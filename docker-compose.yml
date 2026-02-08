@@ -1,0 +1,35 @@
+# Docker Compose for ImageParser PostgreSQL + pgvector
+#
+# This provides a simple way to run PostgreSQL with pgvector extension
+# without installing PostgreSQL locally.
+#
+# Usage:
+#   docker-compose up -d        # Start in background
+#   docker-compose down         # Stop
+#   docker-compose logs -f      # View logs
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: imageparser-postgres
+    environment:
+      POSTGRES_DB: imageparser
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persistent data storage
+      - pg-data:/var/lib/postgresql/data
+      # Auto-initialize schema on first run
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg-data:
+    driver: local

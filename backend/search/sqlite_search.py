@@ -1,0 +1,1093 @@
+"""
+SQLite vector search with sqlite-vec.
+
+This module replaces pg_search.py with SQLite-based vector search,
+maintaining API compatibility for minimal code changes.
+
+Supports three search axes:
+- Vector: SigLIP 2 embedding similarity search
+- FTS5: Full-text keyword search (Korean + English)
+- User Filters: Format, category, rating, tags
+"""
+
+import logging
+import json
+import os
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+import numpy as np
+
+from backend.db.sqlite_client import SQLiteDB
+from backend.search.query_decomposer import QueryDecomposer
+
+logger = logging.getLogger(__name__)
+
+# Search diagnostic logging (disable with SEARCH_DIAGNOSTIC=0)
+_DIAGNOSTIC_ENABLED = os.getenv("SEARCH_DIAGNOSTIC", "1") != "0"
+_DIAGNOSTIC_LOG_DIR = Path(__file__).parent.parent.parent / "logs"
+
+
+class SqliteVectorSearch:
+    """SQLite vector search with SigLIP 2 embeddings."""
+
+    def __init__(self, db: Optional[SQLiteDB] = None):
+        """
+        Initialize vector search.
+
+        Args:
+            db: SQLiteDB instance (creates new if None)
+        """
+        self.db = db if db else SQLiteDB()
+        self._encoder = None  # Lazy loading (V-axis)
+        self._text_provider = None  # Lazy loading (T-axis)
+        self._text_enabled = None  # Cache for T-axis availability check
+
+        logger.info("SqliteVectorSearch initialized")
+
+    @property
+    def encoder(self):
+        """Lazy load V-axis embedding encoder (SigLIP 2)."""
+        if self._encoder is None:
+            from backend.vector.siglip2_encoder import SigLIP2Encoder
+            self._encoder = SigLIP2Encoder()
+            logger.info(f"Embedding encoder loaded: {self._encoder.model_name}")
+        return self._encoder
+
+    @property
+    def text_provider(self):
+        """Lazy load T-axis text embedding provider."""
+        if self._text_provider is None:
+            from backend.vector.text_embedding import get_text_embedding_provider
+            self._text_provider = get_text_embedding_provider()
+        return self._text_provider
+
+    @property
+    def text_search_enabled(self) -> bool:
+        """Check if T-axis text vector search is available (vec_text table exists with data)."""
+        if self._text_enabled is None:
+            try:
+                count = self.db.conn.execute("SELECT COUNT(*) FROM vec_text").fetchone()[0]
+                self._text_enabled = count > 0
+            except Exception:
+                self._text_enabled = False
+        return self._text_enabled
+
+    def encode_text(self, text: str) -> np.ndarray:
+        """
+        Encode text query to V-axis embedding vector (SigLIP 2).
+
+        Args:
+            text: Text query
+
+        Returns:
+            Embedding vector
+        """
+        return self.encoder.encode_text(text)
+
+    def vector_search(
+        self,
+        query: str,
+        top_k: int = 20,
+        threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """
+        Perform vector similarity search using CLIP embeddings.
+
+        Args:
+            query: Text query (will be encoded with CLIP)
+            top_k: Number of results to return
+            threshold: Minimum similarity threshold (0.0 to 1.0)
+
+        Returns:
+            List of file records with similarity scores
+        """
+        # Encode query text
+        query_embedding = self.encode_text(query)
+        embedding_json = json.dumps(query_embedding.astype(np.float32).tolist())
+
+        cursor = self.db.conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT
+                    f.id,
+                    f.file_path,
+                    f.file_name,
+                    f.format,
+                    f.width,
+                    f.height,
+                    f.ai_caption,
+                    f.ai_tags,
+                    f.ocr_text,
+                    f.metadata,
+                    f.thumbnail_url,
+                    f.user_note,
+                    f.user_tags,
+                    f.user_category,
+                    f.user_rating,
+                    f.folder_path,
+                    f.folder_depth,
+                    f.folder_tags,
+                    (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
+                FROM files f
+                JOIN vec_files v ON f.id = v.file_id
+                WHERE (1.0 - vec_distance_cosine(v.embedding, ?)) >= ?
+                ORDER BY vec_distance_cosine(v.embedding, ?) ASC
+                LIMIT ?
+            """, (embedding_json, embedding_json, threshold, embedding_json, top_k))
+
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                self._parse_json_fields(result)
+                results.append(result)
+
+            logger.info(f"Vector search '{query}' returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"Vector search failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def hybrid_search(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        top_k: int = 20,
+        threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """
+        Hybrid search: vector similarity + metadata filters.
+
+        Args:
+            query: Text query for vector search
+            filters: Metadata filters, e.g.:
+                     {
+                         "format": "PSD",
+                         "min_width": 2000,
+                         "max_width": 4000,
+                         "tags": "cartoon",  # LIKE search in semantic_tags
+                         "ai_caption": "city"  # Full-text search
+                     }
+            top_k: Number of results
+            threshold: Minimum similarity
+
+        Returns:
+            Filtered and ranked results
+        """
+        query_embedding = self.encode_text(query)
+        embedding_json = json.dumps(query_embedding.astype(np.float32).tolist())
+
+        # Build dynamic WHERE clause
+        where_clauses = []
+        params = [embedding_json, embedding_json, threshold]
+
+        if filters:
+            if "format" in filters:
+                where_clauses.append("f.format = ?")
+                params.append(filters["format"])
+
+            if "min_width" in filters:
+                where_clauses.append("f.width >= ?")
+                params.append(filters["min_width"])
+
+            if "max_width" in filters:
+                where_clauses.append("f.width <= ?")
+                params.append(filters["max_width"])
+
+            if "min_height" in filters:
+                where_clauses.append("f.height >= ?")
+                params.append(filters["min_height"])
+
+            if "max_height" in filters:
+                where_clauses.append("f.height <= ?")
+                params.append(filters["max_height"])
+
+            if "tags" in filters:
+                where_clauses.append("json_extract(f.metadata, '$.semantic_tags') LIKE ?")
+                params.append(f"%{filters['tags']}%")
+
+            if "ai_caption" in filters:
+                where_clauses.append("f.ai_caption LIKE ?")
+                params.append(f"%{filters['ai_caption']}%")
+
+            if "folder_path" in filters:
+                where_clauses.append("f.folder_path LIKE ?")
+                params.append(f"{filters['folder_path']}%")  # prefix match
+
+            if "folder_tag" in filters:
+                where_clauses.append("f.folder_tags LIKE ?")
+                params.append(f"%\"{filters['folder_tag']}\"%")
+
+        where_sql = " AND " + " AND ".join(where_clauses) if where_clauses else ""
+        params.extend([embedding_json, top_k])
+
+        cursor = self.db.conn.cursor()
+
+        try:
+            sql = f"""
+                SELECT
+                    f.id,
+                    f.file_path,
+                    f.file_name,
+                    f.format,
+                    f.width,
+                    f.height,
+                    f.ai_caption,
+                    f.ai_tags,
+                    f.metadata,
+                    f.thumbnail_url,
+                    f.folder_path,
+                    f.folder_depth,
+                    f.folder_tags,
+                    (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
+                FROM files f
+                JOIN vec_files v ON f.id = v.file_id
+                WHERE (1.0 - vec_distance_cosine(v.embedding, ?)) >= ?
+                {where_sql}
+                ORDER BY vec_distance_cosine(v.embedding, ?) ASC
+                LIMIT ?
+            """
+
+            cursor.execute(sql, params)
+
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                self._parse_json_fields(result)
+                results.append(result)
+
+            logger.info(f"Hybrid search '{query}' with {len(filters or {})} filters returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def metadata_query(
+        self,
+        filters: Dict[str, Any],
+        top_k: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Pure metadata query (no vector search).
+
+        Args:
+            filters: Same as hybrid_search filters
+            top_k: Number of results
+
+        Returns:
+            Filtered results ordered by parsed_at DESC
+        """
+        where_clauses = []
+        params = []
+
+        if "format" in filters:
+            where_clauses.append("format = ?")
+            params.append(filters["format"])
+
+        if "min_width" in filters:
+            where_clauses.append("width >= ?")
+            params.append(filters["min_width"])
+
+        if "tags" in filters:
+            where_clauses.append("json_extract(metadata, '$.semantic_tags') LIKE ?")
+            params.append(f"%{filters['tags']}%")
+
+        if "ai_caption" in filters:
+            where_clauses.append("ai_caption LIKE ?")
+            params.append(f"%{filters['ai_caption']}%")
+
+        if "folder_path" in filters:
+            where_clauses.append("folder_path LIKE ?")
+            params.append(f"{filters['folder_path']}%")
+
+        if "folder_tag" in filters:
+            where_clauses.append("folder_tags LIKE ?")
+            params.append(f"%\"{filters['folder_tag']}\"%")
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        params.append(top_k)
+
+        cursor = self.db.conn.cursor()
+
+        try:
+            cursor.execute(f"""
+                SELECT
+                    id,
+                    file_path,
+                    file_name,
+                    format,
+                    width,
+                    height,
+                    ai_caption,
+                    ai_tags,
+                    metadata,
+                    thumbnail_url,
+                    folder_path,
+                    folder_depth,
+                    folder_tags,
+                    parsed_at
+                FROM files
+                WHERE {where_sql}
+                ORDER BY parsed_at DESC
+                LIMIT ?
+            """, params)
+
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                self._parse_json_fields(result)
+                results.append(result)
+
+            logger.info(f"Metadata query with {len(filters)} filters returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"Metadata query failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def json_query(
+        self,
+        json_path: str,
+        value: Any,
+        top_k: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Query nested JSON metadata.
+
+        Args:
+            json_path: JSON path (e.g., "$.layer_tree.name")
+            value: Value to match
+            top_k: Number of results
+
+        Returns:
+            Matching files
+
+        Example:
+            # Find files with layer_tree.name = "Root"
+            results = search.json_query("$.layer_tree.name", "Root")
+        """
+        cursor = self.db.conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT
+                    id,
+                    file_path,
+                    file_name,
+                    metadata,
+                    parsed_at
+                FROM files
+                WHERE json_extract(metadata, ?) = ?
+                ORDER BY parsed_at DESC
+                LIMIT ?
+            """, (json_path, value, top_k))
+
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                if result.get('metadata'):
+                    try:
+                        result['metadata'] = json.loads(result['metadata'])
+                    except:
+                        result['metadata'] = {}
+                results.append(result)
+
+            logger.info(f"JSON query '{json_path}' = '{value}' returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"JSON query failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def text_vector_search(
+        self,
+        query: str,
+        top_k: int = 20,
+        threshold: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        T-axis: Text vector similarity search using Qwen3-Embedding.
+
+        Searches vec_text table (caption+tags embeddings) for semantic text matching.
+        Complements V-axis (visual similarity) with textual semantic similarity.
+
+        Args:
+            query: Text query (encoded with text embedding model)
+            top_k: Number of results
+            threshold: Minimum similarity threshold
+
+        Returns:
+            List of file records with text_similarity scores
+        """
+        query_vec = self.text_provider.encode(query, is_query=True)
+        embedding_json = json.dumps(query_vec.astype(np.float32).tolist())
+
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    f.id,
+                    f.file_path,
+                    f.file_name,
+                    f.format,
+                    f.width,
+                    f.height,
+                    f.ai_caption,
+                    f.ai_tags,
+                    f.ocr_text,
+                    f.metadata,
+                    f.thumbnail_url,
+                    f.user_note,
+                    f.user_tags,
+                    f.user_category,
+                    f.user_rating,
+                    f.folder_path,
+                    f.folder_depth,
+                    f.folder_tags,
+                    (1.0 - vec_distance_cosine(vt.embedding, ?)) AS text_similarity
+                FROM files f
+                JOIN vec_text vt ON f.id = vt.file_id
+                WHERE (1.0 - vec_distance_cosine(vt.embedding, ?)) >= ?
+                ORDER BY vec_distance_cosine(vt.embedding, ?) ASC
+                LIMIT ?
+            """, (embedding_json, embedding_json, threshold, embedding_json, top_k))
+
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                self._parse_json_fields(result)
+                results.append(result)
+
+            logger.info(f"T-axis search '{query[:50]}' returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"T-axis text vector search failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def fts_search(
+        self,
+        keywords: List[str],
+        top_k: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Full-text search using FTS5.
+
+        Args:
+            keywords: List of keywords to search (combined with OR)
+            top_k: Number of results to return
+
+        Returns:
+            List of file records with FTS rank scores
+        """
+        if not keywords:
+            return []
+
+        # Build FTS5 MATCH query: split multi-word keywords into individual
+        # tokens so "crossroads at night" matches documents containing any of
+        # those words, not just the exact phrase.
+        tokens = set()
+        for kw in keywords:
+            for word in kw.split():
+                word = word.strip().replace('"', '""')
+                if word:
+                    tokens.add(word)
+        if not tokens:
+            return []
+
+        match_expr = " OR ".join(f'"{t}"' for t in tokens)
+
+        cursor = self.db.conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT
+                    f.id,
+                    f.file_path,
+                    f.file_name,
+                    f.format,
+                    f.width,
+                    f.height,
+                    f.ai_caption,
+                    f.ai_tags,
+                    f.ocr_text,
+                    f.metadata,
+                    f.thumbnail_url,
+                    f.user_note,
+                    f.user_tags,
+                    f.user_category,
+                    f.user_rating,
+                    f.folder_path,
+                    f.folder_depth,
+                    f.folder_tags,
+                    fts.rank AS fts_rank
+                FROM files_fts fts
+                JOIN files f ON f.id = fts.rowid
+                WHERE files_fts MATCH ?
+                ORDER BY fts.rank
+                LIMIT ?
+            """, (match_expr, top_k))
+
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                self._parse_json_fields(result)
+                results.append(result)
+
+            logger.info(f"FTS search '{match_expr}' returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"FTS search failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def triaxis_search(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        top_k: int = 20,
+        threshold: float = 0.0,
+        return_diagnostic: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        3-axis search: Vector + FTS5 + User Filters with RRF merge.
+
+        1. QueryDecomposer decomposes query (LLM or fallback)
+        2. Vector search with decomposed.vector_query
+        3. FTS5 search with decomposed.fts_keywords
+        4. RRF merge results
+        5. Apply user filters
+
+        Args:
+            query: Natural language search query
+            filters: User-specified metadata filters
+            top_k: Number of results
+            threshold: Vector similarity threshold
+            return_diagnostic: If True, return (results, diagnostic) tuple
+
+        Returns:
+            Merged and filtered search results.
+            If return_diagnostic=True, returns (results, diagnostic_dict).
+        """
+        t_start = time.perf_counter()
+        diag = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "query": query,
+            "top_k": top_k,
+            "threshold": threshold,
+            "user_filters": filters,
+        }
+
+        # Step 1: Decompose query
+        t0 = time.perf_counter()
+        decomposer = QueryDecomposer()
+        plan = decomposer.decompose(query)
+        diag["decomposition_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        vector_query = plan["vector_query"]
+        fts_keywords = plan["fts_keywords"]
+        llm_filters = plan.get("filters", {})
+
+        query_type = plan.get("query_type", "balanced")
+
+        diag["decomposition"] = {
+            "decomposed": plan.get("decomposed", False),
+            "vector_query": vector_query,
+            "fts_keywords": fts_keywords,
+            "llm_filters": llm_filters,
+            "query_type": query_type,
+        }
+
+        # Separate LLM-suggested filters (soft boost) from user filters (hard gate)
+        user_filters = filters or {}
+        soft_filters = llm_filters  # applied as score boost, never removes results
+
+        # Step 2: V-axis vector search (may fail if sqlite-vec not available)
+        vector_results = []
+        t0 = time.perf_counter()
+        try:
+            vector_results = self.vector_search(vector_query, top_k=top_k * 2, threshold=threshold)
+        except Exception as e:
+            logger.warning(f"V-axis search unavailable: {e}")
+            diag["vector_error"] = str(e)
+        diag["vector_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        diag["vector_results"] = {
+            "count": len(vector_results),
+            "top5": [
+                {
+                    "file": r.get("file_name", r.get("file_path", "")),
+                    "similarity": round(r.get("similarity", 0), 4),
+                    "rank": i + 1,
+                }
+                for i, r in enumerate(vector_results[:5])
+            ],
+        }
+
+        # Step 2b: T-axis text vector search (if vec_text is populated)
+        text_vec_results = []
+        t0 = time.perf_counter()
+        if self.text_search_enabled:
+            try:
+                text_vec_results = self.text_vector_search(
+                    vector_query, top_k=top_k * 2, threshold=threshold
+                )
+            except Exception as e:
+                logger.warning(f"T-axis search unavailable: {e}")
+                diag["text_vec_error"] = str(e)
+        diag["text_vec_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        diag["text_vec_results"] = {
+            "count": len(text_vec_results),
+            "top5": [
+                {
+                    "file": r.get("file_name", r.get("file_path", "")),
+                    "text_similarity": round(r.get("text_similarity", 0), 4),
+                    "rank": i + 1,
+                }
+                for i, r in enumerate(text_vec_results[:5])
+            ],
+        }
+
+        # Step 3: F-axis FTS5 search
+        fts_results = []
+        t0 = time.perf_counter()
+        try:
+            fts_results = self.fts_search(fts_keywords, top_k=top_k * 2)
+        except Exception as e:
+            logger.warning(f"FTS search unavailable: {e}")
+            diag["fts_error"] = str(e)
+        diag["fts_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        diag["fts_results"] = {
+            "count": len(fts_results),
+            "top5": [
+                {
+                    "file": r.get("file_name", r.get("file_path", "")),
+                    "fts_rank": round(r.get("fts_rank", 0), 4),
+                    "rank": i + 1,
+                }
+                for i, r in enumerate(fts_results[:5])
+            ],
+        }
+
+        # Step 4: 3-axis RRF merge (V + T + F)
+        # Build rank lookup before merge for diagnostic
+        vector_rank_map = {
+            r["file_path"]: i + 1 for i, r in enumerate(vector_results)
+        }
+        text_vec_rank_map = {
+            r["file_path"]: i + 1 for i, r in enumerate(text_vec_results)
+        }
+        fts_rank_map = {
+            r["file_path"]: i + 1 for i, r in enumerate(fts_results)
+        }
+
+        # Collect all non-empty result lists for RRF
+        rrf_weights = None
+        all_result_lists = []
+        if vector_results:
+            all_result_lists.append(("visual", vector_results))
+        if text_vec_results:
+            all_result_lists.append(("text_vec", text_vec_results))
+        if fts_results:
+            all_result_lists.append(("fts", fts_results))
+
+        if len(all_result_lists) >= 2:
+            from backend.search.rrf import get_weights
+            from backend.utils.config import get_config as _get_config
+            rrf_k = _get_config().get("search.rrf.k", 60)
+            active_axes = [name for name, _ in all_result_lists]
+            rrf_weights = get_weights(query_type, active_axes)
+            merged = self._rrf_merge_multi(all_result_lists, k=rrf_k, weights=rrf_weights)
+        elif len(all_result_lists) == 1:
+            axis_name, single_results = all_result_lists[0]
+            if axis_name == "visual":
+                for r in single_results:
+                    r["vector_score"] = r.get("similarity", 0)
+                    r["text_vec_score"] = None
+                    r["text_score"] = None
+            elif axis_name == "text_vec":
+                for r in single_results:
+                    r["vector_score"] = None
+                    r["text_vec_score"] = r.get("text_similarity", 0)
+                    r["text_score"] = None
+            else:  # fts
+                fts_ranks = [r.get("fts_rank", 0) for r in single_results]
+                worst = min(fts_ranks)
+                best = max(fts_ranks)
+                span = best - worst
+                for r in single_results:
+                    r["vector_score"] = None
+                    r["text_vec_score"] = None
+                    raw = r.get("fts_rank", 0)
+                    r["text_score"] = (raw - worst) / span if span else 1.0
+            merged = single_results
+        else:
+            merged = []
+
+        # OR-condition threshold: pass if any axis matched
+        if threshold > 0 and merged:
+            merged = [r for r in merged
+                      if (r.get("vector_score") or 0) >= threshold
+                      or (r.get("text_vec_score") or 0) >= threshold
+                      or r.get("text_score") is not None]
+
+        diag["rrf_merge"] = {
+            "axes": len(all_result_lists),
+            "query_type": query_type,
+            "weights": rrf_weights if len(all_result_lists) >= 2 else None,
+            "count": len(merged),
+            "top5": [
+                {
+                    "file": r.get("file_name", r.get("file_path", "")),
+                    "rrf_score": round(r.get("rrf_score", 0), 6),
+                    "vector_rank": vector_rank_map.get(r.get("file_path")),
+                    "text_vec_rank": text_vec_rank_map.get(r.get("file_path")),
+                    "fts_rank": fts_rank_map.get(r.get("file_path")),
+                    "vector_score": round(r["vector_score"], 4) if r.get("vector_score") is not None else None,
+                    "text_vec_score": round(r["text_vec_score"], 4) if r.get("text_vec_score") is not None else None,
+                    "text_score": round(r["text_score"], 4) if r.get("text_score") is not None else None,
+                }
+                for i, r in enumerate(merged[:5])
+            ],
+        }
+
+        # Step 5: Apply user filters only (LLM filters no longer used as hard gate)
+        pre_filter_count = len(merged)
+        if user_filters:
+            merged = self._apply_user_filters(merged, user_filters)
+        diag["filter_applied"] = bool(user_filters)
+        diag["filter_removed"] = pre_filter_count - len(merged)
+
+        # Trim to top_k
+        merged = merged[:top_k]
+        diag["final_results_count"] = len(merged)
+        diag["total_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
+
+        logger.info(
+            f"Triaxis search '{query}': vector={len(vector_results)}, "
+            f"fts={len(fts_results)}, merged={len(merged)}, "
+            f"decomposed={plan.get('decomposed', False)}"
+        )
+
+        # Write diagnostic log
+        if _DIAGNOSTIC_ENABLED:
+            self._write_diagnostic(diag)
+
+        if return_diagnostic:
+            return merged, diag
+        return merged
+
+    @staticmethod
+    def _write_diagnostic(diagnostic: Dict[str, Any]) -> None:
+        """Append diagnostic data to logs/search_diagnostic.jsonl."""
+        try:
+            _DIAGNOSTIC_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            log_path = _DIAGNOSTIC_LOG_DIR / "search_diagnostic.jsonl"
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(diagnostic, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.warning(f"Failed to write diagnostic log: {e}")
+
+    def _rrf_merge(
+        self,
+        vector_results: List[Dict],
+        fts_results: List[Dict],
+        k: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """
+        Reciprocal Rank Fusion (RRF) to merge results from multiple sources.
+        Preserves per-axis scores: vector_score (cosine similarity) and
+        text_score (min-max normalized FTS rank).
+
+        Args:
+            vector_results: Results from vector search (ordered by similarity)
+            fts_results: Results from FTS5 search (ordered by rank)
+            k: RRF constant (default 60)
+
+        Returns:
+            Merged results ordered by RRF score (descending),
+            each with vector_score and text_score fields.
+        """
+        scores = {}  # file_path -> rrf_score
+        result_map = {}  # file_path -> result dict
+        vector_scores = {}  # file_path -> cosine similarity
+        fts_raw_ranks = {}  # file_path -> fts_rank (negative)
+
+        # Score vector results
+        for rank, result in enumerate(vector_results):
+            fp = result["file_path"]
+            scores[fp] = scores.get(fp, 0) + 1.0 / (k + rank + 1)
+            vector_scores[fp] = result.get("similarity", 0)
+            if fp not in result_map:
+                result_map[fp] = result
+
+        # Score FTS results
+        for rank, result in enumerate(fts_results):
+            fp = result["file_path"]
+            scores[fp] = scores.get(fp, 0) + 1.0 / (k + rank + 1)
+            fts_raw_ranks[fp] = result.get("fts_rank", 0)
+            if fp not in result_map:
+                result_map[fp] = result
+
+        # Normalize FTS ranks (negative → 0~1)
+        normalized_text = {}
+        if fts_raw_ranks:
+            ranks = list(fts_raw_ranks.values())
+            worst = min(ranks)  # most negative = worst match
+            best = max(ranks)   # closest to 0 = best match
+            span = best - worst
+            for fp, r in fts_raw_ranks.items():
+                normalized_text[fp] = (r - worst) / span if span else 1.0
+
+        # Sort by RRF score descending
+        sorted_paths = sorted(scores.keys(), key=lambda fp: scores[fp], reverse=True)
+
+        merged = []
+        for fp in sorted_paths:
+            result = result_map[fp]
+            result["rrf_score"] = scores[fp]
+            result["vector_score"] = vector_scores.get(fp)   # None if not in vector results
+            result["text_score"] = normalized_text.get(fp)    # None if not in FTS results
+            merged.append(result)
+
+        return merged
+
+    def _rrf_merge_multi(
+        self,
+        result_lists: list[tuple[str, list[dict]]],
+        k: int = 60,
+        weights: dict[str, float] | None = None,
+    ) -> list[dict]:
+        """
+        Multi-axis RRF merge for 2+ result lists.
+
+        Generalizes _rrf_merge to handle V + T + F axes.
+        Preserves per-axis scores: vector_score, text_vec_score, text_score.
+
+        Args:
+            result_lists: List of (axis_name, results) tuples.
+                          axis_name: "visual", "text_vec", or "fts"
+            k: RRF constant (default 60)
+            weights: Per-axis weight dict (e.g. {"visual": 0.5, "text_vec": 0.3, "fts": 0.2}).
+                     If None, uniform weighting (1.0 per axis).
+
+        Returns:
+            Merged results ordered by RRF score (descending).
+        """
+        scores = {}       # file_path -> cumulative rrf_score
+        result_map = {}   # file_path -> result dict
+        axis_scores = {}  # file_path -> {axis_name: raw_score}
+
+        for axis_name, results in result_lists:
+            w = weights.get(axis_name, 1.0) if weights else 1.0
+            for rank, result in enumerate(results):
+                fp = result["file_path"]
+                scores[fp] = scores.get(fp, 0) + w / (k + rank + 1)
+
+                if fp not in axis_scores:
+                    axis_scores[fp] = {}
+
+                # Store raw per-axis score
+                if axis_name == "visual":
+                    axis_scores[fp]["visual"] = result.get("similarity", 0)
+                elif axis_name == "text_vec":
+                    axis_scores[fp]["text_vec"] = result.get("text_similarity", 0)
+                elif axis_name == "fts":
+                    axis_scores[fp]["fts_rank"] = result.get("fts_rank", 0)
+
+                if fp not in result_map:
+                    result_map[fp] = result
+
+        # Normalize FTS ranks to 0~1
+        fts_raw = {fp: s.get("fts_rank") for fp, s in axis_scores.items() if "fts_rank" in s}
+        normalized_fts = {}
+        if fts_raw:
+            ranks = list(fts_raw.values())
+            worst = min(ranks)
+            best = max(ranks)
+            span = best - worst
+            for fp, r in fts_raw.items():
+                normalized_fts[fp] = (r - worst) / span if span else 1.0
+
+        # Sort by cumulative RRF score
+        sorted_paths = sorted(scores.keys(), key=lambda fp: scores[fp], reverse=True)
+
+        merged = []
+        for fp in sorted_paths:
+            result = result_map[fp]
+            result["rrf_score"] = scores[fp]
+            result["vector_score"] = axis_scores.get(fp, {}).get("visual")
+            result["text_vec_score"] = axis_scores.get(fp, {}).get("text_vec")
+            result["text_score"] = normalized_fts.get(fp)
+            merged.append(result)
+
+        return merged
+
+    def _apply_user_filters(
+        self,
+        results: List[Dict],
+        filters: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """
+        Apply user metadata filters to results in-memory.
+
+        Supported filters:
+            format: File format (PSD, PNG, JPG)
+            user_category: User-assigned category
+            min_rating: Minimum star rating (1-5)
+            user_tags: Tag that must be present
+            dominant_color_hint: Boost results matching this color (soft filter)
+            image_type: v3 P0 image classification filter
+            art_style: v3 P0 art style filter
+            scene_type: v3 P0 scene type filter (backgrounds)
+            time_of_day: v3 P0 time of day filter (backgrounds)
+            weather: v3 P0 weather filter (backgrounds)
+        """
+        filtered = []
+
+        for result in results:
+            # Hard filters (exclude non-matching)
+            if "format" in filters and filters["format"]:
+                if result.get("format", "").upper() != filters["format"].upper():
+                    continue
+
+            if "user_category" in filters and filters["user_category"]:
+                if result.get("user_category", "") != filters["user_category"]:
+                    continue
+
+            if "min_rating" in filters and filters["min_rating"]:
+                if (result.get("user_rating") or 0) < int(filters["min_rating"]):
+                    continue
+
+            if "user_tags" in filters and filters["user_tags"]:
+                result_tags = result.get("user_tags", [])
+                if isinstance(result_tags, str):
+                    try:
+                        result_tags = json.loads(result_tags)
+                    except:
+                        result_tags = []
+                filter_tag = filters["user_tags"].lower()
+                if not any(filter_tag in t.lower() for t in result_tags):
+                    continue
+
+            if "folder_path" in filters and filters["folder_path"]:
+                result_folder = result.get("folder_path") or ""
+                if not result_folder.startswith(filters["folder_path"]):
+                    continue
+
+            if "folder_tag" in filters and filters["folder_tag"]:
+                result_ftags = result.get("folder_tags", [])
+                if isinstance(result_ftags, str):
+                    try:
+                        result_ftags = json.loads(result_ftags)
+                    except:
+                        result_ftags = []
+                filter_ftag = filters["folder_tag"].lower()
+                if not any(filter_ftag in t.lower() for t in result_ftags):
+                    continue
+
+            # v3 P0: structured vision filters
+            if "image_type" in filters and filters["image_type"]:
+                if (result.get("image_type") or "").lower() != filters["image_type"].lower():
+                    continue
+
+            if "art_style" in filters and filters["art_style"]:
+                if (result.get("art_style") or "").lower() != filters["art_style"].lower():
+                    continue
+
+            if "scene_type" in filters and filters["scene_type"]:
+                if (result.get("scene_type") or "").lower() != filters["scene_type"].lower():
+                    continue
+
+            if "time_of_day" in filters and filters["time_of_day"]:
+                if (result.get("time_of_day") or "").lower() != filters["time_of_day"].lower():
+                    continue
+
+            if "weather" in filters and filters["weather"]:
+                if (result.get("weather") or "").lower() != filters["weather"].lower():
+                    continue
+
+            filtered.append(result)
+
+        return filtered
+
+    @staticmethod
+    def _parse_json_fields(result: Dict) -> None:
+        """Parse JSON string fields in a result dict."""
+        if result.get("ai_tags"):
+            try:
+                result["ai_tags"] = json.loads(result["ai_tags"])
+            except (json.JSONDecodeError, TypeError):
+                result["ai_tags"] = []
+        if result.get("metadata"):
+            try:
+                result["metadata"] = json.loads(result["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                result["metadata"] = {}
+        if result.get("user_tags") and isinstance(result["user_tags"], str):
+            try:
+                result["user_tags"] = json.loads(result["user_tags"])
+            except (json.JSONDecodeError, TypeError):
+                result["user_tags"] = []
+        if result.get("folder_tags") and isinstance(result["folder_tags"], str):
+            try:
+                result["folder_tags"] = json.loads(result["folder_tags"])
+            except (json.JSONDecodeError, TypeError):
+                result["folder_tags"] = []
+
+    def search(
+        self,
+        query: str,
+        mode: str = "vector",
+        filters: Optional[Dict[str, Any]] = None,
+        top_k: int = 20,
+        threshold: float = 0.0,
+        return_diagnostic: bool = False,
+    ):
+        """
+        Unified search interface (compatibility with VectorSearcher).
+
+        Args:
+            query: Search query
+            mode: "vector", "hybrid", "metadata", "fts", or "triaxis"
+            filters: Optional metadata filters
+            top_k: Number of results
+            threshold: Similarity threshold (vector modes only)
+            return_diagnostic: If True and mode=triaxis, return (results, diagnostic)
+
+        Returns:
+            Search results. If return_diagnostic=True with triaxis mode,
+            returns (results, diagnostic_dict).
+        """
+        if mode == "vector":
+            return self.vector_search(query, top_k, threshold)
+        elif mode == "hybrid":
+            return self.hybrid_search(query, filters, top_k, threshold)
+        elif mode == "metadata":
+            if not filters:
+                raise ValueError("Metadata mode requires filters")
+            return self.metadata_query(filters, top_k)
+        elif mode == "fts":
+            return self.fts_search([query], top_k)
+        elif mode == "triaxis":
+            return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic)
+        else:
+            raise ValueError(f"Invalid mode: {mode}. Use 'vector', 'hybrid', 'metadata', 'fts', or 'triaxis'")

@@ -1,0 +1,43 @@
+# config.yaml — ImageParser v3 configuration
+# .env overrides are supported for backward compatibility
+
+# ══════════════════════════════════════════════════════
+# Vision (Ingest Pipeline)
+# ══════════════════════════════════════════════════════
+vision:
+  model: "qwen3-vl:8b"          # Ollama model name
+  keep_alive: "5m"               # Model keep-alive during batch
+  temperature: 0.1               # Low = deterministic classification
+  max_retries: 2                 # JSON parse retry count
+  ollama_host: "http://localhost:11434"
+
+# ══════════════════════════════════════════════════════
+# Search
+# ══════════════════════════════════════════════════════
+search:
+  rrf:
+    k: 60                        # RRF k parameter
+    auto_weight: true             # P2+ Auto-Weighted RRF (query_type → preset)
+    manual_weights:               # Used when auto_weight: false
+      visual: 0.34
+      text_vec: 0.33
+      fts: 0.33
+
+# ══════════════════════════════════════════════════════
+# Embedding
+# ══════════════════════════════════════════════════════
+embedding:
+  visual:
+    model: "google/siglip2-so400m-patch14-384"
+    dimensions: 1152
+  text:
+    enabled: true
+    model: "qwen3-embedding:0.6b"
+    dimensions: 1024
+    instruction_prefix: ""
+
+# ══════════════════════════════════════════════════════
+# Storage / Paths
+# ══════════════════════════════════════════════════════
+storage:
+  path_style: "posix"            # Always use forward slashes

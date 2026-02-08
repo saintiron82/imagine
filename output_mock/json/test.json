@@ -1,0 +1,103 @@
+{
+  "file_path": "C:\\Users\\saint\\ImageParser\\mock_assets\\test.psd",
+  "file_name": "test.psd",
+  "file_size": 0,
+  "format": "PSD",
+  "resolution": [
+    1000,
+    800
+  ],
+  "visual_source_path": null,
+  "semantic_tags": "Background Character Group Body Dialogue",
+  "text_content": [
+    "Hello World"
+  ],
+  "layer_tree": {
+    "name": "Root",
+    "size": [
+      1000,
+      800
+    ],
+    "children": [
+      {
+        "name": "Background",
+        "cleaned_name": "Background",
+        "kind": "pixel",
+        "visible": true,
+        "opacity": 1.0,
+        "position": [
+          0,
+          0
+        ],
+        "size": [
+          1000,
+          800
+        ],
+        "content_type": "background"
+      },
+      {
+        "name": "Character Group",
+        "cleaned_name": "Character Group",
+        "kind": "group",
+        "visible": true,
+        "opacity": 1.0,
+        "position": [
+          200,
+          200
+        ],
+        "size": [
+          400,
+          600
+        ],
+        "content_type": "character",
+        "children": [
+          {
+            "name": "Body",
+            "cleaned_name": "Body",
+            "kind": "pixel",
+            "visible": true,
+            "opacity": 1.0,
+            "position": [
+              200,
+              200
+            ],
+            "size": [
+              400,
+              600
+            ],
+            "content_type": "character"
+          }
+        ]
+      },
+      {
+        "name": "Dialogue",
+        "cleaned_name": "Dialogue",
+        "kind": "type",
+        "visible": true,
+        "opacity": 1.0,
+        "position": [
+          300,
+          100
+        ],
+        "size": [
+          200,
+          50
+        ],
+        "content_type": "unknown",
+        "text": "Hello World"
+      }
+    ]
+  },
+  "layer_count": 5,
+  "used_fonts": [
+    "Arial-Bold"
+  ],
+  "metadata": {
+    "color_mode": "RGB",
+    "channels": 3
+  },
+  "created_at": null,
+  "modified_at": "2026-02-05T17:01:55.017995",
+  "parsed_at": "2026-02-05T17:01:55.019520",
+  "thumbnail_url": null
+}

@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# Cache
+.cache/
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output
+output/
+
+# Environment / secrets
+.env
+
+# Database files
+*.db
+chroma_db/
+
+# Test artifacts
+_test_*.py
+_test_*.json
+
+# Misc
+nul

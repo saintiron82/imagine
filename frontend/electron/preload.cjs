@@ -1,0 +1,83 @@
+const { contextBridge, ipcRenderer } = require('electron');
+const fs = require('fs/promises');
+const path = require('path');
+const os = require('os');
+
+const isDev = process.env.NODE_ENV === 'development';
+const projectRoot = isDev
+    ? path.resolve(__dirname, '../../')
+    : process.resourcesPath;
+
+contextBridge.exposeInMainWorld('electron', {
+    versions: {
+        node: process.versions.node,
+        chrome: process.versions.chrome,
+        electron: process.versions.electron,
+    },
+    projectRoot,
+    fs: {
+        // Get Home Directory
+        getHomeDir: () => os.homedir(),
+
+        // List Directory Contents
+        listDir: async (dirPath) => {
+            try {
+                const items = await fs.readdir(dirPath, { withFileTypes: true });
+                return items.map(item => ({
+                    name: item.name,
+                    isDirectory: item.isDirectory(),
+                    path: path.join(dirPath, item.name),
+                    extension: path.extname(item.name).toLowerCase(),
+                })).filter(item => !item.name.startsWith('.')); // Hide dotfiles
+            } catch (error) {
+                console.error("Failed to read directory:", error);
+                throw error;
+            }
+        },
+
+        // Check if path exists
+        exists: async (pathToCheck) => {
+            try {
+                await fs.access(pathToCheck);
+                return true;
+            } catch {
+                return false;
+            }
+        },
+
+        // Resolve path
+        pathJoin: (...args) => path.join(...args),
+    },
+
+    // Pipeline Bridge
+    pipeline: {
+        run: (filePaths) => ipcRenderer.send('run-pipeline', { filePaths }),
+        onLog: (callback) => ipcRenderer.on('pipeline-log', (_, data) => callback(data)),
+        offLog: () => ipcRenderer.removeAllListeners('pipeline-log'),
+        onProgress: (callback) => ipcRenderer.on('pipeline-progress', (_, data) => callback(data)),
+        offProgress: () => ipcRenderer.removeAllListeners('pipeline-progress'),
+        onStep: (callback) => ipcRenderer.on('pipeline-step', (_, data) => callback(data)),
+        offStep: () => ipcRenderer.removeAllListeners('pipeline-step'),
+        onFileDone: (callback) => ipcRenderer.on('pipeline-file-done', (_, data) => callback(data)),
+        offFileDone: () => ipcRenderer.removeAllListeners('pipeline-file-done'),
+        openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
+        generateThumbnail: (filePath) => ipcRenderer.invoke('generate-thumbnail', filePath),
+        generateThumbnailsBatch: (filePaths) => ipcRenderer.invoke('generate-thumbnails-batch', filePaths),
+        readMetadata: (filePath) => ipcRenderer.invoke('read-metadata', filePath),
+        checkMetadataExists: (filePaths) => ipcRenderer.invoke('check-metadata-exists', filePaths),
+        searchVector: (options) => ipcRenderer.invoke('search-vector', options),
+        getDbStats: () => ipcRenderer.invoke('get-db-stats'),
+
+        // Installer
+        checkEnv: () => ipcRenderer.invoke('check-env'),
+        installEnv: () => ipcRenderer.send('install-env'),
+        onInstallLog: (callback) => ipcRenderer.on('install-log', (_, data) => callback(data)),
+        offInstallLog: () => ipcRenderer.removeAllListeners('install-log'),
+    },
+
+    // User Metadata API
+    metadata: {
+        updateUserData: (filePath, updates) =>
+            ipcRenderer.invoke('metadata:updateUserData', filePath, updates)
+    }
+});

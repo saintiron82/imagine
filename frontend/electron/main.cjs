@@ -1,0 +1,475 @@
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const isDev = process.env.NODE_ENV === 'development';
+const projectRoot = isDev
+    ? path.resolve(__dirname, '../../')
+    : process.resourcesPath;
+
+// IPC Handler: Open Folder Dialog
+ipcMain.handle('open-folder-dialog', async () => {
+    const result = await dialog.showOpenDialog({
+        properties: ['openDirectory'],
+        title: 'Select Folder to Process'
+    });
+    if (result.canceled) return null;
+    return result.filePaths[0];
+});
+
+// IPC Handler: Read Metadata JSON
+ipcMain.handle('read-metadata', async (_, filePath) => {
+    try {
+        const baseName = path.basename(filePath, path.extname(filePath));
+        const outputDir = isDev
+            ? path.join(projectRoot, 'output/json')
+            : path.join(process.resourcesPath, 'output/json');
+        const jsonPath = path.join(outputDir, `${baseName}.json`);
+
+        if (fs.existsSync(jsonPath)) {
+            const content = fs.readFileSync(jsonPath, 'utf-8');
+            return JSON.parse(content);
+        }
+        return null;
+    } catch (err) {
+        console.error('[Read Metadata Error]', err);
+        return null;
+    }
+});
+
+// IPC Handler: Check if metadata exists (batch)
+ipcMain.handle('check-metadata-exists', async (_, filePaths) => {
+    const outputDir = isDev
+        ? path.join(projectRoot, 'output/json')
+        : path.join(process.resourcesPath, 'output/json');
+
+    const results = {};
+    for (const fp of filePaths) {
+        const baseName = path.basename(fp, path.extname(fp));
+        const jsonPath = path.join(outputDir, `${baseName}.json`);
+        results[fp] = fs.existsSync(jsonPath);
+    }
+    return results;
+});
+
+// IPC Handler: Generate Thumbnail (single file)
+ipcMain.handle('generate-thumbnail', async (_, filePath) => {
+    const { spawn } = require('child_process');
+
+    const pythonPath = isDev
+        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
+        : path.join(process.resourcesPath, 'python/python.exe');
+
+    // Fallback logic
+    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
+        : path.join(process.resourcesPath, 'backend/thumbnail_generator.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath, filePath, '--size', '256'], { cwd: projectRoot });
+        let output = '';
+        let error = '';
+
+        proc.stdout.on('data', (data) => {
+            output += data.toString();
+        });
+
+        proc.stderr.on('data', (data) => {
+            error += data.toString();
+        });
+
+        proc.on('close', (code) => {
+            if (code === 0 && output.trim()) {
+                resolve(`data:image/png;base64,${output.trim()}`);
+            } else {
+                console.error('[Thumbnail Error]', error);
+                resolve(null);
+            }
+        });
+
+        proc.on('error', (err) => {
+            console.error('[Thumbnail Spawn Error]', err);
+            resolve(null);
+        });
+    });
+});
+
+// IPC Handler: Generate Thumbnails Batch
+ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
+    const { spawn } = require('child_process');
+
+    const pythonPath = isDev
+        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
+        : path.join(process.resourcesPath, 'python/python.exe');
+
+    // Fallback logic
+    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
+        : path.join(process.resourcesPath, 'backend/thumbnail_generator.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath, '--batch', JSON.stringify(filePaths), '--size', '256'], { cwd: projectRoot });
+        let output = '';
+        let error = '';
+
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+
+        proc.on('close', (code) => {
+            if (code === 0 && output.trim()) {
+                try {
+                    const results = JSON.parse(output.trim());
+                    const dataUrls = {};
+                    for (const [fp, b64] of Object.entries(results)) {
+                        dataUrls[fp] = b64 ? `data:image/png;base64,${b64}` : null;
+                    }
+                    resolve(dataUrls);
+                } catch {
+                    resolve({});
+                }
+            } else {
+                console.error('[Batch Thumbnail Error]', error);
+                resolve({});
+            }
+        });
+
+        proc.on('error', (err) => {
+            console.error('[Batch Thumbnail Spawn Error]', err);
+            resolve({});
+        });
+    });
+});
+
+// IPC Handler: Triaxis Search (Vector + FTS5 + Filters)
+// Accepts either:
+//   - string query (backward compatible): searchVector("dragon")
+//   - object options: searchVector({query, limit, mode, filters})
+ipcMain.handle('search-vector', async (_, searchOptions) => {
+    const { spawn } = require('child_process');
+
+    const pythonPath = isDev
+        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
+        : path.join(process.resourcesPath, 'python/python.exe');
+
+    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_search.py')
+        : path.join(process.resourcesPath, 'backend/api_search.py');
+
+    // Normalize input: string → object
+    let inputData;
+    if (typeof searchOptions === 'string') {
+        inputData = { query: searchOptions, limit: 20, mode: 'triaxis' };
+    } else {
+        inputData = {
+            query: searchOptions.query || '',
+            limit: searchOptions.limit || 20,
+            mode: searchOptions.mode || 'triaxis',
+            threshold: searchOptions.threshold ?? 0.0,
+            filters: searchOptions.filters || null,
+        };
+    }
+
+    return new Promise((resolve) => {
+        // Use stdin JSON protocol
+        const proc = spawn(finalPython, [scriptPath], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+        });
+
+        let output = '';
+        let error = '';
+
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+
+        proc.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    const result = JSON.parse(output);
+                    resolve(result);
+                } catch (e) {
+                    console.error('[Search JSON Parse Error]', e, output);
+                    resolve({ success: false, error: 'JSON parse error', results: [] });
+                }
+            } else {
+                console.error('[Search Execution Error]', error);
+                resolve({ success: false, error: error || 'Search failed', results: [] });
+            }
+        });
+
+        proc.on('error', (err) => {
+            console.error('[Search Spawn Error]', err);
+            resolve({ success: false, error: err.message, results: [] });
+        });
+
+        // Send search options via stdin
+        proc.stdin.write(JSON.stringify(inputData));
+        proc.stdin.end();
+    });
+});
+
+// IPC Handler: Database Stats (archived image count)
+ipcMain.handle('get-db-stats', async () => {
+    const { spawn } = require('child_process');
+    const pythonPath = isDev
+        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
+        : path.join(process.resourcesPath, 'python/python.exe');
+    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_stats.py')
+        : path.join(process.resourcesPath, 'backend/api_stats.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+        });
+        let output = '';
+        proc.stdout.on('data', (d) => output += d.toString());
+        proc.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(output.trim()));
+                } catch {
+                    resolve({ success: false, total_files: 0 });
+                }
+            } else {
+                resolve({ success: false, total_files: 0 });
+            }
+        });
+        proc.on('error', () => resolve({ success: false, total_files: 0 }));
+    });
+});
+
+// IPC Handler: Environment Check
+ipcMain.handle('check-env', async () => {
+    const { spawn } = require('child_process');
+    const pythonPath = isDev ? path.resolve(__dirname, '../../.venv/Scripts/python.exe') : path.join(process.resourcesPath, 'python/python.exe');
+    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath, '--check'], { cwd: projectRoot });
+        let output = '';
+        proc.stdout.on('data', (d) => output += d.toString());
+        proc.on('close', () => {
+            try {
+                resolve(JSON.parse(output.trim()));
+            } catch {
+                resolve({ dependencies_ok: false, error: "Parse Error" });
+            }
+        });
+        proc.on('error', () => resolve({ dependencies_ok: false, error: "Spawn Error" }));
+    });
+});
+
+// IPC Handler: Install Environment
+ipcMain.on('install-env', (event) => {
+    const { spawn } = require('child_process');
+    const pythonPath = isDev ? path.resolve(__dirname, '../../.venv/Scripts/python.exe') : path.join(process.resourcesPath, 'python/python.exe');
+    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
+
+    event.reply('install-log', { message: '🚀 Starting installation...', type: 'info' });
+
+    // Run install + download model
+    const proc = spawn(finalPython, [scriptPath, '--install', '--download-model'], { cwd: projectRoot });
+
+    proc.stdout.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg) event.reply('install-log', { message: msg, type: 'info' });
+    });
+    proc.stderr.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg) event.reply('install-log', { message: msg, type: 'warning' });
+    });
+    proc.on('close', (code) => {
+        event.reply('install-log', {
+            message: code === 0 ? '✅ Installation Complete!' : '❌ Installation Failed',
+            type: code === 0 ? 'success' : 'error',
+            done: true
+        });
+    });
+});
+
+// IPC Handler: Update User Metadata
+ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
+    const { spawn } = require('child_process');
+
+    const pythonPath = isDev
+        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
+        : path.join(process.resourcesPath, 'python/python.exe');
+
+    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_metadata_update.py')
+        : path.join(process.resourcesPath, 'backend/api_metadata_update.py');
+
+    return new Promise((resolve, reject) => {
+        const proc = spawn(finalPython, [scriptPath], { cwd: projectRoot });
+
+        let output = '';
+        let errorOutput = '';
+
+        proc.stdout.on('data', (data) => {
+            output += data.toString();
+        });
+
+        proc.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+        });
+
+        proc.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    const result = JSON.parse(output);
+                    resolve(result);
+                } catch (err) {
+                    reject(new Error('Failed to parse response: ' + err.message));
+                }
+            } else {
+                reject(new Error('Python error: ' + errorOutput));
+            }
+        });
+
+        proc.on('error', (err) => {
+            reject(new Error('Failed to spawn Python process: ' + err.message));
+        });
+
+        // Send input data via stdin
+        const inputData = JSON.stringify({ file_path: filePath, updates });
+        proc.stdin.write(inputData);
+        proc.stdin.end();
+    });
+});
+
+function createWindow() {
+    const mainWindow = new BrowserWindow({
+        width: 1280,
+        height: 800,
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.cjs'),
+            nodeIntegration: false,
+            contextIsolation: true,
+            webSecurity: false,
+            sandbox: false,
+        },
+    });
+
+    if (isDev) {
+        mainWindow.loadURL('http://localhost:5173');
+        mainWindow.webContents.openDevTools();
+    } else {
+        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    }
+
+    // IPC Handler: Run Python Pipeline
+    ipcMain.on('run-pipeline', (event, { filePaths }) => {
+        const { spawn } = require('child_process');
+
+        const pythonPath = isDev
+            ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
+            : path.join(process.resourcesPath, 'python/python.exe');
+
+        const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+
+        const scriptPath = isDev
+            ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
+            : path.join(process.resourcesPath, 'backend/ingest_engine.py');
+
+        event.reply('pipeline-log', { message: `Starting batch processing: ${filePaths.length} files...`, type: 'info' });
+
+        // Track progress
+        let processedCount = 0;
+        const totalFiles = filePaths.length;
+
+        const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], { cwd: projectRoot });
+
+        proc.stdout.on('data', (data) => {
+            const message = data.toString().trim();
+            if (message) {
+                event.reply('pipeline-log', { message, type: 'info' });
+
+                // Detect file processing progress
+                const processingMatch = message.match(/Processing: (.+)/);
+                const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+                if (processingMatch) {
+                    event.reply('pipeline-progress', {
+                        processed: processedCount,
+                        total: totalFiles,
+                        currentFile: path.basename(processingMatch[1])
+                    });
+                } else if (stepMatch) {
+                    // Per-file step progress: STEP 1/5 Parsing
+                    event.reply('pipeline-step', {
+                        step: parseInt(stepMatch[1]),
+                        totalSteps: parseInt(stepMatch[2]),
+                        stepName: stepMatch[3]
+                    });
+                } else if (message.includes('[OK] Parsed successfully')) {
+                    processedCount++;
+                    event.reply('pipeline-progress', {
+                        processed: processedCount,
+                        total: totalFiles,
+                        currentFile: ''
+                    });
+                }
+            }
+        });
+
+        proc.stderr.on('data', (data) => {
+            const message = data.toString().trim();
+            if (!message) return;
+            // Only treat as error if it contains actual error keywords
+            const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
+            const type = isError ? 'error' : 'info';
+            event.reply('pipeline-log', { message, type });
+        });
+
+        proc.on('close', (code) => {
+            // Final progress update
+            event.reply('pipeline-progress', {
+                processed: totalFiles,
+                total: totalFiles,
+                currentFile: ''
+            });
+
+            event.reply('pipeline-log', {
+                message: code === 0 ? '✅ Pipeline complete!' : `⚠️ Pipeline exited with code ${code}`,
+                type: code === 0 ? 'success' : 'error'
+            });
+
+            // Dedicated completion signal for queue advancement
+            event.reply('pipeline-file-done', {
+                success: code === 0,
+                filePaths: filePaths
+            });
+        });
+
+        proc.on('error', (err) => {
+            event.reply('pipeline-log', { message: `Pipeline error: ${err.message}`, type: 'error' });
+        });
+    });
+}
+
+app.whenReady().then(() => {
+    createWindow();
+
+    app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+            createWindow();
+        }
+    });
+});
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
+});
