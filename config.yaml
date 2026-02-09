@@ -32,9 +32,9 @@ ai_mode:
         dimensions: 768
         model: google/siglip2-base-patch16-224
       vlm:
-        backend: ollama
+        backend: transformers
         device: auto
-        model: qwen3-vl:2b
+        model: Qwen/Qwen3-VL-2B-Instruct
       vram_max: 6144
     ultra:
       preprocess:

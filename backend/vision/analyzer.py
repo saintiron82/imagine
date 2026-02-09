@@ -10,6 +10,7 @@ This module analyzes images to extract:
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from PIL import Image
@@ -536,3 +537,137 @@ class VisionAnalyzer:
         cleaned = re.sub(r'<[^>]+>', '', cleaned)
 
         return cleaned.strip()
+
+    # ── v3 P0: 2-Stage Pipeline (transformers backend) ─────────
+
+    def _generate_response(self, image: Image.Image, prompt: str) -> str:
+        """
+        Generate text response from Qwen2/3-VL using chat template.
+
+        This is the core inference helper shared by classify() and analyze_structured().
+        Uses the same chat template API as _generate_caption() but with arbitrary prompts
+        and proper input-token trimming to return model output only.
+
+        Args:
+            image: PIL Image
+            prompt: Text prompt for the model
+
+        Returns:
+            Model-generated text (input tokens stripped)
+        """
+        self._load_model()
+
+        if "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": prompt}
+                ]
+            }]
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            inputs = self.processor(
+                text=[text], images=[image], return_tensors="pt"
+            ).to(self.device)
+
+            with torch.no_grad():
+                generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+
+            # Trim input tokens to get model output only
+            trimmed = [
+                out[len(inp):]
+                for inp, out in zip(inputs.input_ids, generated_ids)
+            ]
+            return self.processor.batch_decode(
+                trimmed, skip_special_tokens=True
+            )[0]
+        else:
+            # Fallback for non-Qwen models: use _generate_caption with the prompt
+            return self._generate_caption(image, context={"prompt_override": prompt})
+
+    def classify(self, image: Image.Image, keep_alive: str = None) -> Dict[str, Any]:
+        """
+        Stage 1: Classify image type.
+
+        Args:
+            image: PIL Image
+            keep_alive: Ignored (Ollama-only concept, kept for interface compatibility)
+
+        Returns:
+            {"image_type": "character"|"background"|..., "confidence": "high"|...}
+        """
+        from .prompts import STAGE1_PROMPT
+        from .schemas import STAGE1_SCHEMA
+        from .repair import parse_structured_output
+
+        try:
+            t0 = time.perf_counter()
+            raw = self._generate_response(image, STAGE1_PROMPT)
+            elapsed = time.perf_counter() - t0
+            result = parse_structured_output(raw, STAGE1_SCHEMA, image_type="other")
+            logger.info(f"Stage 1 completed in {elapsed:.1f}s → {result.get('image_type')}")
+            return result
+        except Exception as e:
+            logger.warning(f"Stage 1 classification failed: {e}")
+            return {"image_type": "other", "confidence": "low"}
+
+    def analyze_structured(
+        self, image: Image.Image, image_type: str, keep_alive: str = None, context: dict = None
+    ) -> Dict[str, Any]:
+        """
+        Stage 2: Type-specific structured analysis.
+
+        Args:
+            image: PIL Image
+            image_type: Result from Stage 1 classify()
+            keep_alive: Ignored (Ollama-only concept)
+            context: Optional file metadata context (v3.1: MC.raw)
+
+        Returns:
+            Structured dict with type-specific fields + caption + tags
+        """
+        from .prompts import get_stage2_prompt
+        from .schemas import get_schema
+        from .repair import parse_structured_output
+
+        try:
+            t0 = time.perf_counter()
+            prompt = get_stage2_prompt(image_type, context=context)
+            raw = self._generate_response(image, prompt)
+            elapsed = time.perf_counter() - t0
+            result = parse_structured_output(raw, get_schema(image_type), image_type=image_type)
+            result["image_type"] = image_type
+            logger.info(f"Stage 2 completed in {elapsed:.1f}s ({image_type})")
+            return result
+        except Exception as e:
+            logger.warning(f"Stage 2 analysis failed: {e}")
+            return {"caption": "", "tags": [], "image_type": image_type}
+
+    def classify_and_analyze(
+        self, image: Image.Image, keep_alive: str = None, context: dict = None
+    ) -> Dict[str, Any]:
+        """
+        Full 2-Stage pipeline: classify → analyze_structured.
+
+        Args:
+            image: PIL Image to analyze
+            keep_alive: Ignored (Ollama-only concept)
+            context: Optional file metadata context (v3.1: MC.raw)
+
+        Returns:
+            Merged dict with image_type + all structured fields
+        """
+        t_total = time.perf_counter()
+
+        classification = self.classify(image, keep_alive)
+        image_type = classification.get("image_type", "other")
+        logger.info(f"Stage 1 → {image_type} (confidence: {classification.get('confidence', '?')})")
+
+        analysis = self.analyze_structured(image, image_type, keep_alive, context=context)
+
+        total_elapsed = time.perf_counter() - t_total
+        logger.info(f"2-Stage total: {total_elapsed:.1f}s ({image_type})")
+
+        return analysis

@@ -472,11 +472,11 @@ python tools/migrate_to_postgres.py
 
 ### Tier 시스템 (config.yaml)
 
-| Tier | VRAM | Visual Encoder (HuggingFace) | VLM (Ollama) | Text Embed (Ollama) |
-|------|------|------------------------------|--------------|---------------------|
-| **standard** | ~6GB | `google/siglip2-base-patch16-224` (768d) | `qwen3-vl:2b` | `qwen3-embedding:0.6b` (256d) |
-| **pro** | 8-16GB | `google/siglip2-so400m-patch14-384` (1152d) | `Qwen3-VL-4B` (transformers) | `qwen3-embedding:0.6b` (1024d) |
-| **ultra** | 20GB+ | `google/siglip2-giant-opt-patch16-256` (1664d) | `qwen3-vl:8b` (auto) | `qwen3-embedding:8b` (4096d) |
+| Tier | VRAM | Visual Encoder | VLM | Text Embed (Ollama) |
+|------|------|----------------|-----|---------------------|
+| **standard** | ~6GB | `google/siglip2-base-patch16-224` (768d) | `Qwen/Qwen3-VL-2B-Instruct` (transformers) | `qwen3-embedding:0.6b` (256d) |
+| **pro** | 8-16GB | `google/siglip2-so400m-patch14-384` (1152d) | `Qwen/Qwen3-VL-4B-Instruct` (transformers) | `qwen3-embedding:0.6b` (1024d) |
+| **ultra** | 20GB+ | `google/siglip2-giant-opt-patch16-256` (1664d) | `qwen3-vl:8b` (auto: ollama/vllm) | `qwen3-embedding:8b` (4096d) |
 
 **설정 파일**: `config.yaml` > `ai_mode.override` (현재: `standard`)
 **Tier 로더**: `backend/utils/tier_config.py` > `get_active_tier()`
@@ -485,7 +485,7 @@ python tools/migrate_to_postgres.py
 
 ```
 STEP 1/4: Parse       → PSD/PNG/JPG 파싱, 썸네일 생성, 메타데이터 추출
-STEP 2/4: AI Vision   → Ollama VLM으로 캡션/태그/분류 생성
+STEP 2/4: AI Vision   → VLM으로 캡션/태그/분류 생성 (tier별 backend: transformers/ollama/auto)
 STEP 3/4: Embedding   → SigLIP2로 시각 임베딩 생성
 STEP 4/4: Storing     → SQLite 저장 (메타데이터 + 벡터 + 텍스트 임베딩)
 ```
@@ -499,7 +499,7 @@ STEP 4/4: Storing     → SQLite 저장 (메타데이터 + 벡터 + 텍스트 �
 | **프론트엔드** | Electron 40 + React 19 + Vite + Tailwind CSS |
 | **백엔드 통신** | IPC → Python subprocess (stdio JSON) |
 | **DB** | SQLite (로컬 파일, Docker 불필요) |
-| **VLM** | Ollama (Windows 네이티브) |
+| **VLM** | transformers (standard/pro) 또는 Ollama (ultra) |
 | **Visual Encoder** | SigLIP2 (HuggingFace, 로컬 캐시) |
 | **API 서버** | 없음 (subprocess 직접 호출) |
 
@@ -509,18 +509,17 @@ STEP 4/4: Storing     → SQLite 저장 (메타데이터 + 벡터 + 텍스트 �
 # 1. Python 3.11+ (venv)
 python -m venv .venv && .venv\Scripts\activate
 
-# 2. Ollama 설치 (https://ollama.com/download)
-# 3. Ollama 모델 pull
-ollama pull qwen3-vl:2b
+# 2. Ollama 설치 (https://ollama.com/download) - text embedding용
+# 3. Ollama 모델 pull (text embedding만, VLM은 HuggingFace 자동 다운로드)
 ollama pull qwen3-embedding:0.6b
 
-# 4. Python 패키지 + SigLIP2 모델 + DB 초기화
+# 4. Python 패키지 + SigLIP2/Qwen3-VL 모델 + DB 초기화
 python backend/setup/installer.py --full-setup
 
 # 또는 개별 실행:
 python backend/setup/installer.py --install          # pip 패키지
-python backend/setup/installer.py --download-model    # SigLIP2
-python backend/setup/installer.py --setup-ollama      # Ollama 모델 확인/pull
+python backend/setup/installer.py --download-model    # SigLIP2 + Qwen3-VL (HuggingFace)
+python backend/setup/installer.py --setup-ollama      # Ollama text embedding 모델 확인/pull
 python backend/setup/installer.py --init-db           # SQLite 스키마
 
 # 5. 상태 진단
@@ -537,7 +536,8 @@ python backend/setup/installer.py --check
 | `backend/search/sqlite_search.py` | Triaxis 검색 엔진 | ❌ |
 | `backend/pipeline/ingest_engine.py` | 4단계 처리 파이프라인 | ❌ |
 | `backend/vision/vision_factory.py` | VLM 백엔드 자동 선택 | ❌ |
-| `backend/vision/ollama_adapter.py` | Ollama VLM 어댑터 | ❌ |
+| `backend/vision/analyzer.py` | Transformers VLM 어댑터 (2-Stage) | ❌ |
+| `backend/vision/ollama_adapter.py` | Ollama VLM 어댑터 (2-Stage) | ❌ |
 | `backend/vector/siglip2_encoder.py` | SigLIP2 시각 인코더 | ❌ |
 | `backend/utils/tier_config.py` | Tier 설정 로더 | ❌ |
 | `backend/setup/installer.py` | 통합 설치 프로그램 | ❌ |
