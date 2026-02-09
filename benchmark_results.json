@@ -1,0 +1,74 @@
+{
+  "timestamp": "2026-02-09T21:55:55.289790",
+  "tiers": {
+    "standard": {
+      "1": {
+        "status": "success",
+        "total_time": 12.21,
+        "per_file": 12.21,
+        "files_count": 1
+      },
+      "5": {
+        "status": "success",
+        "total_time": 14.91,
+        "per_file": 2.98,
+        "files_count": 5
+      },
+      "10": {
+        "status": "success",
+        "total_time": 17.03,
+        "per_file": 1.7,
+        "files_count": 10
+      },
+      "20": {
+        "status": "success",
+        "total_time": 17.41,
+        "per_file": 0.87,
+        "files_count": 20
+      }
+    },
+    "pro": {
+      "1": {
+        "status": "success",
+        "total_time": 17.53,
+        "per_file": 17.53,
+        "files_count": 1
+      },
+      "5": {
+        "status": "success",
+        "total_time": 24.57,
+        "per_file": 4.91,
+        "files_count": 5
+      },
+      "10": {
+        "status": "success",
+        "total_time": 37.63,
+        "per_file": 3.76,
+        "files_count": 10
+      },
+      "20": {
+        "status": "failed"
+      }
+    },
+    "ultra": {
+      "1": {
+        "status": "success",
+        "total_time": 51.04,
+        "per_file": 51.04,
+        "files_count": 1
+      },
+      "5": {
+        "status": "success",
+        "total_time": 397.15,
+        "per_file": 79.43,
+        "files_count": 5
+      },
+      "10": {
+        "status": "timeout"
+      },
+      "20": {
+        "status": "timeout"
+      }
+    }
+  }
+}

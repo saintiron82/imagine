@@ -36,6 +36,7 @@ from backend.parser.base_parser import BaseParser
 from backend.parser.psd_parser import PSDParser
 from backend.parser.image_parser import ImageParser
 from backend.parser.schema import AssetMeta
+from backend.utils.auto_batch_calibrator import AutoBatchCalibrator
 
 
 # Configure Logging
@@ -587,6 +588,16 @@ def start_watcher(path: str):
     observer.join()
 
 
+def parse_batch_size(value):
+    """Parse batch size argument (int or 'auto')."""
+    if value.lower() == 'auto':
+        return 'auto'
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"batch-size must be an integer or 'auto', got: {value}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="ImageParser Ingest Engine")
     parser.add_argument("--file", help="Process a single file")
@@ -594,9 +605,43 @@ def main():
     parser.add_argument("--watch", help="Watch a directory for changes (includes initial scan)")
     parser.add_argument("--discover", help="DFS scan directory and process all supported images")
     parser.add_argument("--no-skip", action="store_true", help="Disable smart skip (reprocess all files)")
-    parser.add_argument("--batch-size", type=int, default=5, help="Number of files to process concurrently (default: 5, set to 1 for sequential)")
+    parser.add_argument("--batch-size", type=parse_batch_size, default=5,
+                       help="Number of files to process concurrently (default: 5, set to 1 for sequential, 'auto' for automatic calibration)")
 
     args = parser.parse_args()
+
+    # AUTO batch size calibration
+    if args.batch_size == 'auto':
+        logger.info("[AUTO] Automatic batch size calibration requested")
+
+        # Get current tier
+        from backend.utils.tier_config import get_active_tier
+        tier_name, _ = get_active_tier()
+
+        # Check for cached calibration
+        cached = AutoBatchCalibrator.load_latest_calibration(tier_name)
+
+        if cached:
+            logger.info(f"[AUTO] Using cached calibration for {tier_name} tier")
+            logger.info(f"[AUTO] Recommended batch size: {cached['recommended']}")
+            args.batch_size = cached['recommended']
+        else:
+            logger.info(f"[AUTO] No cached calibration found for {tier_name}, running calibration...")
+
+            # Gather test files
+            test_dir = Path("test_assets")
+            test_files = [str(f) for f in test_dir.glob("*.psd")] + \
+                        [str(f) for f in test_dir.glob("*.png")]
+            test_files = test_files[:64]  # Max 64 for calibration
+
+            if len(test_files) < 8:
+                logger.warning(f"[AUTO] Not enough test files ({len(test_files)}), using default batch size 5")
+                args.batch_size = 5
+            else:
+                calibrator = AutoBatchCalibrator(tier=tier_name)
+                config = calibrator.calibrate(test_files)
+                args.batch_size = config['recommended']
+                logger.info(f"[AUTO] Calibration complete! Using batch size: {args.batch_size}")
 
     if args.discover:
         run_discovery(args.discover, skip_processed=not args.no_skip, batch_size=args.batch_size)
