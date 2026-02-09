@@ -111,6 +111,9 @@ def process_file(
         return
 
     logger.info(f"Processing: {file_path}")
+
+    # === STEP 1/4: Parsing ===
+    step_start = time.time()
     logger.info(f"STEP 1/4 Parsing")
 
     # 1. Select Parser
@@ -120,9 +123,10 @@ def process_file(
         return
 
     # 2. Parse
-    start_time = time.time()
+    parse_start = time.time()
     result = parser.parse(file_path)
-    duration = time.time() - start_time
+    parse_duration = time.time() - parse_start
+    logger.info(f"  → Parsing completed in {parse_duration:.2f}s")
 
     # 3. Handle Result
     if result.success:
@@ -160,11 +164,14 @@ def process_file(
                     # Make absolute relative to project root
                     thumb_path = Path(__file__).parent.parent.parent / thumb_path
 
+        # === STEP 2/4: AI Vision (2-Stage) ===
+        step2_start = time.time()
         logger.info(f"STEP 2/4 AI Vision (2-Stage)")
         # === 4. AI Vision Analysis (v3 P0: 2-Stage Pipeline) ===
         try:
             if thumb_path and thumb_path.exists():
                 logger.info("Running 2-Stage AI vision analysis...")
+                vision_start = time.time()
 
                 # Lazy load Vision Analyzer (environment-based factory)
                 global _global_vision_analyzer
@@ -286,6 +293,8 @@ def process_file(
                 # Save metadata with AI fields
                 parser._save_json(meta, file_path)
 
+                vision_duration = time.time() - vision_start
+                logger.info(f"  → AI Vision completed in {vision_duration:.2f}s")
                 logger.info(f"   MC Caption: {meta.mc_caption[:80]}..." if len(meta.mc_caption or '') > 80 else f"   MC Caption: {meta.mc_caption}")
                 logger.info(f"   AI Tags: {', '.join(meta.ai_tags[:10])}")
                 if meta.ocr_text:
@@ -300,6 +309,11 @@ def process_file(
             logger.debug(traceback.format_exc())
             # Continue processing even if Vision fails
 
+        step2_duration = time.time() - step2_start
+        logger.info(f"STEP 2/4 completed in {step2_duration:.2f}s")
+
+        # === STEP 3/4: Embedding ===
+        step3_start = time.time()
         logger.info(f"STEP 3/4 Embedding")
         # === 5. PostgreSQL Storage (Vector + Metadata) ===
         try:
@@ -335,7 +349,11 @@ def process_file(
                 dims = get_config().get("embedding.visual.dimensions", 1152)
                 embedding = np.zeros(dims, dtype=np.float32)
 
-            # Store metadata + V-axis embedding in SQLite
+            step3_duration = time.time() - step3_start
+            logger.info(f"STEP 3/4 completed in {step3_duration:.2f}s")
+
+            # === STEP 4/4: Storing ===
+            step4_start = time.time()
             logger.info(f"STEP 4/4 Storing")
             logger.info(f"Storing to SQLite: {file_path.name}")
             file_id = _global_sqlite_db.insert_file(
@@ -385,6 +403,11 @@ def process_file(
             import traceback
             logger.debug(traceback.format_exc())
 
+        step4_duration = time.time() - step4_start
+        logger.info(f"STEP 4/4 completed in {step4_duration:.2f}s")
+
+        total_duration = time.time() - step_start
+        logger.info(f"[OK] Total processing time: {total_duration:.2f}s")
         logger.info(f"[OK] Parsed successfully in {duration:.2f}s")
         logger.info(f"   Format: {meta.format}, Layers: {meta.layer_count}")
         logger.info(f"   Tags: {meta.semantic_tags}")
