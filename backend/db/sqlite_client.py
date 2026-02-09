@@ -884,48 +884,36 @@ class SQLiteDB:
     def check_tier_compatibility(self, current_tier: str, current_dimension: int) -> Dict[str, Any]:
         """
         Check if current tier is compatible with existing DB data.
+        Uses tier compatibility matrix for intelligent decision-making.
 
         Args:
             current_tier: Current tier being used ('standard', 'pro', 'ultra')
             current_dimension: Expected embedding dimension for current tier
 
         Returns:
-            Dict with:
+            Dict with detailed compatibility information:
                 - compatible: bool
+                - action: str (TierAction: 'none', 'reprocess_optional', 'reprocess_required', 'block')
+                - reason: str (CompatibilityReason)
+                - message: str (short description)
+                - user_prompt: str or None (detailed message for user)
+                - auto_allow: bool (can proceed automatically)
                 - db_tier: str or None
+                - current_tier: str
                 - db_dimension: int or None
-                - action_required: str (description of what to do)
+                - current_dimension: int
         """
+        from backend.utils.tier_compatibility import check_tier_transition
+
         db_tier = self.get_db_tier()
         db_dimension = self.get_db_embedding_dimension()
 
-        # Empty DB - compatible
-        if db_tier is None:
-            return {
-                'compatible': True,
-                'db_tier': None,
-                'db_dimension': db_dimension,
-                'action_required': 'none'
-            }
-
-        # Same tier - compatible
-        if db_tier == current_tier and db_dimension == current_dimension:
-            return {
-                'compatible': True,
-                'db_tier': db_tier,
-                'db_dimension': db_dimension,
-                'action_required': 'none'
-            }
-
-        # Different tier or dimension - incompatible
-        return {
-            'compatible': False,
-            'db_tier': db_tier,
-            'db_dimension': db_dimension,
-            'action_required': f'Tier changed from {db_tier} to {current_tier}. '
-                              f'Dimension mismatch: {db_dimension} → {current_dimension}. '
-                              f'All files must be reprocessed.'
-        }
+        return check_tier_transition(
+            db_tier=db_tier,
+            current_tier=current_tier,
+            db_dimension=db_dimension,
+            current_dimension=current_dimension
+        )
 
     def migrate_tier(self, new_tier: str, new_dimension: int) -> bool:
         """

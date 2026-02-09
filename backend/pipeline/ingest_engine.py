@@ -631,24 +631,45 @@ def main():
     compat = db.check_tier_compatibility(tier_name, expected_dimension)
 
     if not compat['compatible']:
+        from backend.utils.tier_compatibility import get_migration_steps
+
         logger.error("=" * 60)
-        logger.error("[TIER MISMATCH] Database is incompatible with current tier!")
-        logger.error(f"  DB Tier: {compat['db_tier']} (dimension: {compat['db_dimension']})")
-        logger.error(f"  Current Tier: {tier_name} (dimension: {expected_dimension})")
-        logger.error("")
-        logger.error("Action Required:")
-        logger.error(f"  {compat['action_required']}")
-        logger.error("")
-        logger.error("Options:")
-        logger.error("  1. Reprocess all files:")
-        logger.error(f"     python backend/db/migrate_tier.py --tier {tier_name}")
-        logger.error("")
-        logger.error("  2. Change config.yaml back to previous tier:")
-        logger.error(f"     ai_mode.override: {compat['db_tier']}")
+        logger.error(f"[TIER CHANGE] {compat['message']}")
         logger.error("=" * 60)
+        logger.error(f"  From: {compat['db_tier']} tier (dimension: {compat['db_dimension']})")
+        logger.error(f"  To:   {compat['current_tier']} tier (dimension: {compat['current_dimension']})")
+        logger.error("")
+        logger.error(f"  Action: {compat['action'].upper()}")
+        logger.error(f"  Reason: {compat['reason']}")
+        logger.error("")
+
+        # Show user prompt if available
+        if compat['user_prompt']:
+            logger.error("Details:")
+            for line in compat['user_prompt'].split('\n'):
+                logger.error(f"  {line}")
+            logger.error("")
+
+        # Show migration steps
+        logger.error("Migration Steps:")
+        steps = get_migration_steps(compat['db_tier'], compat['current_tier'])
+        for step in steps:
+            logger.error(f"  {step}")
+        logger.error("")
+
+        # Alternative: revert config
+        logger.error("OR revert config.yaml to previous tier:")
+        logger.error(f"  ai_mode.override: {compat['db_tier']}")
+        logger.error("=" * 60)
+
+        # Block execution
+        logger.error("\n⛔ Execution blocked. Please migrate tier or revert config.")
         sys.exit(1)
 
-    logger.info(f"[TIER CHECK] Compatibility OK (DB tier: {compat['db_tier'] or 'empty'})")
+    logger.info(f"[TIER CHECK] ✅ Compatibility OK")
+    logger.info(f"  DB Tier: {compat['db_tier'] or 'empty'}")
+    logger.info(f"  Current Tier: {compat['current_tier']}")
+    logger.info(f"  Action: {compat['action']}")
     db.close()
 
     if not batch_enabled and args.batch_size in ['auto', 'adaptive']:
