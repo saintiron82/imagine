@@ -611,6 +611,16 @@ def main():
 
     args = parser.parse_args()
 
+    # Check batch_processing.enabled config
+    from backend.config import get_config
+    config = get_config()
+    batch_enabled = config.get("batch_processing", {}).get("enabled", True)
+
+    if not batch_enabled and args.batch_size in ['auto', 'adaptive']:
+        logger.info("[CONFIG] Batch processing disabled in config.yaml")
+        logger.info("[CONFIG] Forcing batch_size=1 (sequential processing)")
+        args.batch_size = 1
+
     # AUTO/ADAPTIVE batch size
     if args.batch_size in ['auto', 'adaptive']:
         from backend.utils.tier_config import get_active_tier

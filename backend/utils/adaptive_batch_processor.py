@@ -275,14 +275,16 @@ class AdaptiveBatchProcessor:
         logger.info(f"[ADAPTIVE] Processing {total_files} files with adaptive batching")
 
         # Check cache
+        start_from_batch_size = None
         if use_cache:
             cached_optimal = self.load_cached_optimal()
             if cached_optimal:
-                logger.info(f"[ADAPTIVE] Using cached optimal batch_size={cached_optimal}")
-                # Process all files with optimal batch size
-                metrics = self._process_batch(files, cached_optimal)
-                self.optimal_batch_size = cached_optimal
-                return [], cached_optimal
+                # Start from 50% of previous optimal for faster convergence
+                start_from_batch_size = max(1, cached_optimal // 2)
+                logger.info(
+                    f"[ADAPTIVE] Found cached optimal={cached_optimal}, "
+                    f"starting from {start_from_batch_size} (50%)"
+                )
 
         # Adaptive search for optimal batch size
         logger.info("[ADAPTIVE] Starting adaptive batch size search...")
@@ -294,7 +296,16 @@ class AdaptiveBatchProcessor:
         # Process files in increasing batch sizes
         remaining_files = files[:]
 
-        for batch_size in self.BATCH_SIZES:
+        # Filter BATCH_SIZES to start from the 50% point if cached
+        batch_sizes_to_test = self.BATCH_SIZES
+        if start_from_batch_size is not None:
+            batch_sizes_to_test = [bs for bs in self.BATCH_SIZES if bs >= start_from_batch_size]
+            logger.info(
+                f"[ADAPTIVE] Starting from batch_size={start_from_batch_size}, "
+                f"testing sizes: {batch_sizes_to_test}"
+            )
+
+        for batch_size in batch_sizes_to_test:
             if not remaining_files:
                 break
 

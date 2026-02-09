@@ -1,6 +1,6 @@
 ai_mode:
   auto_detect: false
-  override: ultra
+  override: standard
   tiers:
     pro:
       preprocess:
@@ -87,6 +87,8 @@ embedding:
 runtime:
   ollama_version: 0.15.2
   pin_version: false
+batch_processing:
+  enabled: true  # Enable adaptive batch processing (GUI configurable)
 search:
   candidate:
     fts_topn_cut: 2000

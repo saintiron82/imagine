@@ -10,10 +10,13 @@ const SettingsModal = ({ onClose }) => {
     const [logs, setLogs] = useState([]);
     const [aiMode, setAiMode] = useState(null); // { auto_detect: bool, override: string | null }
     const [tierChanging, setTierChanging] = useState(false);
+    const [batchMode, setBatchMode] = useState(null); // { enabled: bool }
+    const [batchChanging, setBatchChanging] = useState(false);
 
     useEffect(() => {
         checkStatus();
         loadAiMode();
+        loadBatchMode();
 
         // Subscribe to logs
         window.electron?.pipeline?.onInstallLog((data) => {
@@ -36,6 +39,20 @@ const SettingsModal = ({ onClose }) => {
             }
         } catch (e) {
             console.error('Failed to load AI mode:', e);
+        }
+    };
+
+    const loadBatchMode = async () => {
+        try {
+            const result = await window.electron?.pipeline?.getConfig();
+            if (result?.success) {
+                const config = result.config;
+                // Default to enabled if not explicitly set
+                setBatchMode({ enabled: config.batch_processing?.enabled !== false });
+            }
+        } catch (e) {
+            console.error('Failed to load batch mode:', e);
+            setBatchMode({ enabled: true }); // Default to enabled
         }
     };
 
@@ -79,6 +96,25 @@ const SettingsModal = ({ onClose }) => {
             alert('Failed to update AI Tier: ' + e.message);
         } finally {
             setTierChanging(false);
+        }
+    };
+
+    const handleBatchModeChange = async (enabled) => {
+        setBatchChanging(true);
+        try {
+            // Update config
+            await window.electron?.pipeline?.updateConfig('batch_processing.enabled', enabled);
+
+            // Reload config
+            await loadBatchMode();
+
+            // Show notification
+            alert(t('settings.batch_restart_required'));
+        } catch (e) {
+            console.error('Failed to update batch mode:', e);
+            alert('Failed to update batch mode: ' + e.message);
+        } finally {
+            setBatchChanging(false);
         }
     };
 
@@ -169,6 +205,45 @@ const SettingsModal = ({ onClose }) => {
                                             <div><span className="font-bold">Standard:</span> Moondream2, SigLIP-base (fastest, ~6GB)</div>
                                             <div><span className="font-bold">Pro:</span> Qwen3-VL-4B, SigLIP-so400m (balanced, 8-16GB)</div>
                                             <div><span className="font-bold">Ultra:</span> Qwen3-VL-8B, SigLIP-giant (highest quality, 20GB+)</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Batch Processing Mode */}
+                            {batchMode && (
+                                <div className="bg-gray-900/50 rounded border border-gray-700 p-4">
+                                    <h3 className="text-sm font-bold text-gray-400 mb-3">{t('settings.batch_mode_title')}</h3>
+                                    <div className="space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex-1">
+                                                <div className="text-sm text-gray-300">{t('settings.batch_mode_desc')}</div>
+                                                <div className="text-xs text-gray-500 mt-1">
+                                                    <span className="font-bold">Status:</span>{' '}
+                                                    <span className={batchMode.enabled ? 'text-green-400' : 'text-gray-400'}>
+                                                        {batchMode.enabled ? t('settings.batch_enabled') : t('settings.batch_disabled')}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={() => handleBatchModeChange(!batchMode.enabled)}
+                                                disabled={batchChanging}
+                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 ${
+                                                    batchMode.enabled ? 'bg-blue-600' : 'bg-gray-600'
+                                                }`}
+                                            >
+                                                <span
+                                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                                        batchMode.enabled ? 'translate-x-6' : 'translate-x-1'
+                                                    }`}
+                                                />
+                                            </button>
+                                        </div>
+
+                                        {/* Description */}
+                                        <div className="text-xs text-gray-500 bg-gray-800/50 rounded p-2">
+                                            <div><span className="font-bold">Enabled:</span> Adaptive batch sizing (1→2→3→5→8→10...) for optimal speed</div>
+                                            <div className="mt-1"><span className="font-bold">Disabled:</span> Sequential processing (batch_size=1)</div>
                                         </div>
                                     </div>
                                 </div>

@@ -1,0 +1,11 @@
+{
+  "optimal_batch_size": 10,
+  "platform": "windows",
+  "tier": "standard",
+  "metrics": {
+    "batch_size": 10,
+    "time_per_file": 3.3960238297780356,
+    "success_rate": 1.0
+  },
+  "timestamp": "2026-02-10 00:16:41"
+}

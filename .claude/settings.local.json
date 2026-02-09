@@ -55,7 +55,9 @@
       "Bash(ls -la \"C:\\\\Users\\\\saint\\\\ImageParser\\\\frontend\"\" | grep -E \"electron)",
       "Bash(main \")",
       "Bash(ls:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(Select-String -Pattern \"\\(Platform|Backend|AUTO|Ollama|batch\\)\" -Context 0,2)",
+      "Bash(git restore:*)"
     ]
   }
 }
