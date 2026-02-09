@@ -169,6 +169,24 @@ def process_file(
         # === STEP 2/4: AI Vision (2-Stage) ===
         step2_start = time.time()
         logger.info(f"STEP 2/4 AI Vision (2-Stage)")
+
+        # v3.1: Tier metadata (always set, regardless of Vision success/failure)
+        from backend.utils.config import get_config as _get_config_tier
+        from backend.utils.tier_config import get_active_tier as _get_active_tier
+
+        _cfg_tier = _get_config_tier()
+        _tier_name, _tier_config = _get_active_tier()
+
+        meta.mode_tier = _tier_name
+        meta.caption_model = _tier_config.get("vlm", {}).get("model", "")
+        meta.text_embed_model = _tier_config.get("text_embed", {}).get("model", "")
+        meta.runtime_version = _cfg_tier.get("runtime.ollama_version", "")
+        meta.preprocess_params = _tier_config.get("preprocess", {})
+        meta.embedding_model = _tier_config.get("visual", {}).get("model") or _cfg_tier.get(
+            "embedding.visual.model", "google/siglip2-so400m-patch14-384"
+        )
+        meta.embedding_version = 1
+
         # === 4. AI Vision Analysis (v3 P0: 2-Stage Pipeline) ===
         try:
             if thumb_path and thumb_path.exists():
@@ -272,25 +290,7 @@ def process_file(
                     meta.storage_root = parts[0] if len(parts) > 1 else ''
                     meta.relative_path = parts[-1]
 
-                # v3 P0: embedding version
-                from backend.utils.config import get_config
-                from backend.utils.tier_config import get_active_tier
-
-                cfg = get_config()
-                tier_name, tier_config = get_active_tier()
-
-                # v3.1: Tier metadata
-                meta.mode_tier = tier_name
-                meta.caption_model = tier_config.get("vlm", {}).get("model", "")
-                meta.text_embed_model = tier_config.get("text_embed", {}).get("model", "")
-                meta.runtime_version = cfg.get("runtime.ollama_version", "")
-                meta.preprocess_params = tier_config.get("preprocess", {})
-
-                # Visual encoder model (tier-aware)
-                meta.embedding_model = tier_config.get("visual", {}).get("model") or cfg.get(
-                    "embedding.visual.model", "google/siglip2-so400m-patch14-384"
-                )
-                meta.embedding_version = 1
+                # (tier metadata already set before STEP 2 try block)
 
                 # Save metadata with AI fields
                 parser._save_json(meta, file_path)

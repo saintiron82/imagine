@@ -127,6 +127,16 @@ class AssetMeta(BaseModel):
         description="Relative path from storage root (POSIX normalized)"
     )
 
+    # === v3.1: Perceptual hash for de-duplication ===
+    perceptual_hash: Optional[int] = Field(
+        None,
+        description="Perceptual hash (dHash) for near-duplicate detection"
+    )
+    dup_group_id: Optional[int] = Field(
+        None,
+        description="Duplicate group ID (files with similar perceptual hashes)"
+    )
+
     # === v3 P0: Embedding Version Tracking ===
     embedding_model: Optional[str] = Field(
         None,

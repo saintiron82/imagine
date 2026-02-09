@@ -26,15 +26,15 @@ ai_mode:
         padding_color: '#FFFFFF'
       text_embed:
         dimensions: 256
-        model: google/gemma-2b-instruct
+        model: qwen3-embedding:0.6b
         normalize: true
       visual:
         dimensions: 768
         model: google/siglip2-base-patch16-224
       vlm:
-        backend: transformers
+        backend: ollama
         device: auto
-        model: Qwen/Qwen3-VL-2B-Instruct
+        model: qwen3-vl:2b
       vram_max: 6144
     ultra:
       preprocess:

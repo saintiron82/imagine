@@ -22,8 +22,8 @@ from typing import List, Dict
 TIER_MODELS: Dict[str, List[str]] = {
     "standard": [
         # Standard tier: Lightweight models for ≤6GB VRAM
-        # Note: Moondream2 may not be available on Ollama yet
-        # "moondream",  # Uncomment when Ollama supports it
+        "qwen3-vl:2b",              # VLM: Qwen3-VL-2B-Instruct
+        "qwen3-embedding:0.6b",     # Text embedding: Qwen3-Embedding-0.6B
     ],
     "pro": [
         # Pro tier: Balanced models for 8-16GB VRAM

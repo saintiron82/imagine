@@ -94,7 +94,7 @@ class VisionAnalyzer:
                 ).to(self.device)
 
             elif "Qwen2-VL" in self.model_id:
-                # Qwen2-VL model (for future Mac M5 use)
+                # Qwen2-VL model
                 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
                 self.processor = AutoProcessor.from_pretrained(self.model_id)
@@ -104,8 +104,21 @@ class VisionAnalyzer:
                     device_map="auto"
                 )
 
+            elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
+                # Qwen3-VL model (Standard/Pro/Ultra tiers)
+                # Use direct module import to avoid lazy import race conditions
+                from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLForConditionalGeneration
+                from transformers.models.qwen3_vl.processing_qwen3_vl import Qwen3VLProcessor
+
+                self.processor = Qwen3VLProcessor.from_pretrained(self.model_id)
+                self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    self.model_id,
+                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                    device_map="auto"
+                )
+
             else:
-                # Florence-2 or other models (if flash_attn issue resolved)
+                # Florence-2 or other models
                 from transformers import AutoProcessor, AutoModelForCausalLM
 
                 self.processor = AutoProcessor.from_pretrained(
@@ -275,8 +288,8 @@ class VisionAnalyzer:
 
                 return caption
 
-            elif "Qwen2-VL" in self.model_id:
-                # Qwen2-VL caption generation
+            elif "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
+                # Qwen2-VL / Qwen3-VL caption generation (same chat template API)
                 messages = [{
                     "role": "user",
                     "content": [

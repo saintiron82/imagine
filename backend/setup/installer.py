@@ -2,8 +2,9 @@
 Env Installer - Handles dependency installation, model download, and SQLite setup.
 
 This script ensures all dependencies are installed including:
-- Python packages (torch, sentence-transformers, sqlite-vec, etc.)
-- CLIP model (clip-ViT-L-14)
+- Python packages (torch, transformers, sqlite-vec, etc.)
+- SigLIP2 visual embedding model (tier-based)
+- Ollama VLM + text embedding models
 - SQLite + sqlite-vec setup verification
 """
 import sys
@@ -25,6 +26,8 @@ logger = logging.getLogger("installer")
 REQUIRED_PACKAGES = [
     "torch",
     "sqlite-vec",          # SQLite vector extension
+    "transformers",        # SigLIP2, Qwen3-VL
+    "accelerate",          # Model loading
     "sentence-transformers",
     "deep-translator",
     "pillow",
@@ -34,6 +37,7 @@ REQUIRED_PACKAGES = [
     "tqdm",
     "psd-tools",
     "exifread",
+    "PyYAML",
 ]
 
 def check_imports():
@@ -47,6 +51,7 @@ def check_imports():
             if pkg == "sentence-transformers": import_name = "sentence_transformers"
             if pkg == "deep-translator": import_name = "deep_translator"
             if pkg == "pillow": import_name = "PIL"
+            if pkg == "PyYAML": import_name = "yaml"
 
             __import__(import_name)
             status[pkg] = True
@@ -55,18 +60,28 @@ def check_imports():
             all_ok = False
     return status, all_ok
 
-def check_model():
-    """Check if CLIP model is cached."""
+def _get_tier_config():
+    """Get active tier name and config from config.yaml."""
     try:
-        from sentence_transformers import SentenceTransformer
-        # Check if model files exist in cache
-        from pathlib import Path
+        from backend.utils.tier_config import get_active_tier
+        return get_active_tier()
+    except Exception:
+        return "standard", {}
+
+def check_model():
+    """Check if SigLIP2 visual embedding model is cached (tier-based)."""
+    try:
+        tier_name, tier_config = _get_tier_config()
+        model_name = tier_config.get("visual", {}).get("model", "google/siglip2-base-patch16-224")
+
         cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
-        # Look for clip-ViT-L-14 model files
-        model_dirs = list(cache_dir.glob("*clip-ViT-L-14*"))
-        return len(model_dirs) > 0
-    except:
-        return False
+        # HuggingFace caches models as "models--org--name"
+        safe_name = model_name.replace("/", "--")
+        model_dirs = list(cache_dir.glob(f"models--{safe_name}"))
+        cached = len(model_dirs) > 0
+        return cached, model_name
+    except Exception:
+        return False, "unknown"
 
 def check_sqlite():
     """Check if SQLite version supports sqlite-vec (3.41+)."""
@@ -98,6 +113,75 @@ def check_sqlitevec():
     except Exception as e:
         return False, f"Extension load failed: {str(e)}"
 
+def check_ollama():
+    """Check if Ollama is installed and running."""
+    try:
+        import requests
+        resp = requests.get("http://localhost:11434/api/tags", timeout=3)
+        if resp.status_code == 200:
+            models = [m["name"] for m in resp.json().get("models", [])]
+            return True, models
+        return False, []
+    except Exception:
+        return False, []
+
+def check_ollama_models(tier_name=None):
+    """Check if required Ollama models are available for the given tier."""
+    tier_models = {
+        "standard": ["qwen3-vl:2b", "qwen3-embedding:0.6b"],
+        "pro": ["qwen3-embedding:0.6b"],  # pro VLM uses transformers
+        "ultra": ["qwen3-vl:8b", "qwen3-embedding:8b"],
+    }
+
+    if tier_name is None:
+        tier_name, _ = _get_tier_config()
+
+    required = tier_models.get(tier_name, [])
+    running, installed = check_ollama()
+
+    if not running:
+        return False, required, []
+
+    # Normalize model names for comparison (strip :latest etc.)
+    installed_base = set()
+    for m in installed:
+        installed_base.add(m)
+        if ":" in m:
+            installed_base.add(m.split(":")[0])
+
+    missing = []
+    for req in required:
+        req_base = req.split(":")[0] if ":" in req else req
+        found = any(req in installed_base or req_base in inst for inst in installed_base)
+        if not found:
+            missing.append(req)
+
+    return len(missing) == 0, required, missing
+
+def pull_ollama_models(tier_name=None):
+    """Pull required Ollama models for the given tier."""
+    ok, required, missing = check_ollama_models(tier_name)
+    if ok:
+        logger.info(f"✅ All Ollama models ready: {', '.join(required)}")
+        return True
+
+    running, _ = check_ollama()
+    if not running:
+        logger.error("❌ Ollama is not running. Please start Ollama first.")
+        logger.error("   Download: https://ollama.com/download")
+        return False
+
+    for model in missing:
+        logger.info(f"Pulling Ollama model: {model} ...")
+        try:
+            subprocess.check_call(["ollama", "pull", model], timeout=600)
+            logger.info(f"  ✅ {model} downloaded")
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.error(f"  ❌ Failed to pull {model}: {e}")
+            return False
+
+    return True
+
 def install_packages():
     """Install packages via pip."""
     logger.info("Installing dependencies...")
@@ -122,13 +206,17 @@ def install_packages():
         return False
 
 def download_model():
-    """Download CLIP model."""
-    logger.info("Downloading AI Model (CLIP-ViT-L-14)... This may take a while.")
+    """Download SigLIP2 visual embedding model (tier-based)."""
+    tier_name, tier_config = _get_tier_config()
+    model_name = tier_config.get("visual", {}).get("model", "google/siglip2-base-patch16-224")
+
+    logger.info(f"Downloading visual embedding model ({tier_name} tier): {model_name}")
+    logger.info("This may take a while on first run...")
     try:
-        from sentence_transformers import SentenceTransformer
-        # This triggers download if not cached
-        SentenceTransformer('clip-ViT-L-14')
-        logger.info("✅ Model downloaded and verified.")
+        from transformers import AutoModel, AutoProcessor
+        AutoProcessor.from_pretrained(model_name)
+        AutoModel.from_pretrained(model_name)
+        logger.info(f"✅ Model downloaded and verified: {model_name}")
         return True
     except Exception as e:
         logger.error(f"❌ Model download failed: {e}")
@@ -206,6 +294,18 @@ def init_database():
         logger.info("="*80)
         return False
 
+def check_gpu():
+    """Check GPU/VRAM status."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            vram = torch.cuda.get_device_properties(0).total_memory // (1024**2)
+            return True, f"{name} ({vram} MB VRAM)"
+        return False, "No CUDA GPU detected (CPU mode)"
+    except ImportError:
+        return False, "PyTorch not installed"
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(
@@ -216,29 +316,43 @@ def main():
     parser.add_argument("--install", action="store_true",
                        help="Install Python dependencies")
     parser.add_argument("--download-model", action="store_true",
-                       help="Download CLIP AI model")
+                       help="Download SigLIP2 visual embedding model")
     parser.add_argument("--setup-sqlite", action="store_true",
                        help="Show SQLite setup guide")
     parser.add_argument("--init-db", action="store_true",
                        help="Initialize SQLite database schema")
+    parser.add_argument("--setup-ollama", action="store_true",
+                       help="Check and pull required Ollama models")
     parser.add_argument("--full-setup", action="store_true",
-                       help="Run full setup (install + download model + init db)")
+                       help="Run full setup (install + models + db)")
     args = parser.parse_args()
 
     if args.check:
         deps_status, deps_ok = check_imports()
-        model_ok = check_model()
+        model_ok, model_name = check_model()
         sqlite_ok, sqlite_msg = check_sqlite()
         sqlitevec_ok, sqlitevec_msg = check_sqlitevec()
+        ollama_ok, ollama_models = check_ollama()
+        ollama_models_ok, required_models, missing_models = check_ollama_models()
+        gpu_ok, gpu_msg = check_gpu()
+        tier_name, _ = _get_tier_config()
 
         result = {
             "dependencies": deps_status,
             "dependencies_ok": deps_ok,
-            "model_cached": model_ok,
+            "visual_model": model_name,
+            "visual_model_cached": model_ok,
             "sqlite_ok": sqlite_ok,
             "sqlite_message": sqlite_msg,
             "sqlitevec_ok": sqlitevec_ok,
             "sqlitevec_message": sqlitevec_msg,
+            "ollama_running": ollama_ok,
+            "ollama_models_ok": ollama_models_ok,
+            "ollama_required": required_models,
+            "ollama_missing": missing_models,
+            "gpu": gpu_msg,
+            "gpu_available": gpu_ok,
+            "tier": tier_name,
             "platform": platform.system(),
         }
 
@@ -246,18 +360,25 @@ def main():
 
         # Print human-readable summary
         logger.info("\n" + "="*80)
-        logger.info("Installation Status")
+        logger.info(f"Installation Status (tier: {tier_name})")
         logger.info("="*80)
-        logger.info(f"Python Dependencies: {'✅ OK' if deps_ok else '❌ Missing'}")
-        logger.info(f"CLIP Model Cached:   {'✅ Yes' if model_ok else '❌ No'}")
-        logger.info(f"SQLite:              {'✅ ' + sqlite_msg if sqlite_ok else '❌ ' + sqlite_msg}")
-        logger.info(f"sqlite-vec Extension:{'✅ ' + sqlitevec_msg if sqlitevec_ok else '❌ ' + sqlitevec_msg}")
+        logger.info(f"Python Dependencies:  {'✅ OK' if deps_ok else '❌ Missing'}")
+        logger.info(f"Visual Model Cached:  {'✅ ' + model_name if model_ok else '❌ ' + model_name}")
+        logger.info(f"SQLite:               {'✅ ' + sqlite_msg if sqlite_ok else '❌ ' + sqlite_msg}")
+        logger.info(f"sqlite-vec Extension: {'✅ ' + sqlitevec_msg if sqlitevec_ok else '❌ ' + sqlitevec_msg}")
+        logger.info(f"Ollama Running:       {'✅ Yes' if ollama_ok else '❌ No'}")
+        logger.info(f"Ollama Models:        {'✅ Ready' if ollama_models_ok else '❌ Missing: ' + ', '.join(missing_models)}")
+        logger.info(f"GPU:                  {gpu_msg}")
         logger.info("="*80)
 
         if not deps_ok:
             logger.info("\nTo install dependencies: python backend/setup/installer.py --install")
         if not model_ok:
             logger.info("To download model:       python backend/setup/installer.py --download-model")
+        if not ollama_ok:
+            logger.info("Ollama not running:      Start Ollama (https://ollama.com/download)")
+        elif not ollama_models_ok:
+            logger.info("To pull Ollama models:   python backend/setup/installer.py --setup-ollama")
         if not sqlite_ok or not sqlitevec_ok:
             logger.info("To setup SQLite:         python backend/setup/installer.py --setup-sqlite")
         if sqlite_ok and sqlitevec_ok:
@@ -266,19 +387,15 @@ def main():
         return
 
     if args.full_setup:
-        logger.info("Running full setup...")
+        tier_name, _ = _get_tier_config()
+        logger.info(f"Running full setup (tier: {tier_name})...")
 
-        # Install packages
+        # 1. Install packages
         if not install_packages():
             logger.error("❌ Package installation failed!")
             sys.exit(1)
 
-        # Download model
-        if not download_model():
-            logger.error("❌ Model download failed!")
-            sys.exit(1)
-
-        # Check SQLite
+        # 2. Check SQLite
         sqlite_ok, sqlite_msg = check_sqlite()
         sqlitevec_ok, sqlitevec_msg = check_sqlitevec()
 
@@ -291,6 +408,19 @@ def main():
             # Initialize database
             if not init_database():
                 sys.exit(1)
+
+        # 3. Download SigLIP2 model
+        if not download_model():
+            logger.warning("⚠️ Visual model download failed - will retry on first use")
+
+        # 4. Setup Ollama models
+        ollama_ok, _ = check_ollama()
+        if ollama_ok:
+            pull_ollama_models(tier_name)
+        else:
+            logger.warning("⚠️ Ollama is not running - skipping model pull")
+            logger.warning("   Install Ollama: https://ollama.com/download")
+            logger.warning("   Then run: python backend/setup/installer.py --setup-ollama")
 
         logger.info("\n✅ Full setup complete!")
         return
@@ -308,6 +438,10 @@ def main():
 
     if args.init_db:
         if not init_database():
+            sys.exit(1)
+
+    if args.setup_ollama:
+        if not pull_ollama_models():
             sys.exit(1)
 
 if __name__ == "__main__":

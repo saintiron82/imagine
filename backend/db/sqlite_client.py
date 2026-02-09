@@ -519,6 +519,13 @@ class SQLiteDB:
             perceptual_hash = metadata.get("perceptual_hash")
             dup_group_id = metadata.get("dup_group_id")
 
+            # v3.1: Tier tracking metadata
+            mode_tier = metadata.get("mode_tier")
+            caption_model = metadata.get("caption_model")
+            text_embed_model = metadata.get("text_embed_model")
+            runtime_version = metadata.get("runtime_version")
+            preprocess_params_json = json.dumps(metadata.get("preprocess_params", {})) if metadata.get("preprocess_params") else None
+
             # Insert/update file record
             cursor.execute("""
                 INSERT INTO files (
@@ -533,9 +540,12 @@ class SQLiteDB:
                     structured_meta,
                     storage_root, relative_path,
                     embedding_model, embedding_version,
-                    perceptual_hash, dup_group_id
+                    perceptual_hash, dup_group_id,
+                    mode_tier, caption_model, text_embed_model,
+                    runtime_version, preprocess_params
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?)
                 -- CRITICAL: user_note, user_tags, user_category, user_rating는
                 -- 여기에 절대 추가하지 말 것. 재분석 시 사용자 입력이 덮어쓰기됨.
                 -- 사용자 메타데이터는 update_user_metadata()로만 업데이트.
@@ -565,7 +575,12 @@ class SQLiteDB:
                     embedding_model = excluded.embedding_model,
                     embedding_version = excluded.embedding_version,
                     perceptual_hash = excluded.perceptual_hash,
-                    dup_group_id = excluded.dup_group_id
+                    dup_group_id = excluded.dup_group_id,
+                    mode_tier = excluded.mode_tier,
+                    caption_model = excluded.caption_model,
+                    text_embed_model = excluded.text_embed_model,
+                    runtime_version = excluded.runtime_version,
+                    preprocess_params = excluded.preprocess_params
             """, (
                 file_path,
                 metadata.get("file_name"),
@@ -592,6 +607,8 @@ class SQLiteDB:
                 storage_root, relative_path,
                 embedding_model, embedding_version,
                 perceptual_hash, dup_group_id,
+                mode_tier, caption_model, text_embed_model,
+                runtime_version, preprocess_params_json,
             ))
 
             file_id = cursor.lastrowid
