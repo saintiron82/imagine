@@ -12,6 +12,7 @@ import logging
 import sys
 import time
 import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -472,13 +473,14 @@ def should_skip_file(file_path: Path, db) -> bool:
     return stored_normalized == current_normalized
 
 
-def run_discovery(root_dir: str, skip_processed: bool = True):
+def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 5):
     """
     DFS discover all supported files and process them.
 
     Args:
         root_dir: Root directory to scan
         skip_processed: Skip files unchanged since last processing
+        batch_size: Number of files to process concurrently (default: 5)
     """
     root_path = Path(root_dir).resolve()
     if not root_path.exists() or not root_path.is_dir():
@@ -494,7 +496,7 @@ def run_discovery(root_dir: str, skip_processed: bool = True):
     if total == 0:
         return
 
-    # Phase 2: Process each file (with smart skip)
+    # Phase 2: Filter files (smart skip)
     db = None
     if skip_processed:
         try:
@@ -503,20 +505,58 @@ def run_discovery(root_dir: str, skip_processed: bool = True):
         except Exception as e:
             logger.warning(f"Cannot open DB for smart skip: {e}")
 
-    processed, skipped, errors = 0, 0, 0
-    for i, (fp, folder, depth, tags) in enumerate(discovered, 1):
+    # Filter out skipped files
+    to_process = []
+    skipped = 0
+    for fp, folder, depth, tags in discovered:
         if skip_processed and db and should_skip_file(fp, db):
             skipped += 1
             logger.debug(f"[SKIP] {fp.name} (unchanged)")
-            continue
+        else:
+            to_process.append((fp, folder, depth, tags))
 
-        logger.info(f"[{i}/{total}] {fp.name} (folder: {folder or '/'})")
+    if skipped > 0:
+        logger.info(f"[SKIP] {skipped} files unchanged, {len(to_process)} to process")
+
+    # Phase 3: Batch processing with ThreadPoolExecutor
+    def process_wrapper(args):
+        """Wrapper for parallel processing"""
+        idx, fp, folder, depth, tags = args
+        logger.info(f"[{idx}/{len(to_process)}] Processing: {fp.name}")
         try:
             process_file(fp, folder_path=folder, folder_depth=depth, folder_tags=tags)
-            processed += 1
+            return ('success', fp.name)
         except Exception as e:
-            errors += 1
-            logger.error(f"[ERROR] {fp}: {e}")
+            logger.error(f"[ERROR] {fp.name}: {e}")
+            return ('error', fp.name, str(e))
+
+    processed, errors = 0, 0
+
+    if batch_size > 1 and len(to_process) > 1:
+        logger.info(f"[BATCH] Processing {len(to_process)} files with batch_size={batch_size}")
+
+        with ThreadPoolExecutor(max_workers=batch_size) as executor:
+            # Submit all tasks
+            futures = []
+            for idx, (fp, folder, depth, tags) in enumerate(to_process, 1):
+                future = executor.submit(process_wrapper, (idx, fp, folder, depth, tags))
+                futures.append(future)
+
+            # Collect results
+            for future in as_completed(futures):
+                result = future.result()
+                if result[0] == 'success':
+                    processed += 1
+                elif result[0] == 'error':
+                    errors += 1
+    else:
+        # Sequential processing for batch_size=1
+        for idx, (fp, folder, depth, tags) in enumerate(to_process, 1):
+            result = process_wrapper((idx, fp, folder, depth, tags))
+            if result[0] == 'success':
+                processed += 1
+            elif result[0] == 'error':
+                errors += 1
 
     logger.info(f"[DONE] {processed} processed, {skipped} skipped, {errors} errors (total: {total})")
 
@@ -554,21 +594,49 @@ def main():
     parser.add_argument("--watch", help="Watch a directory for changes (includes initial scan)")
     parser.add_argument("--discover", help="DFS scan directory and process all supported images")
     parser.add_argument("--no-skip", action="store_true", help="Disable smart skip (reprocess all files)")
+    parser.add_argument("--batch-size", type=int, default=5, help="Number of files to process concurrently (default: 5, set to 1 for sequential)")
 
     args = parser.parse_args()
 
     if args.discover:
-        run_discovery(args.discover, skip_processed=not args.no_skip)
+        run_discovery(args.discover, skip_processed=not args.no_skip, batch_size=args.batch_size)
     elif args.files:
-        # Batch mode - process files sequentially
+        # Batch mode - process files with parallel processing
         import json
         try:
             file_list = json.loads(args.files)
-            logger.info(f"[BATCH] Processing {len(file_list)} files...")
-            for i, fp in enumerate(file_list, 1):
-                logger.info(f"[{i}/{len(file_list)}] Processing: {fp}")
-                process_file(Path(fp))
-            logger.info(f"[DONE] Batch complete: {len(file_list)} files processed")
+            total = len(file_list)
+            logger.info(f"[BATCH] Processing {total} files with batch_size={args.batch_size}...")
+
+            def process_indexed_file(args_tuple):
+                idx, fp = args_tuple
+                logger.info(f"[{idx}/{total}] Processing: {fp}")
+                try:
+                    process_file(Path(fp))
+                    return ('success', fp)
+                except Exception as e:
+                    logger.error(f"[ERROR] {fp}: {e}")
+                    return ('error', fp, str(e))
+
+            processed, errors = 0, 0
+            if args.batch_size > 1 and total > 1:
+                with ThreadPoolExecutor(max_workers=args.batch_size) as executor:
+                    futures = [executor.submit(process_indexed_file, (i, fp)) for i, fp in enumerate(file_list, 1)]
+                    for future in as_completed(futures):
+                        result = future.result()
+                        if result[0] == 'success':
+                            processed += 1
+                        else:
+                            errors += 1
+            else:
+                for i, fp in enumerate(file_list, 1):
+                    result = process_indexed_file((i, fp))
+                    if result[0] == 'success':
+                        processed += 1
+                    else:
+                        errors += 1
+
+            logger.info(f"[DONE] Batch complete: {processed} processed, {errors} errors (total: {total})")
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON: {e}")
     elif args.file:
