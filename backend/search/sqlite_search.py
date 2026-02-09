@@ -88,25 +88,23 @@ class SqliteVectorSearch:
         """
         return self.encoder.encode_text(text)
 
-    def vector_search(
+    def vector_search_by_embedding(
         self,
-        query: str,
+        query_embedding: np.ndarray,
         top_k: int = 20,
         threshold: float = 0.0
     ) -> List[Dict[str, Any]]:
         """
-        Perform vector similarity search using CLIP embeddings.
+        Perform vector similarity search using a pre-computed embedding.
 
         Args:
-            query: Text query (will be encoded with CLIP)
+            query_embedding: Embedding vector (np.ndarray)
             top_k: Number of results to return
             threshold: Minimum similarity threshold (0.0 to 1.0)
 
         Returns:
             List of file records with similarity scores
         """
-        # Encode query text
-        query_embedding = self.encode_text(query)
         embedding_json = json.dumps(query_embedding.astype(np.float32).tolist())
 
         cursor = self.db.conn.cursor()
@@ -146,14 +144,35 @@ class SqliteVectorSearch:
                 self._parse_json_fields(result)
                 results.append(result)
 
-            logger.info(f"Vector search '{query}' returned {len(results)} results")
             return results
 
         except Exception as e:
-            logger.error(f"Vector search failed: {e}")
+            logger.error(f"Vector search by embedding failed: {e}")
             return []
         finally:
             cursor.close()
+
+    def vector_search(
+        self,
+        query: str,
+        top_k: int = 20,
+        threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """
+        Perform vector similarity search using CLIP embeddings.
+
+        Args:
+            query: Text query (will be encoded with CLIP)
+            top_k: Number of results to return
+            threshold: Minimum similarity threshold (0.0 to 1.0)
+
+        Returns:
+            List of file records with similarity scores
+        """
+        query_embedding = self.encode_text(query)
+        results = self.vector_search_by_embedding(query_embedding, top_k, threshold)
+        logger.info(f"Vector search '{query}' returned {len(results)} results")
+        return results
 
     def hybrid_search(
         self,
@@ -1070,28 +1089,44 @@ class SqliteVectorSearch:
 
     def search(
         self,
-        query: str,
+        query: str = "",
         mode: str = "vector",
         filters: Optional[Dict[str, Any]] = None,
         top_k: int = 20,
         threshold: float = 0.0,
         return_diagnostic: bool = False,
+        query_image: Optional[str] = None,
     ):
         """
         Unified search interface (compatibility with VectorSearcher).
 
         Args:
-            query: Search query
+            query: Search query (text)
             mode: "vector", "hybrid", "metadata", "fts", or "triaxis"
             filters: Optional metadata filters
             top_k: Number of results
             threshold: Similarity threshold (vector modes only)
             return_diagnostic: If True and mode=triaxis, return (results, diagnostic)
+            query_image: Base64-encoded image for image-to-image search
 
         Returns:
             Search results. If return_diagnostic=True with triaxis mode,
             returns (results, diagnostic_dict).
         """
+        # Image-to-image search: encode image and use vector similarity
+        if query_image:
+            image_embedding = self.encoder.encode_image_from_base64(query_image)
+            results = self.vector_search_by_embedding(image_embedding, top_k, threshold)
+            if filters:
+                results = self._apply_user_filters(results, filters)
+            # Add vector_score field for consistency with triaxis results
+            for r in results:
+                r["vector_score"] = r.get("similarity", 0)
+                r["text_vec_score"] = None
+                r["text_score"] = None
+            logger.info(f"Image search returned {len(results)} results")
+            return results
+
         if mode == "vector":
             return self.vector_search(query, top_k, threshold)
         elif mode == "hybrid":

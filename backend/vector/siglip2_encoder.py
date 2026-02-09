@@ -9,11 +9,14 @@ v3.1: Supports 3-Tier architecture with automatic model selection.
 API: get_image_features / get_text_features → pooler_output (768/1152/1664,)
 """
 
+import base64
 import logging
-import torch
-import numpy as np
-from PIL import Image
+from io import BytesIO
 from typing import Optional
+
+import numpy as np
+import torch
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +123,26 @@ class SigLIP2Encoder:
         if norm > 0:
             vec = vec / norm
         return vec.astype(np.float32)
+
+    def encode_image_from_base64(self, base64_data: str) -> np.ndarray:
+        """
+        Encode a base64-encoded image to a normalized embedding vector.
+
+        Accepts raw base64 or data URL (data:image/...;base64,...).
+
+        Args:
+            base64_data: Base64-encoded image string
+
+        Returns:
+            L2-normalized numpy array of shape (dimensions,)
+        """
+        # Strip data URL prefix if present
+        if "," in base64_data and base64_data.startswith("data:"):
+            base64_data = base64_data.split(",", 1)[1]
+
+        raw = base64.b64decode(base64_data)
+        image = Image.open(BytesIO(raw)).convert("RGB")
+        return self.encode_image(image)
 
     def encode_text(self, text: str) -> np.ndarray:
         """

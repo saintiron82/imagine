@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, Type, ImageIcon } from 'lucide-react';
 import SettingsModal from './SettingsModal';
+import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
@@ -512,7 +513,9 @@ const SearchResultCard = ({ result, onShowMeta }) => {
 
 export default function SearchPanel() {
     const { t } = useLocale();
+    const [searchMode, setSearchMode] = useState('text'); // 'text' | 'image'
     const [query, setQuery] = useState('');
+    const [queryImage, setQueryImage] = useState(null); // base64 string
     const [results, setResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
     const [error, setError] = useState(null);
@@ -544,7 +547,9 @@ export default function SearchPanel() {
     }, []);
 
     const handleSearch = async () => {
-        if (!query.trim()) return;
+        const isImageMode = searchMode === 'image';
+        if (isImageMode && !queryImage) return;
+        if (!isImageMode && !query.trim()) return;
 
         setIsSearching(true);
         setError(null);
@@ -557,13 +562,20 @@ export default function SearchPanel() {
             if (activeFilters.image_type) filters.image_type = activeFilters.image_type;
             if (activeFilters.art_style) filters.art_style = activeFilters.art_style;
 
-            const response = await window.electron.pipeline.searchVector({
-                query,
+            const searchOptions = {
                 limit: 20,
-                mode: 'triaxis',
+                mode: isImageMode ? 'vector' : 'triaxis',
                 threshold,
                 filters: Object.keys(filters).length > 0 ? filters : null,
-            });
+            };
+
+            if (isImageMode) {
+                searchOptions.queryImage = queryImage;
+            } else {
+                searchOptions.query = query;
+            }
+
+            const response = await window.electron.pipeline.searchVector(searchOptions);
 
             if (response.success) {
                 setResults(response.results);
@@ -582,7 +594,10 @@ export default function SearchPanel() {
     };
 
     const handleLoadMore = async () => {
-        if (!query.trim() || isLoadingMore) return;
+        const isImageMode = searchMode === 'image';
+        if (isImageMode && !queryImage) return;
+        if (!isImageMode && !query.trim()) return;
+        if (isLoadingMore) return;
 
         setIsLoadingMore(true);
         const nextLimit = currentLimit + 20;
@@ -595,13 +610,20 @@ export default function SearchPanel() {
             if (activeFilters.image_type) filters.image_type = activeFilters.image_type;
             if (activeFilters.art_style) filters.art_style = activeFilters.art_style;
 
-            const response = await window.electron.pipeline.searchVector({
-                query,
+            const searchOptions = {
                 limit: nextLimit,
-                mode: 'triaxis',
+                mode: isImageMode ? 'vector' : 'triaxis',
                 threshold: nextLimit > 40 ? 0 : threshold,
                 filters: Object.keys(filters).length > 0 ? filters : null,
-            });
+            };
+
+            if (isImageMode) {
+                searchOptions.queryImage = queryImage;
+            } else {
+                searchOptions.query = query;
+            }
+
+            const response = await window.electron.pipeline.searchVector(searchOptions);
 
             if (response.success) {
                 setCurrentLimit(nextLimit);
@@ -628,6 +650,7 @@ export default function SearchPanel() {
     const clearSearch = () => {
         setResults([]);
         setQuery('');
+        setQueryImage(null);
         setError(null);
         setCurrentLimit(20);
         setNoMoreResults(false);
@@ -670,8 +693,35 @@ export default function SearchPanel() {
                     </div>
                 )}
 
+                {/* Mode Toggle Tabs */}
+                <div className="w-full max-w-2xl flex mb-3">
+                    <button
+                        onClick={() => setSearchMode('text')}
+                        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-t-lg border border-b-0 transition-colors ${
+                            searchMode === 'text'
+                                ? 'bg-gray-800 text-white border-gray-600'
+                                : 'bg-gray-900 text-gray-500 border-gray-800 hover:text-gray-300'
+                        }`}
+                    >
+                        <Type size={14} />
+                        {t('tab.search_by_text')}
+                    </button>
+                    <button
+                        onClick={() => setSearchMode('image')}
+                        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-t-lg border border-b-0 transition-colors ${
+                            searchMode === 'image'
+                                ? 'bg-gray-800 text-white border-gray-600'
+                                : 'bg-gray-900 text-gray-500 border-gray-800 hover:text-gray-300'
+                        }`}
+                    >
+                        <ImageIcon size={14} />
+                        {t('tab.search_by_image')}
+                    </button>
+                </div>
+
                 {/* Search Bar */}
                 <div className="w-full max-w-2xl">
+                    {searchMode === 'text' ? (
                     <div className="flex items-center space-x-2">
                         <div className="flex-1 relative">
                             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
@@ -725,6 +775,49 @@ export default function SearchPanel() {
                             <Settings size={18} />
                         </button>
                     </div>
+                    ) : (
+                    /* Image Search Mode */
+                    <div className="flex items-center space-x-2">
+                        <div className="flex-1">
+                            <ImageSearchInput
+                                queryImage={queryImage}
+                                onImageChange={setQueryImage}
+                            />
+                        </div>
+                        <button
+                            onClick={handleSearch}
+                            disabled={!queryImage || isSearching}
+                            className="px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg flex items-center space-x-2 transition-colors self-start mt-3"
+                        >
+                            {isSearching ? (
+                                <Loader2 size={18} className="animate-spin" />
+                            ) : (
+                                <Search size={18} />
+                            )}
+                            <span className="text-sm">{t('action.search_similar')}</span>
+                        </button>
+                        {/* Filter Toggle */}
+                        <button
+                            onClick={() => setShowFilters(!showFilters)}
+                            className={`p-3 rounded-lg transition-colors self-start mt-3 ${
+                                showFilters || hasActiveFilters
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600'
+                            }`}
+                            title={t('search.filters_title')}
+                        >
+                            <SlidersHorizontal size={18} />
+                        </button>
+                        {/* Settings Button */}
+                        <button
+                            onClick={() => setShowSettings(true)}
+                            className="p-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600 transition-colors self-start mt-3"
+                            title={t('search.settings_title')}
+                        >
+                            <Settings size={18} />
+                        </button>
+                    </div>
+                    )}
 
                     {/* Filter Bar */}
                     {showFilters && (

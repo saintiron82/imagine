@@ -167,6 +167,7 @@ ipcMain.handle('search-vector', async (_, searchOptions) => {
     } else {
         inputData = {
             query: searchOptions.query || '',
+            query_image: searchOptions.queryImage || null,
             limit: searchOptions.limit || 20,
             mode: searchOptions.mode || 'triaxis',
             threshold: searchOptions.threshold ?? 0.0,
