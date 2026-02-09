@@ -458,6 +458,59 @@ function createWindow() {
     });
 }
 
+// IPC Handler: Get config.yaml
+ipcMain.handle('get-config', async () => {
+    try {
+        const yaml = require('js-yaml');
+        const configPath = path.join(projectRoot, 'config.yaml');
+
+        if (!fs.existsSync(configPath)) {
+            return { success: false, error: 'config.yaml not found' };
+        }
+
+        const fileContents = fs.readFileSync(configPath, 'utf8');
+        const config = yaml.load(fileContents);
+
+        return { success: true, config };
+    } catch (err) {
+        console.error('[Get Config Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
+// IPC Handler: Update config.yaml
+ipcMain.handle('update-config', async (_, key, value) => {
+    try {
+        const yaml = require('js-yaml');
+        const configPath = path.join(projectRoot, 'config.yaml');
+
+        if (!fs.existsSync(configPath)) {
+            return { success: false, error: 'config.yaml not found' };
+        }
+
+        const fileContents = fs.readFileSync(configPath, 'utf8');
+        const config = yaml.load(fileContents);
+
+        // Update nested key (e.g., "ai_mode.override")
+        const keys = key.split('.');
+        let current = config;
+        for (let i = 0; i < keys.length - 1; i++) {
+            if (!current[keys[i]]) current[keys[i]] = {};
+            current = current[keys[i]];
+        }
+        current[keys[keys.length - 1]] = value;
+
+        // Write back to file
+        const newYaml = yaml.dump(config, { lineWidth: -1 });
+        fs.writeFileSync(configPath, newYaml, 'utf8');
+
+        return { success: true };
+    } catch (err) {
+        console.error('[Update Config Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
 app.whenReady().then(() => {
     createWindow();
 

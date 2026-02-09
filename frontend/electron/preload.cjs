@@ -73,6 +73,10 @@ contextBridge.exposeInMainWorld('electron', {
         installEnv: () => ipcRenderer.send('install-env'),
         onInstallLog: (callback) => ipcRenderer.on('install-log', (_, data) => callback(data)),
         offInstallLog: () => ipcRenderer.removeAllListeners('install-log'),
+
+        // Config Management
+        getConfig: () => ipcRenderer.invoke('get-config'),
+        updateConfig: (key, value) => ipcRenderer.invoke('update-config', key, value),
     },
 
     // User Metadata API

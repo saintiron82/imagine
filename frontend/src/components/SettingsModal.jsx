@@ -8,9 +8,12 @@ const SettingsModal = ({ onClose }) => {
     const [loading, setLoading] = useState(true);
     const [installing, setInstalling] = useState(false);
     const [logs, setLogs] = useState([]);
+    const [aiMode, setAiMode] = useState(null); // { auto_detect: bool, override: string | null }
+    const [tierChanging, setTierChanging] = useState(false);
 
     useEffect(() => {
         checkStatus();
+        loadAiMode();
 
         // Subscribe to logs
         window.electron?.pipeline?.onInstallLog((data) => {
@@ -23,6 +26,18 @@ const SettingsModal = ({ onClose }) => {
 
         return () => window.electron?.pipeline?.offInstallLog();
     }, []);
+
+    const loadAiMode = async () => {
+        try {
+            const result = await window.electron?.pipeline?.getConfig();
+            if (result?.success) {
+                const config = result.config;
+                setAiMode(config.ai_mode || { auto_detect: true, override: null });
+            }
+        } catch (e) {
+            console.error('Failed to load AI mode:', e);
+        }
+    };
 
     const checkStatus = async () => {
         setLoading(true);
@@ -40,6 +55,31 @@ const SettingsModal = ({ onClose }) => {
         setInstalling(true);
         setLogs([]);
         window.electron?.pipeline?.installEnv();
+    };
+
+    const handleTierChange = async (value) => {
+        setTierChanging(true);
+        try {
+            // Update config
+            if (value === 'auto') {
+                await window.electron?.pipeline?.updateConfig('ai_mode.auto_detect', true);
+                await window.electron?.pipeline?.updateConfig('ai_mode.override', null);
+            } else {
+                await window.electron?.pipeline?.updateConfig('ai_mode.auto_detect', false);
+                await window.electron?.pipeline?.updateConfig('ai_mode.override', value);
+            }
+
+            // Reload config
+            await loadAiMode();
+
+            // Show restart notification
+            alert('AI Tier changed successfully. Please restart the application for changes to take effect.');
+        } catch (e) {
+            console.error('Failed to update tier:', e);
+            alert('Failed to update AI Tier: ' + e.message);
+        } finally {
+            setTierChanging(false);
+        }
     };
 
     return (
@@ -91,6 +131,48 @@ const SettingsModal = ({ onClose }) => {
                                     ))}
                                 </div>
                             </div>
+
+                            {/* AI Model Tier Selection */}
+                            {aiMode && (
+                                <div className="bg-gray-900/50 rounded border border-gray-700 p-4">
+                                    <h3 className="text-sm font-bold text-gray-400 mb-3">AI Model Tier</h3>
+                                    <div className="space-y-3">
+                                        <select
+                                            value={aiMode.auto_detect ? 'auto' : (aiMode.override || 'auto')}
+                                            onChange={(e) => handleTierChange(e.target.value)}
+                                            disabled={tierChanging}
+                                            className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                                        >
+                                            <option value="auto">Auto-Detect (Recommended)</option>
+                                            <option value="standard">Standard (~6GB VRAM)</option>
+                                            <option value="pro">Pro (8-16GB VRAM)</option>
+                                            <option value="ultra">Ultra (20GB+ VRAM)</option>
+                                        </select>
+
+                                        {/* Current Mode Display */}
+                                        <div className="text-xs text-gray-500 space-y-1">
+                                            <div>
+                                                <span className="font-bold">Current Mode:</span>{' '}
+                                                <span className="text-gray-400 font-mono">
+                                                    {aiMode.auto_detect ? 'AUTO-DETECT' : (aiMode.override || 'AUTO').toUpperCase()}
+                                                </span>
+                                            </div>
+                                            {!aiMode.auto_detect && aiMode.override && (
+                                                <div className="text-amber-500">
+                                                    ⚠️ Manual override active. Auto-detection disabled.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Tier Descriptions */}
+                                        <div className="text-xs text-gray-500 bg-gray-800/50 rounded p-2 space-y-1">
+                                            <div><span className="font-bold">Standard:</span> Moondream2, SigLIP-base (fastest, ~6GB)</div>
+                                            <div><span className="font-bold">Pro:</span> Qwen3-VL-4B, SigLIP-so400m (balanced, 8-16GB)</div>
+                                            <div><span className="font-bold">Ultra:</span> Qwen3-VL-8B, SigLIP-giant (highest quality, 20GB+)</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Install Button */}
                             {!installing && !status?.dependencies_ok && (

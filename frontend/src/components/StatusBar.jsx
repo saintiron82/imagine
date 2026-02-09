@@ -1,11 +1,32 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Terminal, X, Loader2, Square } from 'lucide-react';
+import { Terminal, X, Loader2, Square, Cpu } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 const StatusBar = ({ logs, clearLogs, isProcessing, processed = 0, total = 0, currentFile = '', fileStep = {}, onStop }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
+    const [aiTier, setAiTier] = useState(null);
     const endRef = useRef(null);
+
+    // Load AI Tier info
+    useEffect(() => {
+        const loadTierInfo = async () => {
+            try {
+                const result = await window.electron?.pipeline?.getConfig();
+                if (result?.success) {
+                    const config = result.config;
+                    const aiMode = config.ai_mode || {};
+                    setAiTier({
+                        auto: aiMode.auto_detect !== false,
+                        override: aiMode.override || null,
+                    });
+                }
+            } catch (e) {
+                console.error('Failed to load AI tier:', e);
+            }
+        };
+        loadTierInfo();
+    }, []);
 
     // Auto scroll to bottom
     useEffect(() => {
@@ -77,6 +98,16 @@ const StatusBar = ({ logs, clearLogs, isProcessing, processed = 0, total = 0, cu
                         >
                             <Square size={12} />
                         </button>
+                    </div>
+                )}
+
+                {/* AI Tier Display */}
+                {aiTier && !isProcessing && (
+                    <div className="flex items-center gap-1.5 text-xs text-gray-400 border-l border-blue-700 pl-3 mr-3">
+                        <Cpu size={12} className="flex-shrink-0" />
+                        <span className="font-mono">
+                            {aiTier.auto ? 'AUTO' : (aiTier.override || 'AUTO').toUpperCase()}
+                        </span>
                     </div>
                 )}
 
