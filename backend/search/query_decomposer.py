@@ -103,7 +103,7 @@ Convert the user's natural language search query into structured search paramete
 The database has 16 FTS columns across two axes:
 
 AI Vision (Qwen/Ollama output):
-- ai_caption: English description of the image
+- mc_caption: English description of the image
 - ai_tags: keywords independently generated (e.g. "anime style", "night scene")
 - ai_style: style description (e.g. "anime illustration", "photorealistic")
 - dominant_color: color analysis (e.g. "blue", "warm orange")

@@ -10,12 +10,18 @@ import sys
 import json
 import logging
 import io
+import os
 from pathlib import Path
 
 # Force UTF-8 stdout/stdin for multilingual support (JP, KR, CN, etc.)
 # Windows defaults to cp949/cp932 which breaks non-local characters
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
+
+# Suppress tqdm/transformers progress bars that pollute stdout
+# (Electron reads stdout for JSON — any non-JSON breaks parsing)
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -34,8 +40,9 @@ def format_result(result: dict) -> dict:
 
     formatted = {
         "path": result["file_path"],
-        "vector_score": result.get("vector_score"),     # float or None
-        "text_score": result.get("text_score"),          # float or None
+        "vector_score": result.get("vector_score", result.get("similarity")),     # V-axis: SigLIP visual
+        "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),  # T-axis: Qwen3 text vector
+        "text_score": result.get("text_score"),          # F-axis: FTS5 keyword
         "combined_score": result.get("rrf_score", result.get("similarity", 0)),
         "metadata": metadata,
         "thumbnail_path": result.get("thumbnail_url", ""),
@@ -43,7 +50,7 @@ def format_result(result: dict) -> dict:
         "width": result.get("width", 0),
         "height": result.get("height", 0),
         "layer_count": metadata.get("layer_count", 0),
-        "ai_caption": result.get("ai_caption", ""),
+        "mc_caption": result.get("mc_caption", ""),
         "ai_tags": result.get("ai_tags", []),
         "semantic_tags": metadata.get("semantic_tags", ""),
         "user_note": result.get("user_note", ""),

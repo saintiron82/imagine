@@ -236,18 +236,18 @@ const MetadataModal = ({ metadata, onClose }) => {
                             </div>
                         </div>
 
-                        {(metadata.ai_caption || metadata.ai_tags || metadata.dominant_color || metadata.ai_style) && (
+                        {(metadata.mc_caption || metadata.ai_tags || metadata.dominant_color || metadata.ai_style) && (
                             <div className="shrink-0 bg-purple-900/10 border border-purple-700/30 rounded-lg p-3">
                                 <div className="text-purple-300 text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2">
                                     <span className="bg-purple-600 text-white px-2 py-0.5 rounded text-[10px]">AI</span>
                                     {t('label.vision_analysis')}
                                 </div>
 
-                                {metadata.ai_caption && (
+                                {metadata.mc_caption && (
                                     <div className="mb-3">
                                         <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">{t('label.caption')}</div>
                                         <div className="text-purple-200 text-xs leading-relaxed bg-black/20 p-2 rounded">
-                                            {metadata.ai_caption}
+                                            {metadata.mc_caption}
                                         </div>
                                     </div>
                                 )}
@@ -430,11 +430,16 @@ const SearchResultCard = ({ result, onShowMeta }) => {
                     </div>
                 )}
 
-                {/* 2-axis score badges (Vector=blue, Text=green) */}
+                {/* 3-axis score badges (V=visual blue, Tv=text-vec purple, T=fts green) */}
                 <div className="absolute top-2 right-2 flex gap-1">
                     {result.vector_score != null && (
                         <span className="bg-blue-900/80 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
                             V {(result.vector_score * 100).toFixed(0)}%
+                        </span>
+                    )}
+                    {result.text_vec_score != null && (
+                        <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            Tv {(result.text_vec_score * 100).toFixed(0)}%
                         </span>
                     )}
                     {result.text_score != null && (
@@ -443,6 +448,12 @@ const SearchResultCard = ({ result, onShowMeta }) => {
                         </span>
                     )}
                 </div>
+                {/* Combined RRF score (bottom-left, normalized to ~100%) */}
+                {result.combined_score > 0 && (
+                    <span className="absolute bottom-2 left-2 bg-yellow-900/80 text-yellow-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                        ★ {(result.combined_score / 0.01639 * 100).toFixed(0)}%
+                    </span>
+                )}
                 {/* v3 P0: image_type badge */}
                 {result.image_type && (
                     <span className="absolute top-2 left-2 bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
@@ -455,9 +466,9 @@ const SearchResultCard = ({ result, onShowMeta }) => {
             <div className="p-3">
                 <div className="text-sm font-medium text-white truncate">{fileName}</div>
 
-                {result.ai_caption && (
+                {result.mc_caption && (
                     <div className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
-                        {result.ai_caption}
+                        {result.mc_caption}
                     </div>
                 )}
 
@@ -511,6 +522,9 @@ export default function SearchPanel() {
     const [metadata, setMetadata] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
     const [dbStats, setDbStats] = useState(null);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [currentLimit, setCurrentLimit] = useState(20);
+    const [noMoreResults, setNoMoreResults] = useState(false);
     const inputRef = useRef(null);
 
     // Auto-focus search input on mount
@@ -553,6 +567,8 @@ export default function SearchPanel() {
 
             if (response.success) {
                 setResults(response.results);
+                setCurrentLimit(20);
+                setNoMoreResults(response.results.length < 20);
             } else {
                 setError(response.error || 'Search failed');
                 setResults([]);
@@ -562,6 +578,44 @@ export default function SearchPanel() {
             setResults([]);
         } finally {
             setIsSearching(false);
+        }
+    };
+
+    const handleLoadMore = async () => {
+        if (!query.trim() || isLoadingMore) return;
+
+        setIsLoadingMore(true);
+        const nextLimit = currentLimit + 20;
+
+        try {
+            const filters = {};
+            if (activeFilters.format) filters.format = activeFilters.format;
+            if (activeFilters.user_category) filters.user_category = activeFilters.user_category;
+            if (activeFilters.min_rating) filters.min_rating = activeFilters.min_rating;
+            if (activeFilters.image_type) filters.image_type = activeFilters.image_type;
+            if (activeFilters.art_style) filters.art_style = activeFilters.art_style;
+
+            const response = await window.electron.pipeline.searchVector({
+                query,
+                limit: nextLimit,
+                mode: 'triaxis',
+                threshold: nextLimit > 40 ? 0 : threshold,
+                filters: Object.keys(filters).length > 0 ? filters : null,
+            });
+
+            if (response.success) {
+                setCurrentLimit(nextLimit);
+                if (response.results.length <= results.length) {
+                    setNoMoreResults(true);
+                } else {
+                    setResults(response.results);
+                    setNoMoreResults(response.results.length < nextLimit);
+                }
+            }
+        } catch (err) {
+            console.error('Load more failed:', err);
+        } finally {
+            setIsLoadingMore(false);
         }
     };
 
@@ -575,6 +629,8 @@ export default function SearchPanel() {
         setResults([]);
         setQuery('');
         setError(null);
+        setCurrentLimit(20);
+        setNoMoreResults(false);
     };
 
     const handleShowMeta = async (filePath) => {
@@ -829,6 +885,28 @@ export default function SearchPanel() {
                                     onShowMeta={handleShowMeta}
                                 />
                             ))}
+                        </div>
+
+                        {/* Load More */}
+                        <div className="flex justify-center mt-6">
+                            {noMoreResults ? (
+                                <span className="text-xs text-gray-600">{t('status.no_more_results')}</span>
+                            ) : (
+                                <button
+                                    onClick={handleLoadMore}
+                                    disabled={isLoadingMore}
+                                    className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-800 text-gray-300 hover:text-white disabled:text-gray-600 rounded-lg border border-gray-600 hover:border-gray-500 disabled:border-gray-700 transition-all flex items-center gap-2 text-sm"
+                                >
+                                    {isLoadingMore ? (
+                                        <>
+                                            <Loader2 size={16} className="animate-spin" />
+                                            {t('status.loading_more')}
+                                        </>
+                                    ) : (
+                                        t('action.load_more')
+                                    )}
+                                </button>
+                            )}
                         </div>
                     </>
                 ) : null}

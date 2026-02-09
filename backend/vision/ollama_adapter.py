@@ -303,7 +303,7 @@ Format your response as JSON:
         return {"image_type": "other", "confidence": "low"}
 
     def analyze_structured(
-        self, image: Image.Image, image_type: str, keep_alive: str = None
+        self, image: Image.Image, image_type: str, keep_alive: str = None, context: dict = None
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -320,7 +320,8 @@ Format your response as JSON:
             logger.error("Ollama server is not running!")
             return {"caption": "", "tags": [], "image_type": image_type}
 
-        prompt = get_stage2_prompt(image_type)
+        # v3.1: Inject context into Stage 2 prompt
+        prompt = get_stage2_prompt(image_type, context=context)
         schema = get_schema(image_type)
         img_b64 = self._encode_image(image)
 
@@ -340,10 +341,15 @@ Format your response as JSON:
         return {"caption": "", "tags": [], "image_type": image_type}
 
     def classify_and_analyze(
-        self, image: Image.Image, keep_alive: str = None
+        self, image: Image.Image, keep_alive: str = None, context: dict = None
     ) -> Dict[str, Any]:
         """
         Full 2-Stage pipeline: classify → analyze_structured.
+
+        Args:
+            image: PIL Image to analyze
+            keep_alive: Model keep-alive duration (default from config)
+            context: Optional file metadata context (v3.1: MC.raw)
 
         Returns:
             Merged dict with image_type + all structured fields
@@ -354,7 +360,7 @@ Format your response as JSON:
         image_type = classification.get("image_type", "other")
         logger.info(f"Stage 1 → {image_type} (confidence: {classification.get('confidence', '?')})")
 
-        analysis = self.analyze_structured(image, image_type, keep_alive)
+        analysis = self.analyze_structured(image, image_type, keep_alive, context=context)
 
         total_elapsed = time.perf_counter() - t_total
         logger.info(f"2-Stage total: {total_elapsed:.1f}s ({image_type})")

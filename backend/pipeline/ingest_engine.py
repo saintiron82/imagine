@@ -130,9 +130,20 @@ def process_file(
 
         # Inject folder discovery metadata
         if folder_path is not None:
+            # --discover/--watch mode
             meta.folder_path = folder_path
             meta.folder_depth = folder_depth
             meta.folder_tags = folder_tags or []
+        else:
+            # --file mode: extract folder metadata from file path
+            # v3.1 Context Injection: ensure folder_path is always populated
+            parent = file_path.parent
+            if parent.name and parent.name not in (".", ""):
+                meta.folder_path = str(parent)
+                # Calculate depth (number of parent directories)
+                meta.folder_depth = len(parent.parts) - 1 if len(parent.parts) > 1 else 0
+                # Use folder name as tag
+                meta.folder_tags = [parent.name]
 
         # === Extract Thumbnail Path (used by Vision & Vector Indexing) ===
         thumb_path = None

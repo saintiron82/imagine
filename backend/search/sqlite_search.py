@@ -118,7 +118,7 @@ class SqliteVectorSearch:
                     f.format,
                     f.width,
                     f.height,
-                    f.ai_caption,
+                    f.mc_caption,
                     f.ai_tags,
                     f.ocr_text,
                     f.metadata,
@@ -171,7 +171,7 @@ class SqliteVectorSearch:
                          "min_width": 2000,
                          "max_width": 4000,
                          "tags": "cartoon",  # LIKE search in semantic_tags
-                         "ai_caption": "city"  # Full-text search
+                         "mc_caption": "city"  # Full-text search
                      }
             top_k: Number of results
             threshold: Minimum similarity
@@ -211,9 +211,9 @@ class SqliteVectorSearch:
                 where_clauses.append("json_extract(f.metadata, '$.semantic_tags') LIKE ?")
                 params.append(f"%{filters['tags']}%")
 
-            if "ai_caption" in filters:
-                where_clauses.append("f.ai_caption LIKE ?")
-                params.append(f"%{filters['ai_caption']}%")
+            if "mc_caption" in filters:
+                where_clauses.append("f.mc_caption LIKE ?")
+                params.append(f"%{filters['mc_caption']}%")
 
             if "folder_path" in filters:
                 where_clauses.append("f.folder_path LIKE ?")
@@ -237,7 +237,7 @@ class SqliteVectorSearch:
                     f.format,
                     f.width,
                     f.height,
-                    f.ai_caption,
+                    f.mc_caption,
                     f.ai_tags,
                     f.metadata,
                     f.thumbnail_url,
@@ -300,9 +300,9 @@ class SqliteVectorSearch:
             where_clauses.append("json_extract(metadata, '$.semantic_tags') LIKE ?")
             params.append(f"%{filters['tags']}%")
 
-        if "ai_caption" in filters:
-            where_clauses.append("ai_caption LIKE ?")
-            params.append(f"%{filters['ai_caption']}%")
+        if "mc_caption" in filters:
+            where_clauses.append("mc_caption LIKE ?")
+            params.append(f"%{filters['mc_caption']}%")
 
         if "folder_path" in filters:
             where_clauses.append("folder_path LIKE ?")
@@ -326,7 +326,7 @@ class SqliteVectorSearch:
                     format,
                     width,
                     height,
-                    ai_caption,
+                    mc_caption,
                     ai_tags,
                     metadata,
                     thumbnail_url,
@@ -444,7 +444,7 @@ class SqliteVectorSearch:
                     f.format,
                     f.width,
                     f.height,
-                    f.ai_caption,
+                    f.mc_caption,
                     f.ai_tags,
                     f.ocr_text,
                     f.metadata,
@@ -522,7 +522,7 @@ class SqliteVectorSearch:
                     f.format,
                     f.width,
                     f.height,
-                    f.ai_caption,
+                    f.mc_caption,
                     f.ai_tags,
                     f.ocr_text,
                     f.metadata,
@@ -534,13 +534,13 @@ class SqliteVectorSearch:
                     f.folder_path,
                     f.folder_depth,
                     f.folder_tags,
-                    fts.rank AS fts_rank
+                    bm25(files_fts, ?, ?, ?) AS fts_rank
                 FROM files_fts fts
                 JOIN files f ON f.id = fts.rowid
                 WHERE files_fts MATCH ?
-                ORDER BY fts.rank
+                ORDER BY fts_rank
                 LIMIT ?
-            """, (match_expr, top_k))
+            """, (3.0, 1.5, 0.7, match_expr, top_k))
 
             results = []
             for row in cursor.fetchall():
@@ -618,11 +618,18 @@ class SqliteVectorSearch:
         user_filters = filters or {}
         soft_filters = llm_filters  # applied as score boost, never removes results
 
+        # Per-axis thresholds: SigLIP (V) and Qwen3 (Tv) have very different score ranges
+        # V-axis: 0.10-0.17 typical match, Tv-axis: 0.65-0.78 typical match
+        from backend.utils.config import get_config as _cfg
+        _search_cfg = _cfg()
+        v_threshold = _search_cfg.get("search.threshold.visual", 0.05)
+        tv_threshold = _search_cfg.get("search.threshold.text_vec", threshold)
+
         # Step 2: V-axis vector search (may fail if sqlite-vec not available)
         vector_results = []
         t0 = time.perf_counter()
         try:
-            vector_results = self.vector_search(vector_query, top_k=top_k * 2, threshold=threshold)
+            vector_results = self.vector_search(vector_query, top_k=top_k * 2, threshold=v_threshold)
         except Exception as e:
             logger.warning(f"V-axis search unavailable: {e}")
             diag["vector_error"] = str(e)
@@ -646,7 +653,7 @@ class SqliteVectorSearch:
         if self.text_search_enabled:
             try:
                 text_vec_results = self.text_vector_search(
-                    vector_query, top_k=top_k * 2, threshold=threshold
+                    vector_query, top_k=top_k * 2, threshold=tv_threshold
                 )
             except Exception as e:
                 logger.warning(f"T-axis search unavailable: {e}")
@@ -730,14 +737,14 @@ class SqliteVectorSearch:
                     r["text_score"] = None
             else:  # fts
                 fts_ranks = [r.get("fts_rank", 0) for r in single_results]
-                worst = min(fts_ranks)
-                best = max(fts_ranks)
-                span = best - worst
+                best = min(fts_ranks)   # most negative = best match
+                worst = max(fts_ranks)  # closest to 0 = worst match
+                span = worst - best
                 for r in single_results:
                     r["vector_score"] = None
                     r["text_vec_score"] = None
                     raw = r.get("fts_rank", 0)
-                    r["text_score"] = (raw - worst) / span if span else 1.0
+                    r["text_score"] = (worst - raw) / span if span else 1.0
             merged = single_results
         else:
             merged = []
@@ -847,15 +854,15 @@ class SqliteVectorSearch:
             if fp not in result_map:
                 result_map[fp] = result
 
-        # Normalize FTS ranks (negative → 0~1)
+        # Normalize FTS ranks (negative → 0~1, more negative = better match → higher score)
         normalized_text = {}
         if fts_raw_ranks:
             ranks = list(fts_raw_ranks.values())
-            worst = min(ranks)  # most negative = worst match
-            best = max(ranks)   # closest to 0 = best match
-            span = best - worst
+            best = min(ranks)   # most negative = best match
+            worst = max(ranks)  # closest to 0 = worst match
+            span = worst - best
             for fp, r in fts_raw_ranks.items():
-                normalized_text[fp] = (r - worst) / span if span else 1.0
+                normalized_text[fp] = (worst - r) / span if span else 1.0
 
         # Sort by RRF score descending
         sorted_paths = sorted(scores.keys(), key=lambda fp: scores[fp], reverse=True)
@@ -916,16 +923,16 @@ class SqliteVectorSearch:
                 if fp not in result_map:
                     result_map[fp] = result
 
-        # Normalize FTS ranks to 0~1
+        # Normalize FTS ranks to 0~1 (more negative = better match → higher score)
         fts_raw = {fp: s.get("fts_rank") for fp, s in axis_scores.items() if "fts_rank" in s}
         normalized_fts = {}
         if fts_raw:
             ranks = list(fts_raw.values())
-            worst = min(ranks)
-            best = max(ranks)
-            span = best - worst
+            best = min(ranks)   # most negative = best match
+            worst = max(ranks)  # closest to 0 = worst match
+            span = worst - best
             for fp, r in fts_raw.items():
-                normalized_fts[fp] = (r - worst) / span if span else 1.0
+                normalized_fts[fp] = (worst - r) / span if span else 1.0
 
         # Sort by cumulative RRF score
         sorted_paths = sorted(scores.keys(), key=lambda fp: scores[fp], reverse=True)

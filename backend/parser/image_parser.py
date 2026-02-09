@@ -68,7 +68,7 @@ class ImageParser(BaseParser):
                 layer_name = clean_layer_name(file_path.stem)
                 if not layer_name:
                     layer_name = "Image"
-                
+
                 # Infer content type
                 content_type = infer_content_type(
                     layer_name=layer_name,
@@ -77,7 +77,7 @@ class ImageParser(BaseParser):
                     layer_position=(0, 0),
                     alpha_ratio=1.0
                 )
-                
+
                 layer_tree = {
                     "name": "Root",
                     "children": [
@@ -89,9 +89,11 @@ class ImageParser(BaseParser):
                         }
                     ]
                 }
-                
-                # Build semantic tags from filename
-                semantic_tags = layer_name if layer_name else file_path.stem
+
+                # Build semantic tags from filename (v3.1 Context Injection)
+                # Use raw filename with underscores/hyphens converted to spaces
+                file_stem = file_path.stem
+                semantic_tags = file_stem.replace("_", " ").replace("-", " ")
                 
                 # Get file stats
                 file_stats = file_path.stat()

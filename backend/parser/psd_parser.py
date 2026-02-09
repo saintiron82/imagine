@@ -65,12 +65,13 @@ class PSDParser(BaseParser):
             layer_tree, layer_paths, text_contents, fonts = self._extract_layers(
                 psd, (width, height)
             )
-            
+
             # Generate composite thumbnail
             thumbnail_path = self._create_thumbnail(psd, file_path)
-            
+
             # Build semantic tags from layer paths
-            semantic_tags = build_semantic_tags(layer_paths)
+            # v3.1 Context Injection: Use raw layer names for richer context
+            semantic_tags = self._build_semantic_tags_raw(psd)
             
             # Get file stats
             file_stats = file_path.stat()
@@ -261,3 +262,46 @@ class PSDParser(BaseParser):
         json_path = self.get_json_path(file_path)
         with open(json_path, 'w', encoding='utf-8') as f:
             f.write(asset_meta.model_dump_json(indent=2))
+
+    def _build_semantic_tags_raw(self, psd: PSDImage) -> str:
+        """
+        Build semantic tags from raw layer names for Context Injection.
+
+        Unlike build_semantic_tags() which uses clean_layer_name(),
+        this method preserves original layer names for richer AI context.
+
+        Args:
+            psd: PSDImage object
+
+        Returns:
+            Space-separated layer names (max 50 layers)
+        """
+        from .cleaner import MEANINGLESS_NAMES
+
+        layer_names = []
+
+        def collect_layer_names(layer, depth=0):
+            """Recursively collect layer names."""
+            if len(layer_names) >= 50:  # Limit to 50 layers
+                return
+
+            layer_name = layer.name or ""
+            if layer_name:
+                # Skip completely meaningless names
+                name_lower = layer_name.lower().strip()
+                if name_lower not in MEANINGLESS_NAMES and layer_name.strip():
+                    # Keep original name but normalize spacing
+                    normalized = ' '.join(layer_name.split())
+                    if normalized and normalized not in layer_names:
+                        layer_names.append(normalized)
+
+            # Process children for groups
+            if hasattr(layer, '__iter__'):
+                for child in layer:
+                    collect_layer_names(child, depth + 1)
+
+        # Collect from all top-level layers
+        for layer in psd:
+            collect_layer_names(layer)
+
+        return ' '.join(layer_names[:50])

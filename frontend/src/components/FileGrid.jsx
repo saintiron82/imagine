@@ -284,18 +284,18 @@ const MetadataModal = ({ metadata, onClose }) => {
                         </div>
 
                         {/* AI Vision Analysis */}
-                        {(metadata.ai_caption || metadata.ai_tags || metadata.dominant_color || metadata.ai_style) && (
+                        {(metadata.mc_caption || metadata.ai_tags || metadata.dominant_color || metadata.ai_style) && (
                             <div className="shrink-0 bg-purple-900/10 border border-purple-700/30 rounded-lg p-3">
                                 <div className="text-purple-300 text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2">
                                     <span className="bg-purple-600 text-white px-2 py-0.5 rounded text-[10px]">AI</span>
                                     {t('label.vision_analysis')}
                                 </div>
 
-                                {metadata.ai_caption && (
+                                {metadata.mc_caption && (
                                     <div className="mb-3">
                                         <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">{t('label.caption')}</div>
                                         <div className="text-purple-200 text-xs leading-relaxed bg-black/20 p-2 rounded">
-                                            {metadata.ai_caption}
+                                            {metadata.mc_caption}
                                         </div>
                                     </div>
                                 )}

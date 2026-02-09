@@ -175,52 +175,18 @@ class SQLiteDB:
         except Exception as e:
             logger.warning(f"v3 migration check failed (non-fatal): {e}")
 
-    # ── FTS5 columns: 16 columns across 3 axes + v3 ─────────────────
+    # ── FTS5 columns: v3.1 3-column BM25-weighted architecture ──
     #
-    # 2축 Descriptive (AI 비저닝 — Qwen/Ollama 출력):
-    #   ai_caption      AI가 생성한 이미지 설명 문장
-    #   ai_tags         AI가 독립 생성한 키워드 (caption과 다른 정보 포함)
-    #   ai_style        AI가 독립 생성한 스타일 설명
-    #   dominant_color   AI 색상 분석
-    #   ocr_text        AI OCR (이미지 안 글자)
+    # meta_strong (BM25 3.0): Direct identification facts
+    #   file_name, layer_names, used_fonts, user_tags, ocr_text
     #
-    # 3축 Structural (PSD 파싱 + 파일 정보 + 사용자 입력):
-    #   file_path       파일 경로 (폴더 포함)
-    #   file_name       파일명
-    #   layer_names     PSD 레이어명 (원본+KR+EN 통합, Python 빌드)
-    #   text_content    PSD 텍스트 (원본+KR+EN 통합, Python 빌드)
-    #   used_fonts      사용 폰트 (Python 빌드)
-    #   user_note       사용자 메모
-    #   user_tags       사용자 태그
+    # meta_weak (BM25 1.5): Contextual information
+    #   file_path, text_content, user_note, folder_tags,
+    #   image_type, scene_type, art_style
     #
-    # Merged (별도 컬럼 불필요):
-    #   semantic_tags → layer_names에 병합
-    #   folder_tags → file_path에 포함
-    _FTS_COLUMNS = [
-        # 3축 Structural
-        'file_path',        # file identity + folder path
-        'file_name',        # file name search
-        # 2축 Descriptive
-        'ai_caption',       # AI vision description
-        'ai_tags',          # AI keywords (independently generated, NOT subset of caption)
-        'ai_style',         # AI style (Ollama generates independently)
-        # 3축 Structural (Python-built from metadata JSON)
-        'layer_names',      # PSD layer names: original + KR + EN merged
-        'text_content',     # PSD text layers: original + KR + EN merged
-        # 2축 Descriptive
-        'ocr_text',         # AI OCR (text visible in image)
-        'dominant_color',   # image color analysis
-        # 3축 Structural (Python-built)
-        'used_fonts',       # PSD fonts
-        # 3축 Structural (user input)
-        'user_note',        # user memo
-        'user_tags',        # user tags
-        # v3 P0: 2-Stage Vision classification (filterable + searchable)
-        'image_type',       # character, background, ui_element, item, ...
-        'scene_type',       # alley, forest, dungeon, ... (backgrounds)
-        'art_style',        # realistic, anime, pixel, ...
-        'folder_tags',      # folder name tags
-    ]
+    # caption (BM25 0.7): AI-generated content
+    #   mc_caption, ai_tags
+    _FTS_COLUMNS = ['meta_strong', 'meta_weak', 'caption']
 
     def _ensure_fts(self):
         """Ensure FTS5 table exists with correct schema and is populated."""
@@ -250,7 +216,7 @@ class SQLiteDB:
 
     def _rebuild_fts(self):
         """Drop and recreate FTS5 table, backfilling from files table."""
-        logger.info("Rebuilding FTS5 table (16 columns, 3-axis + v3)...")
+        logger.info("Rebuilding FTS5 table (v3.1: 3 columns, BM25-weighted)...")
 
         # Drop old FTS + triggers, then create fresh
         self.conn.executescript("""
@@ -260,54 +226,22 @@ class SQLiteDB:
             DROP TABLE IF EXISTS files_fts;
 
             CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
-                file_path, file_name,
-                ai_caption, ai_tags, ai_style,
-                layer_names, text_content,
-                ocr_text, dominant_color,
-                used_fonts,
-                user_note, user_tags,
-                image_type, scene_type, art_style, folder_tags
+                meta_strong,
+                meta_weak,
+                caption
             );
 
-            -- Trigger: layer_names, text_content, used_fonts, folder_tags need Python.
-            -- Set to '' here; patched immediately after INSERT in insert_file().
+            -- Triggers: meta_strong, meta_weak, caption need Python (complex JSON walking)
+            -- Set to '' here; patched immediately after INSERT in insert_file()
             CREATE TRIGGER IF NOT EXISTS files_fts_insert AFTER INSERT ON files BEGIN
-                INSERT INTO files_fts(rowid,
-                    file_path, file_name,
-                    ai_caption, ai_tags, ai_style,
-                    layer_names, text_content,
-                    ocr_text, dominant_color,
-                    used_fonts,
-                    user_note, user_tags,
-                    image_type, scene_type, art_style, folder_tags)
-                VALUES (new.id,
-                    new.file_path, new.file_name,
-                    new.ai_caption, new.ai_tags, new.ai_style,
-                    '', '',
-                    new.ocr_text, new.dominant_color,
-                    '',
-                    new.user_note, new.user_tags,
-                    new.image_type, new.scene_type, new.art_style, '');
+                INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption)
+                VALUES (new.id, '', '', '');
             END;
 
             CREATE TRIGGER IF NOT EXISTS files_fts_update AFTER UPDATE ON files BEGIN
                 DELETE FROM files_fts WHERE rowid = old.id;
-                INSERT INTO files_fts(rowid,
-                    file_path, file_name,
-                    ai_caption, ai_tags, ai_style,
-                    layer_names, text_content,
-                    ocr_text, dominant_color,
-                    used_fonts,
-                    user_note, user_tags,
-                    image_type, scene_type, art_style, folder_tags)
-                VALUES (new.id,
-                    new.file_path, new.file_name,
-                    new.ai_caption, new.ai_tags, new.ai_style,
-                    '', '',
-                    new.ocr_text, new.dominant_color,
-                    '',
-                    new.user_note, new.user_tags,
-                    new.image_type, new.scene_type, new.art_style, '');
+                INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption)
+                VALUES (new.id, '', '', '');
             END;
 
             CREATE TRIGGER IF NOT EXISTS files_fts_delete AFTER DELETE ON files BEGIN
@@ -315,71 +249,32 @@ class SQLiteDB:
             END;
         """)
 
-        # Backfill: Python merges all layer/text/font data per row
+        # Backfill: v3.1 3-column FTS
         cursor = self.conn.execute(
-            "SELECT id, file_path, file_name, ai_caption, ai_tags, ai_style, "
-            "metadata, ocr_text, dominant_color, user_note, user_tags, "
+            "SELECT id, file_path, file_name, mc_caption, ai_tags, "
+            "metadata, ocr_text, user_note, user_tags, "
             "image_type, scene_type, art_style, folder_tags FROM files"
         )
 
         rows_inserted = 0
         for row in cursor.fetchall():
             file_id = row[0]
+            mc_caption = row[3] or ''
             ai_tags_raw = row[4] or ''
-            metadata_str = row[6] or '{}'
+            metadata_str = row[5] or '{}'
             try:
                 meta = json.loads(metadata_str)
             except (json.JSONDecodeError, TypeError):
                 meta = {}
 
-            # ai_tags: stored as JSON array string, flatten to space-separated for FTS
-            ai_tags_fts = ''
-            if ai_tags_raw:
-                try:
-                    tags_list = json.loads(ai_tags_raw)
-                    if isinstance(tags_list, list):
-                        ai_tags_fts = ' '.join(str(t) for t in tags_list)
-                    else:
-                        ai_tags_fts = str(tags_list)
-                except (json.JSONDecodeError, TypeError):
-                    ai_tags_fts = str(ai_tags_raw)
-
-            layer_names = self._build_fts_layer_names(meta)
-            text_content = self._build_fts_text_content(meta)
-            used_fonts = meta.get('used_fonts', [])
-            if isinstance(used_fonts, list):
-                used_fonts = ' '.join(used_fonts)
-            else:
-                used_fonts = str(used_fonts) if used_fonts else ''
-
-            # v3: folder_tags JSON → space-separated for FTS
-            folder_tags_raw = row[14] or ''
-            folder_tags_fts = ''
-            if folder_tags_raw:
-                try:
-                    ft_list = json.loads(folder_tags_raw)
-                    if isinstance(ft_list, list):
-                        folder_tags_fts = ' '.join(str(t) for t in ft_list)
-                except (json.JSONDecodeError, TypeError):
-                    folder_tags_fts = str(folder_tags_raw)
+            # Build 3-column FTS
+            meta_strong = self._build_fts_meta_strong(row, meta)
+            meta_weak = self._build_fts_meta_weak(row, meta)
+            caption = self._build_fts_caption(mc_caption, ai_tags_raw)
 
             self.conn.execute(
-                "INSERT INTO files_fts(rowid, "
-                "file_path, file_name, "
-                "ai_caption, ai_tags, ai_style, "
-                "layer_names, text_content, "
-                "ocr_text, dominant_color, "
-                "used_fonts, "
-                "user_note, user_tags, "
-                "image_type, scene_type, art_style, folder_tags) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (file_id, row[1], row[2],
-                 row[3], ai_tags_fts, row[5],
-                 layer_names, text_content,
-                 row[7], row[8],
-                 used_fonts,
-                 row[9], row[10],
-                 row[11] or '', row[12] or '', row[13] or '', folder_tags_fts)
+                "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption) VALUES (?, ?, ?, ?)",
+                (file_id, meta_strong, meta_weak, caption)
             )
             rows_inserted += 1
 
@@ -436,6 +331,103 @@ class SQLiteDB:
         if val and isinstance(val, list):
             return ' '.join(str(t) for t in val if t)
         return ''
+
+    @classmethod
+    def _build_fts_meta_strong(cls, row, meta: dict) -> str:
+        """Build meta_strong: file_name, layer_names, used_fonts, user_tags, ocr_text.
+
+        v3.1: BM25 weight 3.0 (highest priority for direct identification)
+        """
+        parts = []
+
+        # file_name
+        parts.append(str(row[2]) if row[2] else '')  # row[2] = file_name
+
+        # layer_names (from metadata layer_tree)
+        layer_names = cls._build_fts_layer_names(meta)
+        if layer_names:
+            parts.append(layer_names)
+
+        # used_fonts
+        fonts = meta.get('used_fonts', [])
+        if isinstance(fonts, list):
+            parts.append(' '.join(fonts))
+
+        # user_tags
+        user_tags_raw = row[8] or ''  # row[8] = user_tags
+        if user_tags_raw:
+            try:
+                tags = json.loads(user_tags_raw)
+                if isinstance(tags, list):
+                    parts.append(' '.join(str(t) for t in tags))
+            except:
+                pass
+
+        # ocr_text
+        parts.append(str(row[6]) if row[6] else '')  # row[6] = ocr_text
+
+        return ' '.join(str(p) for p in parts if p)
+
+    @staticmethod
+    def _build_fts_meta_weak(row, meta: dict) -> str:
+        """Build meta_weak: file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style.
+
+        v3.1: BM25 weight 1.5 (contextual information)
+        """
+        parts = []
+
+        # file_path
+        parts.append(str(row[1]) if row[1] else '')  # row[1] = file_path
+
+        # text_content (from metadata)
+        text_content = meta.get('text_content', [])
+        if isinstance(text_content, list):
+            parts.append(' '.join(str(t) for t in text_content))
+
+        # user_note
+        parts.append(str(row[7]) if row[7] else '')  # row[7] = user_note
+
+        # folder_tags
+        folder_tags_raw = row[12] or ''  # row[12] = folder_tags
+        if folder_tags_raw:
+            try:
+                ft = json.loads(folder_tags_raw)
+                if isinstance(ft, list):
+                    parts.append(' '.join(str(t) for t in ft))
+            except:
+                pass
+
+        # image_type, scene_type, art_style
+        parts.append(str(row[9]) if row[9] else '')   # row[9] = image_type
+        parts.append(str(row[10]) if row[10] else '')  # row[10] = scene_type
+        parts.append(str(row[11]) if row[11] else '')  # row[11] = art_style
+
+        return ' '.join(str(p) for p in parts if p)
+
+    @staticmethod
+    def _build_fts_caption(mc_caption: str, ai_tags_raw: str) -> str:
+        """Build caption: mc_caption + ai_tags.
+
+        v3.1: BM25 weight 0.7 (AI-generated content, lowest priority)
+        """
+        parts = []
+
+        # mc_caption
+        if mc_caption:
+            parts.append(mc_caption)
+
+        # ai_tags (JSON array → space-separated)
+        if ai_tags_raw:
+            try:
+                tags = json.loads(ai_tags_raw)
+                if isinstance(tags, list):
+                    parts.append(' '.join(str(t) for t in tags))
+                else:
+                    parts.append(str(tags))
+            except:
+                parts.append(str(ai_tags_raw))
+
+        return ' '.join(p for p in parts if p)
 
     def get_file_modified_at(self, file_path: str) -> Optional[str]:
         """
@@ -512,11 +504,15 @@ class SQLiteDB:
             embedding_model = metadata.get("embedding_model", "google/siglip2-so400m-patch14-384")
             embedding_version = metadata.get("embedding_version", 1)
 
+            # v3.1: Extract perceptual_hash and dup_group_id
+            perceptual_hash = metadata.get("perceptual_hash")
+            dup_group_id = metadata.get("dup_group_id")
+
             # Insert/update file record
             cursor.execute("""
                 INSERT INTO files (
                     file_path, file_name, file_size, format, width, height,
-                    ai_caption, ai_tags, ocr_text, dominant_color, ai_style,
+                    mc_caption, ai_tags, ocr_text, dominant_color, ai_style,
                     metadata, thumbnail_url,
                     created_at, modified_at, parsed_at,
                     folder_path, folder_depth, folder_tags,
@@ -525,14 +521,15 @@ class SQLiteDB:
                     character_type, item_type, ui_type,
                     structured_meta,
                     storage_root, relative_path,
-                    embedding_model, embedding_version
+                    embedding_model, embedding_version,
+                    perceptual_hash, dup_group_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 -- CRITICAL: user_note, user_tags, user_category, user_rating는
                 -- 여기에 절대 추가하지 말 것. 재분석 시 사용자 입력이 덮어쓰기됨.
                 -- 사용자 메타데이터는 update_user_metadata()로만 업데이트.
                 ON CONFLICT(file_path) DO UPDATE SET
-                    ai_caption = excluded.ai_caption,
+                    mc_caption = excluded.mc_caption,
                     ai_tags = excluded.ai_tags,
                     ocr_text = excluded.ocr_text,
                     dominant_color = excluded.dominant_color,
@@ -555,7 +552,9 @@ class SQLiteDB:
                     storage_root = excluded.storage_root,
                     relative_path = excluded.relative_path,
                     embedding_model = excluded.embedding_model,
-                    embedding_version = excluded.embedding_version
+                    embedding_version = excluded.embedding_version,
+                    perceptual_hash = excluded.perceptual_hash,
+                    dup_group_id = excluded.dup_group_id
             """, (
                 file_path,
                 metadata.get("file_name"),
@@ -563,7 +562,7 @@ class SQLiteDB:
                 metadata.get("format"),
                 width,
                 height,
-                metadata.get("ai_caption"),
+                metadata.get("mc_caption"),
                 ai_tags_json,
                 metadata.get("ocr_text"),
                 metadata.get("dominant_color"),
@@ -581,6 +580,7 @@ class SQLiteDB:
                 structured_meta,
                 storage_root, relative_path,
                 embedding_model, embedding_version,
+                perceptual_hash, dup_group_id,
             ))
 
             file_id = cursor.lastrowid
@@ -606,24 +606,32 @@ class SQLiteDB:
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to insert embedding (sqlite-vec may not be loaded): {e}")
 
-            # Post-trigger FTS fix: layer_names, text_content, used_fonts, folder_tags
-            # need Python (SQL triggers set these to '' because JSON walking is not possible)
-            layer_names = self._build_fts_layer_names(metadata_json)
-            text_content = self._build_fts_text_content(metadata_json)
-            used_fonts_raw = metadata_json.get('used_fonts', [])
-            used_fonts = ' '.join(used_fonts_raw) if isinstance(used_fonts_raw, list) else ''
-            # folder_tags: flatten JSON array to space-separated for FTS
-            folder_tags_list = metadata.get("folder_tags", [])
-            folder_tags_fts = ' '.join(str(t) for t in folder_tags_list) if isinstance(folder_tags_list, list) else ''
-            if layer_names or text_content or used_fonts or folder_tags_fts:
-                try:
+            # v3.1: Post-trigger FTS fix (3 columns: meta_strong, meta_weak, caption)
+            # SQL triggers set these to ''; Python updates with actual data
+            try:
+                # Get file data for FTS building
+                file_data = cursor.execute(
+                    "SELECT id, file_path, file_name, mc_caption, ai_tags, "
+                    "metadata, ocr_text, user_note, user_tags, "
+                    "image_type, scene_type, art_style, folder_tags "
+                    "FROM files WHERE id = ?",
+                    (file_id,)
+                ).fetchone()
+
+                if file_data:
+                    mc_caption = file_data[3] or ''
+                    ai_tags_raw = file_data[4] or ''
+
+                    meta_strong = self._build_fts_meta_strong(file_data, metadata_json)
+                    meta_weak = self._build_fts_meta_weak(file_data, metadata_json)
+                    caption = self._build_fts_caption(mc_caption, ai_tags_raw)
+
                     cursor.execute(
-                        "UPDATE files_fts SET layer_names = ?, text_content = ?, "
-                        "used_fonts = ?, folder_tags = ? WHERE rowid = ?",
-                        (layer_names, text_content, used_fonts, folder_tags_fts, file_id)
+                        "UPDATE files_fts SET meta_strong = ?, meta_weak = ?, caption = ? WHERE rowid = ?",
+                        (meta_strong, meta_weak, caption, file_id)
                     )
-                except Exception as e:
-                    logger.warning(f"⚠️ FTS post-trigger update failed: {e}")
+            except Exception as e:
+                logger.warning(f"⚠️ FTS post-trigger update failed: {e}")
 
             self.conn.commit()
 
@@ -776,9 +784,9 @@ class SQLiteDB:
         cursor.execute("SELECT COUNT(*) FROM layers")
         stats['total_layers'] = cursor.fetchone()[0]
 
-        # Files with AI captions
-        cursor.execute("SELECT COUNT(*) FROM files WHERE ai_caption IS NOT NULL")
-        stats['files_with_ai_caption'] = cursor.fetchone()[0]
+        # Files with MC captions (v3.1: renamed from ai_caption)
+        cursor.execute("SELECT COUNT(*) FROM files WHERE mc_caption IS NOT NULL")
+        stats['files_with_mc_caption'] = cursor.fetchone()[0]
 
         # Average layers per file
         cursor.execute("""
