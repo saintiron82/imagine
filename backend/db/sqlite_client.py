@@ -841,6 +841,134 @@ class SQLiteDB:
             logger.error(f"❌ Failed to update user metadata for {file_path}: {e}")
             return False
 
+    def get_db_tier(self) -> Optional[str]:
+        """
+        Get the tier of existing data in the database.
+
+        Returns:
+            Tier name ('standard', 'pro', 'ultra') or None if DB is empty
+        """
+        try:
+            cursor = self.conn.execute(
+                "SELECT mode_tier FROM files WHERE mode_tier IS NOT NULL LIMIT 1"
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Failed to get DB tier: {e}")
+            return None
+
+    def get_db_embedding_dimension(self) -> Optional[int]:
+        """
+        Get the embedding dimension used in the database.
+
+        Returns:
+            Dimension size or None if cannot determine
+        """
+        try:
+            # Query vec_files table info
+            cursor = self.conn.execute("SELECT sql FROM sqlite_master WHERE name='vec_files'")
+            row = cursor.fetchone()
+            if row:
+                # Parse CREATE VIRTUAL TABLE statement
+                # Example: "CREATE VIRTUAL TABLE vec_files USING vec0(..., embedding FLOAT[1152])"
+                import re
+                match = re.search(r'embedding FLOAT\[(\d+)\]', row[0])
+                if match:
+                    return int(match.group(1))
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get DB embedding dimension: {e}")
+            return None
+
+    def check_tier_compatibility(self, current_tier: str, current_dimension: int) -> Dict[str, Any]:
+        """
+        Check if current tier is compatible with existing DB data.
+
+        Args:
+            current_tier: Current tier being used ('standard', 'pro', 'ultra')
+            current_dimension: Expected embedding dimension for current tier
+
+        Returns:
+            Dict with:
+                - compatible: bool
+                - db_tier: str or None
+                - db_dimension: int or None
+                - action_required: str (description of what to do)
+        """
+        db_tier = self.get_db_tier()
+        db_dimension = self.get_db_embedding_dimension()
+
+        # Empty DB - compatible
+        if db_tier is None:
+            return {
+                'compatible': True,
+                'db_tier': None,
+                'db_dimension': db_dimension,
+                'action_required': 'none'
+            }
+
+        # Same tier - compatible
+        if db_tier == current_tier and db_dimension == current_dimension:
+            return {
+                'compatible': True,
+                'db_tier': db_tier,
+                'db_dimension': db_dimension,
+                'action_required': 'none'
+            }
+
+        # Different tier or dimension - incompatible
+        return {
+            'compatible': False,
+            'db_tier': db_tier,
+            'db_dimension': db_dimension,
+            'action_required': f'Tier changed from {db_tier} to {current_tier}. '
+                              f'Dimension mismatch: {db_dimension} → {current_dimension}. '
+                              f'All files must be reprocessed.'
+        }
+
+    def migrate_tier(self, new_tier: str, new_dimension: int) -> bool:
+        """
+        Migrate database to a new tier by recreating vec_files table.
+        WARNING: This deletes all existing embeddings!
+
+        Args:
+            new_tier: Target tier name
+            new_dimension: Target embedding dimension
+
+        Returns:
+            True if successful
+        """
+        try:
+            logger.warning(f"[TIER MIGRATION] Migrating to {new_tier} (dimension: {new_dimension})")
+            logger.warning("[TIER MIGRATION] This will delete all existing embeddings!")
+
+            # Drop vec_files table
+            self.conn.execute("DROP TABLE IF EXISTS vec_files")
+            logger.info("[TIER MIGRATION] Dropped vec_files table")
+
+            # Recreate with new dimension
+            self.conn.execute(f"""
+                CREATE VIRTUAL TABLE vec_files USING vec0(
+                    file_id INTEGER PRIMARY KEY,
+                    embedding FLOAT[{new_dimension}]
+                )
+            """)
+            logger.info(f"[TIER MIGRATION] Created vec_files with dimension={new_dimension}")
+
+            # Clear mode_tier from all files (will be repopulated on reprocessing)
+            self.conn.execute("UPDATE files SET mode_tier = NULL, embedding_model = NULL")
+            self.conn.commit()
+            logger.info("[TIER MIGRATION] Cleared tier metadata from files table")
+
+            logger.info(f"[TIER MIGRATION] Migration complete. Reprocess all files to populate embeddings.")
+            return True
+
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"[TIER MIGRATION] Failed: {e}")
+            return False
+
     def close(self):
         """Close database connection."""
         if self.conn:

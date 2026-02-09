@@ -67,6 +67,9 @@ class AdaptiveBatchProcessor:
     # Minimum improvement to continue
     MIN_IMPROVEMENT = 0.95  # Must be at least 5% better
 
+    # Fine-tuning mode (after coarse search)
+    ENABLE_FINE_TUNING = True  # Enable fine-tuning between optimal and degraded point
+
     def __init__(
         self,
         process_func: Callable,
@@ -332,11 +335,65 @@ class AdaptiveBatchProcessor:
 
             # Check if we should continue
             if not self._should_continue(metrics, baseline_metrics):
-                # Performance degraded - revert to previous batch size
+                # Performance degraded - enter fine-tuning phase
+                degraded_batch_size = batch_size
                 logger.info(
-                    f"[ADAPTIVE] Optimal batch_size found: {optimal_batch_size} "
-                    f"(stopped at {batch_size})"
+                    f"[ADAPTIVE] Performance degraded at batch_size={degraded_batch_size} "
+                    f"(previous optimal: {optimal_batch_size})"
                 )
+
+                # Fine-tuning phase: Test intermediate values
+                if self.ENABLE_FINE_TUNING and degraded_batch_size - optimal_batch_size > 2:
+                    logger.info(
+                        f"[ADAPTIVE] Starting fine-tuning phase: "
+                        f"testing batch_sizes {optimal_batch_size+1}~{degraded_batch_size-1}"
+                    )
+
+                    for fine_batch_size in range(optimal_batch_size + 1, degraded_batch_size):
+                        if not remaining_files:
+                            logger.info("[ADAPTIVE] No remaining files for fine-tuning")
+                            break
+
+                        sample_size = min(fine_batch_size * 3, len(remaining_files))
+                        sample_files = remaining_files[:sample_size]
+
+                        logger.info(
+                            f"[ADAPTIVE] [FINE-TUNE] Testing batch_size={fine_batch_size} "
+                            f"with {len(sample_files)} files..."
+                        )
+
+                        fine_metrics = self._process_batch(sample_files, fine_batch_size)
+                        self.metrics_history.append(fine_metrics)
+
+                        # Check if this is better than current optimal
+                        if fine_metrics.time_per_file < baseline_metrics.time_per_file:
+                            logger.info(
+                                f"[ADAPTIVE] [FINE-TUNE] New optimal found! "
+                                f"{baseline_metrics.time_per_file:.1f}s → {fine_metrics.time_per_file:.1f}s"
+                            )
+                            baseline_metrics = fine_metrics
+                            optimal_batch_size = fine_batch_size
+                            remaining_files = remaining_files[sample_size:]
+                        elif fine_metrics.time_per_file > baseline_metrics.time_per_file * self.DEGRADATION_THRESHOLD:
+                            # Fine-tuning also degraded - stop
+                            logger.info(
+                                f"[ADAPTIVE] [FINE-TUNE] Performance degraded at {fine_batch_size}, "
+                                f"stopping fine-tuning"
+                            )
+                            break
+                        else:
+                            # Marginal - continue
+                            remaining_files = remaining_files[sample_size:]
+
+                    logger.info(
+                        f"[ADAPTIVE] Fine-tuning complete. Final optimal: {optimal_batch_size}"
+                    )
+                else:
+                    logger.info(
+                        f"[ADAPTIVE] Fine-tuning skipped (gap too small or disabled). "
+                        f"Optimal: {optimal_batch_size}"
+                    )
+
                 break
 
             # Performance improved or stable - continue

@@ -616,6 +616,41 @@ def main():
     config = get_config()
     batch_enabled = config.get("batch_processing", {}).get("enabled", True)
 
+    # ===== TIER COMPATIBILITY CHECK =====
+    from backend.utils.tier_config import get_active_tier
+    from backend.db.sqlite_client import SQLiteDB
+
+    tier_name, tier_config = get_active_tier()
+    visual_config = tier_config.get("visual", {})
+    expected_dimension = visual_config.get("dimensions", 768)
+
+    logger.info(f"[TIER CHECK] Current tier: {tier_name}, Expected dimension: {expected_dimension}")
+
+    # Check DB compatibility
+    db = SQLiteDB()
+    compat = db.check_tier_compatibility(tier_name, expected_dimension)
+
+    if not compat['compatible']:
+        logger.error("=" * 60)
+        logger.error("[TIER MISMATCH] Database is incompatible with current tier!")
+        logger.error(f"  DB Tier: {compat['db_tier']} (dimension: {compat['db_dimension']})")
+        logger.error(f"  Current Tier: {tier_name} (dimension: {expected_dimension})")
+        logger.error("")
+        logger.error("Action Required:")
+        logger.error(f"  {compat['action_required']}")
+        logger.error("")
+        logger.error("Options:")
+        logger.error("  1. Reprocess all files:")
+        logger.error(f"     python backend/db/migrate_tier.py --tier {tier_name}")
+        logger.error("")
+        logger.error("  2. Change config.yaml back to previous tier:")
+        logger.error(f"     ai_mode.override: {compat['db_tier']}")
+        logger.error("=" * 60)
+        sys.exit(1)
+
+    logger.info(f"[TIER CHECK] Compatibility OK (DB tier: {compat['db_tier'] or 'empty'})")
+    db.close()
+
     if not batch_enabled and args.batch_size in ['auto', 'adaptive']:
         logger.info("[CONFIG] Batch processing disabled in config.yaml")
         logger.info("[CONFIG] Forcing batch_size=1 (sequential processing)")
