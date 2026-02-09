@@ -10,12 +10,20 @@ v3.1: Supports 3-Tier architecture (Standard/Pro/Ultra) with automatic VRAM dete
 
 import os
 import logging
+import platform
 from pathlib import Path
 from typing import Optional, Dict, Any
 from PIL import Image
 
 # v3.1: Tier-aware configuration
 from backend.utils.tier_config import get_active_tier
+
+# v3.1.1: Platform-specific optimization
+from backend.utils.platform_detector import (
+    get_optimal_backend,
+    get_optimal_batch_size,
+    get_platform_info
+)
 
 # Load environment variables
 try:
@@ -52,9 +60,10 @@ class VisionAnalyzerFactory:
         Create vision analyzer based on environment configuration.
 
         v3.1: Uses tier-aware configuration (Standard/Pro/Ultra).
+        v3.1.1: Platform-specific optimization (auto backend selection).
 
         Returns:
-            VisionAnalyzer (Transformers) or OllamaVisionAdapter
+            VisionAnalyzer (Transformers), OllamaVisionAdapter, or VLLMAdapter
         """
         # Use cached instance for efficiency
         if cls._cached_analyzer is not None:
@@ -69,20 +78,60 @@ class VisionAnalyzerFactory:
         backend = vlm_config.get("backend") or os.getenv('VISION_BACKEND') or "transformers"
         backend = backend.lower()
 
+        # v3.1.1: AUTO mode - platform-specific optimization
+        model = None  # Will be set by platform config or fallback
+        if backend == 'auto':
+            current_platform = platform.system().lower()  # 'windows', 'darwin', 'linux'
+
+            logger.info(f"AUTO mode enabled (platform: {current_platform}, tier: {tier_name})")
+
+            # Try platform-specific config first
+            platform_configs = vlm_config.get("backends", {})
+            if current_platform in platform_configs:
+                platform_config = platform_configs[current_platform]
+                backend = platform_config.get("backend", "ollama")
+                model = platform_config.get("model")
+
+                logger.info(f"✓ Platform-specific config found: {backend} ({model})")
+            else:
+                # Fallback to platform detector
+                backend = get_optimal_backend(tier_name)
+                logger.info(f"✓ Platform detector selected: {backend}")
+
+        # Backend instantiation
+        if backend == 'vllm':
+            logger.info(f"Using vLLM vision backend (tier: {tier_name})")
+
+            # Check platform compatibility
+            if platform.system() == 'Windows':
+                logger.error("vLLM is not supported on Windows. Falling back to Ollama.")
+                backend = 'ollama'
+            else:
+                from .vllm_adapter import VLLMAdapter
+
+                # Model selection
+                model = model or vlm_config.get("model") or os.getenv('VISION_MODEL') or "Qwen/Qwen3-VL-8B-Instruct"
+
+                cls._cached_analyzer = VLLMAdapter(
+                    model=model,
+                    tier_name=tier_name
+                )
+                return cls._cached_analyzer
+
         if backend == 'ollama':
             logger.info(f"Using Ollama vision backend (tier: {tier_name})")
             from .ollama_adapter import OllamaVisionAdapter
 
             # Fix: Tier-specific model takes priority over env override
-            model = vlm_config.get("model") or os.getenv('VISION_MODEL') or "qwen3-vl:4b"
+            model = model or vlm_config.get("model") or os.getenv('VISION_MODEL') or "qwen3-vl:4b"
             cls._cached_analyzer = OllamaVisionAdapter(model=model)
 
-        else:
+        else:  # transformers (default)
             logger.info(f"Using Transformers vision backend (tier: {tier_name})")
             from .analyzer import VisionAnalyzer
 
             # Fix: Tier-specific model takes priority over env override
-            model = vlm_config.get("model") or os.getenv('VISION_MODEL') or "Qwen/Qwen2-VL-2B-Instruct"
+            model = model or vlm_config.get("model") or os.getenv('VISION_MODEL') or "Qwen/Qwen2-VL-2B-Instruct"
             device = vlm_config.get("device") or os.getenv('VISION_DEVICE') or "auto"
             dtype = vlm_config.get("dtype", "float16")
 

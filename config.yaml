@@ -48,10 +48,32 @@ ai_mode:
         dimensions: 1664
         model: google/siglip2-giant-opt-patch16-256
       vlm:
-        backend: ollama
+        # Backend: 'auto' enables platform-specific optimization
+        # 'ollama', 'vllm', or 'transformers' for explicit selection
+        backend: auto
         device: auto
         dtype: bfloat16
         model: qwen3-vl:8b
+
+        # Platform-specific configurations (used when backend=auto)
+        backends:
+          windows:
+            backend: ollama
+            model: qwen3-vl:8b
+            batch_size: 1  # Ollama Vision API: sequential only
+            note: vLLM not supported on Windows
+
+          darwin:  # macOS
+            backend: vllm  # Preferred for batch processing
+            model: Qwen/Qwen3-VL-8B-Instruct
+            batch_size: 16  # vLLM supports excellent batching
+            fallback: ollama  # If vLLM not installed
+
+          linux:
+            backend: vllm  # Preferred for batch processing
+            model: Qwen/Qwen3-VL-8B-Instruct
+            batch_size: 16
+            fallback: ollama
       vram_min: 20480
 embedding:
   text:
