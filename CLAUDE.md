@@ -540,3 +540,91 @@ const { t } = useLocale();
 4. **Factory Pattern 사용**: 새 파서는 BaseParser를 상속하고 can_parse() 구현
 5. **문제 발생 시 기록 필수**: troubleshooting.md에 모든 이슈와 해결책 문서화
 6. **UI 문자열 로컬라이제이션 필수**: 모든 프론트엔드 텍스트는 i18n 키 사용
+7. **플랫폼별 최적화 우선**: AUTO 모드를 사용하여 플랫폼에 맞는 백엔드 자동 선택
+
+---
+
+## 플랫폼별 최적화 규칙 (v3.1.1)
+
+**모든 vision 처리는 플랫폼별로 최적화된 백엔드를 사용합니다.**
+
+### 핵심 원칙
+
+1. **항상 AUTO 모드 사용**
+   ```yaml
+   # config.yaml
+   ai_mode:
+     tiers:
+       ultra:
+         vlm:
+           backend: auto  # 플랫폼 자동 감지
+   ```
+
+2. **플랫폼별 권장 설정**
+   - **Windows**: Ollama (batch_size=1, 순차 처리)
+   - **Mac**: vLLM 우선 (batch_size=16, 병렬 처리)
+   - **Linux**: vLLM 우선 (batch_size=16, 병렬 처리)
+
+3. **성능 특성 이해**
+   - Ollama Vision API: 배치 처리 시 성능 저하 (0.6x)
+   - vLLM: 배치 처리 시 8.5배 향상
+   - Transformers: 배치 처리 시 4-14배 향상
+
+### 실측 벤치마크 데이터
+
+**Ultra Tier (Qwen3-VL-8B):**
+
+| 플랫폼 | 백엔드 | 1개 이미지 | 10개 이미지 | Speedup |
+|--------|--------|-----------|-------------|---------|
+| Windows | Ollama | 51초 | 510초 | 1.0x (기준) |
+| Mac/Linux | vLLM | ~6초 | ~60초 | 8.5x |
+| Mac/Linux | Ollama | 51초 | 510초 | 1.0x |
+
+**Windows + Ollama 배치 처리 특성:**
+- batch_size=1: 평균 68.9초/파일 (일관적)
+- batch_size=3: 평균 127.8초/파일 (2배 느림)
+- **결론**: 순차 처리가 최적
+
+### 개발 가이드라인
+
+**새 기능 개발 시:**
+```python
+# ✅ 올바른 방법 - Factory 사용 (플랫폼 자동 감지)
+from backend.vision.vision_factory import get_vision_analyzer
+analyzer = get_vision_analyzer()  # AUTO 모드 작동
+
+# ❌ 잘못된 방법 - 직접 adapter 초기화
+from backend.vision.ollama_adapter import OllamaVisionAdapter
+analyzer = OllamaVisionAdapter()  # 플랫폼 무시
+```
+
+**배치 처리 구현 시:**
+```python
+# 플랫폼별 최적 batch_size 자동 감지
+from backend.utils.platform_detector import get_optimal_batch_size
+
+optimal_batch = get_optimal_batch_size(backend='auto', tier='ultra')
+# Windows: 1, Mac/Linux: 16
+```
+
+### 문제 해결 체크리스트
+
+**Vision 처리가 느린 경우:**
+1. [ ] 플랫폼 확인: `python -m backend.utils.platform_detector`
+2. [ ] Tier 확인: config.yaml의 `override` 설정
+3. [ ] Backend 확인: 로그에서 "Using ... backend" 검색
+4. [ ] Batch size 확인: Windows는 1이 최적
+
+**Windows에서 속도 개선 원하는 경우:**
+- **단기**: Tier 낮추기 (ultra → pro → standard)
+- **장기**: Mac/Linux 서버로 마이그레이션 (8.5배 향상)
+- **대안**: WSL2 + vLLM (고급 사용자)
+
+### 관련 문서
+
+- [플랫폼별 최적화 가이드](docs/platform_optimization.md) - 상세 설정
+- [빠른 시작 가이드](docs/quick_start_guide.md) - 플랫폼별 사용법
+- [Ollama 배치 분석](docs/ollama_batch_processing_analysis.md) - 벤치마크 데이터
+
+**심각도**: ⚠️ HIGH - 성능에 직접적인 영향
+**적용 시기**: v3.1.1부터 필수

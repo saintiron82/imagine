@@ -589,13 +589,14 @@ def start_watcher(path: str):
 
 
 def parse_batch_size(value):
-    """Parse batch size argument (int or 'auto')."""
-    if value.lower() == 'auto':
-        return 'auto'
+    """Parse batch size argument (int, 'auto', or 'adaptive')."""
+    value_lower = value.lower()
+    if value_lower in ['auto', 'adaptive']:
+        return value_lower
     try:
         return int(value)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"batch-size must be an integer or 'auto', got: {value}")
+        raise argparse.ArgumentTypeError(f"batch-size must be an integer, 'auto', or 'adaptive', got: {value}")
 
 
 def main():
@@ -605,46 +606,105 @@ def main():
     parser.add_argument("--watch", help="Watch a directory for changes (includes initial scan)")
     parser.add_argument("--discover", help="DFS scan directory and process all supported images")
     parser.add_argument("--no-skip", action="store_true", help="Disable smart skip (reprocess all files)")
-    parser.add_argument("--batch-size", type=parse_batch_size, default=5,
-                       help="Number of files to process concurrently (default: 5, set to 1 for sequential, 'auto' for automatic calibration)")
+    parser.add_argument("--batch-size", type=parse_batch_size, default='adaptive',
+                       help="Batch size: integer (e.g. 5), 'auto' (use cached optimal), or 'adaptive' (find optimal at runtime, default)")
 
     args = parser.parse_args()
 
-    # AUTO batch size calibration
-    if args.batch_size == 'auto':
-        logger.info("[AUTO] Automatic batch size calibration requested")
-
-        # Get current tier
+    # AUTO/ADAPTIVE batch size
+    if args.batch_size in ['auto', 'adaptive']:
         from backend.utils.tier_config import get_active_tier
+        from backend.utils.platform_detector import get_optimal_batch_size, get_platform_info
+        import platform as platform_module
+
         tier_name, _ = get_active_tier()
 
-        # Check for cached calibration
-        cached = AutoBatchCalibrator.load_latest_calibration(tier_name)
+        if args.batch_size == 'auto':
+            # Use cached optimal batch size
+            logger.info("[AUTO] Using cached optimal batch size")
 
-        if cached:
-            logger.info(f"[AUTO] Using cached calibration for {tier_name} tier")
-            logger.info(f"[AUTO] Recommended batch size: {cached['recommended']}")
-            args.batch_size = cached['recommended']
-        else:
-            logger.info(f"[AUTO] No cached calibration found for {tier_name}, running calibration...")
-
-            # Gather test files
-            test_dir = Path("test_assets")
-            test_files = [str(f) for f in test_dir.glob("*.psd")] + \
-                        [str(f) for f in test_dir.glob("*.png")]
-            test_files = test_files[:64]  # Max 64 for calibration
-
-            if len(test_files) < 8:
-                logger.warning(f"[AUTO] Not enough test files ({len(test_files)}), using default batch size 5")
-                args.batch_size = 5
+            cached = AutoBatchCalibrator.load_latest_calibration(tier_name)
+            if cached:
+                logger.info(f"[AUTO] Cached batch size for {tier_name}: {cached['recommended']}")
+                args.batch_size = cached['recommended']
             else:
-                calibrator = AutoBatchCalibrator(tier=tier_name)
-                config = calibrator.calibrate(test_files)
-                args.batch_size = config['recommended']
-                logger.info(f"[AUTO] Calibration complete! Using batch size: {args.batch_size}")
+                # Fallback to platform detector
+                logger.info("[AUTO] No cache found, using platform detector")
+                backend = 'auto'  # Let platform detector decide
+                args.batch_size = get_optimal_batch_size(backend, tier_name)
+                logger.info(f"[AUTO] Platform-recommended batch size: {args.batch_size}")
+
+        elif args.batch_size == 'adaptive':
+            # Adaptive mode: Start with 1, increase gradually
+            logger.info("[ADAPTIVE] Adaptive batch sizing enabled")
+            logger.info("[ADAPTIVE] Will start with batch_size=1 and increase during processing")
+
+            platform_info = get_platform_info()
+            logger.info(f"[ADAPTIVE] Platform: {platform_info['os']}, Tier: {tier_name}")
+
+            # Note: Actual adaptive logic will be applied during processing
+            args.batch_size = 'adaptive'  # Keep as string for later processing
 
     if args.discover:
-        run_discovery(args.discover, skip_processed=not args.no_skip, batch_size=args.batch_size)
+        if args.batch_size == 'adaptive':
+            # Adaptive batch processing
+            from backend.utils.adaptive_batch_processor import AdaptiveBatchProcessor
+            logger.info("[ADAPTIVE] Using adaptive batch processor")
+
+            # Discover files first
+            root_path = Path(args.discover).resolve()
+            discovered = discover_files(root_path)
+            total = len(discovered)
+            logger.info(f"[DISCOVER] Found {total} supported files")
+
+            if total == 0:
+                return
+
+            # Filter files (smart skip)
+            db = None
+            if not args.no_skip:
+                try:
+                    from backend.db.sqlite_client import SQLiteDB
+                    db = SQLiteDB()
+                except Exception as e:
+                    logger.warning(f"Cannot open DB for smart skip: {e}")
+
+            to_process = []
+            skipped = 0
+            for fp, folder, depth, tags in discovered:
+                if not args.no_skip and db and should_skip_file(fp, db):
+                    skipped += 1
+                    logger.debug(f"[SKIP] {fp.name} (unchanged)")
+                else:
+                    to_process.append((fp, folder, depth, tags))
+
+            if skipped > 0:
+                logger.info(f"[SKIP] {skipped} files unchanged, {len(to_process)} to process")
+
+            if len(to_process) == 0:
+                logger.info("[DONE] No files to process")
+                return
+
+            # Adaptive processing
+            def process_single(args_tuple):
+                fp, folder, depth, tags = args_tuple
+                process_file(fp, folder_path=folder, folder_depth=depth, folder_tags=tags)
+                return fp
+
+            processor = AdaptiveBatchProcessor(
+                process_func=process_single,
+                platform=platform_module.system(),
+                tier=tier_name
+            )
+
+            results, optimal_batch_size = processor.process_adaptive(to_process, use_cache=True)
+
+            logger.info(f"[ADAPTIVE] Optimal batch size found: {optimal_batch_size}")
+            logger.info(f"\n{processor.get_metrics_summary()}")
+            logger.info(f"[DONE] {len(to_process)} processed, {skipped} skipped (total: {total})")
+        else:
+            # Standard batch processing
+            run_discovery(args.discover, skip_processed=not args.no_skip, batch_size=args.batch_size)
     elif args.files:
         # Batch mode - process files with parallel processing
         import json
@@ -664,7 +724,28 @@ def main():
                     return ('error', fp, str(e))
 
             processed, errors = 0, 0
-            if args.batch_size > 1 and total > 1:
+            if args.batch_size == 'adaptive':
+                # Adaptive batch processing
+                from backend.utils.adaptive_batch_processor import AdaptiveBatchProcessor
+                logger.info("[ADAPTIVE] Using adaptive batch processor")
+
+                def process_single(fp):
+                    process_file(Path(fp))
+                    return fp
+
+                processor = AdaptiveBatchProcessor(
+                    process_func=process_single,
+                    platform=platform_module.system(),
+                    tier=tier_name
+                )
+
+                results, optimal_batch_size = processor.process_adaptive(file_list, use_cache=True)
+                processed = len(file_list)
+                errors = 0
+
+                logger.info(f"[ADAPTIVE] Optimal batch size found: {optimal_batch_size}")
+                logger.info(f"\n{processor.get_metrics_summary()}")
+            elif args.batch_size > 1 and total > 1:
                 with ThreadPoolExecutor(max_workers=args.batch_size) as executor:
                     futures = [executor.submit(process_indexed_file, (i, fp)) for i, fp in enumerate(file_list, 1)]
                     for future in as_completed(futures):
