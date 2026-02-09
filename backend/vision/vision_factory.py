@@ -65,24 +65,25 @@ class VisionAnalyzerFactory:
         vlm_config = tier_config.get("vlm", {})
 
         # Backend selection: tier config > env var > default
-        backend = os.getenv('VISION_BACKEND') or vlm_config.get("backend", "transformers")
+        # Fix: Tier config should take priority over .env (GUI settings must be respected)
+        backend = vlm_config.get("backend") or os.getenv('VISION_BACKEND') or "transformers"
         backend = backend.lower()
 
         if backend == 'ollama':
             logger.info(f"Using Ollama vision backend (tier: {tier_name})")
             from .ollama_adapter import OllamaVisionAdapter
 
-            # Use tier-specific model or env override
-            model = os.getenv('VISION_MODEL') or vlm_config.get("model", "qwen3-vl:4b")
+            # Fix: Tier-specific model takes priority over env override
+            model = vlm_config.get("model") or os.getenv('VISION_MODEL') or "qwen3-vl:4b"
             cls._cached_analyzer = OllamaVisionAdapter(model=model)
 
         else:
             logger.info(f"Using Transformers vision backend (tier: {tier_name})")
             from .analyzer import VisionAnalyzer
 
-            # Use tier-specific model or env override
-            model = os.getenv('VISION_MODEL') or vlm_config.get("model", "Qwen/Qwen2-VL-2B-Instruct")
-            device = os.getenv('VISION_DEVICE') or vlm_config.get("device", "auto")
+            # Fix: Tier-specific model takes priority over env override
+            model = vlm_config.get("model") or os.getenv('VISION_MODEL') or "Qwen/Qwen2-VL-2B-Instruct"
+            device = vlm_config.get("device") or os.getenv('VISION_DEVICE') or "auto"
             dtype = vlm_config.get("dtype", "float16")
 
             cls._cached_analyzer = VisionAnalyzer(
