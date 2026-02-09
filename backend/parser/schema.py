@@ -53,10 +53,10 @@ class AssetMeta(BaseModel):
         description="Text extracted from text layers or OCR"
     )
 
-    # === AI-Generated Content (Phase 4) ===
-    ai_caption: Optional[str] = Field(
+    # === AI-Generated Content (Phase 4 → v3.1: mc_caption) ===
+    mc_caption: Optional[str] = Field(
         None,
-        description="AI-generated detailed caption describing the image"
+        description="Meta-Context Caption: AI-generated caption with file metadata context"
     )
     ai_tags: List[str] = Field(
         default_factory=list,
@@ -175,6 +175,28 @@ class AssetMeta(BaseModel):
     folder_tags: List[str] = Field(
         default_factory=list,
         description="Folder names as searchable tags (e.g., ['Characters', 'Hero'])"
+    )
+
+    # === v3.1: 3-Tier AI Mode Metadata ===
+    mode_tier: str = Field(
+        "pro",
+        description="AI mode tier: standard | pro | ultra"
+    )
+    caption_model: str = Field(
+        "",
+        description="VLM model used for captioning (e.g., Qwen/Qwen3-VL-4B-Instruct)"
+    )
+    text_embed_model: str = Field(
+        "",
+        description="Text embedding model (e.g., qwen3-embedding:0.6b)"
+    )
+    runtime_version: str = Field(
+        "",
+        description="Ollama/runtime version (e.g., ollama-0.15.2)"
+    )
+    preprocess_params: Dict = Field(
+        default_factory=dict,
+        description="Preprocessing parameters: max_edge, aspect_ratio_mode, padding_color"
     )
 
 

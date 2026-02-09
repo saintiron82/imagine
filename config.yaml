@@ -1,4 +1,4 @@
-# config.yaml — ImageParser v3 configuration
+# config.yaml — ImageParser v3.1 configuration
 # .env overrides are supported for backward compatibility
 
 # ══════════════════════════════════════════════════════
@@ -12,23 +12,61 @@ vision:
   ollama_host: "http://localhost:11434"
 
 # ══════════════════════════════════════════════════════
-# Search
+# Thumbnail
+# ══════════════════════════════════════════════════════
+thumbnail:
+  max_size: 1024                 # Max width/height (Phase 3.1: increased from 512)
+  format: "png"                  # RGBA PNG for transparency preservation
+  keep_alpha: true               # Keep alpha channel (disk storage)
+  index_composite_bg: "#FFFFFF"  # Background color for RGB composite (indexing only)
+
+# ══════════════════════════════════════════════════════
+# Search (v3.1: Candidate First + 3-column FTS)
 # ══════════════════════════════════════════════════════
 search:
+  candidate:
+    hard_no_full_scan: true      # Never full-scan vectors (always use candidates)
+    full_scan_threshold: 10000   # If candidates > this, cut to topn
+    fts_topn_cut: 2000           # Top N candidates to keep if over threshold
+    no_cut_if_under: 200         # If candidates < this, don't cut (use all)
+
   rrf:
     k: 60                        # RRF k parameter
-    auto_weight: true             # P2+ Auto-Weighted RRF (query_type → preset)
-    manual_weights:               # Used when auto_weight: false
-      visual: 0.34
-      text_vec: 0.33
-      fts: 0.33
+    preset: "balanced"           # Default preset
+    presets:
+      balanced:                  # VV/MV/FTS balanced
+        vv: 0.34
+        mv: 0.33
+        fts: 0.33
+      visual:                    # Visual-heavy
+        vv: 0.50
+        mv: 0.30
+        fts: 0.20
+      semantic:                  # Semantic-heavy (VV + MV)
+        vv: 0.40
+        mv: 0.40
+        fts: 0.20
+      fact:                      # Fact-heavy (FTS dominant)
+        vv: 0.25
+        mv: 0.25
+        fts: 0.50
+
+  fts:
+    bm25_weights:                # BM25 per-column weights (v3.1: 3-column FTS)
+      meta_strong: 3.0           # file_name, layer_names, used_fonts, user_tags, ocr_text
+      meta_weak: 1.5             # file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
+      caption: 0.7               # mc_caption, ai_tags (AI-generated)
+
+  threshold:                     # Per-axis minimum thresholds
+    visual: 0.05                 # SigLIP cosine: 0.10-0.17 typical match
+    text_vec: 0.15               # Qwen3 cosine: 0.65-0.78 typical match
 
 # ══════════════════════════════════════════════════════
 # Embedding
 # ══════════════════════════════════════════════════════
 embedding:
   visual:
-    model: "google/siglip2-so400m-patch14-384"
+    model: "google/siglip2-so400m-patch16-naflex"
     dimensions: 1152
   text:
     enabled: true
@@ -41,3 +79,73 @@ embedding:
 # ══════════════════════════════════════════════════════
 storage:
   path_style: "posix"            # Always use forward slashes
+
+# ══════════════════════════════════════════════════════
+# AI Mode (v3.1: 3-Tier Architecture)
+# ══════════════════════════════════════════════════════
+ai_mode:
+  auto_detect: true               # VRAM 자동 감지 (true/false)
+  override: null                  # null | "standard" | "pro" | "ultra"
+
+  # Tier 정의
+  tiers:
+    standard:
+      vram_max: 6144              # MB
+      visual:
+        model: "google/siglip2-base-patch16-224"
+        dimensions: 768
+      vlm:
+        backend: "transformers"   # transformers | ollama
+        model: "vikhyatk/moondream2"
+        device: "auto"
+      text_embed:
+        model: "google/gemma-2b-instruct"  # EmbeddingGemma-300m 래퍼
+        dimensions: 256           # MRL truncation
+        normalize: true
+      preprocess:
+        max_edge: 512
+        aspect_ratio_mode: "contain"
+        padding_color: "#FFFFFF"
+
+    pro:
+      vram_min: 8192
+      vram_max: 16384
+      visual:
+        model: "google/siglip2-so400m-patch14-384"
+        dimensions: 1152
+      vlm:
+        backend: "transformers"
+        model: "Qwen/Qwen3-VL-4B-Instruct"
+        device: "auto"
+      text_embed:
+        model: "qwen3-embedding:0.6b"
+        dimensions: 1024
+      preprocess:
+        max_edge: 768
+        aspect_ratio_mode: "contain"
+        padding_color: "#FFFFFF"
+
+    ultra:
+      vram_min: 20480
+      visual:
+        model: "google/siglip2-giant-opt-patch16-256"
+        dimensions: 1664
+      vlm:
+        backend: "transformers"
+        model: "Qwen/Qwen3-VL-8B-Instruct"
+        device: "auto"
+        dtype: "bfloat16"
+      text_embed:
+        model: "qwen3-embedding:8b"
+        dimensions: 4096
+      preprocess:
+        max_edge: 1024
+        aspect_ratio_mode: "contain"
+        padding_color: "#FFFFFF"
+
+# ══════════════════════════════════════════════════════
+# Runtime (v3.1: Version Management)
+# ══════════════════════════════════════════════════════
+runtime:
+  ollama_version: "0.15.2"
+  pin_version: false

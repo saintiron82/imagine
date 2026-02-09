@@ -163,15 +163,40 @@ def process_file(
 
                 from PIL import Image
                 import json as _json
-                image = Image.open(thumb_path).convert("RGB")
+
+                # v3.1: Load thumbnail (keep RGBA if present)
+                thumb_img = Image.open(thumb_path)
+
+                # Build MC.raw context before vision analysis
+                mc_raw = {
+                    "file_name": meta.file_name,
+                    "folder_path": meta.folder_path or "",
+                    "layer_names": meta.semantic_tags[:200] if meta.semantic_tags else [],  # First 200 chars
+                    "used_fonts": meta.used_fonts[:5] if meta.used_fonts else [],  # First 5 fonts
+                    "ocr_text": "",  # Will be filled by vision
+                    "text_content": meta.text_content[:3] if meta.text_content else [],  # First 3 text layers
+                }
+
+                # Composite to RGB for vision model (in-memory, not saved)
+                if thumb_img.mode == 'RGBA':
+                    from backend.utils.config import get_config
+                    cfg = get_config()
+                    bg_color = cfg.get('thumbnail.index_composite_bg', '#FFFFFF')
+                    # Convert hex to RGB
+                    bg_rgb = tuple(int(bg_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+                    background = Image.new('RGB', thumb_img.size, bg_rgb)
+                    background.paste(thumb_img, mask=thumb_img.split()[-1])
+                    image = background
+                else:
+                    image = thumb_img.convert("RGB")
 
                 # Check if adapter supports 2-stage
                 if hasattr(_global_vision_analyzer, 'classify_and_analyze'):
-                    # v3 2-Stage: classify → analyze_structured
-                    vision_result = _global_vision_analyzer.classify_and_analyze(image)
+                    # v3.1: 2-Stage with MC.raw context injection
+                    vision_result = _global_vision_analyzer.classify_and_analyze(image, context=mc_raw)
 
                     # Common fields
-                    meta.ai_caption = vision_result.get('caption', '')
+                    meta.mc_caption = vision_result.get('caption', '')
                     meta.ai_tags = vision_result.get('tags', [])
                     meta.ocr_text = vision_result.get('ocr', '') or vision_result.get('text_content', '')
                     meta.dominant_color = vision_result.get('color', '') or vision_result.get('color_palette', '')
@@ -193,11 +218,15 @@ def process_file(
                 else:
                     # Legacy single-pass fallback
                     vision_result = _global_vision_analyzer.analyze(image)
-                    meta.ai_caption = vision_result.get('caption', '')
+                    meta.mc_caption = vision_result.get('caption', '')
                     meta.ai_tags = vision_result.get('tags', [])
                     meta.ocr_text = vision_result.get('ocr', '')
                     meta.dominant_color = vision_result.get('color', '')
                     meta.ai_style = vision_result.get('style', '')
+
+                # v3.1: Compute perceptual hash (dHash) for de-duplication
+                from backend.utils.dhash import dhash64
+                meta.perceptual_hash = dhash64(image)
 
                 # v3 P0: path normalization (POSIX)
                 normalized = str(file_path).replace('\\', '/')
@@ -215,14 +244,28 @@ def process_file(
 
                 # v3 P0: embedding version
                 from backend.utils.config import get_config
+                from backend.utils.tier_config import get_active_tier
+
                 cfg = get_config()
-                meta.embedding_model = cfg.get("embedding.visual.model", "google/siglip2-so400m-patch14-384")
+                tier_name, tier_config = get_active_tier()
+
+                # v3.1: Tier metadata
+                meta.mode_tier = tier_name
+                meta.caption_model = tier_config.get("vlm", {}).get("model", "")
+                meta.text_embed_model = tier_config.get("text_embed", {}).get("model", "")
+                meta.runtime_version = cfg.get("runtime.ollama_version", "")
+                meta.preprocess_params = tier_config.get("preprocess", {})
+
+                # Visual encoder model (tier-aware)
+                meta.embedding_model = tier_config.get("visual", {}).get("model") or cfg.get(
+                    "embedding.visual.model", "google/siglip2-so400m-patch14-384"
+                )
                 meta.embedding_version = 1
 
                 # Save metadata with AI fields
                 parser._save_json(meta, file_path)
 
-                logger.info(f"   AI Caption: {meta.ai_caption[:80]}..." if len(meta.ai_caption or '') > 80 else f"   AI Caption: {meta.ai_caption}")
+                logger.info(f"   MC Caption: {meta.mc_caption[:80]}..." if len(meta.mc_caption or '') > 80 else f"   MC Caption: {meta.mc_caption}")
                 logger.info(f"   AI Tags: {', '.join(meta.ai_tags[:10])}")
                 if meta.ocr_text:
                     logger.info(f"   OCR: {meta.ocr_text[:50]}...")
@@ -290,7 +333,16 @@ def process_file(
                         _global_text_provider = get_text_embedding_provider()
 
                     from backend.vector.text_embedding import build_document_text
-                    doc_text = build_document_text(meta.ai_caption, meta.ai_tags)
+
+                    # v3.1: Build MV document with [SEMANTIC]/[FACTS] format
+                    facts = {
+                        "image_type": meta.image_type,
+                        "scene_type": meta.scene_type,
+                        "art_style": meta.art_style,
+                        "fonts": ", ".join(meta.used_fonts[:5]) if meta.used_fonts else None,
+                        "path": meta.relative_path or meta.folder_path,
+                    }
+                    doc_text = build_document_text(meta.mc_caption, meta.ai_tags, facts=facts)
                     if doc_text:
                         text_emb = _global_text_provider.encode(doc_text)
                         if np.any(text_emb):

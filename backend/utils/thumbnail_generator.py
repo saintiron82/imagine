@@ -3,6 +3,8 @@ Batch Thumbnail Generator with Parallel Processing.
 - Memory processing: 5 concurrent (ThreadPool)
 - Disk saving: Sequential (Lock)
 
+v3.1: Supports tier-aware preprocessing with aspect ratio preservation and letterbox padding.
+
 Usage:
     python thumbnail_generator.py <file_path>           # Single file (returns base64)
     python thumbnail_generator.py --batch <json_paths>  # Batch mode (saves to disk, returns status)
@@ -23,8 +25,17 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PIL import Image
+import yaml
 
-DEFAULT_SIZE = 512
+# Load config
+CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
+try:
+    with open(CONFIG_PATH, encoding='utf-8') as f:
+        CONFIG = yaml.safe_load(f)
+except:
+    CONFIG = {}
+
+DEFAULT_SIZE = CONFIG.get('thumbnail', {}).get('max_size', 1024)  # v3.1: increased from 512
 MAX_WORKERS = 5
 THUMB_DIR = Path(__file__).parent.parent.parent / "output" / "thumbnails"
 
@@ -63,14 +74,12 @@ def process_single(file_path: str, size: int = DEFAULT_SIZE) -> tuple[Image.Imag
         else:
             img = Image.open(file_path)
         
-        # Convert to RGB
-        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-            background = Image.new('RGB', img.size, (255, 255, 255))
-            if img.mode == 'P':
-                img = img.convert('RGBA')
-            background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
-            img = background
-        elif img.mode != 'RGB':
+        # v3.1: Keep RGBA for disk storage (transparency preservation)
+        # Composite to RGB will be done in-memory during indexing
+        if img.mode == 'P':
+            img = img.convert('RGBA')
+        elif img.mode not in ('RGB', 'RGBA'):
+            # Convert grayscale/other modes to RGB
             img = img.convert('RGB')
         
         # Resize
@@ -146,13 +155,102 @@ def generate_batch(file_paths: list[str], size: int = DEFAULT_SIZE) -> dict:
     return results
 
 
+# ══════════════════════════════════════════════════════════════════
+# v3.1: Tier-Aware Preprocessing with Aspect Ratio Preservation
+# ══════════════════════════════════════════════════════════════════
+
+def _parse_color(hex_color: str) -> tuple:
+    """Convert hex color to RGB/RGBA tuple."""
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 6:
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    elif len(hex_color) == 8:
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4, 6))
+    else:
+        return (255, 255, 255)  # White fallback
+
+
+def generate_thumbnail_with_tier(file_path: str) -> Image.Image:
+    """
+    Tier-aware thumbnail generation with aspect ratio preservation.
+
+    v3.1: Applies tier-specific preprocessing:
+    - Standard: max_edge=512, letterbox padding
+    - Pro: max_edge=768, letterbox padding
+    - Ultra: max_edge=1024, letterbox padding
+
+    Args:
+        file_path: Path to image file (PSD/PNG/JPG)
+
+    Returns:
+        PIL Image (RGBA or RGB) with aspect ratio preserved and letterbox padding
+
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        Exception: If image loading/processing fails
+    """
+    from backend.utils.tier_config import get_active_tier
+
+    tier_name, tier_config = get_active_tier()
+    preprocess = tier_config.get("preprocess", {})
+
+    max_edge = preprocess.get("max_edge", 768)
+    mode = preprocess.get("aspect_ratio_mode", "contain")
+    padding_color = preprocess.get("padding_color", "#FFFFFF")
+
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Load original image
+    ext = path.suffix.lower()
+    if ext == '.psd':
+        from psd_tools import PSDImage
+        psd = PSDImage.open(file_path)
+        img = psd.composite()
+    else:
+        img = Image.open(file_path)
+
+    # Convert palette/grayscale to RGBA/RGB
+    if img.mode == 'P':
+        img = img.convert('RGBA')
+    elif img.mode not in ('RGB', 'RGBA', 'LA'):
+        img = img.convert('RGB')
+
+    # Aspect Ratio preservation with contain mode
+    w, h = img.size
+    scale = min(max_edge / w, max_edge / h)
+    new_w, new_h = int(w * scale), int(h * scale)
+
+    img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    if mode == "contain":
+        # Create square canvas with letterbox padding
+        canvas_mode = "RGBA" if img.mode in ("RGBA", "LA") else "RGB"
+        canvas = Image.new(
+            canvas_mode,
+            (max_edge, max_edge),
+            _parse_color(padding_color)
+        )
+
+        # Center the resized image
+        offset_x = (max_edge - new_w) // 2
+        offset_y = (max_edge - new_h) // 2
+        canvas.paste(img_resized, (offset_x, offset_y))
+
+        return canvas
+    else:
+        # Direct resize without padding (legacy mode)
+        return img_resized
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('file_path', nargs='?', help='Single file path')
     parser.add_argument('--batch', type=str, help='JSON array of file paths for batch mode')
     parser.add_argument('--size', type=int, default=DEFAULT_SIZE)
     args = parser.parse_args()
-    
+
     if args.batch:
         # Batch mode
         paths = json.loads(args.batch)

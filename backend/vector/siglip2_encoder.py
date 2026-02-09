@@ -1,12 +1,12 @@
 """
-SigLIP 2 Vision-Language Encoder for image/text embeddings.
+SigLIP 2 NaFlex Vision-Language Encoder for image/text embeddings.
 
-Replaces CLIP ViT-L-14 (768-dim) with SigLIP 2 So400m (1152-dim).
-Uses HuggingFace transformers AutoModel (not sentence-transformers).
+Uses SigLIP 2 So400m NaFlex (1152-dim) with dynamic resolution.
+NaFlex preserves native aspect ratio for better embedding quality.
 
-Note: AutoProcessor has a tokenizer mapping bug in transformers 5.x,
-so we load AutoImageProcessor and GemmaTokenizerFast separately.
-Forward pass (model(**inputs)) returns pooled image_embeds/text_embeds.
+v3.1: Supports 3-Tier architecture with automatic model selection.
+
+API: get_image_features / get_text_features → pooler_output (768/1152/1664,)
 """
 
 import logging
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class SigLIP2Encoder:
     """
-    Lazy-loaded SigLIP 2 encoder for image and text embeddings.
+    Lazy-loaded SigLIP 2 NaFlex encoder for image and text embeddings.
 
     Usage:
         encoder = SigLIP2Encoder()                        # config-driven
@@ -30,35 +30,44 @@ class SigLIP2Encoder:
 
     def __init__(self, model_name: Optional[str] = None):
         from ..utils.config import get_config
+        from ..utils.tier_config import get_active_tier
+
         cfg = get_config()
 
-        self.model_name = model_name or cfg.get(
-            "embedding.visual.model", "google/siglip2-so400m-patch14-384"
+        # v3.1: Tier-aware model selection
+        tier_name, tier_config = get_active_tier()
+        visual_config = tier_config.get("visual", {})
+
+        # Priority: explicit param > tier config > legacy config
+        self.model_name = model_name or visual_config.get("model") or cfg.get(
+            "embedding.visual.model", "google/siglip2-so400m-patch16-naflex"
         )
-        self._dimensions = cfg.get("embedding.visual.dimensions", 1152)
+        self._dimensions = visual_config.get("dimensions") or cfg.get(
+            "embedding.visual.dimensions", 1152
+        )
+        self.tier_name = tier_name
         self._model = None
-        self._image_processor = None
-        self._tokenizer = None
+        self._processor = None
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        logger.info(f"SigLIP2Encoder initialized (model: {self.model_name}, device: {self._device})")
+        logger.info(
+            f"SigLIP2Encoder initialized (tier: {tier_name}, model: {self.model_name}, "
+            f"dimensions: {self._dimensions}, device: {self._device})"
+        )
 
     def _load(self):
-        """Lazy-load model, image processor, and tokenizer on first use."""
-        if self._model is not None and self._image_processor is not None and self._tokenizer is not None:
+        """Lazy-load model and processor on first use."""
+        if self._model is not None and self._processor is not None:
             return
 
-        from transformers import AutoModel, AutoImageProcessor, GemmaTokenizerFast
+        from transformers import AutoModel, AutoProcessor
 
         logger.info(f"Loading SigLIP 2 model: {self.model_name}...")
         try:
             self._model = AutoModel.from_pretrained(
                 self.model_name, dtype=torch.float16, local_files_only=True
             ).to(self._device).eval()
-            self._image_processor = AutoImageProcessor.from_pretrained(
-                self.model_name, local_files_only=True
-            )
-            self._tokenizer = GemmaTokenizerFast.from_pretrained(
+            self._processor = AutoProcessor.from_pretrained(
                 self.model_name, local_files_only=True
             )
             logger.info(f"SigLIP 2 model loaded ({self._device}, fp16)")
@@ -67,14 +76,12 @@ class SigLIP2Encoder:
             self._model = AutoModel.from_pretrained(
                 self.model_name, dtype=torch.float16
             ).to(self._device).eval()
-            self._image_processor = AutoImageProcessor.from_pretrained(self.model_name)
-            self._tokenizer = GemmaTokenizerFast.from_pretrained(self.model_name)
+            self._processor = AutoProcessor.from_pretrained(self.model_name)
             logger.info(f"SigLIP 2 model downloaded and loaded ({self._device}, fp16)")
         except Exception as e:
             logger.error(f"Failed to load SigLIP 2 model: {e}")
             self._model = None
-            self._image_processor = None
-            self._tokenizer = None
+            self._processor = None
             raise
 
     @property
@@ -85,7 +92,7 @@ class SigLIP2Encoder:
         """
         Encode a PIL Image to a normalized embedding vector.
 
-        Uses forward pass to get pooled image_embeds (not per-patch features).
+        NaFlex preserves native aspect ratio with dynamic patch count.
 
         Args:
             image: PIL Image (RGB)
@@ -94,17 +101,21 @@ class SigLIP2Encoder:
             L2-normalized numpy array of shape (1152,)
         """
         self._load()
-        img_inputs = self._image_processor(images=[image], return_tensors="pt")
-        img_inputs = {k: v.to(self._device) for k, v in img_inputs.items()}
-
-        # Dummy text input for forward pass (required by model)
-        txt_inputs = self._tokenizer([""], return_tensors="pt", padding=True)
-        txt_inputs = {k: v.to(self._device) for k, v in txt_inputs.items()}
+        inputs = self._processor(images=[image], return_tensors="pt")
+        inputs = {k: v.to(self._device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            outputs = self._model(**img_inputs, **txt_inputs)
+            image_features = self._model.get_image_features(**inputs)
 
-        vec = outputs.image_embeds[0].float().cpu().numpy()
+        # get_image_features returns BaseModelOutputWithPooling or tensor
+        if hasattr(image_features, 'pooler_output'):
+            vec = image_features.pooler_output[0]
+        elif image_features.dim() == 2:
+            vec = image_features[0]
+        else:
+            vec = image_features[1][0]  # fallback: index [1] = pooler_output
+
+        vec = vec.float().cpu().numpy()
         norm = np.linalg.norm(vec)
         if norm > 0:
             vec = vec / norm
@@ -114,7 +125,7 @@ class SigLIP2Encoder:
         """
         Encode a text query to a normalized embedding vector.
 
-        Uses forward pass to get pooled text_embeds.
+        Processor handles lowercasing + padding automatically.
 
         Args:
             text: Search query string
@@ -123,20 +134,24 @@ class SigLIP2Encoder:
             L2-normalized numpy array of shape (1152,)
         """
         self._load()
-        txt_inputs = self._tokenizer(
-            [text], return_tensors="pt", padding=True, truncation=True
+        inputs = self._processor(
+            text=[text], return_tensors="pt",
+            padding="max_length", max_length=64, truncation=True
         )
-        txt_inputs = {k: v.to(self._device) for k, v in txt_inputs.items()}
-
-        # Dummy image input for forward pass (required by model)
-        dummy_img = Image.new("RGB", (384, 384), (128, 128, 128))
-        img_inputs = self._image_processor(images=[dummy_img], return_tensors="pt")
-        img_inputs = {k: v.to(self._device) for k, v in img_inputs.items()}
+        inputs = {k: v.to(self._device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            outputs = self._model(**img_inputs, **txt_inputs)
+            text_features = self._model.get_text_features(**inputs)
 
-        vec = outputs.text_embeds[0].float().cpu().numpy()
+        # get_text_features returns BaseModelOutputWithPooling or tensor
+        if hasattr(text_features, 'pooler_output'):
+            vec = text_features.pooler_output[0]
+        elif text_features.dim() == 2:
+            vec = text_features[0]
+        else:
+            vec = text_features[1][0]  # fallback: index [1] = pooler_output
+
+        vec = vec.float().cpu().numpy()
         norm = np.linalg.norm(vec)
         if norm > 0:
             vec = vec / norm

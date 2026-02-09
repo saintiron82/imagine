@@ -27,22 +27,35 @@ class VisionAnalyzer:
     object detection.
     """
 
-    def __init__(self, device: Optional[str] = None, model_id: Optional[str] = None):
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        model_id: Optional[str] = None,
+        dtype: str = "float16",
+        tier_name: str = "pro"
+    ):
         """
         Initialize the vision analyzer.
 
         Args:
             device: Device to run the model on ('cuda', 'cpu', or None for auto)
             model_id: Model to use (default: Qwen2-VL-2B-Instruct)
+            dtype: Model precision ('float16', 'bfloat16', 'float32')
+            tier_name: AI tier for metadata tracking ('standard', 'pro', 'ultra')
         """
         self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
         # Default model: BLIP for stability, Qwen2-VL for quality
         # Options: "Salesforce/blip-image-captioning-large", "Qwen/Qwen2-VL-2B-Instruct"
         self.model_id = model_id if model_id else "Qwen/Qwen2-VL-2B-Instruct"
+        self.dtype = dtype
+        self.tier_name = tier_name
         self.model = None
         self.processor = None
 
-        logger.info(f"VisionAnalyzer initialized (device: {self.device}, model: {self.model_id})")
+        logger.info(
+            f"VisionAnalyzer initialized (tier: {tier_name}, device: {self.device}, "
+            f"model: {self.model_id}, dtype: {dtype})"
+        )
 
     def _load_model(self):
         """Lazy load the vision model."""

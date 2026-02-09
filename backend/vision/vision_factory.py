@@ -4,6 +4,8 @@ Vision Analyzer Factory - Environment-based adapter selection.
 Automatically chooses between:
 - Transformers (development): High accuracy, requires GPU/CPU resources
 - Ollama (deployment): Memory-efficient, automatic model management
+
+v3.1: Supports 3-Tier architecture (Standard/Pro/Ultra) with automatic VRAM detection.
 """
 
 import os
@@ -11,6 +13,9 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 from PIL import Image
+
+# v3.1: Tier-aware configuration
+from backend.utils.tier_config import get_active_tier
 
 # Load environment variables
 try:
@@ -46,6 +51,8 @@ class VisionAnalyzerFactory:
         """
         Create vision analyzer based on environment configuration.
 
+        v3.1: Uses tier-aware configuration (Standard/Pro/Ultra).
+
         Returns:
             VisionAnalyzer (Transformers) or OllamaVisionAdapter
         """
@@ -53,23 +60,37 @@ class VisionAnalyzerFactory:
         if cls._cached_analyzer is not None:
             return cls._cached_analyzer
 
-        backend = os.getenv('VISION_BACKEND', 'transformers').lower()
+        # v3.1: Load tier configuration
+        tier_name, tier_config = get_active_tier()
+        vlm_config = tier_config.get("vlm", {})
+
+        # Backend selection: tier config > env var > default
+        backend = os.getenv('VISION_BACKEND') or vlm_config.get("backend", "transformers")
+        backend = backend.lower()
 
         if backend == 'ollama':
-            logger.info("Using Ollama vision backend (deployment mode)")
+            logger.info(f"Using Ollama vision backend (tier: {tier_name})")
             from .ollama_adapter import OllamaVisionAdapter
 
-            # OllamaVisionAdapter reads from config.yaml internally
-            cls._cached_analyzer = OllamaVisionAdapter()
+            # Use tier-specific model or env override
+            model = os.getenv('VISION_MODEL') or vlm_config.get("model", "qwen3-vl:4b")
+            cls._cached_analyzer = OllamaVisionAdapter(model=model)
 
         else:
-            logger.info("Using Transformers vision backend (development mode)")
+            logger.info(f"Using Transformers vision backend (tier: {tier_name})")
             from .analyzer import VisionAnalyzer
 
-            model = os.getenv('VISION_MODEL', 'Qwen/Qwen2-VL-2B-Instruct')
-            device = os.getenv('VISION_DEVICE', None)  # auto-detect
+            # Use tier-specific model or env override
+            model = os.getenv('VISION_MODEL') or vlm_config.get("model", "Qwen/Qwen2-VL-2B-Instruct")
+            device = os.getenv('VISION_DEVICE') or vlm_config.get("device", "auto")
+            dtype = vlm_config.get("dtype", "float16")
 
-            cls._cached_analyzer = VisionAnalyzer(device=device, model_id=model)
+            cls._cached_analyzer = VisionAnalyzer(
+                device=device,
+                model_id=model,
+                dtype=dtype,
+                tier_name=tier_name  # v3.1: Pass tier for metadata tracking
+            )
 
         return cls._cached_analyzer
 

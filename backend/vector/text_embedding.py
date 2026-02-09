@@ -2,8 +2,11 @@
 Text Embedding Provider for T-axis semantic search.
 
 Uses Ollama's embed API with Qwen3-Embedding-0.6B (1024-dim) by default.
-Encodes ai_caption + ai_tags into a dense vector for text-to-text retrieval,
+Encodes mc_caption + ai_tags into a dense vector for text-to-text retrieval,
 complementing the V-axis (SigLIP 2 image-to-text) search.
+
+v3.1: Supports 3-Tier architecture with MRL (Matryoshka Representation Learning)
+truncation and re-normalization for efficient embedding.
 
 Usage:
     provider = get_text_embedding_provider()
@@ -59,6 +62,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         host: Optional[str] = None,
         dimensions: Optional[int] = None,
         instruction_prefix: Optional[str] = None,
+        normalize: bool = False,
     ):
         from ..utils.config import get_config
         cfg = get_config()
@@ -69,11 +73,12 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         self._instruction_prefix = instruction_prefix or cfg.get(
             "embedding.text.instruction_prefix", ""
         )
+        self._normalize = normalize  # v3.1: MRL re-normalization flag
         self._embed_url = f"{self.host.rstrip('/')}/api/embed"
 
         logger.info(
             f"OllamaEmbeddingProvider initialized "
-            f"(model={self.model}, dims={self._dimensions})"
+            f"(model={self.model}, dims={self._dimensions}, normalize={normalize})"
         )
 
     @property
@@ -115,10 +120,17 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
 
             vec = np.array(embeddings[0], dtype=np.float32)
 
-            # L2 normalize
-            norm = np.linalg.norm(vec)
-            if norm > 0:
-                vec = vec / norm
+            # v3.1: MRL Truncation + Re-normalize (if enabled)
+            if self._normalize and len(vec) > self._dimensions:
+                vec = vec[:self._dimensions]
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+            else:
+                # Standard L2 normalize
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
 
             return vec
 
@@ -177,20 +189,37 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
             return [np.zeros(self._dimensions, dtype=np.float32) for _ in texts]
 
 
-def build_document_text(caption: str, tags: list) -> str:
+def build_document_text(caption: str, tags: list, facts: dict = None) -> str:
     """
-    Build a document string from AI caption and tags for T-axis embedding.
+    Build a document string for MV (text_vec) embedding.
+
+    v3.1: Two-section format for better semantic separation:
+    - [SEMANTIC]: MC caption + AI tags (high-level meaning)
+    - [FACTS]: Structured metadata (image_type, path, fonts, etc.)
 
     Args:
-        caption: AI-generated image description
+        caption: MC caption (AI-generated with file metadata context)
         tags: AI-generated keyword tags
+        facts: Optional structured metadata dict
+               Keys: image_type, scene_type, art_style, fonts, path
 
     Returns:
         Combined text suitable for embedding
+
+    Example:
+        >>> build_document_text(
+        ...     "A warrior holding a sword",
+        ...     ["character", "fantasy", "weapon"],
+        ...     {"image_type": "character", "fonts": "NotoSans"}
+        ... )
+        '[SEMANTIC]\\nA warrior holding a sword\\nKeywords: character, fantasy, weapon\\n\\n[FACTS]\\nimage_type=character; fonts=NotoSans'
     """
     parts = []
+
+    # Section 1: SEMANTIC (caption + tags)
+    semantic_parts = []
     if caption and caption.strip():
-        parts.append(caption.strip())
+        semantic_parts.append(caption.strip())
     if tags:
         if isinstance(tags, str):
             try:
@@ -200,8 +229,25 @@ def build_document_text(caption: str, tags: list) -> str:
         if isinstance(tags, list) and tags:
             tag_str = ", ".join(str(t) for t in tags if t)
             if tag_str:
-                parts.append(f"Tags: {tag_str}")
-    return ". ".join(parts) if parts else ""
+                semantic_parts.append(f"Keywords: {tag_str}")
+
+    if semantic_parts:
+        parts.append("[SEMANTIC]")
+        parts.append("\n".join(semantic_parts))
+
+    # Section 2: FACTS (structured metadata)
+    if facts and isinstance(facts, dict):
+        fact_pairs = []
+        for key in ["image_type", "scene_type", "art_style", "fonts", "path"]:
+            val = facts.get(key)
+            if val and str(val).strip():
+                fact_pairs.append(f"{key}={val}")
+
+        if fact_pairs:
+            parts.append("\n[FACTS]")
+            parts.append("; ".join(fact_pairs))
+
+    return "\n".join(parts) if parts else ""
 
 
 # ── Singleton / Factory ───────────────────────────────────
@@ -213,9 +259,35 @@ def get_text_embedding_provider() -> EmbeddingProvider:
     """
     Return a singleton text embedding provider based on config.yaml.
 
-    Currently only OllamaEmbeddingProvider is supported.
+    v3.1: Tier-aware configuration (Standard/Pro/Ultra).
     """
     global _provider_instance
     if _provider_instance is None:
-        _provider_instance = OllamaEmbeddingProvider()
+        from ..utils.tier_config import get_active_tier
+        from ..utils.config import get_config
+
+        cfg = get_config()
+        tier_name, tier_config = get_active_tier()
+        text_config = tier_config.get("text_embed", {})
+
+        # Extract tier-specific settings
+        model = text_config.get("model") or cfg.get("embedding.text.model", "qwen3-embedding:0.6b")
+        dimensions = text_config.get("dimensions") or cfg.get("embedding.text.dimensions", 1024)
+        normalize = text_config.get("normalize", False)  # MRL re-normalize flag
+        host = cfg.get("vision.ollama_host", "http://localhost:11434")
+        instruction_prefix = cfg.get("embedding.text.instruction_prefix", "")
+
+        logger.info(
+            f"Initializing text embedding provider (tier: {tier_name}, "
+            f"model: {model}, dims: {dimensions}, MRL normalize: {normalize})"
+        )
+
+        _provider_instance = OllamaEmbeddingProvider(
+            model=model,
+            host=host,
+            dimensions=dimensions,
+            instruction_prefix=instruction_prefix,
+            normalize=normalize,
+        )
+
     return _provider_instance

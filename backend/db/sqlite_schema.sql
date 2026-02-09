@@ -16,12 +16,16 @@ CREATE TABLE IF NOT EXISTS files (
     width INTEGER,
     height INTEGER,
 
-    -- AI-generated fields (Phase 4)
-    ai_caption TEXT,
+    -- AI-generated fields (Phase 4 → v3.1)
+    mc_caption TEXT,  -- Meta-Context Caption (renamed from ai_caption in v3.1)
     ai_tags TEXT,  -- JSON array as TEXT: ["tag1", "tag2"]
     ocr_text TEXT,
     dominant_color TEXT,
     ai_style TEXT,
+
+    -- v3.1: Perceptual hash for de-duplication
+    perceptual_hash INTEGER,
+    dup_group_id INTEGER,
 
     -- Nested metadata (JSON for complex structures)
     -- Contains: layer_tree, semantic_tags, text_content, layer_count, used_fonts
@@ -64,7 +68,14 @@ CREATE TABLE IF NOT EXISTS files (
 
     -- v3 P0: Embedding version tracking
     embedding_model TEXT DEFAULT 'clip-ViT-L-14',
-    embedding_version INTEGER DEFAULT 1
+    embedding_version INTEGER DEFAULT 1,
+
+    -- v3.1: 3-Tier AI Mode metadata
+    mode_tier TEXT DEFAULT 'pro',                    -- standard | pro | ultra
+    caption_model TEXT,                              -- VLM model (e.g., Qwen/Qwen3-VL-4B-Instruct)
+    text_embed_model TEXT,                           -- Text embedding model (e.g., qwen3-embedding:0.6b)
+    runtime_version TEXT,                            -- Ollama/runtime version (e.g., ollama-0.15.2)
+    preprocess_params TEXT                           -- JSON: {max_edge, aspect_ratio_mode, padding_color}
 );
 
 -- Layers table: Layer-level metadata (optional)
@@ -117,79 +128,42 @@ CREATE INDEX IF NOT EXISTS idx_image_type ON files(image_type);
 CREATE INDEX IF NOT EXISTS idx_art_style ON files(art_style);
 CREATE INDEX IF NOT EXISTS idx_scene_type ON files(scene_type);
 CREATE INDEX IF NOT EXISTS idx_relative_path ON files(relative_path);
+CREATE INDEX IF NOT EXISTS idx_perceptual_hash ON files(perceptual_hash);
+CREATE INDEX IF NOT EXISTS idx_dup_group_id ON files(dup_group_id);
 
--- Full-text search (FTS5) — 16 columns, 3-axis architecture + v3.
+-- Full-text search (FTS5) — v3.1: 3-column BM25-weighted architecture
 --
--- 2축 Descriptive (AI 비저닝 — Qwen/Ollama):
---   ai_caption, ai_tags, ai_style, dominant_color, ocr_text
---   Note: ai_tags contains keywords NOT present in ai_caption (independently generated).
+-- meta_strong (BM25 weight: 3.0) — Direct identification facts:
+--   file_name, layer_names, used_fonts, user_tags, ocr_text
 --
--- 3축 Structural (PSD 파싱 + 파일 + 사용자):
---   file_path, file_name, layer_names, text_content, used_fonts, user_note, user_tags, folder_tags
+-- meta_weak (BM25 weight: 1.5) — Contextual information:
+--   file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
 --
--- v3 P0 (2-Stage Vision classification):
---   image_type, scene_type, art_style
+-- caption (BM25 weight: 0.7) — AI-generated content:
+--   mc_caption, ai_tags
 --
--- Merged (별도 컬럼 불필요):
---   semantic_tags → layer_names에 병합
+-- v3.1 Design: Candidate First
+--   1. FTS MATCH → candidate doc_id list (top 2000 if >10k results)
+--   2. NumPy scoring only on candidates (VV/MV vectors)
+--   3. RRF merge → de-dup → return
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
-    file_path,        -- 3축: file identity + folder path
-    file_name,        -- 3축: file name
-    ai_caption,       -- 2축: AI description
-    ai_tags,          -- 2축: AI keywords (independent from caption)
-    ai_style,         -- 2축: AI style (independent via Ollama)
-    layer_names,      -- 3축: PSD layers: original + KR + EN merged (Python)
-    text_content,     -- 3축: PSD text: original + KR + EN merged (Python)
-    ocr_text,         -- 2축: AI OCR
-    dominant_color,   -- 2축: image color
-    used_fonts,       -- 3축: PSD fonts (Python)
-    user_note,        -- 3축: user memo
-    user_tags,        -- 3축: user tags
-    image_type,       -- v3: AI classification
-    scene_type,       -- v3: background scene type
-    art_style,        -- v3: art style
-    folder_tags       -- 3축: folder name tags
+    meta_strong,      -- BM25 3.0: file_name, layer_names, used_fonts, user_tags, ocr_text
+    meta_weak,        -- BM25 1.5: file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
+    caption           -- BM25 0.7: mc_caption, ai_tags
 );
 
--- Triggers: layer_names, text_content, used_fonts, folder_tags require Python,
--- so triggers set them to ''. Python patches immediately after INSERT.
+-- Triggers: v3.1 3-column FTS
+-- meta_strong, meta_weak, caption are built by Python (complex JSON walking)
+-- SQL triggers insert empty strings; Python updates immediately after
 CREATE TRIGGER IF NOT EXISTS files_fts_insert AFTER INSERT ON files BEGIN
-    INSERT INTO files_fts(rowid,
-        file_path, file_name,
-        ai_caption, ai_tags, ai_style,
-        layer_names, text_content,
-        ocr_text, dominant_color,
-        used_fonts,
-        user_note, user_tags,
-        image_type, scene_type, art_style, folder_tags)
-    VALUES (new.id,
-        new.file_path, new.file_name,
-        new.ai_caption, new.ai_tags, new.ai_style,
-        '', '',
-        new.ocr_text, new.dominant_color,
-        '',
-        new.user_note, new.user_tags,
-        new.image_type, new.scene_type, new.art_style, '');
+    INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption)
+    VALUES (new.id, '', '', '');
 END;
 
 CREATE TRIGGER IF NOT EXISTS files_fts_update AFTER UPDATE ON files BEGIN
     DELETE FROM files_fts WHERE rowid = old.id;
-    INSERT INTO files_fts(rowid,
-        file_path, file_name,
-        ai_caption, ai_tags, ai_style,
-        layer_names, text_content,
-        ocr_text, dominant_color,
-        used_fonts,
-        user_note, user_tags,
-        image_type, scene_type, art_style, folder_tags)
-    VALUES (new.id,
-        new.file_path, new.file_name,
-        new.ai_caption, new.ai_tags, new.ai_style,
-        '', '',
-        new.ocr_text, new.dominant_color,
-        '',
-        new.user_note, new.user_tags,
-        new.image_type, new.scene_type, new.art_style, '');
+    INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption)
+    VALUES (new.id, '', '', '');
 END;
 
 CREATE TRIGGER IF NOT EXISTS files_fts_delete AFTER DELETE ON files BEGIN
