@@ -67,11 +67,11 @@ CREATE TABLE IF NOT EXISTS files (
     relative_path TEXT,           -- POSIX-normalized relative path
 
     -- v3 P0: Embedding version tracking
-    embedding_model TEXT DEFAULT 'clip-ViT-L-14',
+    embedding_model TEXT DEFAULT '{VISUAL_MODEL}',
     embedding_version INTEGER DEFAULT 1,
 
     -- v3.1: 3-Tier AI Mode metadata
-    mode_tier TEXT DEFAULT 'pro',                    -- standard | pro | ultra
+    mode_tier TEXT DEFAULT '{DEFAULT_TIER}',           -- standard | pro | ultra
     caption_model TEXT,                              -- VLM model (e.g., Qwen/Qwen3-VL-4B-Instruct)
     text_embed_model TEXT,                           -- Text embedding model (e.g., qwen3-embedding:0.6b)
     runtime_version TEXT,                            -- Ollama/runtime version (e.g., ollama-0.15.2)
@@ -100,22 +100,23 @@ CREATE TABLE IF NOT EXISTS layers (
 );
 
 -- Virtual table for file embeddings (sqlite-vec)
+-- Dimension is set dynamically from active tier config
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_files USING vec0(
     file_id INTEGER PRIMARY KEY,
-    embedding FLOAT[1152]  -- SigLIP 2 So400m embeddings
+    embedding FLOAT[{VISUAL_DIM}]
 );
 
 -- Virtual table for layer embeddings (sqlite-vec)
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_layers USING vec0(
     layer_id INTEGER PRIMARY KEY,
-    embedding FLOAT[1152]
+    embedding FLOAT[{VISUAL_DIM}]
 );
 
 -- Virtual table for T-axis text embeddings (sqlite-vec)
--- Generated from ai_caption + ai_tags via Qwen3-Embedding-0.6B
+-- Generated from mc_caption + ai_tags via text embedding model
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_text USING vec0(
     file_id INTEGER PRIMARY KEY,
-    embedding FLOAT[1024]
+    embedding FLOAT[{TEXT_DIM}]
 );
 
 -- Standard indexes for common queries
@@ -131,7 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_relative_path ON files(relative_path);
 CREATE INDEX IF NOT EXISTS idx_perceptual_hash ON files(perceptual_hash);
 CREATE INDEX IF NOT EXISTS idx_dup_group_id ON files(dup_group_id);
 
--- Full-text search (FTS5) — v3.1: 3-column BM25-weighted architecture
+-- Full-text search (FTS5) — 2-column BM25-weighted architecture
 --
 -- meta_strong (BM25 weight: 3.0) — Direct identification facts:
 --   file_name, layer_names, used_fonts, user_tags, ocr_text
@@ -139,31 +140,29 @@ CREATE INDEX IF NOT EXISTS idx_dup_group_id ON files(dup_group_id);
 -- meta_weak (BM25 weight: 1.5) — Contextual information:
 --   file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
 --
--- caption (BM25 weight: 0.7) — AI-generated content:
---   mc_caption, ai_tags
+-- NOTE: caption column (mc_caption, ai_tags) will be added when AI caption feature is implemented
 --
--- v3.1 Design: Candidate First
+-- Design: Candidate First
 --   1. FTS MATCH → candidate doc_id list (top 2000 if >10k results)
 --   2. NumPy scoring only on candidates (VV/MV vectors)
 --   3. RRF merge → de-dup → return
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
     meta_strong,      -- BM25 3.0: file_name, layer_names, used_fonts, user_tags, ocr_text
-    meta_weak,        -- BM25 1.5: file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
-    caption           -- BM25 0.7: mc_caption, ai_tags
+    meta_weak         -- BM25 1.5: file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
 );
 
--- Triggers: v3.1 3-column FTS
--- meta_strong, meta_weak, caption are built by Python (complex JSON walking)
+-- Triggers: 2-column FTS
+-- meta_strong, meta_weak are built by Python (complex JSON walking)
 -- SQL triggers insert empty strings; Python updates immediately after
 CREATE TRIGGER IF NOT EXISTS files_fts_insert AFTER INSERT ON files BEGIN
-    INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption)
-    VALUES (new.id, '', '', '');
+    INSERT INTO files_fts(rowid, meta_strong, meta_weak)
+    VALUES (new.id, '', '');
 END;
 
 CREATE TRIGGER IF NOT EXISTS files_fts_update AFTER UPDATE ON files BEGIN
     DELETE FROM files_fts WHERE rowid = old.id;
-    INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption)
-    VALUES (new.id, '', '', '');
+    INSERT INTO files_fts(rowid, meta_strong, meta_weak)
+    VALUES (new.id, '', '');
 END;
 
 CREATE TRIGGER IF NOT EXISTS files_fts_delete AFTER DELETE ON files BEGIN

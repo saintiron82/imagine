@@ -129,8 +129,8 @@ class AssetMeta(BaseModel):
 
     # === v3 P0: Embedding Version Tracking ===
     embedding_model: Optional[str] = Field(
-        "google/siglip2-so400m-patch14-384",
-        description="Embedding model used for this file"
+        None,
+        description="Embedding model used for this file (set from active tier config)"
     )
     embedding_version: Optional[int] = Field(
         1,

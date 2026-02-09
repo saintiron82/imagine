@@ -28,7 +28,13 @@ def migrate():
     from backend.utils.config import get_config
 
     cfg = get_config()
-    dimensions = cfg.get("embedding.text.dimensions", 1024)
+    # Tier config takes precedence over global fallback
+    try:
+        from backend.utils.tier_config import get_active_tier
+        _, tier_config = get_active_tier()
+        dimensions = tier_config.get("text_embed", {}).get("dimensions") or cfg.get("embedding.text.dimensions", 1024)
+    except Exception:
+        dimensions = cfg.get("embedding.text.dimensions", 1024)
 
     db = SQLiteDB()
     cursor = db.conn.cursor()

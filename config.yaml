@@ -34,7 +34,7 @@ ai_mode:
       vlm:
         backend: transformers
         device: auto
-        model: vikhyatk/moondream2
+        model: Qwen/Qwen3-VL-2B-Instruct
       vram_max: 6144
     ultra:
       preprocess:
@@ -49,7 +49,6 @@ ai_mode:
         model: google/siglip2-giant-opt-patch16-256
       vlm:
         # Backend: 'auto' enables platform-specific optimization
-        # 'ollama', 'vllm', or 'transformers' for explicit selection
         backend: auto
         device: auto
         dtype: bfloat16
@@ -61,7 +60,6 @@ ai_mode:
             backend: ollama
             model: qwen3-vl:8b
             batch_size: 1  # Ollama Vision API: sequential only
-            note: vLLM not supported on Windows
 
           darwin:  # macOS
             backend: vllm  # Preferred for batch processing
@@ -76,6 +74,8 @@ ai_mode:
             fallback: ollama
       vram_min: 20480
 embedding:
+  # NOTE: These are FALLBACK values. Tier-specific config (ai_mode.tiers.{tier})
+  # takes precedence at runtime. These values are only used when tier config is missing.
   text:
     dimensions: 1024
     enabled: true

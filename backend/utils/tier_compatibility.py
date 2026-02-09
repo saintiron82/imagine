@@ -36,7 +36,7 @@ TIER_SPECS = {
         'visual_dim': 768,
         'text_model': 'google/gemma-2b-instruct',
         'text_dim': 256,
-        'vlm_model': 'vikhyatk/moondream2',
+        'vlm_model': 'Qwen/Qwen3-VL-2B-Instruct',
         'vram_req': '~6GB',
         'quality_tier': 1  # 1=basic, 2=medium, 3=high
     },
@@ -141,7 +141,7 @@ TIER_COMPATIBILITY_MATRIX = {
         'message': 'Downgrading from Ultra to Standard tier (MANDATORY REPROCESS)',
         'user_prompt': (
             '⚠️  Downgrade to Standard tier detected:\n'
-            '  • Quality loss (Qwen3-VL-8B → Moondream2)\n'
+            '  • Quality loss (Qwen3-VL-8B → Qwen3-VL-2B)\n'
             '  • Dimension: 1664 → 768 (cannot search existing data)\n'
             '  • VRAM: 20GB+ → ~6GB\n\n'
             'All files MUST be reprocessed.\n'
@@ -172,7 +172,7 @@ TIER_COMPATIBILITY_MATRIX = {
         'message': 'Downgrading from Pro to Standard tier (MANDATORY REPROCESS)',
         'user_prompt': (
             '⚠️  Downgrade to Standard tier detected:\n'
-            '  • Quality loss (Qwen3-VL-4B → Moondream2)\n'
+            '  • Quality loss (Qwen3-VL-4B → Qwen3-VL-2B)\n'
             '  • Dimension: 1152 → 768 (cannot search existing data)\n'
             '  • VRAM: 8-16GB → ~6GB\n\n'
             'All files MUST be reprocessed.\n\n'

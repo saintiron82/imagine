@@ -65,15 +65,36 @@ class SQLiteDB:
             self.conn.execute("PRAGMA synchronous = NORMAL")  # Faster writes
             self.conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
 
-            # Auto-migrate existing DB on connect
-            self._migrate_folder_columns()
-            self._migrate_v3_columns()
-            self._ensure_fts()
+            # Auto-migrate existing DB on connect (only if files table exists)
+            if self._table_exists('files'):
+                self._migrate_folder_columns()
+                self._migrate_v3_columns()
+                self._ensure_fts()
+            else:
+                logger.info("Empty database detected — auto-initializing schema")
+                self.init_schema()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
             logger.error(f"❌ Failed to connect to SQLite: {e}")
             raise
+
+    def _get_default_embedding_model(self) -> str:
+        """Get the visual embedding model name from active tier config."""
+        try:
+            from backend.utils.tier_config import get_active_tier
+            _, tier_config = get_active_tier()
+            return tier_config.get("visual", {}).get("model", "unknown")
+        except Exception:
+            return "unknown"
+
+    def _table_exists(self, table_name: str) -> bool:
+        """Check if a table exists in the database."""
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,)
+        )
+        return cursor.fetchone()[0] > 0
 
     def init_schema(self):
         """
@@ -88,6 +109,24 @@ class SQLiteDB:
 
             with open(schema_path, encoding='utf-8') as f:
                 schema_sql = f.read()
+
+            # Replace dimension placeholders with active tier config
+            try:
+                from backend.utils.tier_config import get_active_tier
+                tier_name, tier_config = get_active_tier()
+                visual_dim = tier_config.get("visual", {}).get("dimensions", 768)
+                text_dim = tier_config.get("text_embed", {}).get("dimensions", 1024)
+                visual_model = tier_config.get("visual", {}).get("model", "unknown")
+            except Exception:
+                visual_dim = 768
+                text_dim = 1024
+                visual_model = "unknown"
+                tier_name = "standard"
+
+            schema_sql = schema_sql.replace("{VISUAL_DIM}", str(visual_dim))
+            schema_sql = schema_sql.replace("{TEXT_DIM}", str(text_dim))
+            schema_sql = schema_sql.replace("{VISUAL_MODEL}", visual_model)
+            schema_sql = schema_sql.replace("{DEFAULT_TIER}", tier_name)
 
             # Execute schema (split by semicolons for multiple statements)
             self.conn.executescript(schema_sql)
@@ -175,7 +214,7 @@ class SQLiteDB:
         except Exception as e:
             logger.warning(f"v3 migration check failed (non-fatal): {e}")
 
-    # ── FTS5 columns: v3.1 3-column BM25-weighted architecture ──
+    # ── FTS5 columns: 2-column BM25-weighted architecture ──
     #
     # meta_strong (BM25 3.0): Direct identification facts
     #   file_name, layer_names, used_fonts, user_tags, ocr_text
@@ -184,9 +223,8 @@ class SQLiteDB:
     #   file_path, text_content, user_note, folder_tags,
     #   image_type, scene_type, art_style
     #
-    # caption (BM25 0.7): AI-generated content
-    #   mc_caption, ai_tags
-    _FTS_COLUMNS = ['meta_strong', 'meta_weak', 'caption']
+    # NOTE: caption column will be added when AI caption feature is implemented
+    _FTS_COLUMNS = ['meta_strong', 'meta_weak']
 
     def _ensure_fts(self):
         """Ensure FTS5 table exists with correct schema and is populated."""
@@ -474,7 +512,7 @@ class SQLiteDB:
             structured_meta = metadata.get("structured_meta")
             storage_root = metadata.get("storage_root")
             relative_path = metadata.get("relative_path")
-            embedding_model = metadata.get("embedding_model", "google/siglip2-so400m-patch14-384")
+            embedding_model = metadata.get("embedding_model", self._get_default_embedding_model())
             embedding_version = metadata.get("embedding_version", 1)
 
             # v3.1: Extract perceptual_hash and dup_group_id
@@ -698,7 +736,7 @@ class SQLiteDB:
         cursor.execute("""
             SELECT
                 f.id, f.file_path, f.file_name, f.file_size, f.format,
-                f.width, f.height, f.ai_caption, f.ai_tags, f.ocr_text,
+                f.width, f.height, f.mc_caption, f.ai_tags, f.ocr_text,
                 f.dominant_color, f.ai_style, f.metadata, f.thumbnail_url,
                 f.folder_path, f.folder_depth, f.folder_tags,
                 f.created_at, f.modified_at, f.parsed_at

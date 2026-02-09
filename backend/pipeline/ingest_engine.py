@@ -348,7 +348,9 @@ def process_file(
             else:
                 logger.warning("No thumbnail available - using zero embedding")
                 import numpy as np
-                dims = get_config().get("embedding.visual.dimensions", 1152)
+                from backend.utils.tier_config import get_active_tier as _get_tier
+                _, _tc = _get_tier()
+                dims = _tc.get("visual", {}).get("dimensions", 768)
                 embedding = np.zeros(dims, dtype=np.float32)
 
             step3_duration = time.time() - step3_start
@@ -612,7 +614,7 @@ def main():
     args = parser.parse_args()
 
     # Check batch_processing.enabled config
-    from backend.config import get_config
+    from backend.utils.config import get_config
     config = get_config()
     batch_enabled = config.get("batch_processing", {}).get("enabled", True)
 

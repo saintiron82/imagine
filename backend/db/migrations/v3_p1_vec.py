@@ -25,8 +25,15 @@ def migrate():
     from backend.utils.config import get_config
 
     cfg = get_config()
-    dimensions = cfg.get("embedding.visual.dimensions", 1152)
-    model_name = cfg.get("embedding.visual.model", "google/siglip2-so400m-patch14-384")
+    # Tier config takes precedence over global fallback
+    try:
+        from backend.utils.tier_config import get_active_tier
+        _, tier_config = get_active_tier()
+        dimensions = tier_config.get("visual", {}).get("dimensions") or cfg.get("embedding.visual.dimensions", 768)
+        model_name = tier_config.get("visual", {}).get("model") or cfg.get("embedding.visual.model", "unknown")
+    except Exception:
+        dimensions = cfg.get("embedding.visual.dimensions", 768)
+        model_name = cfg.get("embedding.visual.model", "unknown")
 
     db = SQLiteDB()
     cursor = db.conn.cursor()
