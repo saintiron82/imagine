@@ -190,6 +190,20 @@ def process_file(
                 else:
                     image = thumb_img.convert("RGB")
 
+                # v3.1: Compute perceptual hash (dHash) BEFORE vision analysis
+                # (independent of vision success/failure)
+                try:
+                    from backend.utils.dhash import dhash64
+                    hash_val = dhash64(image)
+                    # Convert unsigned to signed (SQLite INTEGER is signed 64-bit)
+                    if hash_val >= 2**63:
+                        hash_val -= 2**64
+                    meta.perceptual_hash = hash_val
+                    logger.debug(f"   Perceptual hash: {meta.perceptual_hash}")
+                except Exception as e:
+                    logger.warning(f"   dHash calculation failed: {e}")
+                    # Continue processing even if hash calculation fails
+
                 # Check if adapter supports 2-stage
                 if hasattr(_global_vision_analyzer, 'classify_and_analyze'):
                     # v3.1: 2-Stage with MC.raw context injection
@@ -223,10 +237,6 @@ def process_file(
                     meta.ocr_text = vision_result.get('ocr', '')
                     meta.dominant_color = vision_result.get('color', '')
                     meta.ai_style = vision_result.get('style', '')
-
-                # v3.1: Compute perceptual hash (dHash) for de-duplication
-                from backend.utils.dhash import dhash64
-                meta.perceptual_hash = dhash64(image)
 
                 # v3 P0: path normalization (POSIX)
                 normalized = str(file_path).replace('\\', '/')
