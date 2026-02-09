@@ -92,11 +92,11 @@ class VisionAnalyzerFactory:
                 backend = platform_config.get("backend", "ollama")
                 model = platform_config.get("model")
 
-                logger.info(f"✓ Platform-specific config found: {backend} ({model})")
+                logger.info(f"[OK] Platform-specific config found: {backend} ({model})")
             else:
                 # Fallback to platform detector
                 backend = get_optimal_backend(tier_name)
-                logger.info(f"✓ Platform detector selected: {backend}")
+                logger.info(f"[OK] Platform detector selected: {backend}")
 
         # Backend instantiation
         if backend == 'vllm':

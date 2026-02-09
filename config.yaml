@@ -1,6 +1,6 @@
 ai_mode:
   auto_detect: false
-  override: pro
+  override: ultra
   tiers:
     pro:
       preprocess:

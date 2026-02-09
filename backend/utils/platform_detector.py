@@ -69,13 +69,20 @@ def is_ollama_available() -> bool:
     """
     try:
         import requests
-        from ..config import OLLAMA_HOST
 
-        response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=2)
+        # Get Ollama host from config
+        try:
+            from backend.utils.config import get_config
+            cfg = get_config()
+            ollama_host = cfg.get("vision.ollama_host", "http://localhost:11434")
+        except:
+            ollama_host = "http://localhost:11434"
+
+        response = requests.get(f"{ollama_host}/api/tags", timeout=2)
         available = response.status_code == 200
 
         if available:
-            logger.debug(f"Ollama available at {OLLAMA_HOST}")
+            logger.debug(f"Ollama available at {ollama_host}")
         else:
             logger.debug(f"Ollama not responding: status {response.status_code}")
 
@@ -112,22 +119,22 @@ def get_optimal_backend(tier: str = 'ultra') -> str:
     # Mac/Linux: vLLM preferred for batch processing
     if system in ['Darwin', 'Linux']:
         if is_vllm_available():
-            logger.info("✓ vLLM available - optimal batch processing")
+            logger.info("[OK] vLLM available - optimal batch processing")
             return 'vllm'
         elif is_ollama_available():
-            logger.info("✓ Ollama available (vLLM not installed)")
+            logger.info("[OK] Ollama available (vLLM not installed)")
             return 'ollama'
         else:
-            logger.warning("⚠ Neither vLLM nor Ollama available, falling back to Transformers")
+            logger.warning("[WARNING] Neither vLLM nor Ollama available, falling back to Transformers")
             return 'transformers'
 
     # Windows: Ollama only option for Qwen3-VL
     elif system == 'Windows':
         if is_ollama_available():
-            logger.info("✓ Ollama available (vLLM not supported on Windows)")
+            logger.info("[OK] Ollama available (vLLM not supported on Windows)")
             return 'ollama'
         else:
-            logger.warning("⚠ Ollama not available, falling back to Transformers")
+            logger.warning("[WARNING] Ollama not available, falling back to Transformers")
             return 'transformers'
 
     else:
@@ -265,7 +272,7 @@ def print_platform_info():
         print("WARNINGS")
         print("="*70)
         for warning in recs['warnings']:
-            print(f"⚠ {warning}")
+            print(f"[!] {warning}")
 
     print("="*70 + "\n")
 
