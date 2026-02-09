@@ -1,13 +1,15 @@
 """
-SQLite vector search with sqlite-vec.
+SQLite vector search with sqlite-vec (Triaxis Architecture).
 
 This module replaces pg_search.py with SQLite-based vector search,
 maintaining API compatibility for minimal code changes.
 
-Supports three search axes:
-- Vector: SigLIP 2 embedding similarity search
-- FTS5: Full-text keyword search (Korean + English)
-- User Filters: Format, category, rating, tags
+Triaxis Search (V + S + M):
+- V-axis (Visual): SigLIP 2 embedding similarity (image pixels)
+- S-axis (Semantic): Qwen3 text embedding (AI-interpreted captions + context)
+- M-axis (Metadata): FTS5 metadata-only search (file facts, no AI content)
+
+User Filters: Format, category, rating, tags, folder paths
 """
 
 import logging
@@ -485,7 +487,7 @@ class SqliteVectorSearch:
         top_k: int = 20,
     ) -> List[Dict[str, Any]]:
         """
-        Full-text search using FTS5.
+        Full-text search using FTS5 (M-axis: Metadata-only).
 
         Args:
             keywords: List of keywords to search (combined with OR)
@@ -511,6 +513,12 @@ class SqliteVectorSearch:
 
         match_expr = " OR ".join(f'"{t}"' for t in tokens)
 
+        # Triaxis: Load BM25 weights from config (2 columns: meta_strong, meta_weak)
+        from backend.utils.config import get_config as _cfg
+        cfg = _cfg()
+        w_strong = cfg.get("search.fts.bm25_weights.meta_strong", 3.0)
+        w_weak = cfg.get("search.fts.bm25_weights.meta_weak", 1.5)
+
         cursor = self.db.conn.cursor()
 
         try:
@@ -534,13 +542,13 @@ class SqliteVectorSearch:
                     f.folder_path,
                     f.folder_depth,
                     f.folder_tags,
-                    bm25(files_fts, ?, ?, ?) AS fts_rank
+                    bm25(files_fts, ?, ?) AS fts_rank
                 FROM files_fts fts
                 JOIN files f ON f.id = fts.rowid
                 WHERE files_fts MATCH ?
                 ORDER BY fts_rank
                 LIMIT ?
-            """, (3.0, 1.5, 0.7, match_expr, top_k))
+            """, (w_strong, w_weak, match_expr, top_k))
 
             results = []
             for row in cursor.fetchall():

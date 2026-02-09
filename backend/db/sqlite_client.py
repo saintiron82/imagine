@@ -216,7 +216,7 @@ class SQLiteDB:
 
     def _rebuild_fts(self):
         """Drop and recreate FTS5 table, backfilling from files table."""
-        logger.info("Rebuilding FTS5 table (v3.1: 3 columns, BM25-weighted)...")
+        logger.info("Rebuilding FTS5 table (Triaxis: 2 columns, metadata-only)...")
 
         # Drop old FTS + triggers, then create fresh
         self.conn.executescript("""
@@ -227,21 +227,20 @@ class SQLiteDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
                 meta_strong,
-                meta_weak,
-                caption
+                meta_weak
             );
 
-            -- Triggers: meta_strong, meta_weak, caption need Python (complex JSON walking)
+            -- Triggers: meta_strong, meta_weak need Python (complex JSON walking)
             -- Set to '' here; patched immediately after INSERT in insert_file()
             CREATE TRIGGER IF NOT EXISTS files_fts_insert AFTER INSERT ON files BEGIN
-                INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption)
-                VALUES (new.id, '', '', '');
+                INSERT INTO files_fts(rowid, meta_strong, meta_weak)
+                VALUES (new.id, '', '');
             END;
 
             CREATE TRIGGER IF NOT EXISTS files_fts_update AFTER UPDATE ON files BEGIN
                 DELETE FROM files_fts WHERE rowid = old.id;
-                INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption)
-                VALUES (new.id, '', '', '');
+                INSERT INTO files_fts(rowid, meta_strong, meta_weak)
+                VALUES (new.id, '', '');
             END;
 
             CREATE TRIGGER IF NOT EXISTS files_fts_delete AFTER DELETE ON files BEGIN
@@ -249,7 +248,7 @@ class SQLiteDB:
             END;
         """)
 
-        # Backfill: v3.1 3-column FTS
+        # Backfill: Triaxis 2-column FTS (metadata-only)
         cursor = self.conn.execute(
             "SELECT id, file_path, file_name, mc_caption, ai_tags, "
             "metadata, ocr_text, user_note, user_tags, "
@@ -259,22 +258,19 @@ class SQLiteDB:
         rows_inserted = 0
         for row in cursor.fetchall():
             file_id = row[0]
-            mc_caption = row[3] or ''
-            ai_tags_raw = row[4] or ''
             metadata_str = row[5] or '{}'
             try:
                 meta = json.loads(metadata_str)
             except (json.JSONDecodeError, TypeError):
                 meta = {}
 
-            # Build 3-column FTS
+            # Build 2-column FTS (metadata-only, no caption)
             meta_strong = self._build_fts_meta_strong(row, meta)
             meta_weak = self._build_fts_meta_weak(row, meta)
-            caption = self._build_fts_caption(mc_caption, ai_tags_raw)
 
             self.conn.execute(
-                "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption) VALUES (?, ?, ?, ?)",
-                (file_id, meta_strong, meta_weak, caption)
+                "INSERT INTO files_fts(rowid, meta_strong, meta_weak) VALUES (?, ?, ?)",
+                (file_id, meta_strong, meta_weak)
             )
             rows_inserted += 1
 
@@ -404,30 +400,7 @@ class SQLiteDB:
 
         return ' '.join(str(p) for p in parts if p)
 
-    @staticmethod
-    def _build_fts_caption(mc_caption: str, ai_tags_raw: str) -> str:
-        """Build caption: mc_caption + ai_tags.
-
-        v3.1: BM25 weight 0.7 (AI-generated content, lowest priority)
-        """
-        parts = []
-
-        # mc_caption
-        if mc_caption:
-            parts.append(mc_caption)
-
-        # ai_tags (JSON array → space-separated)
-        if ai_tags_raw:
-            try:
-                tags = json.loads(ai_tags_raw)
-                if isinstance(tags, list):
-                    parts.append(' '.join(str(t) for t in tags))
-                else:
-                    parts.append(str(tags))
-            except:
-                parts.append(str(ai_tags_raw))
-
-        return ' '.join(p for p in parts if p)
+    # Triaxis: _build_fts_caption() removed - AI content now handled by S-axis
 
     def get_file_modified_at(self, file_path: str) -> Optional[str]:
         """
@@ -606,7 +579,7 @@ class SQLiteDB:
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to insert embedding (sqlite-vec may not be loaded): {e}")
 
-            # v3.1: Post-trigger FTS fix (3 columns: meta_strong, meta_weak, caption)
+            # Triaxis: Post-trigger FTS fix (2 columns: meta_strong, meta_weak)
             # SQL triggers set these to ''; Python updates with actual data
             try:
                 # Get file data for FTS building
@@ -619,16 +592,12 @@ class SQLiteDB:
                 ).fetchone()
 
                 if file_data:
-                    mc_caption = file_data[3] or ''
-                    ai_tags_raw = file_data[4] or ''
-
                     meta_strong = self._build_fts_meta_strong(file_data, metadata_json)
                     meta_weak = self._build_fts_meta_weak(file_data, metadata_json)
-                    caption = self._build_fts_caption(mc_caption, ai_tags_raw)
 
                     cursor.execute(
-                        "UPDATE files_fts SET meta_strong = ?, meta_weak = ?, caption = ? WHERE rowid = ?",
-                        (meta_strong, meta_weak, caption, file_id)
+                        "UPDATE files_fts SET meta_strong = ?, meta_weak = ? WHERE rowid = ?",
+                        (meta_strong, meta_weak, file_id)
                     )
             except Exception as e:
                 logger.warning(f"⚠️ FTS post-trigger update failed: {e}")

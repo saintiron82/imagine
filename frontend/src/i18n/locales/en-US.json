@@ -98,5 +98,13 @@
     "vv": "VV",
     "mv": "MV",
     "fts": "FTS"
+  },
+  "axis": {
+    "v": "Visual (V)",
+    "s": "Semantic (S)",
+    "m": "Metadata (M)",
+    "v_desc": "Image pixel similarity",
+    "s_desc": "AI interpretation + context",
+    "m_desc": "Pure metadata facts"
   }
 }

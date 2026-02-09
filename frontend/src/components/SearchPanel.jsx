@@ -430,7 +430,7 @@ const SearchResultCard = ({ result, onShowMeta }) => {
                     </div>
                 )}
 
-                {/* 3-axis score badges (V=visual blue, Tv=text-vec purple, T=fts green) */}
+                {/* Triaxis score badges (V=Visual blue, S=Semantic purple, M=Metadata green) */}
                 <div className="absolute top-2 right-2 flex gap-1">
                     {result.vector_score != null && (
                         <span className="bg-blue-900/80 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
@@ -439,12 +439,12 @@ const SearchResultCard = ({ result, onShowMeta }) => {
                     )}
                     {result.text_vec_score != null && (
                         <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            Tv {(result.text_vec_score * 100).toFixed(0)}%
+                            S {(result.text_vec_score * 100).toFixed(0)}%
                         </span>
                     )}
                     {result.text_score != null && (
                         <span className="bg-green-900/80 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            T {(result.text_score * 100).toFixed(0)}%
+                            M {(result.text_score * 100).toFixed(0)}%
                         </span>
                     )}
                 </div>

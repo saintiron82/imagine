@@ -1,4 +1,8 @@
-"""Auto-Weighted RRF strategy for 3-axis search (V + T + F).
+"""Auto-Weighted RRF strategy for Triaxis search (V + S + M).
+
+V (Visual): Image pixel similarity via SigLIP vectors
+S (Semantic): AI-interpreted content via Qwen3 text vectors
+M (Metadata): Pure metadata facts via FTS5
 
 Selects per-axis weights based on query_type from QueryDecomposer.
 Falls back to manual_weights from config.yaml when auto_weight is disabled.
@@ -17,13 +21,14 @@ def _load_presets() -> Dict[str, Dict[str, float]]:
     cfg = get_config()
     presets_raw = cfg.get('search.rrf.presets', {})
 
-    # Convert config keys (vv, mv, fts) to internal keys (visual, text_vec, fts)
+    # Triaxis: Convert config keys (v, s, m) to internal keys (visual, text_vec, fts)
+    # For backward compatibility, also support old keys (vv, mv, fts)
     presets = {}
     for name, weights in presets_raw.items():
         presets[name] = {
-            'visual': weights.get('vv', 0.34),
-            'text_vec': weights.get('mv', 0.33),
-            'fts': weights.get('fts', 0.33),
+            'visual': weights.get('v', weights.get('vv', 0.34)),
+            'text_vec': weights.get('s', weights.get('mv', 0.33)),
+            'fts': weights.get('m', weights.get('fts', 0.33)),
         }
 
     # Fallback presets if config is empty

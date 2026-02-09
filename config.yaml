@@ -34,28 +34,28 @@ search:
     k: 60                        # RRF k parameter
     preset: "balanced"           # Default preset
     presets:
-      balanced:                  # VV/MV/FTS balanced
-        vv: 0.34
-        mv: 0.33
-        fts: 0.33
+      balanced:                  # V/S/M balanced
+        v: 0.30
+        s: 0.40
+        m: 0.30
       visual:                    # Visual-heavy
-        vv: 0.50
-        mv: 0.30
-        fts: 0.20
-      semantic:                  # Semantic-heavy (VV + MV)
-        vv: 0.40
-        mv: 0.40
-        fts: 0.20
-      fact:                      # Fact-heavy (FTS dominant)
-        vv: 0.25
-        mv: 0.25
-        fts: 0.50
+        v: 0.50
+        s: 0.35
+        m: 0.15
+      semantic:                  # Semantic-heavy (AI understanding)
+        v: 0.20
+        s: 0.55
+        m: 0.25
+      fact:                      # Fact-heavy (metadata dominant)
+        v: 0.15
+        s: 0.25
+        m: 0.60
 
   fts:
-    bm25_weights:                # BM25 per-column weights (v3.1: 3-column FTS)
+    bm25_weights:                # BM25 per-column weights (Triaxis: 2-column M-axis)
       meta_strong: 3.0           # file_name, layer_names, used_fonts, user_tags, ocr_text
       meta_weak: 1.5             # file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
-      caption: 0.7               # mc_caption, ai_tags (AI-generated)
+      # caption: 0.7             # Triaxis: Removed - AI content now handled by S-axis
 
   threshold:                     # Per-axis minimum thresholds
     visual: 0.05                 # SigLIP cosine: 0.10-0.17 typical match
