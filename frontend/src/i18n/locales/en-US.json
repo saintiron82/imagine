@@ -10,6 +10,8 @@
   "action.clear": "Clear",
   "action.clear_results": "Clear results",
   "action.load_more": "Load More (Lower Threshold)",
+  "action.show_in_folder": "Show in Explorer",
+  "action.open_file": "Open File",
   "action.stop_processing": "Stop processing",
   "action.install_all": "Install All Dependencies (Auto-Detect)",
   "action.reinstall_verify": "Re-install / Verify AI Model",

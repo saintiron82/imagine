@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CheckCircle, File, Loader2, Info, X } from 'lucide-react';
+import { CheckCircle, File, Loader2, Info, X, FolderOpen, ExternalLink } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 const SUPPORTED_EXTS = ['.psd', '.png', '.jpg', '.jpeg'];
@@ -207,6 +207,35 @@ const MetadataModal = ({ metadata, onClose }) => {
                                 </div>
                             ))}
                         </div>
+
+                        {/* Path Information + File Actions */}
+                        {metadata.file_path && (
+                            <div className="shrink-0 bg-gray-900/50 border border-gray-700/50 rounded-lg p-3">
+                                <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-2">{t('label.path_info')}</div>
+                                <div className="space-y-1.5">
+                                    <div className="flex items-start gap-2">
+                                        <span className="text-gray-500 text-[10px] uppercase shrink-0 w-14">{t('label.full_path')}</span>
+                                        <span className="text-gray-300 text-[11px] font-mono break-all select-all leading-relaxed">{metadata.file_path}</span>
+                                    </div>
+                                    {metadata.folder_path && (
+                                        <div className="flex items-start gap-2">
+                                            <span className="text-gray-500 text-[10px] uppercase shrink-0 w-14">{t('label.folder')}</span>
+                                            <span className="text-gray-300 text-[11px] font-mono">{metadata.folder_path}</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
+                                    <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
+                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                        <FolderOpen size={12} /> {t('action.show_in_folder')}
+                                    </button>
+                                    <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
+                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                        <ExternalLink size={12} /> {t('action.open_file')}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* User Metadata Section - Always Editable, Auto-Save */}
                         <div className="shrink-0 bg-blue-900/10 border border-blue-700/30 rounded-lg p-4">

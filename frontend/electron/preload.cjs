@@ -47,6 +47,12 @@ contextBridge.exposeInMainWorld('electron', {
 
         // Resolve path
         pathJoin: (...args) => path.join(...args),
+
+        // Show file in OS file explorer (folder opens, file selected)
+        showInFolder: (fullPath) => ipcRenderer.invoke('show-item-in-folder', fullPath),
+
+        // Open file with OS default application
+        openFile: (fullPath) => ipcRenderer.invoke('open-file-native', fullPath),
     },
 
     // Pipeline Bridge

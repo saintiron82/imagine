@@ -10,6 +10,8 @@
   "action.clear": "초기화",
   "action.clear_results": "결과 지우기",
   "action.load_more": "더 보기",
+  "action.show_in_folder": "탐색기에서 보기",
+  "action.open_file": "파일 열기",
   "action.stop_processing": "처리 중지",
   "action.install_all": "모든 종속성 설치 (자동 감지)",
   "action.reinstall_verify": "재설치 / AI 모델 검증",

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const isDev = process.env.NODE_ENV === 'development';
@@ -14,6 +14,21 @@ ipcMain.handle('open-folder-dialog', async () => {
     });
     if (result.canceled) return null;
     return result.filePaths[0];
+});
+
+// IPC Handler: Show file in OS file explorer
+ipcMain.handle('show-item-in-folder', async (_, filePath) => {
+    if (!fs.existsSync(filePath)) return { success: false, error: 'File not found' };
+    shell.showItemInFolder(filePath);
+    return { success: true };
+});
+
+// IPC Handler: Open file with OS default application
+ipcMain.handle('open-file-native', async (_, filePath) => {
+    if (!fs.existsSync(filePath)) return { success: false, error: 'File not found' };
+    const errorMsg = await shell.openPath(filePath);
+    if (errorMsg) return { success: false, error: errorMsg };
+    return { success: true };
 });
 
 // IPC Handler: Read Metadata JSON

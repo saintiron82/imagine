@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings } from 'lucide-react';
+import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink } from 'lucide-react';
 import SettingsModal from './SettingsModal';
 import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
@@ -188,6 +188,17 @@ const MetadataModal = ({ metadata, onClose }) => {
                                             <span className="text-gray-300 text-[11px] font-mono">{metadata.relative_path}</span>
                                         </div>
                                     )}
+                                </div>
+                                {/* File Actions */}
+                                <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
+                                    <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
+                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                        <FolderOpen size={12} /> {t('action.show_in_folder')}
+                                    </button>
+                                    <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
+                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                        <ExternalLink size={12} /> {t('action.open_file')}
+                                    </button>
                                 </div>
                             </div>
                         )}
@@ -491,7 +502,25 @@ const SearchResultCard = ({ result, onShowMeta }) => {
 
             {/* Info */}
             <div className="p-3">
-                <div className="text-sm font-medium text-white truncate">{fileName}</div>
+                <div className="flex items-center gap-1">
+                    <div className="text-sm font-medium text-white truncate flex-1">{fileName}</div>
+                    <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(result.path); }}
+                            className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                            title={t('action.show_in_folder')}
+                        >
+                            <FolderOpen size={14} />
+                        </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(result.path); }}
+                            className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                            title={t('action.open_file')}
+                        >
+                            <ExternalLink size={14} />
+                        </button>
+                    </div>
+                </div>
                 {result.folder_path && (
                     <div className="text-[10px] text-gray-500 truncate mt-0.5" title={result.path}>
                         {result.folder_path}
