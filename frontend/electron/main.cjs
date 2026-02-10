@@ -126,7 +126,7 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
         : path.join(process.resourcesPath, 'backend/thumbnail_generator.py');
 
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath, '--batch', JSON.stringify(filePaths), '--size', '256'], { cwd: projectRoot });
+        const proc = spawn(finalPython, [scriptPath, '--batch', JSON.stringify(filePaths), '--size', '256', '--return-paths'], { cwd: projectRoot });
         let output = '';
         let error = '';
 
@@ -137,11 +137,7 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
             if (code === 0 && output.trim()) {
                 try {
                     const results = JSON.parse(output.trim());
-                    const dataUrls = {};
-                    for (const [fp, b64] of Object.entries(results)) {
-                        dataUrls[fp] = b64 ? `data:image/png;base64,${b64}` : null;
-                    }
-                    resolve(dataUrls);
+                    resolve(results);
                 } catch {
                     resolve({});
                 }
@@ -156,6 +152,21 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
             resolve({});
         });
     });
+});
+
+// IPC Handler: Check if disk thumbnails exist (no Python needed)
+ipcMain.handle('check-thumbnails-exist', async (_, filePaths) => {
+    const thumbDir = isDev
+        ? path.join(projectRoot, 'output', 'thumbnails')
+        : path.join(process.resourcesPath, 'output', 'thumbnails');
+
+    const results = {};
+    for (const fp of filePaths) {
+        const stem = path.basename(fp, path.extname(fp));
+        const thumbPath = path.join(thumbDir, `${stem}_thumb.png`);
+        results[fp] = fs.existsSync(thumbPath) ? thumbPath : null;
+    }
+    return results;
 });
 
 // IPC Handler: Fetch image from URL (bypasses CORS via Node.js)
@@ -496,6 +507,87 @@ function createWindow() {
             event.reply('pipeline-log', { message: `Pipeline error: ${err.message}`, type: 'error' });
         });
     });
+
+    // IPC Handler: Run discover (DFS folder scan)
+    ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
+        const { spawn } = require('child_process');
+
+        const pythonPath = isDev
+            ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
+            : path.join(process.resourcesPath, 'python/python.exe');
+
+        const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+
+        const scriptPath = isDev
+            ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
+            : path.join(process.resourcesPath, 'backend/ingest_engine.py');
+
+        const args = [scriptPath, '--discover', folderPath];
+        if (noSkip) args.push('--no-skip');
+
+        event.reply('discover-log', { message: `Scanning folder: ${folderPath}`, type: 'info' });
+
+        let processedCount = 0;
+
+        const proc = spawn(finalPython, args, { cwd: projectRoot });
+
+        proc.stdout.on('data', (data) => {
+            const message = data.toString().trim();
+            if (!message) return;
+            event.reply('discover-log', { message, type: 'info' });
+
+            const processingMatch = message.match(/Processing: (.+)/);
+            const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+            if (processingMatch) {
+                event.reply('discover-progress', {
+                    processed: processedCount,
+                    currentFile: path.basename(processingMatch[1]),
+                    folderPath
+                });
+            } else if (stepMatch) {
+                event.reply('discover-progress', {
+                    processed: processedCount,
+                    step: parseInt(stepMatch[1]),
+                    totalSteps: parseInt(stepMatch[2]),
+                    stepName: stepMatch[3],
+                    folderPath
+                });
+            } else if (message.includes('[OK] Parsed successfully') || message.includes('[SKIP]')) {
+                processedCount++;
+                event.reply('discover-progress', {
+                    processed: processedCount,
+                    currentFile: '',
+                    folderPath
+                });
+            }
+        });
+
+        proc.stderr.on('data', (data) => {
+            const message = data.toString().trim();
+            if (!message) return;
+            const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
+            event.reply('discover-log', { message, type: isError ? 'error' : 'info' });
+        });
+
+        proc.on('close', (code) => {
+            event.reply('discover-log', {
+                message: code === 0
+                    ? `Scan complete: ${folderPath} (${processedCount} files)`
+                    : `Scan failed: ${folderPath} (code ${code})`,
+                type: code === 0 ? 'success' : 'error'
+            });
+            event.reply('discover-file-done', {
+                success: code === 0,
+                folderPath,
+                processedCount
+            });
+        });
+
+        proc.on('error', (err) => {
+            event.reply('discover-log', { message: `Discover error: ${err.message}`, type: 'error' });
+            event.reply('discover-file-done', { success: false, folderPath, processedCount: 0 });
+        });
+    });
 }
 
 // IPC Handler: Get config.yaml
@@ -514,6 +606,84 @@ ipcMain.handle('get-config', async () => {
         return { success: true, config };
     } catch (err) {
         console.error('[Get Config Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
+// IPC Handler: Get registered folders from config.yaml
+ipcMain.handle('get-registered-folders', async () => {
+    try {
+        const yaml = require('js-yaml');
+        const configPath = path.join(projectRoot, 'config.yaml');
+        if (!fs.existsSync(configPath)) {
+            return { success: true, folders: [], autoScan: true };
+        }
+        const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+        const regFolders = config.registered_folders || { folders: [], auto_scan: true };
+        const folders = (regFolders.folders || []).map(fp => ({
+            path: fp,
+            exists: fs.existsSync(fp),
+        }));
+        return { success: true, folders, autoScan: regFolders.auto_scan !== false };
+    } catch (err) {
+        console.error('[Get Registered Folders Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
+// IPC Handler: Add registered folders (opens multi-select dialog)
+ipcMain.handle('add-registered-folder', async () => {
+    try {
+        const result = await dialog.showOpenDialog({
+            properties: ['openDirectory', 'multiSelections'],
+            title: 'Select Folders to Register'
+        });
+        if (result.canceled || result.filePaths.length === 0) {
+            return { success: true, added: [] };
+        }
+
+        const yaml = require('js-yaml');
+        const configPath = path.join(projectRoot, 'config.yaml');
+        const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+        if (!config.registered_folders) config.registered_folders = { folders: [], auto_scan: true };
+        if (!config.registered_folders.folders) config.registered_folders.folders = [];
+
+        const existing = new Set(config.registered_folders.folders);
+        const added = result.filePaths.filter(fp => !existing.has(fp));
+        config.registered_folders.folders.push(...added);
+
+        fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+
+        const folders = config.registered_folders.folders.map(fp => ({
+            path: fp,
+            exists: fs.existsSync(fp),
+        }));
+        return { success: true, added, folders };
+    } catch (err) {
+        console.error('[Add Registered Folder Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
+// IPC Handler: Remove a registered folder
+ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
+    try {
+        const yaml = require('js-yaml');
+        const configPath = path.join(projectRoot, 'config.yaml');
+        const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+        if (!config.registered_folders || !config.registered_folders.folders) {
+            return { success: true, folders: [] };
+        }
+        config.registered_folders.folders = config.registered_folders.folders.filter(fp => fp !== folderPath);
+        fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+
+        const folders = config.registered_folders.folders.map(fp => ({
+            path: fp,
+            exists: fs.existsSync(fp),
+        }));
+        return { success: true, folders };
+    } catch (err) {
+        console.error('[Remove Registered Folder Error]', err);
         return { success: false, error: err.message };
     }
 });

@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('electron', {
         openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
         generateThumbnail: (filePath) => ipcRenderer.invoke('generate-thumbnail', filePath),
         generateThumbnailsBatch: (filePaths) => ipcRenderer.invoke('generate-thumbnails-batch', filePaths),
+        checkThumbnailsExist: (filePaths) => ipcRenderer.invoke('check-thumbnails-exist', filePaths),
         readMetadata: (filePath) => ipcRenderer.invoke('read-metadata', filePath),
         checkMetadataExists: (filePaths) => ipcRenderer.invoke('check-metadata-exists', filePaths),
         searchVector: (options) => ipcRenderer.invoke('search-vector', options),
@@ -84,6 +85,20 @@ contextBridge.exposeInMainWorld('electron', {
         // Config Management
         getConfig: () => ipcRenderer.invoke('get-config'),
         updateConfig: (key, value) => ipcRenderer.invoke('update-config', key, value),
+
+        // Registered Folders
+        getRegisteredFolders: () => ipcRenderer.invoke('get-registered-folders'),
+        addRegisteredFolder: () => ipcRenderer.invoke('add-registered-folder'),
+        removeRegisteredFolder: (folderPath) => ipcRenderer.invoke('remove-registered-folder', folderPath),
+
+        // Discover (DFS folder scan)
+        runDiscover: (opts) => ipcRenderer.send('run-discover', opts),
+        onDiscoverLog: (cb) => ipcRenderer.on('discover-log', (_, data) => cb(data)),
+        offDiscoverLog: () => ipcRenderer.removeAllListeners('discover-log'),
+        onDiscoverProgress: (cb) => ipcRenderer.on('discover-progress', (_, data) => cb(data)),
+        offDiscoverProgress: () => ipcRenderer.removeAllListeners('discover-progress'),
+        onDiscoverFileDone: (cb) => ipcRenderer.on('discover-file-done', (_, data) => cb(data)),
+        offDiscoverFileDone: () => ipcRenderer.removeAllListeners('discover-file-done'),
     },
 
     // User Metadata API

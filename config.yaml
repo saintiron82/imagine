@@ -89,6 +89,9 @@ runtime:
   pin_version: false
 batch_processing:
   enabled: true  # Enable adaptive batch processing (GUI configurable)
+registered_folders:
+  folders: []          # Registered folder paths for auto-discovery
+  auto_scan: true      # Auto-scan registered folders on app start
 search:
   candidate:
     fts_topn_cut: 2000
