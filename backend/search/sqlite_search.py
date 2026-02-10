@@ -883,7 +883,26 @@ class SqliteVectorSearch:
         # Step 6: Enrich missing per-axis scores via direct DB lookup
         # Files in final results may lack V/S scores if they weren't in that axis's
         # candidate pool. Compute their actual similarity for complete badge display.
+        v_missing_before = sum(1 for r in merged if r.get("vector_score") is None)
+        s_missing_before = sum(1 for r in merged if r.get("text_vec_score") is None)
         self._enrich_axis_scores(merged, v_query_embedding, t_query_embedding)
+        v_missing_after = sum(1 for r in merged if r.get("vector_score") is None)
+        s_missing_after = sum(1 for r in merged if r.get("text_vec_score") is None)
+        diag["enrichment"] = {
+            "v_missing_before": v_missing_before,
+            "v_enriched": v_missing_before - v_missing_after,
+            "s_missing_before": s_missing_before,
+            "s_enriched": s_missing_before - s_missing_after,
+        }
+        diag["final_top5"] = [
+            {
+                "file": r.get("file_name", r.get("file_path", "")),
+                "vector_score": round(r["vector_score"], 4) if r.get("vector_score") is not None else None,
+                "text_vec_score": round(r["text_vec_score"], 4) if r.get("text_vec_score") is not None else None,
+                "text_score": round(r["text_score"], 4) if r.get("text_score") is not None else None,
+            }
+            for r in merged[:5]
+        ]
 
         diag["final_results_count"] = len(merged)
         diag["total_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
@@ -1092,6 +1111,9 @@ class SqliteVectorSearch:
         """
         Compute cosine similarity for specific files against a query embedding.
 
+        Uses JOIN with files table (vec0 virtual tables don't support
+        arbitrary WHERE clauses directly).
+
         Args:
             table: "vec_files" or "vec_text"
             query_embedding: Pre-encoded query embedding vector
@@ -1108,10 +1130,11 @@ class SqliteVectorSearch:
         cursor = self.db.conn.cursor()
         try:
             cursor.execute(f"""
-                SELECT file_id,
-                       (1.0 - vec_distance_cosine(embedding, ?)) AS sim
-                FROM {table}
-                WHERE file_id IN ({placeholders})
+                SELECT f.id,
+                       (1.0 - vec_distance_cosine(v.embedding, ?)) AS sim
+                FROM files f
+                JOIN {table} v ON f.id = v.file_id
+                WHERE f.id IN ({placeholders})
             """, (embedding_json, *file_ids))
             return {row[0]: row[1] for row in cursor.fetchall()}
         except Exception as e:
