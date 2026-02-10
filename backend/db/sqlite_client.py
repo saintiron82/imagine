@@ -193,6 +193,7 @@ class SQLiteDB:
             ("structured_meta", "TEXT"),
             ("storage_root", "TEXT"),
             ("relative_path", "TEXT"),
+            # NOTE: Legacy default from pre-v3.1. Runtime uses SigLIP2 from tier config.
             ("embedding_model", "TEXT DEFAULT 'clip-ViT-L-14'"),
             ("embedding_version", "INTEGER DEFAULT 1"),
         ]

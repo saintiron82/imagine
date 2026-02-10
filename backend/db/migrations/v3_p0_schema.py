@@ -38,6 +38,8 @@ V3_COLUMNS = [
     ("storage_root", "TEXT"),
     ("relative_path", "TEXT"),
     # Embedding version tracking
+    # NOTE: Legacy default 'clip-ViT-L-14' from pre-v3.1 migration.
+    # Runtime uses SigLIP2 model from active tier config. Do not modify.
     ("embedding_model", "TEXT DEFAULT 'clip-ViT-L-14'"),
     ("embedding_version", "INTEGER DEFAULT 1"),
 ]
