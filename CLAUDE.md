@@ -514,6 +514,7 @@ python backend/setup/installer.py --check
 - 명령어는 **PowerShell** 또는 **Git Bash** 사용
 - 파일 경로는 백슬래시(`C:\Users\...`) 사용하지만 Python은 슬래시로 정규화
 - CUDA는 호환되는 NVIDIA GPU + 드라이버 필요 (`nvidia-smi`로 확인)
+- **인코딩은 무조건 UTF-8** (MANDATORY): 모든 파일 I/O, subprocess 출력, DB 읽기/쓰기에서 `encoding='utf-8'`을 명시해야 함. Windows 기본 인코딩(cp949)에 의존하면 한글 경로/데이터가 깨짐
 
 ## 개발 흐름 예시
 
