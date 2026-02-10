@@ -1587,8 +1587,15 @@ class SqliteVectorSearch:
         llm_filters = plan.get("filters", {})
         negative_query = plan.get("negative_query", "")
 
+        # V-axis negative embedding for visual penalty
+        neg_v_embedding = None
         if negative_query:
-            merged = self._apply_negative_filter(merged, negative_query)
+            try:
+                neg_v_embedding = self.encode_text(negative_query)
+            except Exception as e:
+                logger.debug(f"Negative V-axis encoding failed in image search: {e}")
+            merged = self._apply_negative_filter(merged, negative_query, neg_v_embedding)
+
         if llm_filters:
             merged = self._apply_user_filters(merged, llm_filters, strict=False)
         if user_filters:
@@ -1613,6 +1620,41 @@ class SqliteVectorSearch:
             f"V={len(vector_results)}, S={len(text_vec_results)}, "
             f"M={len(fts_results)}, merged={len(merged)}"
         )
+
+        # Write diagnostic log
+        if _DIAGNOSTIC_ENABLED:
+            diag = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "query": query,
+                "search_type": "triaxis_image",
+                "image_count": len(image_embeddings),
+                "image_mode": image_mode,
+                "top_k": top_k,
+                "decomposition": {
+                    "vector_query": plan.get("vector_query"),
+                    "negative_query": plan.get("negative_query"),
+                    "exclude_keywords": plan.get("exclude_keywords"),
+                    "query_type": query_type,
+                },
+                "axis_counts": {
+                    "V": len(vector_results),
+                    "S": len(text_vec_results),
+                    "M": len(fts_results),
+                },
+                "negative_v_axis": neg_v_embedding is not None,
+                "final_results_count": len(merged),
+                "final_top5": [
+                    {
+                        "file": r.get("file_name", r.get("file_path", "")),
+                        "vector_score": round(r["vector_score"], 4) if r.get("vector_score") is not None else None,
+                        "text_vec_score": round(r["text_vec_score"], 4) if r.get("text_vec_score") is not None else None,
+                        "text_score": round(r["text_score"], 4) if r.get("text_score") is not None else None,
+                    }
+                    for r in merged[:5]
+                ],
+            }
+            self._write_diagnostic(diag)
+
         return merged
 
     def multi_image_search(
