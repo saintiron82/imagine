@@ -34,7 +34,34 @@ function resizeToBase64(file) {
     });
 }
 
-function fetchImageFromUrl(url) {
+async function fetchImageFromUrl(url) {
+    // Use Electron main process to bypass CORS
+    if (window.electron?.pipeline?.fetchImageUrl) {
+        const result = await window.electron.pipeline.fetchImageUrl(url);
+        if (!result.success) throw new Error(result.error);
+        // result.data is a full data:image/...;base64,... string — resize it
+        return new Promise((resolve, reject) => {
+            const img = new window.Image();
+            img.onload = () => {
+                let w = img.width;
+                let h = img.height;
+                if (w > MAX_SIZE || h > MAX_SIZE) {
+                    const ratio = Math.min(MAX_SIZE / w, MAX_SIZE / h);
+                    w = Math.round(w * ratio);
+                    h = Math.round(h * ratio);
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+                resolve(canvas.toDataURL('image/jpeg', 0.85));
+            };
+            img.onerror = () => reject(new Error('Invalid image data'));
+            img.src = result.data;
+        });
+    }
+    // Fallback: direct load (may fail on CORS-restricted sites)
     return new Promise((resolve, reject) => {
         const img = new window.Image();
         img.crossOrigin = 'anonymous';

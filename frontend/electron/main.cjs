@@ -143,6 +143,28 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
     });
 });
 
+// IPC Handler: Fetch image from URL (bypasses CORS via Node.js)
+ipcMain.handle('fetch-image-url', async (_, url) => {
+    try {
+        const response = await fetch(url, {
+            headers: { 'User-Agent': 'ImageParser/1.0' },
+            signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.startsWith('image/')) {
+            throw new Error('URL does not point to an image');
+        }
+
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const base64 = `data:${contentType};base64,${buffer.toString('base64')}`;
+        return { success: true, data: base64 };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+});
+
 // IPC Handler: Triaxis Search (Vector + FTS5 + Filters)
 // Accepts either:
 //   - string query (backward compatible): searchVector("dragon")

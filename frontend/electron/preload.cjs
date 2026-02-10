@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('electron', {
         readMetadata: (filePath) => ipcRenderer.invoke('read-metadata', filePath),
         checkMetadataExists: (filePaths) => ipcRenderer.invoke('check-metadata-exists', filePaths),
         searchVector: (options) => ipcRenderer.invoke('search-vector', options),
+        fetchImageUrl: (url) => ipcRenderer.invoke('fetch-image-url', url),
         getDbStats: () => ipcRenderer.invoke('get-db-stats'),
 
         // Installer
