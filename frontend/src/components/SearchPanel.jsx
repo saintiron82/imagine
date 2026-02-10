@@ -167,6 +167,31 @@ const MetadataModal = ({ metadata, onClose }) => {
                             ))}
                         </div>
 
+                        {/* Path Information */}
+                        {metadata.file_path && (
+                            <div className="shrink-0 bg-gray-900/50 border border-gray-700/50 rounded-lg p-3">
+                                <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-2">{t('label.path_info')}</div>
+                                <div className="space-y-1.5">
+                                    <div className="flex items-start gap-2">
+                                        <span className="text-gray-500 text-[10px] uppercase shrink-0 w-14">{t('label.full_path')}</span>
+                                        <span className="text-gray-300 text-[11px] font-mono break-all select-all leading-relaxed">{metadata.file_path}</span>
+                                    </div>
+                                    {metadata.folder_path && (
+                                        <div className="flex items-start gap-2">
+                                            <span className="text-gray-500 text-[10px] uppercase shrink-0 w-14">{t('label.folder')}</span>
+                                            <span className="text-gray-300 text-[11px] font-mono">{metadata.folder_path}</span>
+                                        </div>
+                                    )}
+                                    {metadata.relative_path && (
+                                        <div className="flex items-start gap-2">
+                                            <span className="text-gray-500 text-[10px] uppercase shrink-0 w-14">{t('label.relative_path')}</span>
+                                            <span className="text-gray-300 text-[11px] font-mono">{metadata.relative_path}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
                         <div className="shrink-0 bg-blue-900/10 border border-blue-700/30 rounded-lg p-4">
                             <div className="text-blue-300 text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2">
                                 <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-[10px]">USER</span>
@@ -467,6 +492,11 @@ const SearchResultCard = ({ result, onShowMeta }) => {
             {/* Info */}
             <div className="p-3">
                 <div className="text-sm font-medium text-white truncate">{fileName}</div>
+                {result.folder_path && (
+                    <div className="text-[10px] text-gray-500 truncate mt-0.5" title={result.path}>
+                        {result.folder_path}
+                    </div>
+                )}
 
                 {result.mc_caption && (
                     <div className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
