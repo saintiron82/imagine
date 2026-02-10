@@ -18,6 +18,9 @@ function App() {
   const [processQueue, setProcessQueue] = useState([]); // Processing queue
   const [queueIndex, setQueueIndex] = useState(0); // Current processing index
   const queueRef = useRef({ queue: [], index: 0, processing: false });
+  const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [discoverProgress, setDiscoverProgress] = useState('');
 
   // Initialize with Home Directory & stable IPC listeners (never removed during app lifetime)
   useEffect(() => {
@@ -44,14 +47,56 @@ function App() {
             setQueueIndex((prev) => prev + 1);
           }
         });
+
+        // Discover event listeners (for auto-scan)
+        window.electron.pipeline.onDiscoverLog((data) => {
+          setLogs((prev) => [...prev, data]);
+          setDiscoverProgress(data.message);
+        });
+        window.electron.pipeline.onDiscoverFileDone((data) => {
+          // Auto-scan processes folders sequentially via discoverQueueRef
+          const ref = discoverQueueRef.current;
+          if (ref.scanning && ref.index < ref.folders.length - 1) {
+            discoverQueueRef.current.index++;
+            const nextFolder = ref.folders[ref.index + 1];
+            window.electron.pipeline.runDiscover({ folderPath: nextFolder, noSkip: false });
+          } else {
+            setIsDiscovering(false);
+            setDiscoverProgress('');
+          }
+        });
       }
     }
+
+    // Auto-scan registered folders on startup
+    const autoScanRegisteredFolders = async () => {
+      try {
+        const result = await window.electron?.pipeline?.getRegisteredFolders();
+        if (!result?.success) return;
+        if (result.autoScan === false) return;
+        const validFolders = (result.folders || []).filter(f => f.exists).map(f => f.path);
+        if (validFolders.length === 0) return;
+
+        setIsDiscovering(true);
+        discoverQueueRef.current = { folders: validFolders, index: 0, scanning: true };
+        setLogs((prev) => [...prev, {
+          message: `Auto-scanning ${validFolders.length} registered folder(s)...`,
+          type: 'info'
+        }]);
+        window.electron.pipeline.runDiscover({ folderPath: validFolders[0], noSkip: false });
+      } catch (e) {
+        console.error('Auto-scan failed:', e);
+      }
+    };
+    autoScanRegisteredFolders();
 
     return () => {
       if (window.electron?.pipeline) {
         window.electron.pipeline.offLog();
         window.electron.pipeline.offStep();
         window.electron.pipeline.offFileDone();
+        window.electron.pipeline.offDiscoverLog();
+        window.electron.pipeline.offDiscoverFileDone();
       }
     };
   }, []);
@@ -250,6 +295,8 @@ function App() {
             logs={logs}
             clearLogs={clearLogs}
             isProcessing={isProcessing}
+            isDiscovering={isDiscovering}
+            discoverProgress={discoverProgress}
             processed={queueIndex}
             total={processQueue.length}
             currentFile={processProgress.currentFile}

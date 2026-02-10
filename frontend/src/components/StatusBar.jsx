@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Terminal, X, Loader2, Square, Cpu } from 'lucide-react';
 import { useLocale } from '../i18n';
 
-const StatusBar = ({ logs, clearLogs, isProcessing, processed = 0, total = 0, currentFile = '', fileStep = {}, onStop }) => {
+const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, currentFile = '', fileStep = {}, onStop }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
     const [aiTier, setAiTier] = useState(null);
@@ -101,8 +101,17 @@ const StatusBar = ({ logs, clearLogs, isProcessing, processed = 0, total = 0, cu
                     </div>
                 )}
 
+                {/* Discover progress */}
+                {isDiscovering && !isProcessing && (
+                    <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
+                        <Loader2 className="animate-spin text-green-400" size={14} />
+                        <span className="text-green-300 text-xs font-medium">{t('status.discovering')}</span>
+                        <span className="text-gray-400 text-xs truncate max-w-[250px]">{discoverProgress}</span>
+                    </div>
+                )}
+
                 {/* AI Tier Display */}
-                {aiTier && !isProcessing && (
+                {aiTier && !isProcessing && !isDiscovering && (
                     <div className="flex items-center gap-1.5 text-xs text-gray-400 border-l border-blue-700 pl-3 mr-3">
                         <Cpu size={12} className="flex-shrink-0" />
                         <span className="font-mono">
