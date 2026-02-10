@@ -1,5 +1,4 @@
-# ImageParser Dependencies
-# Phase 1: Data Extraction & Normalization
+# ImageParser Dependencies (v3.1.1+ Triaxis Architecture)
 
 # PSD Parsing
 psd-tools>=1.9.0
@@ -14,30 +13,28 @@ pydantic>=2.0.0
 # File Watching
 watchdog>=3.0.0
 
-# Metadata Extraction (for JPG/PNG)
+# Metadata Extraction (JPG/PNG EXIF)
 exifread>=3.0.0
 
 # CLI & Progress
 tqdm>=4.65.0
 
-# Vector Database
-chromadb>=0.4.0  # Keep for backup during migration
-# AI Vision (Local CLIP)
-sentence-transformers>=2.2.2
-torch>=2.0.0
-Pillow>=10.0.0
+# SQLite Vector Database (Triaxis V/S-axis)
+sqlite-vec>=0.1.0
 
-# PostgreSQL + pgvector (Phase 3: Vision Data Storage)
-psycopg2-binary>=2.9.0  # PostgreSQL adapter
-pgvector>=0.2.0         # Python client for pgvector extension
+# AI Models (SigLIP2, Qwen3-VL)
+torch>=2.0.0
+transformers>=4.30.0
+accelerate>=0.20.0
+
+# HTTP Client (Ollama API)
+requests>=2.28.0
+
+# Config
+PyYAML>=6.0.0
 
 # Translation
 deep-translator>=1.11.0
 
 # Environment Configuration
 python-dotenv>=1.0.0
-
-# AI Vision Models (Phase 4)
-transformers>=4.30.0  # Hugging Face models (BLIP, Qwen2-VL, etc.)
-accelerate>=0.20.0     # Model loading optimization
-requests>=2.28.0       # Ollama API client

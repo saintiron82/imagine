@@ -28,7 +28,7 @@ REQUIRED_PACKAGES = [
     "sqlite-vec",          # SQLite vector extension
     "transformers",        # SigLIP2, Qwen3-VL
     "accelerate",          # Model loading
-    "sentence-transformers",
+    "numpy",               # Array operations
     "deep-translator",
     "pillow",
     "requests",
@@ -48,7 +48,6 @@ def check_imports():
         try:
             # Handle package name vs import name differences
             import_name = pkg.replace("-", "_")
-            if pkg == "sentence-transformers": import_name = "sentence_transformers"
             if pkg == "deep-translator": import_name = "deep_translator"
             if pkg == "pillow": import_name = "PIL"
             if pkg == "PyYAML": import_name = "yaml"
@@ -295,14 +294,16 @@ def init_database():
         return False
 
 def check_gpu():
-    """Check GPU/VRAM status."""
+    """Check GPU/VRAM status (CUDA, Apple Silicon MPS, or CPU)."""
     try:
         import torch
         if torch.cuda.is_available():
             name = torch.cuda.get_device_name(0)
             vram = torch.cuda.get_device_properties(0).total_memory // (1024**2)
             return True, f"{name} ({vram} MB VRAM)"
-        return False, "No CUDA GPU detected (CPU mode)"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return True, "Apple Silicon MPS (GPU accelerated)"
+        return False, "No GPU detected (CPU mode)"
     except ImportError:
         return False, "PyTorch not installed"
 

@@ -1,306 +1,206 @@
 # ImageParser Installation Guide
 
-Complete installation guide for setting up ImageParser on a new machine.
+Cross-platform setup guide for Windows, macOS, and Linux.
 
 ## Prerequisites
 
-- **Python 3.11+** (Python 3.11.9 recommended)
-- **Git** (for cloning the repository)
-- **Docker Desktop** (recommended) OR **PostgreSQL 16+** (manual installation)
+- **Python 3.11+**
+- **Node.js 18+** (for Electron frontend)
+- **Git**
 
-## Quick Start (Recommended)
+## Quick Start (All Platforms)
 
-### 1. Clone Repository
+### 1. Clone & Virtual Environment
 
-```powershell
+```bash
 git clone <repository-url>
 cd ImageParser
-```
-
-### 2. Create Virtual Environment
-
-```powershell
-# Create virtual environment
 python -m venv .venv
-
-# Activate virtual environment
-.venv\Scripts\activate
-
-# Verify activation (should show .venv path)
-where python
 ```
 
-### 3. Run Full Setup
+Activate the virtual environment:
 
-```powershell
-# This will:
-# - Install all Python dependencies
-# - Download CLIP AI model (~1.7GB)
-# - Guide you through PostgreSQL setup
-# - Initialize database schema
+| Platform | Command |
+|----------|---------|
+| **Windows** (PowerShell) | `.venv\Scripts\activate` |
+| **Windows** (CMD) | `.venv\Scripts\activate.bat` |
+| **macOS / Linux** | `source .venv/bin/activate` |
 
+### 2. Install Backend (Python)
+
+```bash
+pip install -r requirements.txt
 python backend/setup/installer.py --full-setup
 ```
 
-### 4. Configure Environment (Optional)
+This will:
+- Install all Python packages
+- Download SigLIP2 visual embedding model (~600MB-3GB depending on tier)
+- Initialize SQLite database
+- Check and pull Ollama models (if Ollama is running)
 
-```powershell
-# Copy environment template
-copy .env.example .env
+### 3. Install Ollama (AI Models)
 
-# Edit .env file to customize settings
-# Key settings:
-# - VISION_BACKEND: 'transformers' (default) or 'ollama' (memory-efficient)
-# - VISION_MODEL: AI model to use for image analysis
-# - POSTGRES_HOST, POSTGRES_PORT, etc: Database connection
+Ollama provides the text embedding and VLM (Vision Language Model) backends.
 
-notepad .env
+| Platform | Install Method |
+|----------|---------------|
+| **Windows** | Download from [ollama.com/download](https://ollama.com/download) |
+| **macOS** | `brew install ollama` or download from [ollama.com/download](https://ollama.com/download) |
+| **Linux** | `curl -fsSL https://ollama.com/install.sh \| sh` |
+
+After installing, pull the required models:
+
+```bash
+# Standard tier (default, ~6GB VRAM)
+ollama pull qwen3-embedding:0.6b
+
+# Or let the installer do it:
+python backend/setup/installer.py --setup-ollama
 ```
 
-**Default Configuration** (no .env needed):
-- Vision Backend: Transformers with Qwen2-VL-2B-Instruct
-- PostgreSQL: localhost:5432 (Docker default)
-- Output: output/ directory
+### 4. Install Frontend (Electron)
 
-**For Deployment** (recommended):
-- Set `VISION_BACKEND=ollama` for memory efficiency
-- Install Ollama: See [docs/ollama_setup.md](docs/ollama_setup.md)
-
-### 5. Setup PostgreSQL
-
-The installer will guide you, but here are the options:
-
-#### Option A: Docker (Easiest - Recommended)
-
-```powershell
-# Install Docker Desktop for Windows
-# Download: https://www.docker.com/products/docker-desktop/
-
-# Start PostgreSQL with pgvector
-docker-compose up -d
-
-# Wait 10 seconds for database to start
-timeout /t 10
-
-# Initialize database schema
-python backend/setup/installer.py --init-db
+```bash
+cd frontend
+npm install
 ```
 
-#### Option B: Manual PostgreSQL Installation
+### 5. Run
 
-See [docs/postgresql_setup.md](docs/postgresql_setup.md) for detailed instructions.
+```bash
+# From frontend/ directory
+npm run electron:dev
+```
 
-### 6. Verify Installation
+## Verify Installation
 
-```powershell
-# Check installation status
+```bash
 python backend/setup/installer.py --check
-
-# You should see:
-# ✅ Python Dependencies: OK
-# ✅ CLIP Model Cached: Yes
-# ✅ PostgreSQL: Connected
-# ✅ pgvector Extension: Active
 ```
 
-## Step-by-Step Installation (Alternative)
-
-If you prefer manual step-by-step installation:
-
-### 1. Install Python Dependencies
-
-```powershell
-# Activate virtual environment
-.venv\Scripts\activate
-
-# Install dependencies
-python -m pip install -r requirements.txt
+Expected output:
+```
+✅ Python Dependencies: OK
+✅ Visual Model Cached: google/siglip2-base-patch16-224
+✅ SQLite: 3.xx.x
+✅ sqlite-vec Extension: 0.x.x
+✅ Ollama Running: Yes
+✅ Ollama Models: Ready
+✅ GPU: NVIDIA RTX xxxx (xxxx MB VRAM)  # or Apple Silicon MPS / CPU mode
 ```
 
-### 2. Download AI Model
+## Platform-Specific Notes
 
-```powershell
-# Download CLIP model (~1.7GB, one-time download)
+### Windows
+
+- **GPU**: NVIDIA GPU with CUDA recommended. Check with `nvidia-smi`.
+- **PyTorch**: Installed automatically via `pip install -r requirements.txt`. For CUDA-specific versions, see [pytorch.org](https://pytorch.org/get-started/locally/).
+- **Encoding**: All file I/O uses UTF-8. No cp949 issues.
+
+### macOS
+
+- **Apple Silicon (M1/M2/M3/M4)**: MPS acceleration is automatically detected for SigLIP2 encoding. No extra setup needed.
+- **PyTorch MPS**: Installed automatically. Verify with:
+  ```bash
+  python -c "import torch; print(torch.backends.mps.is_available())"
+  ```
+- **Intel Mac**: CPU mode only for embeddings. Ollama handles VLM acceleration.
+
+### Linux
+
+- **GPU**: NVIDIA GPU with CUDA recommended.
+- **SQLite**: Ensure system SQLite is 3.41+. Check with:
+  ```bash
+  python -c "import sqlite3; print(sqlite3.sqlite_version)"
+  ```
+
+## Tier System
+
+ImageParser supports 3 tiers configured in `config.yaml` (`ai_mode.override`):
+
+| Tier | VRAM | Visual Model | VLM | Text Embedding |
+|------|------|-------------|-----|----------------|
+| **standard** (default) | ~6GB | SigLIP2-base (768d) | Qwen3-VL-2B | qwen3-embedding:0.6b |
+| **pro** | 8-16GB | SigLIP2-so400m (1152d) | Qwen3-VL-4B | qwen3-embedding:0.6b |
+| **ultra** | 20GB+ | SigLIP2-giant (1664d) | Qwen3-VL-8B | qwen3-embedding:8b |
+
+To change tier:
+```bash
+# Edit config.yaml
+ai_mode:
+  override: standard  # Change to: pro or ultra
+```
+
+Then re-run setup to download the appropriate models:
+```bash
 python backend/setup/installer.py --download-model
+python backend/setup/installer.py --setup-ollama
 ```
 
-### 3. Setup PostgreSQL
+## Individual Setup Commands
 
-```powershell
-# Show setup guide
-python backend/setup/installer.py --setup-postgres
+```bash
+# Install Python packages only
+python backend/setup/installer.py --install
 
-# After PostgreSQL is running:
-python backend/setup/installer.py --init-db
-```
+# Download visual embedding model only
+python backend/setup/installer.py --download-model
 
-## Migrating from Old Version (ChromaDB)
+# Pull Ollama models only
+python backend/setup/installer.py --setup-ollama
 
-If you're upgrading from an older version that used ChromaDB:
-
-```powershell
-# Migrate existing data to PostgreSQL
-python tools/migrate_to_postgres.py
-
-# Verify migration
-python tools/verify_migration.py
-
-# Backup old JSON files
-mkdir output\json_backup
-move output\json\*.json output\json_backup\
-```
-
-## Testing the Installation
-
-### Process a Test Image
-
-```powershell
-# Process a single image
-python backend/pipeline/ingest_engine.py --file "path\to\test\image.psd"
-```
-
-### Search Images
-
-```powershell
-# Search using text query
-python backend/cli_search_pg.py "cartoon city"
-
-# Hybrid search with filters
-python backend/cli_search_pg.py "fantasy character" --mode hybrid --format PSD --min-width 2000
-```
-
-### Watch Directory
-
-```powershell
-# Auto-process files in a directory
-python backend/pipeline/ingest_engine.py --watch "C:\path\to\assets"
-```
-
-## Common Issues
-
-### Issue: "connection refused" (PostgreSQL)
-
-**Solution**:
-```powershell
-# Docker: Check if container is running
-docker-compose ps
-
-# Docker: Restart container
-docker-compose restart
-
-# Manual: Check PostgreSQL service in services.msc
-```
-
-### Issue: "pgvector extension not found"
-
-**Solution**:
-```powershell
-# Docker: Restart with fresh database
-docker-compose down -v
-docker-compose up -d
+# Initialize database only
 python backend/setup/installer.py --init-db
 
-# Manual: Install pgvector extension
-# See docs/postgresql_setup.md
+# Show SQLite setup guide
+python backend/setup/installer.py --setup-sqlite
 ```
 
-### Issue: "CLIP model download stuck"
+## Troubleshooting
 
-**Solution**:
-```powershell
-# Clear Hugging Face cache
-rmdir /s /q "%USERPROFILE%\.cache\huggingface"
+### Ollama connection refused
+
+Ollama is not running. Start it:
+- **Windows**: Ollama runs as a system service after installation. Check system tray.
+- **macOS/Linux**: Run `ollama serve` in a terminal.
+
+### SigLIP2 model download stuck
+
+Clear HuggingFace cache and retry:
+```bash
+# Remove cached model
+rm -rf ~/.cache/huggingface/hub/models--google--siglip2*
 
 # Re-download
 python backend/setup/installer.py --download-model
 ```
 
-### Issue: "ImportError: psycopg2"
+### sqlite-vec extension load failed
 
-**Solution**:
-```powershell
-# Reinstall PostgreSQL adapter
-python -m pip install --force-reinstall psycopg2-binary
+```bash
+pip install --force-reinstall sqlite-vec
 ```
 
-## Directory Structure
+Requires Python 3.11+ with SQLite 3.41+.
 
-After installation, your project should look like:
+### Search returns no results
 
-```
-ImageParser/
-├── .venv/                      # Python virtual environment
-├── backend/
-│   ├── db/                     # PostgreSQL client
-│   │   ├── schema.sql         # Database schema
-│   │   └── pg_client.py       # Python client
-│   ├── parser/                # File parsers (PSD, PNG, JPG)
-│   ├── pipeline/              # Main processing pipeline
-│   ├── search/                # Search API (pgvector)
-│   ├── setup/                 # Installation scripts
-│   │   └── installer.py       # Main installer ⭐
-│   └── vision/                # AI vision analysis
-├── tools/
-│   ├── migrate_to_postgres.py # Migration script
-│   └── verify_migration.py    # Verification script
-├── output/
-│   └── thumbnails/            # Generated thumbnails
-├── docs/
-│   └── postgresql_setup.md    # Detailed PostgreSQL guide
-├── docker-compose.yml         # PostgreSQL + pgvector (Docker)
-├── requirements.txt           # Python dependencies
-└── INSTALLATION.md            # This file
+Files need to be processed first. Use the Electron app to select a folder and run "Process", or:
+```bash
+python backend/pipeline/ingest_engine.py --discover "path/to/images"
 ```
 
-## Next Steps
+### macOS: "python3" not found in Electron
 
-After successful installation:
-
-1. **Process your first image**:
-   ```powershell
-   python backend/pipeline/ingest_engine.py --file "path\to\image.psd"
-   ```
-
-2. **Test vector search**:
-   ```powershell
-   python backend/cli_search_pg.py "your search query"
-   ```
-
-3. **Setup directory watching** (optional):
-   ```powershell
-   python backend/pipeline/ingest_engine.py --watch "C:\path\to\assets"
-   ```
-
-4. **Read documentation**:
-   - [CLAUDE.md](CLAUDE.md) - Project architecture and development guide
-   - [docs/postgresql_setup.md](docs/postgresql_setup.md) - PostgreSQL details
-   - [docs/phase_roadmap.md](docs/phase_roadmap.md) - Project roadmap
-
-## Getting Help
-
-- Check [docs/troubleshooting.md](docs/troubleshooting.md) for common issues
-- Run diagnostic: `python backend/setup/installer.py --check`
-- Open an issue on GitHub (if applicable)
-
-## Cloud Deployment (Optional)
-
-For multi-device synchronization, see:
-- [Supabase Guide](docs/postgresql_setup.md#supabase-recommended---500mb-free)
-- [Render Guide](docs/postgresql_setup.md#render-free-postgresql)
-
-## Performance Expectations
-
-- **Image processing**: 2-5 seconds per PSD file
-- **Vector search**: <50ms for 10,000 images
-- **Storage**: ~50KB per image (metadata + vector)
-- **CLIP model**: ~1.7GB RAM usage
+Ensure `.venv` is created with `python3 -m venv .venv` and the virtual environment is active before running `npm run electron:dev`.
 
 ## System Requirements
 
-- **Minimum**: 4GB RAM, 10GB disk space
-- **Recommended**: 8GB RAM, 20GB disk space
-- **GPU**: Optional (CUDA for faster CLIP encoding)
-
----
-
-**Enjoy using ImageParser!** 🎨✨
+| | Minimum | Recommended |
+|--|---------|------------|
+| **RAM** | 8 GB | 16 GB |
+| **Disk** | 10 GB | 20 GB |
+| **GPU** | None (CPU mode) | NVIDIA 6GB+ VRAM or Apple Silicon |
+| **Python** | 3.11 | 3.12+ |
+| **Node.js** | 18 | 20+ |
