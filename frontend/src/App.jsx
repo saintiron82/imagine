@@ -21,6 +21,8 @@ function App() {
   const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoverProgress, setDiscoverProgress] = useState('');
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState(new Set());
 
   // Initialize with Home Directory & stable IPC listeners (never removed during app lifetime)
   useEffect(() => {
@@ -113,6 +115,23 @@ function App() {
   const handleFolderSelect = (path) => {
     setCurrentPath(path);
     setSelectedFiles(new Set()); // Clear selection on folder change
+  };
+
+  const handleFolderToggle = (path) => {
+    setSelectedPaths(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+    setSelectedFiles(new Set());
+  };
+
+  const handleMultiSelectToggle = (enabled) => {
+    setMultiSelectMode(enabled);
+    if (!enabled) {
+      setSelectedPaths(new Set());
+    }
   };
 
   const handleProcess = () => {
@@ -268,6 +287,10 @@ function App() {
               <Sidebar
                 currentPath={currentPath}
                 onFolderSelect={handleFolderSelect}
+                multiSelectMode={multiSelectMode}
+                selectedPaths={selectedPaths}
+                onMultiSelectToggle={handleMultiSelectToggle}
+                onFolderToggle={handleFolderToggle}
               />
             </div>
           </div>
@@ -285,6 +308,7 @@ function App() {
                   currentPath={currentPath}
                   selectedFiles={selectedFiles}
                   setSelectedFiles={setSelectedFiles}
+                  selectedPaths={selectedPaths}
                 />
               </div>
             )}

@@ -538,7 +538,7 @@ const FileCard = React.forwardRef(({ file, isSelected, onMouseDown, thumbnail, l
 });
 
 // Main FileGrid Component
-const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles }) => {
+const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths = new Set() }) => {
     const { t } = useLocale();
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -554,17 +554,23 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles }) => {
     const lastClickedIndex = useRef(null);
     const pendingClick = useRef(null);
 
-    // Load files
+    // Load files (supports multi-folder via selectedPaths)
     useEffect(() => {
-        if (!currentPath) return;
+        const paths = selectedPaths.size > 0
+            ? Array.from(selectedPaths)
+            : currentPath ? [currentPath] : [];
+        if (paths.length === 0) return;
+
         setLoading(true);
         setThumbnails({});
         setMetadataStatus({});
-        window.electron?.fs?.listDir(currentPath)
-            .then(items => {
-                const supportedFiles = items.filter(i => !i.isDirectory && SUPPORTED_EXTS.includes(i.extension));
+
+        Promise.all(
+            paths.map(p => window.electron?.fs?.listDir(p).catch(() => []))
+        )
+            .then(results => {
+                const supportedFiles = results.flat().filter(i => !i.isDirectory && SUPPORTED_EXTS.includes(i.extension));
                 setFiles(supportedFiles);
-                // Check metadata existence for all files
                 if (window.electron?.pipeline?.checkMetadataExists) {
                     window.electron.pipeline.checkMetadataExists(supportedFiles.map(f => f.path))
                         .then(setMetadataStatus)
@@ -573,7 +579,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles }) => {
             })
             .catch(console.error)
             .finally(() => setLoading(false));
-    }, [currentPath]);
+    }, [currentPath, selectedPaths]);
 
     // Re-check metadata periodically
     useEffect(() => {
