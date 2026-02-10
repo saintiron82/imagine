@@ -21,7 +21,7 @@
 | **Backend** | Python 3.x | psd-tools, Pillow, watchdog |
 | **Database** | SQLite + sqlite-vec + FTS5 | 벡터 + 전문검색 + 메타데이터 통합 |
 | **Frontend** | React 19 + Electron 40 + Vite 7 + Tailwind CSS 4 | 데스크톱 앱 |
-| **Vision LLM** | Tier별: Qwen3-VL-2B (transformers, standard) / 8B (Ollama, ultra) | 2-Stage 분류/분석 |
+| **Vision LLM** | Tier별: Qwen3-VL-2B (standard) / 4B (pro) / 8B (ultra) | 2-Stage 분류/분석, transformers 또는 Ollama |
 | **V-axis 임베딩** | SigLIP2 (tier별: base=768d, so400m=1152d, giant=1664d) | 시각 유사도 |
 | **S-axis 임베딩** | Qwen3-Embedding (Ollama, tier별: 256d/1024d/4096d) | 의미 유사도 |
 | **i18n** | 커스텀 LocaleContext | ko-KR, en-US |
@@ -35,9 +35,9 @@
 
 이미지 (PSD/PNG/JPG)
   │
-  ├─ [S축] PSD 파싱 → 레이어 트리, 텍스트, 메타데이터
+  ├─ [M축] PSD 파싱 → 레이어 트리, 텍스트, 메타데이터 → files + files_fts
   │
-  ├─ [Vision] Qwen3-VL-8B (2-Stage)
+  ├─ [Vision] Qwen3-VL (2-Stage, tier별: 2B/4B/8B)
   │     Stage 1: image_type 분류 (11종)
   │     Stage 2: 타입별 전용 구조화 분석
   │     → ai_caption, ai_tags, image_type, art_style, scene_type ...
@@ -71,6 +71,7 @@
 | **P1** | V-axis SigLIP2 교체 | **완료** | +2~5%p | tier별 차원, 109언어 |
 | **P2** | S-axis Qwen3-Embedding 추가 | **완료** | +3~7%p | tier별 차원, 3축 RRF 완성 |
 | **P2+** | Auto-Weighted RRF + Tier 시스템 | **완료** | +2~5%p | 쿼리 유형별 동적 가중치, standard/pro/ultra |
+| **v3.1.1** | 플랫폼별 최적화 | **완료** | 성능 | AUTO 모드, Windows: Ollama(1), Mac: vLLM(16) |
 | **P3** | 인프라 개선 | 미구현 | 성능/안정성 | FastAPI 서버, 큐 영속성 |
 | **P4** | 서버형 전환 | 미구현 | 확장성 | PostgreSQL, 멀티테넌시 |
 
@@ -178,11 +179,12 @@ python backend/pipeline/ingest_engine.py --discover "C:\Images" --no-skip
 
 ### P0: 2-Stage Vision Pipeline
 
-- Qwen3-VL-8B로 이미지를 **11개 타입** 자동 분류 (character, background, ui_element, item 등)
+- Qwen3-VL (tier별: 2B/4B/8B)로 이미지를 **11개 타입** 자동 분류 (character, background, ui_element, item 등)
 - 타입별 전용 프롬프트로 구조화 분석 (scene_type, time_of_day, character_type 등)
+- VLM 백엔드 자동 선택: `vision_factory.py` (standard/pro: transformers, ultra: Ollama/vLLM auto)
 - 3단계 JSON Repair 로직으로 LLM 출력 안정성 확보
 - DB 15개 컬럼 추가 + FTS5 16컬럼 확장
-- 구현: `backend/vision/` (prompts.py, schemas.py, ollama_adapter.py, repair.py)
+- 구현: `backend/vision/` (vision_factory.py, analyzer.py, ollama_adapter.py, prompts.py, schemas.py, repair.py)
 - 검증: 99파일 100% 처리 — illustration(52), photo(41), background(5), texture(1)
 
 ### P1: V-axis SigLIP2 교체
@@ -225,8 +227,8 @@ AND 조건 하드 게이트로 적용하면 **검색 결과가 전부 0건**으�
    99파일 중 대부분은 해당 필드가 비어 있어 AND 필터를 통과하지 못함.
 2. **근본적 중복**: 구조화 필드가 하는 일을 3축이 이미 더 잘 수행함.
    - `scene_type = "alley"` → FTS가 caption/tags의 "alley" 키워드를 이미 검색
-   - `art_style = "anime"` → V축(SigLIP 1152차원)이 시각적 스타일을 이미 인코딩
-   - `time_of_day = "night"` → T축이 caption "night scene" 의미를 이미 벡터화
+   - `art_style = "anime"` → V축(SigLIP2 tier별 차원)이 시각적 스타일을 이미 인코딩
+   - `time_of_day = "night"` → S축이 caption "night scene" 의미를 이미 벡터화
 3. **정보 손실**: Qwen3-VL이 생산하는 자유형 caption/tags는 풍부한 서술 정보를 포함하지만,
    구조화 필드는 동일 AI가 같은 이미지를 보고 ~10개 카테고리로 강제 분류한 축소 정보.
    1152차원 벡터가 인코딩하는 정보를 ~10개 체크박스로 대체하려는 시도.
@@ -234,7 +236,7 @@ AND 조건 하드 게이트로 적용하면 **검색 결과가 전부 0건**으�
 **결론:**
 - LLM 필터는 검색 시 하드 게이트로 사용하지 않음 (코드에서 제거)
 - 구조화 필드(image_type, scene_type 등)는 DB에 저장은 유지 (프론트엔드 수동 필터 용도)
-- 검색 품질은 V축+T축+FTS 3축 RRF가 전담
+- 검색 품질은 V축+S축+M축(FTS) 3축 RRF가 전담
 - 2-Stage Vision 파이프라인은 유지 (타입별 전용 프롬프트가 caption/tags 품질 향상에 기여)
 
 #### 가중치 튜닝 결과
@@ -244,6 +246,16 @@ AND 조건 하드 게이트로 적용하면 **검색 결과가 전부 0건**으�
 - keyword 쿼리는 가중치에 둔감 (FTS 0.40~0.60 범위에서 top 1~2 불변)
 - visual 쿼리는 가중치에 민감 (V축 0.45 vs 0.50 차이로 1위 변동)
 - 균등 분배(C)는 keyword에서 손해, 극단(D)는 visual에서 V축 과의존
+
+### 플랫폼별 최적화 (v3.1.1) — ✅ 완료
+
+**목표:** 플랫폼별 최적 VLM 백엔드 자동 선택
+**상태:** 완료
+**구현 내용:**
+- `backend/vision/vision_factory.py` — AUTO 모드로 플랫폼 자동 감지
+- Windows: Ollama (batch_size=1, 순차 처리 최적)
+- Mac/Linux: vLLM 우선 (batch_size=16, 8.5배 향상)
+- `config.yaml` > `ai_mode.tiers.*.vlm.backend: auto`
 
 ### P3: 인프라 개선
 
@@ -267,16 +279,19 @@ AND 조건 하드 게이트로 적용하면 **검색 결과가 전부 0건**으�
 ```
 backend/
   vision/
+    vision_factory.py      # VLM 백엔드 자동 선택 (Factory)
+    analyzer.py            # Transformers VLM 어댑터 (2-Stage, standard/pro)
+    ollama_adapter.py      # Ollama VLM 어댑터 (2-Stage, ultra)
     prompts.py             # Stage1/Stage2 프롬프트
     schemas.py             # 11개 image_type JSON 스키마
-    ollama_adapter.py      # Ollama 호출 + 2-Stage 실행
     repair.py              # 3단계 JSON Repair
   vector/
     siglip2_encoder.py     # [P1] V-axis 인코더 (tier별 차원)
     text_embedding.py      # [P2] S-axis Provider (tier별 차원)
   search/
     sqlite_search.py       # 3축 RRF 검색 엔진
-    query_decomposer.py    # 쿼리 분석
+    rrf.py                 # [P2+] RRF 가중치 프리셋 (query_type별)
+    query_decomposer.py    # LLM 쿼리 분류기 (query_type 판별)
   db/
     sqlite_client.py       # SQLite 클라이언트 (880줄)
     sqlite_schema.sql      # 스키마 정의
@@ -338,7 +353,7 @@ python backend/pipeline/ingest_engine.py --watch "C:\assets"
 # 재인덱싱
 python tools/reindex_v3.py --vision-only          # Vision 재처리
 python tools/reindex_v3.py --embedding-only        # V축 재생성
-python tools/reindex_v3.py --text-embedding        # T축 재생성
+python tools/reindex_v3.py --text-embedding        # S축 재생성
 python tools/reindex_v3.py --all                   # 전체
 
 # 검색 (프론트엔드 Electron 앱)
