@@ -563,6 +563,7 @@ class SqliteVectorSearch:
         self,
         keywords: List[str],
         top_k: int = 20,
+        exclude_keywords: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Full-text search using FTS5 (M-axis: Metadata-only).
@@ -570,6 +571,7 @@ class SqliteVectorSearch:
         Args:
             keywords: List of keywords to search (combined with OR)
             top_k: Number of results to return
+            exclude_keywords: Optional list of keywords to exclude via FTS5 NOT operator
 
         Returns:
             List of file records with FTS rank scores
@@ -590,6 +592,18 @@ class SqliteVectorSearch:
             return []
 
         match_expr = " OR ".join(f'"{t}"' for t in tokens)
+
+        # Build exclude expression using FTS5 NOT operator
+        if exclude_keywords:
+            exclude_tokens = set()
+            for kw in exclude_keywords:
+                for word in kw.split():
+                    word = word.strip().replace('"', '""')
+                    if word:
+                        exclude_tokens.add(word)
+            if exclude_tokens:
+                exclude_expr = " OR ".join(f'"{t}"' for t in exclude_tokens)
+                match_expr = f"({match_expr}) NOT ({exclude_expr})"
 
         # Triaxis: Load BM25 weights from config (2 columns: meta_strong, meta_weak)
         from backend.utils.config import get_config as _cfg
@@ -689,6 +703,8 @@ class SqliteVectorSearch:
         vector_query = plan["vector_query"]
         fts_keywords = plan["fts_keywords"]
         llm_filters = plan.get("filters", {})
+        negative_query = plan.get("negative_query", "")
+        exclude_keywords = plan.get("exclude_keywords", [])
 
         query_type = plan.get("query_type", "balanced")
 
@@ -697,12 +713,13 @@ class SqliteVectorSearch:
             "vector_query": vector_query,
             "fts_keywords": fts_keywords,
             "llm_filters": llm_filters,
+            "negative_query": negative_query,
+            "exclude_keywords": exclude_keywords,
             "query_type": query_type,
         }
 
-        # Separate LLM-suggested filters (soft boost) from user filters (hard gate)
+        # Merge LLM-suggested filters with user filters (user takes precedence)
         user_filters = filters or {}
-        soft_filters = llm_filters  # applied as score boost, never removes results
 
         # Per-axis thresholds: SigLIP (V) and Qwen3 (Tv) have very different score ranges
         # V-axis: 0.10-0.17 typical match, S-axis: 0.65-0.78 typical match
@@ -772,7 +789,7 @@ class SqliteVectorSearch:
         fts_results = []
         t0 = time.perf_counter()
         try:
-            fts_results = self.fts_search(fts_keywords, top_k=candidate_k)
+            fts_results = self.fts_search(fts_keywords, top_k=candidate_k, exclude_keywords=exclude_keywords)
         except Exception as e:
             logger.warning(f"FTS search unavailable: {e}")
             diag["fts_error"] = str(e)
@@ -870,12 +887,28 @@ class SqliteVectorSearch:
             ],
         }
 
-        # Step 5: Apply user filters only (LLM filters no longer used as hard gate)
+        # Step 5a: Apply negative filter (demote results matching exclusion terms)
+        pre_neg_count = len(merged)
+        if negative_query:
+            merged = self._apply_negative_filter(merged, negative_query)
+
+        # Step 5b: Apply LLM filters (lenient -- don't exclude results missing the field)
         pre_filter_count = len(merged)
+        llm_removed = 0
+        if llm_filters:
+            merged = self._apply_user_filters(merged, llm_filters, strict=False)
+            llm_removed = pre_filter_count - len(merged)
+
+        # Step 5c: Apply user filters (strict -- exact match required)
+        pre_user_count = len(merged)
+        user_removed = 0
         if user_filters:
-            merged = self._apply_user_filters(merged, user_filters)
-        diag["filter_applied"] = bool(user_filters)
-        diag["filter_removed"] = pre_filter_count - len(merged)
+            merged = self._apply_user_filters(merged, user_filters, strict=True)
+            user_removed = pre_user_count - len(merged)
+
+        diag["filter_applied"] = bool(user_filters) or bool(llm_filters)
+        diag["filter_removed"] = llm_removed + user_removed
+        diag["negative_filter_active"] = bool(negative_query)
 
         # Trim to top_k
         merged = merged[:top_k]
@@ -1204,9 +1237,16 @@ class SqliteVectorSearch:
         self,
         results: List[Dict],
         filters: Dict[str, Any],
+        strict: bool = True,
     ) -> List[Dict[str, Any]]:
         """
-        Apply user metadata filters to results in-memory.
+        Apply metadata filters to results in-memory.
+
+        Args:
+            results: Search results to filter
+            filters: Metadata filter dict
+            strict: If True (user filters), exclude results missing the field.
+                    If False (LLM filters), pass results where the field is None/empty.
 
         Supported filters:
             format: File format (PSD, PNG, JPG)
@@ -1264,29 +1304,102 @@ class SqliteVectorSearch:
                     continue
 
             # v3 P0: structured vision filters
+            # When strict=False (LLM filters), pass results that lack the field entirely
             if "image_type" in filters and filters["image_type"]:
-                if (result.get("image_type") or "").lower() != filters["image_type"].lower():
+                result_val = (result.get("image_type") or "")
+                if not strict and not result_val:
+                    pass  # lenient: skip filter when result lacks the field
+                elif result_val.lower() != filters["image_type"].lower():
                     continue
 
             if "art_style" in filters and filters["art_style"]:
-                if (result.get("art_style") or "").lower() != filters["art_style"].lower():
+                result_val = (result.get("art_style") or "")
+                if not strict and not result_val:
+                    pass
+                elif result_val.lower() != filters["art_style"].lower():
                     continue
 
             if "scene_type" in filters and filters["scene_type"]:
-                if (result.get("scene_type") or "").lower() != filters["scene_type"].lower():
+                result_val = (result.get("scene_type") or "")
+                if not strict and not result_val:
+                    pass
+                elif result_val.lower() != filters["scene_type"].lower():
                     continue
 
             if "time_of_day" in filters and filters["time_of_day"]:
-                if (result.get("time_of_day") or "").lower() != filters["time_of_day"].lower():
+                result_val = (result.get("time_of_day") or "")
+                if not strict and not result_val:
+                    pass
+                elif result_val.lower() != filters["time_of_day"].lower():
                     continue
 
             if "weather" in filters and filters["weather"]:
-                if (result.get("weather") or "").lower() != filters["weather"].lower():
+                result_val = (result.get("weather") or "")
+                if not strict and not result_val:
+                    pass
+                elif result_val.lower() != filters["weather"].lower():
                     continue
 
             filtered.append(result)
 
         return filtered
+
+    def _apply_negative_filter(
+        self,
+        results: List[Dict],
+        negative_query: str,
+    ) -> List[Dict]:
+        """
+        Post-filter: demote results whose AI caption/tags match the negative query.
+
+        Uses text matching on mc_caption and ai_tags to detect negative matches.
+        Results with strong negative matches are moved to the bottom (not removed),
+        so users can still discover them if needed.
+
+        Args:
+            results: Search results to filter
+            negative_query: Space-separated negative terms (e.g. "cold snow winter")
+
+        Returns:
+            Reordered results with negative-matching items demoted to the end
+        """
+        if not negative_query or not results:
+            return results
+
+        neg_terms = [t.lower().strip() for t in negative_query.split() if t.strip()]
+        if not neg_terms:
+            return results
+
+        filtered = []
+        demoted = []
+
+        for r in results:
+            caption = (r.get("mc_caption") or "").lower()
+            tags = r.get("ai_tags", [])
+            if isinstance(tags, str):
+                try:
+                    tags = json.loads(tags)
+                except (json.JSONDecodeError, TypeError):
+                    tags = []
+            tags_text = " ".join(str(t).lower() for t in tags)
+            combined_text = f"{caption} {tags_text}"
+
+            # Check if any negative term appears in the result's AI-generated text
+            neg_match = any(term in combined_text for term in neg_terms)
+
+            if neg_match:
+                demoted.append(r)
+            else:
+                filtered.append(r)
+
+        if demoted:
+            logger.debug(
+                f"Negative filter: demoted {len(demoted)} results "
+                f"matching terms {neg_terms}"
+            )
+
+        # Demoted results go to the end (not removed)
+        return filtered + demoted
 
     @staticmethod
     def _parse_json_fields(result: Dict) -> None:
