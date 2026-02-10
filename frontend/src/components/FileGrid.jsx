@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { CheckCircle, File, Loader2, Info, X, FolderOpen, ExternalLink } from 'lucide-react';
 import { useLocale } from '../i18n';
+import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
 
 const SUPPORTED_EXTS = ['.psd', '.png', '.jpg', '.jpeg'];
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+const GAP = 16;
 
 // Global thumbnail path cache (stores disk paths, not base64 - memory efficient)
 const thumbnailPathCache = new Map();
@@ -465,7 +468,7 @@ const MetadataModal = ({ metadata, onClose }) => {
 };
 
 // FileCard Component
-const FileCard = React.forwardRef(({ file, isSelected, onMouseDown, thumbnail, loading, onShowMeta, hasMetadata }, ref) => {
+const FileCard = ({ file, isSelected, onMouseDown, thumbnail, loading, onShowMeta, hasMetadata }) => {
     const { t } = useLocale();
     const canPreviewNatively = IMAGE_PREVIEW_EXTS.includes(file.extension);
 
@@ -483,7 +486,6 @@ const FileCard = React.forwardRef(({ file, isSelected, onMouseDown, thumbnail, l
 
     return (
         <div
-            ref={ref}
             data-path={file.path}
             className={`relative group border rounded-lg p-2 cursor-pointer transition-all select-none ${isSelected ? 'bg-blue-900 border-blue-500 ring-2 ring-blue-500/50' : 'bg-gray-800 border-gray-700 hover:bg-gray-700'
                 }`}
@@ -529,7 +531,7 @@ const FileCard = React.forwardRef(({ file, isSelected, onMouseDown, thumbnail, l
                     <span className="text-[10px] text-blue-400 ml-auto">{(file.score * 100).toFixed(0)}%</span>
                 )}
                 {file.user_rating > 0 && (
-                    <span className="text-[10px] text-yellow-400">{'&#9733;'.repeat ? '\u2605'.repeat(file.user_rating) : ''}</span>
+                    <span className="text-[10px] text-yellow-400">{'\u2605'.repeat(file.user_rating)}</span>
                 )}
                 {file.user_category && (
                     <span className="text-[9px] bg-gray-700 text-gray-300 px-1 rounded">{file.user_category}</span>
@@ -537,7 +539,7 @@ const FileCard = React.forwardRef(({ file, isSelected, onMouseDown, thumbnail, l
             </div>
         </div>
     );
-});
+};
 
 // Main FileGrid Component
 const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths = new Set() }) => {
@@ -551,10 +553,46 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
     const [dragEnd, setDragEnd] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
     const [metadata, setMetadata] = useState(null);
-    const containerRef = useRef(null);
-    const cardRefs = useRef({});
+    const scrollRef = useRef(null);
     const lastClickedIndex = useRef(null);
     const pendingClick = useRef(null);
+    const missingThumbnails = useRef(new Set());
+
+    // Responsive columns from container width
+    const { columnCount, cardWidth, rowHeight } = useResponsiveColumns(scrollRef, {
+        breakpoints: [2, 500, 3, 768, 4, 1024, 5],
+        gap: GAP,
+        cardAspectTotal: 1.35,
+    });
+
+    const rowCount = Math.ceil(files.length / columnCount);
+
+    // Row virtualizer
+    const rowVirtualizer = useVirtualizer({
+        count: rowCount,
+        getScrollElement: () => scrollRef.current,
+        estimateSize: () => rowHeight,
+        overscan: 3,
+    });
+
+    // Re-measure when layout changes
+    useEffect(() => {
+        rowVirtualizer.measure();
+    }, [rowHeight, columnCount]);
+
+    // Helper: get visible file index range from scroll position
+    const getVisibleRange = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el || files.length === 0 || rowHeight <= 0) return { start: 0, end: 0 };
+        const scrollTop = el.scrollTop;
+        const viewportHeight = el.clientHeight;
+        const firstRow = Math.max(0, Math.floor(scrollTop / rowHeight));
+        const lastRow = Math.min(rowCount - 1, Math.ceil((scrollTop + viewportHeight) / rowHeight));
+        return {
+            start: firstRow * columnCount,
+            end: Math.min((lastRow + 1) * columnCount, files.length),
+        };
+    }, [files.length, columnCount, rowHeight, rowCount]);
 
     // Load files (supports multi-folder via selectedPaths)
     useEffect(() => {
@@ -566,6 +604,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         setLoading(true);
         setThumbnails({});
         setMetadataStatus({});
+        missingThumbnails.current = new Set();
 
         Promise.all(
             paths.map(p => window.electron?.fs?.listDir(p).catch(() => []))
@@ -583,25 +622,27 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
             .finally(() => setLoading(false));
     }, [currentPath, selectedPaths]);
 
-    // Re-check metadata periodically
+    // Viewport-based metadata polling
     useEffect(() => {
         if (files.length === 0) return;
         const interval = setInterval(() => {
-            if (window.electron?.pipeline?.checkMetadataExists) {
-                window.electron.pipeline.checkMetadataExists(files.map(f => f.path))
-                    .then(status => {
-                        setMetadataStatus(prev => {
-                            const isDifferent = Object.keys(status).some(k => status[k] !== prev[k]);
-                            return isDifferent ? status : prev;
-                        });
-                    })
-                    .catch(console.error);
-            }
+            if (!window.electron?.pipeline?.checkMetadataExists) return;
+            const { start, end } = getVisibleRange();
+            const visiblePaths = files.slice(start, end).map(f => f.path);
+            if (visiblePaths.length === 0) return;
+            window.electron.pipeline.checkMetadataExists(visiblePaths)
+                .then(status => {
+                    setMetadataStatus(prev => {
+                        const isDifferent = Object.keys(status).some(k => status[k] !== prev[k]);
+                        return isDifferent ? { ...prev, ...status } : prev;
+                    });
+                })
+                .catch(console.error);
         }, 3000);
         return () => clearInterval(interval);
-    }, [files]);
+    }, [files, getVisibleRange]);
 
-    // Load thumbnails: 2-stage (check disk first, generate missing via queue)
+    // Load thumbnails: check disk for all, generate via viewport-priority queue
     useEffect(() => {
         const psdFiles = files.filter(f => f.extension === '.psd');
         if (psdFiles.length === 0) {
@@ -619,6 +660,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         const unknownPaths = psdFiles.filter(f => !thumbnailPathCache.has(f.path)).map(f => f.path);
         if (unknownPaths.length === 0) {
             setLoadingThumbnails(false);
+            missingThumbnails.current = new Set();
             return;
         }
 
@@ -641,14 +683,26 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                 if (Object.keys(nowCached).length > 0) {
                     setThumbnails(prev => ({ ...prev, ...nowCached }));
                 }
+                missingThumbnails.current = new Set(stillMissing);
                 if (stillMissing.length === 0) {
                     setLoadingThumbnails(false);
                     return;
                 }
-                // Generate only missing thumbnails via queue
+                // Enqueue all missing, then re-prioritize visible ones to front
                 prioritizeFolder(stillMissing);
+                const { start, end } = getVisibleRange();
+                const visibleMissing = [];
+                for (let i = start; i < end; i++) {
+                    const f = files[i];
+                    if (f && f.extension === '.psd' && missingThumbnails.current.has(f.path)) {
+                        visibleMissing.push(f.path);
+                    }
+                }
+                if (visibleMissing.length > 0) {
+                    prioritizeFolder(visibleMissing);
+                }
             } else {
-                // Fallback: generate all via queue
+                missingThumbnails.current = new Set(unknownPaths);
                 prioritizeFolder(unknownPaths);
             }
         };
@@ -662,6 +716,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                 psdFiles.forEach(f => {
                     if (!merged[f.path] && thumbnailPathCache.has(f.path)) {
                         merged[f.path] = thumbnailPathCache.get(f.path);
+                        missingThumbnails.current.delete(f.path);
                         changed = true;
                     }
                 });
@@ -675,6 +730,35 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         return () => { queueListeners.delete(onChunkDone); };
     }, [files]);
 
+    // Re-prioritize visible thumbnails on scroll
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el || files.length === 0) return;
+        let debounceId = null;
+        const handler = () => {
+            clearTimeout(debounceId);
+            debounceId = setTimeout(() => {
+                if (missingThumbnails.current.size === 0) return;
+                const { start, end } = getVisibleRange();
+                const visibleMissing = [];
+                for (let i = start; i < end; i++) {
+                    const f = files[i];
+                    if (f && f.extension === '.psd' && missingThumbnails.current.has(f.path)) {
+                        visibleMissing.push(f.path);
+                    }
+                }
+                if (visibleMissing.length > 0) {
+                    prioritizeFolder(visibleMissing);
+                }
+            }, 200);
+        };
+        el.addEventListener('scroll', handler, { passive: true });
+        return () => {
+            el.removeEventListener('scroll', handler);
+            clearTimeout(debounceId);
+        };
+    }, [files, getVisibleRange]);
+
     const handleShowMeta = async (filePath) => {
         const meta = await window.electron?.pipeline?.readMetadata(filePath);
         if (meta) {
@@ -684,7 +768,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         }
     };
 
-    const displayedFiles = files;
+    // --- Drag selection (math-based, no DOM refs needed) ---
 
     const getSelectionRect = () => {
         if (!dragStart || !dragEnd) return null;
@@ -701,13 +785,24 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
             rect.bottom < selRect.top || rect.top > selRect.top + selRect.height);
     };
 
+    // Math-based card rect calculation (no DOM measurement)
+    const getCardRect = useCallback((globalIndex) => {
+        const row = Math.floor(globalIndex / columnCount);
+        const col = globalIndex % columnCount;
+        const left = col * (cardWidth + GAP);
+        const top = row * rowHeight;
+        const right = left + cardWidth;
+        const bottom = top + rowHeight - GAP;
+        return { left, top, right, bottom };
+    }, [columnCount, cardWidth, rowHeight]);
+
     const handleCardMouseDown = (e, file, index) => {
         // Prevent click if clicking META button
         if (e.target.tagName === 'BUTTON') return;
 
         pendingClick.current = { file, index, startX: e.clientX, startY: e.clientY };
-        const rect = containerRef.current.getBoundingClientRect();
-        const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top + containerRef.current.scrollTop };
+        const rect = scrollRef.current.getBoundingClientRect();
+        const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top + scrollRef.current.scrollTop };
         setDragStart(pos);
         setDragEnd(pos);
 
@@ -726,8 +821,8 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
     };
 
     const handleMouseDown = (e) => {
-        const rect = containerRef.current.getBoundingClientRect();
-        const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top + containerRef.current.scrollTop };
+        const rect = scrollRef.current.getBoundingClientRect();
+        const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top + scrollRef.current.scrollTop };
         setDragStart(pos);
         setDragEnd(pos);
 
@@ -739,8 +834,8 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
 
     const handleMouseMove = (e) => {
         if (!dragStart) return;
-        const rect = containerRef.current.getBoundingClientRect();
-        const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top + containerRef.current.scrollTop };
+        const rect = scrollRef.current.getBoundingClientRect();
+        const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top + scrollRef.current.scrollTop };
         const dist = Math.sqrt(Math.pow(pos.x - dragStart.x, 2) + Math.pow(pos.y - dragStart.y, 2));
 
         if (dist > 5) {
@@ -761,20 +856,12 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         if (isDragging && dragStart && dragEnd) {
             const selRect = getSelectionRect();
             if (selRect && selRect.width > 5 && selRect.height > 5) {
-                const containerRect = containerRef.current.getBoundingClientRect();
-                const scrollTop = containerRef.current.scrollTop;
                 const newSelection = new Set(selectedFiles);
-                files.forEach((file) => {
-                    const el = cardRefs.current[file.path];
-                    if (el) {
-                        const elRect = el.getBoundingClientRect();
-                        const relRect = {
-                            left: elRect.left - containerRect.left,
-                            top: elRect.top - containerRect.top + scrollTop,
-                            right: elRect.right - containerRect.left,
-                            bottom: elRect.bottom - containerRect.top + scrollTop,
-                        };
-                        if (intersects(relRect, selRect)) newSelection.add(file.path);
+                // Math-based: check ALL files against selection rect (no DOM needed)
+                files.forEach((file, idx) => {
+                    const cardRect = getCardRect(idx);
+                    if (intersects(cardRect, selRect)) {
+                        newSelection.add(file.path);
                     }
                 });
                 setSelectedFiles(newSelection);
@@ -797,43 +884,72 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
 
     return (
         <>
-            <div
-                ref={containerRef}
-                className="relative h-full overflow-y-auto select-none"
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-            >
-                <div className="flex items-center justify-between mb-4 sticky top-0 bg-gray-900 z-20 py-2 gap-4">
+            <div className="flex flex-col h-full">
+                {/* Header (outside scroll for stable layout) */}
+                <div className="flex items-center justify-between bg-gray-900 py-2 gap-4 shrink-0">
                     <h2 className="text-lg font-semibold text-gray-300 whitespace-nowrap">
                         {t('label.files', { count: files.length })}
                         {loadingThumbnails && <span className="text-xs text-blue-400 ml-2">{t('status.loading_thumbnails')}</span>}
                     </h2>
                     <button onClick={handleSelectAll} className="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300 whitespace-nowrap">
-                        {selectedFiles.size === displayedFiles.length ? t('action.deselect_all') : t('action.select_all')}
+                        {selectedFiles.size === files.length ? t('action.deselect_all') : t('action.select_all')}
                     </button>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 grid-container pb-4">
-                    {displayedFiles.map((file, idx) => (
-                        <FileCard
-                            key={file.path}
-                            ref={el => { cardRefs.current[file.path] = el; }}
-                            file={file}
-                            isSelected={selectedFiles.has(file.path)}
-                            onMouseDown={(e) => handleCardMouseDown(e, file, idx)}
-                            thumbnail={thumbnails[file.path]}
-                            loading={loadingThumbnails && file.extension === '.psd' && !thumbnails[file.path]}
-                            onShowMeta={handleShowMeta}
-                            hasMetadata={metadataStatus[file.path]}
-                        />
-                    ))}
+                {/* Scroll container with virtual rows */}
+                <div
+                    ref={scrollRef}
+                    className="relative flex-1 overflow-y-auto select-none"
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                >
+                    <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                        {rowVirtualizer.getVirtualItems().map(virtualRow => {
+                            const rowStartIdx = virtualRow.index * columnCount;
+                            const rowFiles = files.slice(rowStartIdx, rowStartIdx + columnCount);
+                            return (
+                                <div
+                                    key={virtualRow.key}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: `${virtualRow.size}px`,
+                                        transform: `translateY(${virtualRow.start}px)`,
+                                    }}
+                                >
+                                    <div className="flex" style={{ gap: `${GAP}px` }}>
+                                        {rowFiles.map((file, colIdx) => {
+                                            const globalIdx = rowStartIdx + colIdx;
+                                            return (
+                                                <div key={file.path} style={{ width: `${cardWidth}px`, flexShrink: 0 }}>
+                                                    <FileCard
+                                                        file={file}
+                                                        isSelected={selectedFiles.has(file.path)}
+                                                        onMouseDown={(e) => handleCardMouseDown(e, file, globalIdx)}
+                                                        thumbnail={thumbnails[file.path]}
+                                                        loading={loadingThumbnails && file.extension === '.psd' && !thumbnails[file.path]}
+                                                        onShowMeta={handleShowMeta}
+                                                        hasMetadata={metadataStatus[file.path]}
+                                                    />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Drag selection overlay */}
+                    {isDragging && selRect && selRect.width > 5 && selRect.height > 5 && (
+                        <div className="absolute border-2 border-blue-500 bg-blue-500/20 pointer-events-none z-30"
+                            style={{ left: selRect.left, top: selRect.top, width: selRect.width, height: selRect.height }} />
+                    )}
                 </div>
-                {isDragging && selRect && selRect.width > 5 && selRect.height > 5 && (
-                    <div className="absolute border-2 border-blue-500 bg-blue-500/20 pointer-events-none z-30"
-                        style={{ left: selRect.left, top: selRect.top, width: selRect.width, height: selRect.height }} />
-                )}
             </div>
 
             {metadata && <MetadataModal metadata={metadata} onClose={() => setMetadata(null)} />}

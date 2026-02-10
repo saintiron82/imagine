@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink } from 'lucide-react';
 import SettingsModal from './SettingsModal';
 import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
+import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
@@ -570,6 +572,135 @@ const SearchResultCard = ({ result, onShowMeta }) => {
     );
 };
 
+const SEARCH_GAP = 16;
+
+// Virtualized search results grid
+const SearchResults = ({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore }) => {
+    const { t } = useLocale();
+    const scrollRef = useRef(null);
+
+    const { columnCount, cardWidth, rowHeight } = useResponsiveColumns(scrollRef, {
+        breakpoints: [2, 500, 3, 768, 4, 1024, 5, 1280, 6],
+        gap: SEARCH_GAP,
+        cardAspectTotal: 1.65, // taller cards (image + caption + tags + info)
+    });
+
+    const rowCount = Math.ceil(results.length / columnCount);
+    // +1 row for load-more button area
+    const totalRows = hasResults ? rowCount + 1 : 0;
+
+    const rowVirtualizer = useVirtualizer({
+        count: totalRows,
+        getScrollElement: () => scrollRef.current,
+        estimateSize: (index) => index < rowCount ? rowHeight : 64,
+        overscan: 3,
+    });
+
+    useEffect(() => {
+        rowVirtualizer.measure();
+    }, [rowHeight, columnCount]);
+
+    // Reset scroll on new search results
+    useEffect(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    }, [results.length > 0 && results[0]?.path]);
+
+    if (isSearching) {
+        return (
+            <div className="flex-1 flex items-center justify-center px-6 pb-6">
+                <div className="flex items-center gap-2 text-blue-400">
+                    <Loader2 className="animate-spin" size={20} />
+                    <span>{t('status.searching')}</span>
+                </div>
+            </div>
+        );
+    }
+
+    if (!hasResults) return <div className="flex-1" />;
+
+    return (
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6">
+            <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-medium text-gray-400">
+                    {t('status.results_found', { count: results.length })}
+                </h3>
+                <button onClick={onClear} className="text-xs text-gray-500 hover:text-gray-300">
+                    {t('action.clear_results')}
+                </button>
+            </div>
+
+            <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                {rowVirtualizer.getVirtualItems().map(virtualRow => {
+                    // Last virtual row = load more button
+                    if (virtualRow.index >= rowCount) {
+                        return (
+                            <div
+                                key="load-more"
+                                style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height: `${virtualRow.size}px`,
+                                    transform: `translateY(${virtualRow.start}px)`,
+                                }}
+                            >
+                                <div className="flex justify-center py-3">
+                                    {noMoreResults ? (
+                                        <span className="text-xs text-gray-600">{t('status.no_more_results')}</span>
+                                    ) : (
+                                        <button
+                                            onClick={onLoadMore}
+                                            disabled={isLoadingMore}
+                                            className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-800 text-gray-300 hover:text-white disabled:text-gray-600 rounded-lg border border-gray-600 hover:border-gray-500 disabled:border-gray-700 transition-all flex items-center gap-2 text-sm"
+                                        >
+                                            {isLoadingMore ? (
+                                                <>
+                                                    <Loader2 size={16} className="animate-spin" />
+                                                    {t('status.loading_more')}
+                                                </>
+                                            ) : (
+                                                t('action.load_more')
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    const rowStartIdx = virtualRow.index * columnCount;
+                    const rowResults = results.slice(rowStartIdx, rowStartIdx + columnCount);
+                    return (
+                        <div
+                            key={virtualRow.key}
+                            style={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100%',
+                                height: `${virtualRow.size}px`,
+                                transform: `translateY(${virtualRow.start}px)`,
+                            }}
+                        >
+                            <div className="flex" style={{ gap: `${SEARCH_GAP}px` }}>
+                                {rowResults.map((result, colIdx) => (
+                                    <div key={result.path || colIdx} style={{ width: `${cardWidth}px`, flexShrink: 0 }}>
+                                        <SearchResultCard
+                                            result={result}
+                                            onShowMeta={onShowMeta}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 export default function SearchPanel() {
     const { t } = useLocale();
     const [query, setQuery] = useState('');
@@ -999,60 +1130,16 @@ export default function SearchPanel() {
             </div>
 
             {/* Results Area */}
-            <div className="flex-1 overflow-y-auto px-6 pb-6">
-                {isSearching ? (
-                    <div className="flex items-center justify-center h-40 text-blue-400 gap-2">
-                        <Loader2 className="animate-spin" size={20} />
-                        <span>{t('status.searching')}</span>
-                    </div>
-                ) : hasResults ? (
-                    <>
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-sm font-medium text-gray-400">
-                                {t('status.results_found', { count: results.length })}
-                            </h3>
-                            <button
-                                onClick={clearSearch}
-                                className="text-xs text-gray-500 hover:text-gray-300"
-                            >
-                                {t('action.clear_results')}
-                            </button>
-                        </div>
-
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
-                            {results.map((result, index) => (
-                                <SearchResultCard
-                                    key={index}
-                                    result={result}
-                                    onShowMeta={handleShowMeta}
-                                />
-                            ))}
-                        </div>
-
-                        {/* Load More */}
-                        <div className="flex justify-center mt-6">
-                            {noMoreResults ? (
-                                <span className="text-xs text-gray-600">{t('status.no_more_results')}</span>
-                            ) : (
-                                <button
-                                    onClick={handleLoadMore}
-                                    disabled={isLoadingMore}
-                                    className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-800 text-gray-300 hover:text-white disabled:text-gray-600 rounded-lg border border-gray-600 hover:border-gray-500 disabled:border-gray-700 transition-all flex items-center gap-2 text-sm"
-                                >
-                                    {isLoadingMore ? (
-                                        <>
-                                            <Loader2 size={16} className="animate-spin" />
-                                            {t('status.loading_more')}
-                                        </>
-                                    ) : (
-                                        t('action.load_more')
-                                    )}
-                                </button>
-                            )}
-                        </div>
-                    </>
-                ) : null}
-            </div>
+            <SearchResults
+                results={results}
+                isSearching={isSearching}
+                hasResults={hasResults}
+                onShowMeta={handleShowMeta}
+                onClear={clearSearch}
+                noMoreResults={noMoreResults}
+                isLoadingMore={isLoadingMore}
+                onLoadMore={handleLoadMore}
+            />
 
             {/* Metadata Modal */}
             {metadata && <MetadataModal metadata={metadata} onClose={() => setMetadata(null)} />}
