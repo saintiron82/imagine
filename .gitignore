@@ -33,11 +33,19 @@ output/
 
 # Database files
 *.db
+*.db-shm
+*.db-wal
 chroma_db/
 
 # Test artifacts
 _test_*.py
 _test_*.json
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Calibration results (local)
+calibration_results/
 
 # Misc
 nul
