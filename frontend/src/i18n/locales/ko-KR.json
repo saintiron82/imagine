@@ -107,11 +107,9 @@
   "search.subtitle": "설명, 태그 또는 콘텐츠로 아카이브된 이미지를 찾으세요",
   "search.filters_title": "검색 필터",
   "search.settings_title": "설정",
-  "badge": {
-    "vv": "시각",
-    "mv": "의미",
-    "fts": "텍스트"
-  },
+  "badge.vv": "시각",
+  "badge.mv": "의미",
+  "badge.mc": "메타",
   "axis": {
     "v": "시각 (V)",
     "s": "의미 (S)",

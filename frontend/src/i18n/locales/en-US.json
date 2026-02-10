@@ -107,11 +107,9 @@
   "search.subtitle": "Find archived images by description, tags, or content",
   "search.filters_title": "Search Filters",
   "search.settings_title": "Settings",
-  "badge": {
-    "vv": "VV",
-    "mv": "MV",
-    "fts": "FTS"
-  },
+  "badge.vv": "VV",
+  "badge.mv": "MV",
+  "badge.mc": "MC",
   "axis": {
     "v": "Visual (V)",
     "s": "Semantic (S)",

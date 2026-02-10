@@ -387,6 +387,7 @@ const MetadataModal = ({ metadata, onClose }) => {
 
 // Search Result Card Component
 const SearchResultCard = ({ result, onShowMeta }) => {
+    const { t } = useLocale();
     const fileName = result.path.split(/[/\\]/).pop();
     const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
     const canPreviewNatively = IMAGE_PREVIEW_EXTS.includes(ext);
@@ -431,21 +432,21 @@ const SearchResultCard = ({ result, onShowMeta }) => {
                     </div>
                 )}
 
-                {/* Triaxis score badges (V=Visual blue, S=Semantic purple, M=Metadata green) */}
+                {/* Triaxis score badges (VV=Visual blue, MV=Semantic purple, MC=Metadata green) */}
                 <div className="absolute top-2 right-2 flex gap-1">
                     {result.vector_score != null && (
                         <span className="bg-blue-900/80 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            V {(result.vector_score * 100).toFixed(0)}%
+                            {t('badge.vv')} {(result.vector_score * 100).toFixed(0)}
                         </span>
                     )}
                     {result.text_vec_score != null && (
                         <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            S {(result.text_vec_score * 100).toFixed(0)}%
+                            {t('badge.mv')} {(result.text_vec_score * 100).toFixed(0)}
                         </span>
                     )}
                     {result.text_score != null && (
                         <span className="bg-green-900/80 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            M {(result.text_score * 100).toFixed(0)}%
+                            {t('badge.mc')} {(result.text_score * 100).toFixed(0)}
                         </span>
                     )}
                 </div>
