@@ -168,6 +168,8 @@ ipcMain.handle('search-vector', async (_, searchOptions) => {
         inputData = {
             query: searchOptions.query || '',
             query_image: searchOptions.queryImage || null,
+            query_images: searchOptions.queryImages || null,
+            image_search_mode: searchOptions.imageSearchMode || 'and',
             limit: searchOptions.limit || 20,
             mode: searchOptions.mode || 'triaxis',
             threshold: searchOptions.threshold ?? 0.0,

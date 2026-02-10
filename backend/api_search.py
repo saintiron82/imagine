@@ -66,7 +66,7 @@ def format_result(result: dict) -> dict:
     return formatted
 
 
-def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None):
+def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None, query_images: list = None, image_search_mode: str = "and"):
     """Search SQLite and return JSON results."""
     try:
         searcher = SqliteVectorSearch()
@@ -74,6 +74,8 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
             query, mode=mode, filters=filters, top_k=limit,
             threshold=threshold, return_diagnostic=diagnostic,
             query_image=query_image,
+            query_images=query_images,
+            image_search_mode=image_search_mode,
         )
 
         if diagnostic and isinstance(result_data, tuple):
@@ -106,9 +108,11 @@ if __name__ == "__main__":
         except (json.JSONDecodeError, ValueError):
             pass
 
-    if stdin_data and isinstance(stdin_data, dict) and ("query" in stdin_data or "query_image" in stdin_data):
+    if stdin_data and isinstance(stdin_data, dict) and ("query" in stdin_data or "query_image" in stdin_data or "query_images" in stdin_data):
         query = stdin_data.get("query", "")
         query_image = stdin_data.get("query_image", None)
+        query_images = stdin_data.get("query_images", None)
+        image_search_mode = stdin_data.get("image_search_mode", "and")
         limit = stdin_data.get("limit", 20)
         mode = stdin_data.get("mode", "triaxis")
         threshold = float(stdin_data.get("threshold", 0.0))
@@ -120,6 +124,8 @@ if __name__ == "__main__":
         positional = [a for a in sys.argv[1:] if not a.startswith("--")]
         query = positional[0]
         query_image = None
+        query_images = None
+        image_search_mode = "and"
         limit = int(positional[1]) if len(positional) > 1 else 20
         mode = "triaxis"
         threshold = 0.0
@@ -128,5 +134,5 @@ if __name__ == "__main__":
         print(json.dumps({"success": False, "error": "No query provided"}))
         sys.exit(1)
 
-    result = search(query, limit, mode, filters, threshold=threshold, diagnostic=diag_flag, query_image=query_image)
+    result = search(query, limit, mode, filters, threshold=threshold, diagnostic=diag_flag, query_image=query_image, query_images=query_images, image_search_mode=image_search_mode)
     print(json.dumps(result, ensure_ascii=False))

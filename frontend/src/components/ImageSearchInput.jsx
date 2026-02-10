@@ -1,8 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Upload, X, ImageIcon, Clipboard } from 'lucide-react';
+import { Upload, X, ImageIcon, Clipboard, Plus } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 const MAX_SIZE = 512;
+const MAX_IMAGES = 10;
 
 function resizeToBase64(file) {
     return new Promise((resolve, reject) => {
@@ -32,32 +33,42 @@ function resizeToBase64(file) {
     });
 }
 
-export default function ImageSearchInput({ queryImage, onImageChange }) {
+export default function ImageSearchInput({ queryImages, onImagesChange }) {
     const { t } = useLocale();
     const [isDragging, setIsDragging] = useState(false);
     const [error, setError] = useState(null);
     const fileInputRef = useRef(null);
 
-    const processFile = useCallback(async (file) => {
-        if (!file || !file.type.startsWith('image/')) {
+    const processFiles = useCallback(async (files) => {
+        const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+        if (imageFiles.length === 0) {
             setError(t('msg.invalid_image'));
             return;
         }
+
+        const remaining = MAX_IMAGES - queryImages.length;
+        if (remaining <= 0) {
+            setError(t('msg.max_images_reached'));
+            return;
+        }
+
+        const toProcess = imageFiles.slice(0, remaining);
         setError(null);
+
         try {
-            const base64 = await resizeToBase64(file);
-            onImageChange(base64);
+            const newImages = await Promise.all(toProcess.map(f => resizeToBase64(f)));
+            onImagesChange([...queryImages, ...newImages]);
         } catch {
             setError(t('msg.invalid_image'));
         }
-    }, [onImageChange, t]);
+    }, [queryImages, onImagesChange, t]);
 
     const handleDrop = useCallback((e) => {
         e.preventDefault();
         setIsDragging(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file) processFile(file);
-    }, [processFile]);
+        const files = e.dataTransfer.files;
+        if (files?.length > 0) processFiles(files);
+    }, [processFiles]);
 
     const handleDragOver = useCallback((e) => {
         e.preventDefault();
@@ -72,49 +83,99 @@ export default function ImageSearchInput({ queryImage, onImageChange }) {
     const handlePaste = useCallback((e) => {
         const items = e.clipboardData?.items;
         if (!items) return;
+        const imageFiles = [];
         for (const item of items) {
             if (item.type.startsWith('image/')) {
-                e.preventDefault();
-                processFile(item.getAsFile());
-                return;
+                imageFiles.push(item.getAsFile());
             }
         }
-    }, [processFile]);
+        if (imageFiles.length > 0) {
+            e.preventDefault();
+            processFiles(imageFiles);
+        }
+    }, [processFiles]);
 
     const handleFileSelect = useCallback((e) => {
-        const file = e.target.files?.[0];
-        if (file) processFile(file);
+        const files = e.target.files;
+        if (files?.length > 0) processFiles(files);
         e.target.value = '';
-    }, [processFile]);
+    }, [processFiles]);
 
-    const handleRemove = useCallback(() => {
-        onImageChange(null);
+    const handleRemoveImage = useCallback((index) => {
+        const updated = queryImages.filter((_, i) => i !== index);
+        onImagesChange(updated);
         setError(null);
-    }, [onImageChange]);
+    }, [queryImages, onImagesChange]);
 
-    // If image is selected, show preview
-    if (queryImage) {
+    const hasImages = queryImages.length > 0;
+    const canAddMore = queryImages.length < MAX_IMAGES;
+
+    // If images are selected, show preview list + optional add zone
+    if (hasImages) {
         return (
-            <div className="w-full max-w-2xl mt-3">
-                <div className="relative inline-block">
-                    <img
-                        src={queryImage}
-                        alt="Query"
-                        className="h-32 w-auto rounded-lg border border-gray-600 object-contain bg-gray-800"
-                    />
-                    <button
-                        onClick={handleRemove}
-                        className="absolute -top-2 -right-2 bg-red-600 hover:bg-red-500 text-white rounded-full p-1 transition-colors"
-                        title={t('action.remove_image')}
-                    >
-                        <X size={14} />
-                    </button>
+            <div className="w-full max-w-2xl mt-3" onPaste={handlePaste} tabIndex={0}>
+                <div className="flex items-start gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                    {queryImages.map((img, index) => (
+                        <div key={index} className="relative shrink-0">
+                            <img
+                                src={img}
+                                alt={`Query ${index + 1}`}
+                                className="h-28 w-auto rounded-lg border border-gray-600 object-contain bg-gray-800"
+                            />
+                            <button
+                                onClick={() => handleRemoveImage(index)}
+                                className="absolute -top-1.5 -right-1.5 bg-red-600 hover:bg-red-500 text-white rounded-full p-0.5 transition-colors"
+                                title={t('action.remove_image')}
+                            >
+                                <X size={12} />
+                            </button>
+                        </div>
+                    ))}
+
+                    {/* Add more button */}
+                    {canAddMore && (
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            onDrop={handleDrop}
+                            onDragOver={handleDragOver}
+                            onDragLeave={handleDragLeave}
+                            className={`shrink-0 h-28 w-20 rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 cursor-pointer transition-all ${
+                                isDragging
+                                    ? 'border-blue-400 bg-blue-900/20'
+                                    : 'border-gray-600 hover:border-gray-500 bg-gray-800/50 hover:bg-gray-800'
+                            }`}
+                        >
+                            <Plus size={18} className="text-gray-400" />
+                            <span className="text-[10px] text-gray-500">{t('action.add_more_images')}</span>
+                        </button>
+                    )}
                 </div>
+
+                <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] text-gray-500">
+                        {t('label.image_count', { count: queryImages.length })}
+                    </span>
+                </div>
+
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleFileSelect}
+                    className="hidden"
+                />
+
+                {error && (
+                    <div className="mt-2 px-3 py-1.5 bg-red-900/30 border border-red-700 rounded text-red-400 text-xs">
+                        {error}
+                    </div>
+                )}
             </div>
         );
     }
 
-    // Drop zone
+    // Drop zone (no images yet)
     return (
         <div className="w-full max-w-2xl mt-3" onPaste={handlePaste} tabIndex={0}>
             <div
@@ -134,7 +195,7 @@ export default function ImageSearchInput({ queryImage, onImageChange }) {
                     <Clipboard size={18} />
                 </div>
                 <p className="text-sm text-gray-400 text-center">
-                    {t('placeholder.drag_image')}
+                    {t('placeholder.drag_images')}
                 </p>
                 <button
                     type="button"
@@ -149,6 +210,7 @@ export default function ImageSearchInput({ queryImage, onImageChange }) {
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 onChange={handleFileSelect}
                 className="hidden"
             />

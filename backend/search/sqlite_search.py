@@ -1375,12 +1375,14 @@ class SqliteVectorSearch:
 
         for r in results:
             caption = (r.get("mc_caption") or "").lower()
-            tags = r.get("ai_tags", [])
+            tags = r.get("ai_tags") or []
             if isinstance(tags, str):
                 try:
                     tags = json.loads(tags)
                 except (json.JSONDecodeError, TypeError):
                     tags = []
+            if not isinstance(tags, list):
+                tags = []
             tags_text = " ".join(str(t).lower() for t in tags)
             combined_text = f"{caption} {tags_text}"
 
@@ -1425,6 +1427,59 @@ class SqliteVectorSearch:
             except (json.JSONDecodeError, TypeError):
                 result["folder_tags"] = []
 
+    def multi_image_search(
+        self,
+        query_images: List[str],
+        mode: str = "and",
+        top_k: int = 20,
+        threshold: float = 0.0,
+    ) -> List[Dict]:
+        """
+        Multi-image search with AND/OR modes.
+
+        Args:
+            query_images: List of base64-encoded images
+            mode: "and" (similar to ALL) or "or" (similar to ANY)
+            top_k: Number of results
+            threshold: Similarity threshold
+        """
+        # Encode all images to embeddings
+        embeddings = []
+        for img_b64 in query_images:
+            emb = self.encoder.encode_image_from_base64(img_b64)
+            embeddings.append(emb)
+        logger.info(f"Multi-image search: {len(embeddings)} images, mode={mode}")
+
+        if mode == "and":
+            # Average embeddings → re-normalize → single search
+            mean_emb = np.mean(embeddings, axis=0).astype(np.float32)
+            norm = np.linalg.norm(mean_emb)
+            if norm > 0:
+                mean_emb = mean_emb / norm
+            results = self.vector_search_by_embedding(mean_emb, top_k, threshold)
+        else:
+            # OR: search per image → union with max score per file
+            all_results = {}
+            for emb in embeddings:
+                hits = self.vector_search_by_embedding(emb, top_k, threshold)
+                for r in hits:
+                    fid = r.get("id")
+                    sim = r.get("similarity", 0)
+                    if fid not in all_results or sim > all_results[fid].get("similarity", 0):
+                        all_results[fid] = r
+            results = sorted(
+                all_results.values(),
+                key=lambda x: x.get("similarity", 0),
+                reverse=True
+            )[:top_k]
+
+        for r in results:
+            r["vector_score"] = r.get("similarity", 0)
+            r["text_vec_score"] = None
+            r["text_score"] = None
+        logger.info(f"Multi-image search returned {len(results)} results")
+        return results
+
     def search(
         self,
         query: str = "",
@@ -1434,6 +1489,8 @@ class SqliteVectorSearch:
         threshold: float = 0.0,
         return_diagnostic: bool = False,
         query_image: Optional[str] = None,
+        query_images: Optional[List[str]] = None,
+        image_search_mode: str = "and",
     ):
         """
         Unified search interface (compatibility with VectorSearcher).
@@ -1445,19 +1502,27 @@ class SqliteVectorSearch:
             top_k: Number of results
             threshold: Similarity threshold (vector modes only)
             return_diagnostic: If True and mode=triaxis, return (results, diagnostic)
-            query_image: Base64-encoded image for image-to-image search
+            query_image: Base64-encoded image for single image-to-image search
+            query_images: List of base64-encoded images for multi-image search
+            image_search_mode: "and" or "or" (for multi-image search)
 
         Returns:
             Search results. If return_diagnostic=True with triaxis mode,
             returns (results, diagnostic_dict).
         """
-        # Image-to-image search: encode image and use vector similarity
+        # Multi-image search
+        if query_images and len(query_images) > 0:
+            results = self.multi_image_search(query_images, image_search_mode, top_k, threshold)
+            if filters:
+                results = self._apply_user_filters(results, filters)
+            return results
+
+        # Single image-to-image search (backward compatible)
         if query_image:
             image_embedding = self.encoder.encode_image_from_base64(query_image)
             results = self.vector_search_by_embedding(image_embedding, top_k, threshold)
             if filters:
                 results = self._apply_user_filters(results, filters)
-            # Add vector_score field for consistency with triaxis results
             for r in results:
                 r["vector_score"] = r.get("similarity", 0)
                 r["text_vec_score"] = None
