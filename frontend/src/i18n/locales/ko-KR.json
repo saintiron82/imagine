@@ -103,6 +103,7 @@
   "placeholder.drag_image": "이미지를 드래그하거나 클립보드에서 붙여넣기",
   "placeholder.drag_images": "이미지를 드래그하거나 붙여넣기 (최대 10장)",
   "placeholder.drag_images_or_url": "이미지 드래그, 붙여넣기 또는 URL 붙여넣기 (최대 10장)",
+  "placeholder.add_images": "이미지를 추가하여 시각 검색",
   "action.add_more_images": "추가",
   "label.image_count": "{count}장",
   "label.search_mode_and": "AND",

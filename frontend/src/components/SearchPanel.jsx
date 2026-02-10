@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, Type, ImageIcon } from 'lucide-react';
+import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings } from 'lucide-react';
 import SettingsModal from './SettingsModal';
 import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
@@ -514,7 +514,6 @@ const SearchResultCard = ({ result, onShowMeta }) => {
 
 export default function SearchPanel() {
     const { t } = useLocale();
-    const [searchMode, setSearchMode] = useState('text'); // 'text' | 'image'
     const [query, setQuery] = useState('');
     const [queryImages, setQueryImages] = useState([]); // base64 string array
     const [imageSearchMode, setImageSearchMode] = useState('and'); // 'and' | 'or'
@@ -549,9 +548,9 @@ export default function SearchPanel() {
     }, []);
 
     const handleSearch = async () => {
-        const isImageMode = searchMode === 'image';
-        if (isImageMode && queryImages.length === 0) return;
-        if (!isImageMode && !query.trim()) return;
+        const hasText = query.trim().length > 0;
+        const hasImages = queryImages.length > 0;
+        if (!hasText && !hasImages) return;
 
         setIsSearching(true);
         setError(null);
@@ -566,22 +565,28 @@ export default function SearchPanel() {
 
             const searchOptions = {
                 limit: 20,
-                mode: isImageMode ? 'vector' : 'triaxis',
                 threshold,
                 filters: Object.keys(filters).length > 0 ? filters : null,
             };
 
-            if (isImageMode) {
+            // Text
+            if (hasText) searchOptions.query = query;
+
+            // Images
+            if (hasImages) {
                 if (queryImages.length === 1) {
-                    // Single image: backward compatible path
                     searchOptions.queryImage = queryImages[0];
                 } else {
-                    // Multi-image: AND/OR mode
                     searchOptions.queryImages = queryImages;
                     searchOptions.imageSearchMode = imageSearchMode;
                 }
+            }
+
+            // Mode auto-determination
+            if (hasImages && !hasText) {
+                searchOptions.mode = 'vector';
             } else {
-                searchOptions.query = query;
+                searchOptions.mode = 'triaxis';
             }
 
             const response = await window.electron.pipeline.searchVector(searchOptions);
@@ -603,9 +608,9 @@ export default function SearchPanel() {
     };
 
     const handleLoadMore = async () => {
-        const isImageMode = searchMode === 'image';
-        if (isImageMode && queryImages.length === 0) return;
-        if (!isImageMode && !query.trim()) return;
+        const hasText = query.trim().length > 0;
+        const hasImages = queryImages.length > 0;
+        if (!hasText && !hasImages) return;
         if (isLoadingMore) return;
 
         setIsLoadingMore(true);
@@ -621,20 +626,24 @@ export default function SearchPanel() {
 
             const searchOptions = {
                 limit: nextLimit,
-                mode: isImageMode ? 'vector' : 'triaxis',
                 threshold: nextLimit > 40 ? 0 : threshold,
                 filters: Object.keys(filters).length > 0 ? filters : null,
             };
 
-            if (isImageMode) {
+            if (hasText) searchOptions.query = query;
+            if (hasImages) {
                 if (queryImages.length === 1) {
                     searchOptions.queryImage = queryImages[0];
                 } else {
                     searchOptions.queryImages = queryImages;
                     searchOptions.imageSearchMode = imageSearchMode;
                 }
+            }
+
+            if (hasImages && !hasText) {
+                searchOptions.mode = 'vector';
             } else {
-                searchOptions.query = query;
+                searchOptions.mode = 'triaxis';
             }
 
             const response = await window.electron.pipeline.searchVector(searchOptions);
@@ -707,35 +716,9 @@ export default function SearchPanel() {
                     </div>
                 )}
 
-                {/* Mode Toggle Tabs */}
-                <div className="w-full max-w-2xl flex mb-3">
-                    <button
-                        onClick={() => setSearchMode('text')}
-                        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-t-lg border border-b-0 transition-colors ${
-                            searchMode === 'text'
-                                ? 'bg-gray-800 text-white border-gray-600'
-                                : 'bg-gray-900 text-gray-500 border-gray-800 hover:text-gray-300'
-                        }`}
-                    >
-                        <Type size={14} />
-                        {t('tab.search_by_text')}
-                    </button>
-                    <button
-                        onClick={() => setSearchMode('image')}
-                        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-t-lg border border-b-0 transition-colors ${
-                            searchMode === 'image'
-                                ? 'bg-gray-800 text-white border-gray-600'
-                                : 'bg-gray-900 text-gray-500 border-gray-800 hover:text-gray-300'
-                        }`}
-                    >
-                        <ImageIcon size={14} />
-                        {t('tab.search_by_image')}
-                    </button>
-                </div>
-
-                {/* Search Bar */}
+                {/* Unified Search Bar: Text + Images */}
                 <div className="w-full max-w-2xl">
-                    {searchMode === 'text' ? (
+                    {/* Text Input Row */}
                     <div className="flex items-center space-x-2">
                         <div className="flex-1 relative">
                             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
@@ -748,7 +731,7 @@ export default function SearchPanel() {
                                 placeholder={t('placeholder.search')}
                                 className="w-full pl-10 pr-10 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 text-base"
                             />
-                            {query && (
+                            {(query || queryImages.length > 0) && (
                                 <button
                                     onClick={clearSearch}
                                     className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
@@ -759,7 +742,7 @@ export default function SearchPanel() {
                         </div>
                         <button
                             onClick={handleSearch}
-                            disabled={!query.trim() || isSearching}
+                            disabled={(!query.trim() && queryImages.length === 0) || isSearching}
                             className="px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg flex items-center space-x-2 transition-colors"
                         >
                             {isSearching ? (
@@ -789,81 +772,42 @@ export default function SearchPanel() {
                             <Settings size={18} />
                         </button>
                     </div>
-                    ) : (
-                    /* Image Search Mode */
-                    <div>
-                        <div className="flex items-center space-x-2">
-                            <div className="flex-1">
-                                <ImageSearchInput
-                                    queryImages={queryImages}
-                                    onImagesChange={setQueryImages}
-                                />
-                            </div>
-                            <button
-                                onClick={handleSearch}
-                                disabled={queryImages.length === 0 || isSearching}
-                                className="px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg flex items-center space-x-2 transition-colors self-start mt-3"
-                            >
-                                {isSearching ? (
-                                    <Loader2 size={18} className="animate-spin" />
-                                ) : (
-                                    <Search size={18} />
-                                )}
-                                <span className="text-sm">{t('action.search_similar')}</span>
-                            </button>
-                            {/* Filter Toggle */}
-                            <button
-                                onClick={() => setShowFilters(!showFilters)}
-                                className={`p-3 rounded-lg transition-colors self-start mt-3 ${
-                                    showFilters || hasActiveFilters
-                                        ? 'bg-blue-600 text-white'
-                                        : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600'
-                                }`}
-                                title={t('search.filters_title')}
-                            >
-                                <SlidersHorizontal size={18} />
-                            </button>
-                            {/* Settings Button */}
-                            <button
-                                onClick={() => setShowSettings(true)}
-                                className="p-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600 transition-colors self-start mt-3"
-                                title={t('search.settings_title')}
-                            >
-                                <Settings size={18} />
-                            </button>
-                        </div>
 
-                        {/* AND/OR Toggle (visible when 2+ images) */}
-                        {queryImages.length >= 2 && (
-                            <div className="flex items-center gap-2 mt-2 ml-1">
-                                <div className="flex bg-gray-800 rounded-lg p-0.5 border border-gray-700">
-                                    <button
-                                        onClick={() => setImageSearchMode('and')}
-                                        className={`px-3 py-1 rounded text-xs font-bold transition-all ${
-                                            imageSearchMode === 'and'
-                                                ? 'bg-blue-600 text-white shadow-md'
-                                                : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                                        }`}
-                                    >
-                                        {t('label.search_mode_and')}
-                                    </button>
-                                    <button
-                                        onClick={() => setImageSearchMode('or')}
-                                        className={`px-3 py-1 rounded text-xs font-bold transition-all ${
-                                            imageSearchMode === 'or'
-                                                ? 'bg-orange-600 text-white shadow-md'
-                                                : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                                        }`}
-                                    >
-                                        {t('label.search_mode_or')}
-                                    </button>
-                                </div>
-                                <span className="text-[10px] text-gray-500">
-                                    {imageSearchMode === 'and' ? t('label.search_mode_and_desc') : t('label.search_mode_or_desc')}
-                                </span>
+                    {/* Image Input Area (always visible) */}
+                    <ImageSearchInput
+                        queryImages={queryImages}
+                        onImagesChange={setQueryImages}
+                    />
+
+                    {/* AND/OR Toggle (visible when 2+ images) */}
+                    {queryImages.length >= 2 && (
+                        <div className="flex items-center gap-2 mt-2 ml-1">
+                            <div className="flex bg-gray-800 rounded-lg p-0.5 border border-gray-700">
+                                <button
+                                    onClick={() => setImageSearchMode('and')}
+                                    className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                                        imageSearchMode === 'and'
+                                            ? 'bg-blue-600 text-white shadow-md'
+                                            : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                                    }`}
+                                >
+                                    {t('label.search_mode_and')}
+                                </button>
+                                <button
+                                    onClick={() => setImageSearchMode('or')}
+                                    className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                                        imageSearchMode === 'or'
+                                            ? 'bg-orange-600 text-white shadow-md'
+                                            : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                                    }`}
+                                >
+                                    {t('label.search_mode_or')}
+                                </button>
                             </div>
-                        )}
-                    </div>
+                            <span className="text-[10px] text-gray-500">
+                                {imageSearchMode === 'and' ? t('label.search_mode_and_desc') : t('label.search_mode_or_desc')}
+                            </span>
+                        </div>
                     )}
 
                     {/* Filter Bar */}

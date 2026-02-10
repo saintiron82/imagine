@@ -1427,6 +1427,134 @@ class SqliteVectorSearch:
             except (json.JSONDecodeError, TypeError):
                 result["folder_tags"] = []
 
+    def triaxis_image_search(
+        self,
+        query: str,
+        image_embeddings: list,
+        image_mode: str = "and",
+        filters: Optional[Dict[str, Any]] = None,
+        top_k: int = 20,
+        threshold: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Combined text + image triaxis search.
+        V-axis uses image embeddings, S-axis and M-axis use text query.
+
+        Args:
+            query: Text query for S-axis and M-axis
+            image_embeddings: Pre-computed SigLIP2 image embeddings
+            image_mode: "and" (average) or "or" (union)
+            filters: Optional metadata filters
+            top_k: Number of results
+            threshold: Similarity threshold
+        """
+        from backend.search.rrf import get_weights
+        from backend.utils.config import get_config as _cfg
+        _search_cfg = _cfg()
+
+        candidate_mul = _search_cfg.get("search.rrf.candidate_multiplier", 5)
+        candidate_k = top_k * candidate_mul
+        v_threshold = _search_cfg.get("search.threshold.visual", 0.05)
+        tv_threshold = _search_cfg.get("search.threshold.text_vec", threshold)
+
+        # V-axis: image embeddings
+        if image_mode == "and":
+            mean_emb = np.mean(image_embeddings, axis=0).astype(np.float32)
+            norm = np.linalg.norm(mean_emb)
+            if norm > 0:
+                mean_emb = mean_emb / norm
+            vector_results = self.vector_search_by_embedding(mean_emb, candidate_k, v_threshold)
+        else:  # OR
+            all_v = {}
+            for emb in image_embeddings:
+                for r in self.vector_search_by_embedding(emb, candidate_k, v_threshold):
+                    fid = r.get("id")
+                    if fid not in all_v or r.get("similarity", 0) > all_v[fid].get("similarity", 0):
+                        all_v[fid] = r
+            vector_results = sorted(
+                all_v.values(), key=lambda x: x.get("similarity", 0), reverse=True
+            )[:candidate_k]
+
+        # S-axis: text query (Qwen3-Embedding)
+        decomposer = QueryDecomposer()
+        plan = decomposer.decompose(query)
+        vector_query = plan.get("vector_query", query)
+        query_type = plan.get("query_type", "balanced")
+
+        text_vec_results = []
+        t_query_embedding = None
+        if self.text_search_enabled:
+            try:
+                t_query_embedding = self.text_provider.encode(vector_query, is_query=True)
+                text_vec_results = self._text_vector_search_by_embedding(
+                    t_query_embedding, top_k=candidate_k, threshold=tv_threshold
+                )
+            except Exception as e:
+                logger.warning(f"S-axis search unavailable in triaxis_image: {e}")
+
+        # M-axis: FTS5 keywords (text query)
+        fts_keywords = plan.get("fts_keywords", [query])
+        exclude_kw = plan.get("exclude_keywords", [])
+        fts_results = []
+        try:
+            fts_results = self.fts_search(fts_keywords, top_k=candidate_k, exclude_keywords=exclude_kw)
+        except Exception as e:
+            logger.warning(f"M-axis search unavailable in triaxis_image: {e}")
+
+        # RRF merge (3 axes)
+        all_result_lists = []
+        if vector_results:
+            all_result_lists.append(("visual", vector_results))
+        if text_vec_results:
+            all_result_lists.append(("text_vec", text_vec_results))
+        if fts_results:
+            all_result_lists.append(("fts", fts_results))
+
+        if len(all_result_lists) >= 2:
+            rrf_k = _search_cfg.get("search.rrf.k", 60)
+            active_axes = [name for name, _ in all_result_lists]
+            rrf_weights = get_weights(query_type, active_axes)
+            merged = self._rrf_merge_multi(all_result_lists, k=rrf_k, weights=rrf_weights)
+        elif len(all_result_lists) == 1:
+            _, merged = all_result_lists[0]
+            for r in merged:
+                r["vector_score"] = r.get("similarity", r.get("vector_score"))
+        else:
+            merged = []
+
+        # Filters
+        user_filters = filters or {}
+        llm_filters = plan.get("filters", {})
+        negative_query = plan.get("negative_query", "")
+
+        if negative_query:
+            merged = self._apply_negative_filter(merged, negative_query)
+        if llm_filters:
+            merged = self._apply_user_filters(merged, llm_filters, strict=False)
+        if user_filters:
+            merged = self._apply_user_filters(merged, user_filters, strict=True)
+
+        merged = merged[:top_k]
+
+        # Enrich missing axis scores (V uses image embedding for enrichment)
+        if image_mode == "and" and len(image_embeddings) > 0:
+            v_emb_for_enrich = np.mean(image_embeddings, axis=0).astype(np.float32)
+            norm = np.linalg.norm(v_emb_for_enrich)
+            if norm > 0:
+                v_emb_for_enrich = v_emb_for_enrich / norm
+        elif image_embeddings:
+            v_emb_for_enrich = image_embeddings[0]
+        else:
+            v_emb_for_enrich = None
+        self._enrich_axis_scores(merged, v_emb_for_enrich, t_query_embedding, fts_keywords)
+
+        logger.info(
+            f"Triaxis image search '{query}' + {len(image_embeddings)} images: "
+            f"V={len(vector_results)}, S={len(text_vec_results)}, "
+            f"M={len(fts_results)}, merged={len(merged)}"
+        )
+        return merged
+
     def multi_image_search(
         self,
         query_images: List[str],
@@ -1510,14 +1638,31 @@ class SqliteVectorSearch:
             Search results. If return_diagnostic=True with triaxis mode,
             returns (results, diagnostic_dict).
         """
-        # Multi-image search
+        # Combined text + image search (triaxis with V=image, S+M=text)
+        has_images = (query_images and len(query_images) > 0) or query_image
+        has_text = bool(query and query.strip())
+
+        if has_text and has_images:
+            # Encode images
+            embeddings = []
+            if query_images and len(query_images) > 0:
+                for img_b64 in query_images:
+                    embeddings.append(self.encoder.encode_image_from_base64(img_b64))
+            elif query_image:
+                embeddings.append(self.encoder.encode_image_from_base64(query_image))
+
+            return self.triaxis_image_search(
+                query, embeddings, image_search_mode, filters, top_k, threshold
+            )
+
+        # Multi-image search (images only, no text)
         if query_images and len(query_images) > 0:
             results = self.multi_image_search(query_images, image_search_mode, top_k, threshold)
             if filters:
                 results = self._apply_user_filters(results, filters)
             return results
 
-        # Single image-to-image search (backward compatible)
+        # Single image-to-image search (backward compatible, image only)
         if query_image:
             image_embedding = self.encoder.encode_image_from_base64(query_image)
             results = self.vector_search_by_embedding(image_embedding, top_k, threshold)

@@ -103,6 +103,7 @@
   "placeholder.drag_image": "Drag & drop an image, or paste from clipboard",
   "placeholder.drag_images": "Drag & drop images, or paste (max 10)",
   "placeholder.drag_images_or_url": "Drag & drop images, paste, or paste image URL (max 10)",
+  "placeholder.add_images": "Add images for visual search",
   "action.add_more_images": "Add More",
   "label.image_count": "{count} images",
   "label.search_mode_and": "AND",
