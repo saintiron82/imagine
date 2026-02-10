@@ -5,17 +5,17 @@
 ```
 현재 3축:
   V-axis:  이미지 → SigLIP 벡터         (시각)
-  Tv-axis: AI캡션 → Qwen3 벡터          (AI 해석의 벡터 형태)
-  F-axis:  AI캡션+메타데이터 → FTS 키워드 (전부 다 Ctrl+F)
+  S-axis: AI캡션 → Qwen3 벡터          (AI 해석의 벡터 형태)
+  M-axis:  AI캡션+메타데이터 → FTS 키워드 (전부 다 Ctrl+F)
            ~~~~~~~ 겹침 ~~~~~~~
 ```
 
 | 문제 | 설명 |
 |------|------|
-| Tv-axis ↔ F-axis 중복 | 둘 다 같은 AI 캡션+태그를 다른 방법으로 검색 |
-| Tv-axis가 메타데이터 무시 | 캡션+태그 2개 필드만 벡터화. 레이어명, 폴더, 사용자 메모 등 미활용 |
+| S-axis ↔ M-axis 중복 | 둘 다 같은 AI 캡션+태그를 다른 방법으로 검색 |
+| S-axis가 메타데이터 무시 | 캡션+태그 2개 필드만 벡터화. 레이어명, 폴더, 사용자 메모 등 미활용 |
 | AI가 이미지만 봄 | 폴더 구조, 레이어명 등 맥락 정보 없이 캡션 생성 |
-| F-axis 무차별 검색 | AI 해석과 메타데이터를 구분하지 않고 16컬럼 한꺼번에 검색 |
+| M-axis 무차별 검색 | AI 해석과 메타데이터를 구분하지 않고 16컬럼 한꺼번에 검색 |
 
 ---
 
@@ -77,7 +77,7 @@
 **왜 FTS(키워드)인가**: 메타데이터는 고유명사가 많다.
 "NotoSansKR", "Shadow_Effect", "warrior_boss.psd" 같은 건 의미 매칭보다 **글자 매칭이 정확**하다.
 
-**현재 F-axis와 차이**: AI가 생성한 컬럼(ai_caption, ai_tags, ai_style 등)을 **제외**하고 메타데이터 컬럼만 검색.
+**현재 M-axis와 차이**: AI가 생성한 컬럼(ai_caption, ai_tags, ai_style 등)을 **제외**하고 메타데이터 컬럼만 검색.
 
 ---
 
@@ -193,12 +193,12 @@ WEIGHT_PRESETS = {
 
 | 쿼리 | 현재 동작 | 변경 후 동작 |
 |------|----------|-------------|
-| "보스전 배경" | user_note에 "보스전" 있어도 Tv-axis 무반응. F-axis 키워드만 매칭 | M-axis: user_note "보스전" 키워드 매칭. S-axis: 캡션에 "boss battle arena" 의미 매칭 |
-| "Shadow 레이어 있는 파일" | F-axis: 16컬럼에서 "Shadow" 키워드 찾음 (AI캡션 노이즈 포함) | M-axis: layer_names에서만 정확 매칭 |
-| "NotoSans 폰트 사용" | F-axis에서 찾지만 Tv와 혼합 순위 | M-axis: used_fonts에서 정확 매칭. 깔끔한 결과 |
+| "보스전 배경" | user_note에 "보스전" 있어도 S-axis 무반응. M-axis 키워드만 매칭 | M-axis: user_note "보스전" 키워드 매칭. S-axis: 캡션에 "boss battle arena" 의미 매칭 |
+| "Shadow 레이어 있는 파일" | M-axis: 16컬럼에서 "Shadow" 키워드 찾음 (AI캡션 노이즈 포함) | M-axis: layer_names에서만 정확 매칭 |
+| "NotoSans 폰트 사용" | M-axis에서 찾지만 Tv와 혼합 순위 | M-axis: used_fonts에서 정확 매칭. 깔끔한 결과 |
 | "파란 톤 야경" | V-axis만 유효 | V-axis + S-axis(메타 맥락 포함 캡션) 이중 매칭 |
-| "Characters 폴더의 검 든 캐릭터" | F-axis 키워드 + Tv 부분 매칭 | M-axis(folder 키워드) + S-axis("sword character" 의미) 정확 분리 |
-| "그림자 효과 적용된 일러스트" | F-axis: "그림자" 키워드만 | S-axis: AI가 "Shadow_Effect → 그림자 효과" 해석한 캡션에서 의미 매칭 |
+| "Characters 폴더의 검 든 캐릭터" | M-axis 키워드 + Tv 부분 매칭 | M-axis(folder 키워드) + S-axis("sword character" 의미) 정확 분리 |
+| "그림자 효과 적용된 일러스트" | M-axis: "그림자" 키워드만 | S-axis: AI가 "Shadow_Effect → 그림자 효과" 해석한 캡션에서 의미 매칭 |
 
 ---
 
