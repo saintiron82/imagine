@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, X, ImageIcon, Clipboard, Plus, Link, Loader2 } from 'lucide-react';
 import { useLocale } from '../i18n';
 
@@ -151,29 +151,38 @@ export default function ImageSearchInput({ queryImages, onImagesChange }) {
         }
     }, [queryImages, onImagesChange, t]);
 
-    const handlePaste = useCallback((e) => {
-        const items = e.clipboardData?.items;
-        if (!items) return;
+    // Global paste listener — captures image paste regardless of focus
+    useEffect(() => {
+        const handleGlobalPaste = (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
 
-        // Check for image blobs first
-        const imageFiles = [];
-        for (const item of items) {
-            if (item.type.startsWith('image/')) {
-                imageFiles.push(item.getAsFile());
+            // Check for image blobs first (always capture, regardless of focus)
+            const imageFiles = [];
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    imageFiles.push(item.getAsFile());
+                }
             }
-        }
-        if (imageFiles.length > 0) {
-            e.preventDefault();
-            processFiles(imageFiles);
-            return;
-        }
+            if (imageFiles.length > 0) {
+                e.preventDefault();
+                processFiles(imageFiles);
+                return;
+            }
 
-        // Check for pasted URL text
-        const text = e.clipboardData.getData('text/plain')?.trim();
-        if (text && URL_PATTERN.test(text)) {
-            e.preventDefault();
-            processUrl(text);
-        }
+            // Check for pasted URL text (only when not in text input/textarea)
+            const tag = document.activeElement?.tagName;
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+                const text = e.clipboardData.getData('text/plain')?.trim();
+                if (text && URL_PATTERN.test(text)) {
+                    e.preventDefault();
+                    processUrl(text);
+                }
+            }
+        };
+
+        document.addEventListener('paste', handleGlobalPaste);
+        return () => document.removeEventListener('paste', handleGlobalPaste);
     }, [processFiles, processUrl]);
 
     const handleFileSelect = useCallback((e) => {
@@ -194,7 +203,7 @@ export default function ImageSearchInput({ queryImages, onImagesChange }) {
     // If images are selected, show preview list + optional add zone
     if (hasImages) {
         return (
-            <div className="w-full max-w-2xl mt-3" onPaste={handlePaste} tabIndex={0}>
+            <div className="w-full max-w-2xl mt-3">
                 <div className="flex items-start gap-2 overflow-x-auto pb-2 custom-scrollbar">
                     {queryImages.map((img, index) => (
                         <div key={index} className="relative shrink-0">
@@ -264,7 +273,7 @@ export default function ImageSearchInput({ queryImages, onImagesChange }) {
 
     // Drop zone (no images yet)
     return (
-        <div className="w-full max-w-2xl mt-3" onPaste={handlePaste} tabIndex={0}>
+        <div className="w-full max-w-2xl mt-3">
             <div
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
