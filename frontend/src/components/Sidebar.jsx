@@ -1,31 +1,40 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronDown, Folder, FolderOpen, CheckSquare, Square } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare, Square } from 'lucide-react';
 import { useLocale } from '../i18n';
 
-const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMode = false, selectedPaths = new Set(), onFolderToggle }) => {
+const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMode = false, selectedPaths = new Set(), onFolderToggle, isRoot = false, onRemoveRoot }) => {
     const { t } = useLocale();
-    const [isOpen, setIsOpen] = useState(false);
+    const [isOpen, setIsOpen] = useState(isRoot); // Roots start open
     const [children, setChildren] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const isSelected = multiSelectMode ? selectedPaths.has(path) : currentPath === path;
 
-    // Load children when opened
+    // Auto-load children for root nodes
+    useEffect(() => {
+        if (isRoot && isOpen && children.length === 0) {
+            loadChildren();
+        }
+    }, [isRoot, isOpen]);
+
+    const loadChildren = async () => {
+        setIsLoading(true);
+        try {
+            if (window.electron && window.electron.fs) {
+                const items = await window.electron.fs.listDir(path);
+                const folders = items.filter(item => item.isDirectory);
+                setChildren(folders);
+            }
+        } catch (err) {
+            console.error("Failed to load folders", err);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleToggle = async (e) => {
         e.stopPropagation();
-
-        if (!isOpen) {
-            setIsLoading(true);
-            try {
-                if (window.electron && window.electron.fs) {
-                    const items = await window.electron.fs.listDir(path);
-                    const folders = items.filter(item => item.isDirectory);
-                    setChildren(folders);
-                }
-            } catch (err) {
-                console.error("Failed to load folders", err);
-            } finally {
-                setIsLoading(false);
-            }
+        if (!isOpen && children.length === 0) {
+            await loadChildren();
         }
         setIsOpen(!isOpen);
     };
@@ -45,7 +54,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMod
     return (
         <div className="select-none">
             <div
-                className={`flex items-center py-1 px-2 cursor-pointer hover:bg-gray-700 transition-colors ${highlightClass}`}
+                className={`flex items-center py-1 px-2 cursor-pointer hover:bg-gray-700 transition-colors group ${highlightClass}`}
                 style={{ paddingLeft: `${level * 16 + 8}px` }}
                 onClick={handleClick}
             >
@@ -64,12 +73,22 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMod
                 )}
 
                 {isOpen ? (
-                    <FolderOpen size={16} className="text-yellow-500 mr-2" />
+                    <FolderOpen size={16} className={`mr-2 ${isRoot ? 'text-blue-400' : 'text-yellow-500'}`} />
                 ) : (
-                    <Folder size={16} className="text-yellow-500 mr-2" />
+                    <Folder size={16} className={`mr-2 ${isRoot ? 'text-blue-400' : 'text-yellow-500'}`} />
                 )}
 
-                <span className="text-sm truncate text-gray-200">{name}</span>
+                <span className={`text-sm truncate flex-1 ${isRoot ? 'text-white font-medium' : 'text-gray-200'}`}>{name}</span>
+
+                {isRoot && onRemoveRoot && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onRemoveRoot(path); }}
+                        className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
+                        title={t('action.remove_folder')}
+                    >
+                        <Trash2 size={12} />
+                    </button>
+                )}
             </div>
 
             {isOpen && (
@@ -100,39 +119,72 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMod
 
 const Sidebar = ({ currentPath, onFolderSelect, multiSelectMode = false, selectedPaths = new Set(), onMultiSelectToggle, onFolderToggle }) => {
     const { t } = useLocale();
-    const [root, setRoot] = useState(null);
+    const [roots, setRoots] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    const loadRoots = useCallback(async () => {
+        setLoading(true);
+        try {
+            const result = await window.electron?.pipeline?.getRegisteredFolders();
+            if (result?.success) {
+                setRoots((result.folders || []).filter(f => f.exists).map(f => ({
+                    path: f.path,
+                    name: f.path.split(/[/\\]/).pop() || f.path,
+                })));
+            }
+        } catch (e) {
+            console.error('Failed to load registered folders:', e);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
-        if (window.electron && window.electron.fs) {
-            const home = window.electron.fs.getHomeDir();
-            setRoot({
-                path: home,
-                name: t('msg.home'),
-            });
-        }
-    }, [t]);
+        loadRoots();
+    }, [loadRoots]);
 
-    const handleBrowse = async () => {
-        if (window.electron && window.electron.pipeline) {
-            const folderPath = await window.electron.pipeline.openFolderDialog();
-            if (folderPath) {
-                onFolderSelect(folderPath);
+    const handleAddFolder = async () => {
+        try {
+            const result = await window.electron?.pipeline?.addRegisteredFolder();
+            if (result?.success && result.folders) {
+                setRoots(result.folders.filter(f => f.exists).map(f => ({
+                    path: f.path,
+                    name: f.path.split(/[/\\]/).pop() || f.path,
+                })));
+                // Auto-select the first newly added folder
+                if (result.added?.length > 0) {
+                    onFolderSelect(result.added[0]);
+                }
             }
+        } catch (e) {
+            console.error('Failed to add folder:', e);
         }
     };
 
-    if (!root) return <div className="p-4 text-gray-500">{t('status.loading')}</div>;
+    const handleRemoveRoot = async (folderPath) => {
+        try {
+            const result = await window.electron?.pipeline?.removeRegisteredFolder(folderPath);
+            if (result?.success) {
+                setRoots((result.folders || []).filter(f => f.exists).map(f => ({
+                    path: f.path,
+                    name: f.path.split(/[/\\]/).pop() || f.path,
+                })));
+            }
+        } catch (e) {
+            console.error('Failed to remove folder:', e);
+        }
+    };
 
     return (
         <div>
-            {/* Browse + Multi-Select Buttons */}
+            {/* Add Folder + Multi-Select Buttons */}
             <div className="flex gap-1 mb-2">
                 <button
-                    onClick={handleBrowse}
+                    onClick={handleAddFolder}
                     className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded flex items-center justify-center space-x-2"
                 >
-                    <FolderOpen size={16} />
-                    <span>{t('action.browse_folder')}</span>
+                    <FolderPlus size={16} />
+                    <span>{t('action.add_folder')}</span>
                 </button>
                 <button
                     onClick={() => onMultiSelectToggle?.(!multiSelectMode)}
@@ -154,17 +206,29 @@ const Sidebar = ({ currentPath, onFolderSelect, multiSelectMode = false, selecte
                 </div>
             )}
 
-            <div className="text-xs text-gray-500 mb-2 px-2">{t('msg.navigate_below')}</div>
-
-            <TreeNode
-                path={root.path}
-                name={root.name}
-                onSelect={onFolderSelect}
-                currentPath={currentPath}
-                multiSelectMode={multiSelectMode}
-                selectedPaths={selectedPaths}
-                onFolderToggle={onFolderToggle}
-            />
+            {/* Registered folder roots */}
+            {loading ? (
+                <div className="text-xs text-gray-500 p-4 text-center">{t('status.loading')}</div>
+            ) : roots.length === 0 ? (
+                <div className="text-xs text-gray-500 p-4 text-center">{t('msg.no_registered_folders')}</div>
+            ) : (
+                <div>
+                    {roots.map((root) => (
+                        <TreeNode
+                            key={root.path}
+                            path={root.path}
+                            name={root.name}
+                            onSelect={onFolderSelect}
+                            currentPath={currentPath}
+                            isRoot={true}
+                            onRemoveRoot={handleRemoveRoot}
+                            multiSelectMode={multiSelectMode}
+                            selectedPaths={selectedPaths}
+                            onFolderToggle={onFolderToggle}
+                        />
+                    ))}
+                </div>
+            )}
         </div>
     );
 };
