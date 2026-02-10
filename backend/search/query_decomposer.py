@@ -22,7 +22,8 @@ Falls back gracefully when Ollama is unavailable.
 import logging
 import json
 import os
-from typing import Dict, Any
+import re
+from typing import Dict, Any, List, Tuple
 
 import requests
 
@@ -217,7 +218,7 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                 elif not isinstance(exclude_keywords, list):
                     exclude_keywords = []
 
-                return {
+                result = {
                     "vector_query": vector_query if vector_query else original_query,
                     "negative_query": negative_query,
                     "fts_keywords": fts_keywords,
@@ -225,10 +226,110 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                     "filters": filters if isinstance(filters, dict) else {},
                     "query_type": query_type,
                 }
+
+                # Rule-based validation: fix when LLM fails to separate negation
+                result = self._validate_negation(result, original_query)
+                return result
+
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"Failed to parse LLM response: {e}")
 
         return self._fallback(original_query)
+
+    # Korean negation patterns: (negated noun)(negation suffix)
+    _KO_NEG_PATTERNS = [
+        # "X이/가 없는", "X이/가 없어야"
+        re.compile(r'(\S+?)(?:이|가|은|는)?\s*없(?:는|어야|이)', re.UNICODE),
+        # "X 아닌", "X가 아닌"
+        re.compile(r'(\S+?)(?:이|가|은|는)?\s*아닌', re.UNICODE),
+        # "X 말고", "X 빼고", "X 제외"
+        re.compile(r'(\S+?)(?:을|를)?\s*(?:말고|빼고|제외하고|제외한|제외)', re.UNICODE),
+        # "X 없이"
+        re.compile(r'(\S+?)(?:이|가|은|는)?\s*없이', re.UNICODE),
+    ]
+
+    # English negation words to strip from vector_query
+    _EN_NEG_WORDS = re.compile(
+        r'\b(without|no|not|except|excluding|other than)\b', re.IGNORECASE
+    )
+
+    def _validate_negation(self, result: Dict[str, Any], original_query: str) -> Dict[str, Any]:
+        """
+        Rule-based validation: if the original query contains negation patterns
+        but the LLM failed to populate negative_query/exclude_keywords, fix it.
+
+        Also strips English negation words from vector_query when negative_query
+        is populated (LLM sometimes leaves "without X" in vector_query).
+        """
+        has_neg = result.get("negative_query", "").strip()
+        has_excl = bool(result.get("exclude_keywords"))
+
+        # Step 1: Detect Korean negation in original query
+        ko_neg_nouns = self._extract_ko_negation(original_query)
+
+        if ko_neg_nouns and not has_neg and not has_excl:
+            # LLM completely missed negation — build exclude from regex
+            logger.info(f"Negation validation: LLM missed negation, "
+                        f"extracted Korean negative nouns: {ko_neg_nouns}")
+
+            result["exclude_keywords"] = ko_neg_nouns
+
+            # Try to translate Korean negative nouns to English for negative_query
+            en_terms = self._translate_terms(ko_neg_nouns)
+            if en_terms:
+                result["negative_query"] = " ".join(en_terms)
+
+        # Step 2: Clean vector_query — strip English negation words and negative subjects
+        vq = result.get("vector_query", "")
+        neg_q = result.get("negative_query", "")
+        if neg_q and vq:
+            cleaned = self._EN_NEG_WORDS.sub("", vq).strip()
+            # Remove negative subject terms and their morphological variants (e.g. sign→signs)
+            for term in neg_q.split():
+                pattern = re.compile(r'\b' + re.escape(term) + r'\w*\b', re.IGNORECASE)
+                cleaned = pattern.sub("", cleaned)
+            cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
+            if cleaned and cleaned != vq:
+                logger.info(f"Negation validation: cleaned vector_query "
+                            f"'{vq}' → '{cleaned}'")
+                result["vector_query"] = cleaned
+
+        # Step 3: Remove negative nouns from fts_keywords
+        excl = set(k.lower() for k in result.get("exclude_keywords", []))
+        if excl and result.get("fts_keywords"):
+            neg_extra = set(t.lower() for t in neg_q.split()) if neg_q else set()
+            all_neg = excl | neg_extra
+            cleaned_fts = [
+                kw for kw in result["fts_keywords"]
+                if not any(n in kw.lower() for n in all_neg)
+            ]
+            if cleaned_fts:
+                result["fts_keywords"] = cleaned_fts
+
+        return result
+
+    def _extract_ko_negation(self, query: str) -> List[str]:
+        """Extract negated nouns from Korean text using regex patterns."""
+        nouns = []
+        for pattern in self._KO_NEG_PATTERNS:
+            for m in pattern.finditer(query):
+                noun = m.group(1).strip()
+                if noun and len(noun) >= 1:
+                    nouns.append(noun)
+        return nouns
+
+    @staticmethod
+    def _translate_terms(terms: List[str]) -> List[str]:
+        """Best-effort translate Korean terms to English."""
+        try:
+            from deep_translator import GoogleTranslator
+            joined = ", ".join(terms)
+            translated = GoogleTranslator(source='ko', target='en').translate(joined)
+            if translated:
+                return [t.strip().lower() for t in translated.split(",") if t.strip()]
+        except Exception as e:
+            logger.debug(f"Term translation failed: {e}")
+        return []
 
     def _fallback(self, query: str) -> Dict[str, Any]:
         """Fallback when LLM is unavailable - translate query for cross-language search."""
