@@ -470,8 +470,10 @@ const FileCard = React.forwardRef(({ file, isSelected, onMouseDown, thumbnail, l
     const canPreviewNatively = IMAGE_PREVIEW_EXTS.includes(file.extension);
 
     const toFileUrl = (p) => {
-        const encoded = p.replace(/\\/g, '/').split('/').map(s => encodeURIComponent(s)).join('/');
-        return `file:///${encoded}`;
+        const normalized = p.replace(/\\/g, '/');
+        const encoded = normalized.split('/').map(s => encodeURIComponent(s)).join('/');
+        // Windows: file:///C:/... | Mac/Linux: file:///home/... (path already starts with /)
+        return /^[A-Za-z]:/.test(normalized) ? `file:///${encoded}` : `file://${encoded}`;
     };
 
     const handleMetaClick = (e) => {

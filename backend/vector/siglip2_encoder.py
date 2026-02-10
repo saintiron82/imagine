@@ -51,7 +51,12 @@ class SigLIP2Encoder:
         self.tier_name = tier_name
         self._model = None
         self._processor = None
-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            self._device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            self._device = "mps"
+        else:
+            self._device = "cpu"
 
         logger.info(
             f"SigLIP2Encoder initialized (tier: {tier_name}, model: {self.model_name}, "

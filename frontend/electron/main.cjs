@@ -6,6 +6,23 @@ const projectRoot = isDev
     ? path.resolve(__dirname, '../../')
     : process.resourcesPath;
 
+// Cross-platform Python path resolution
+function getPythonPath() {
+    const isWin = process.platform === 'win32';
+    if (isDev) {
+        const venvDir = isWin ? 'Scripts' : 'bin';
+        const pyExe = isWin ? 'python.exe' : 'python3';
+        return path.resolve(__dirname, `../../.venv/${venvDir}/${pyExe}`);
+    }
+    const pyExe = isWin ? 'python.exe' : 'python3';
+    return path.join(process.resourcesPath, 'python', pyExe);
+}
+
+function resolvePython() {
+    const pythonPath = getPythonPath();
+    return fs.existsSync(pythonPath) ? pythonPath : 'python3';
+}
+
 // IPC Handler: Open Folder Dialog
 ipcMain.handle('open-folder-dialog', async () => {
     const result = await dialog.showOpenDialog({
@@ -70,12 +87,7 @@ ipcMain.handle('check-metadata-exists', async (_, filePaths) => {
 ipcMain.handle('generate-thumbnail', async (_, filePath) => {
     const { spawn } = require('child_process');
 
-    const pythonPath = isDev
-        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
-        : path.join(process.resourcesPath, 'python/python.exe');
-
-    // Fallback logic
-    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const finalPython = resolvePython();
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
@@ -114,12 +126,7 @@ ipcMain.handle('generate-thumbnail', async (_, filePath) => {
 ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
     const { spawn } = require('child_process');
 
-    const pythonPath = isDev
-        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
-        : path.join(process.resourcesPath, 'python/python.exe');
-
-    // Fallback logic
-    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const finalPython = resolvePython();
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
@@ -198,11 +205,7 @@ ipcMain.handle('fetch-image-url', async (_, url) => {
 ipcMain.handle('search-vector', async (_, searchOptions) => {
     const { spawn } = require('child_process');
 
-    const pythonPath = isDev
-        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
-        : path.join(process.resourcesPath, 'python/python.exe');
-
-    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const finalPython = resolvePython();
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_search.py')
@@ -267,10 +270,7 @@ ipcMain.handle('search-vector', async (_, searchOptions) => {
 // IPC Handler: Database Stats (archived image count)
 ipcMain.handle('get-db-stats', async () => {
     const { spawn } = require('child_process');
-    const pythonPath = isDev
-        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
-        : path.join(process.resourcesPath, 'python/python.exe');
-    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_stats.py')
         : path.join(process.resourcesPath, 'backend/api_stats.py');
@@ -300,8 +300,7 @@ ipcMain.handle('get-db-stats', async () => {
 // IPC Handler: Environment Check
 ipcMain.handle('check-env', async () => {
     const { spawn } = require('child_process');
-    const pythonPath = isDev ? path.resolve(__dirname, '../../.venv/Scripts/python.exe') : path.join(process.resourcesPath, 'python/python.exe');
-    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const finalPython = resolvePython();
     const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
 
     return new Promise((resolve) => {
@@ -322,8 +321,7 @@ ipcMain.handle('check-env', async () => {
 // IPC Handler: Install Environment
 ipcMain.on('install-env', (event) => {
     const { spawn } = require('child_process');
-    const pythonPath = isDev ? path.resolve(__dirname, '../../.venv/Scripts/python.exe') : path.join(process.resourcesPath, 'python/python.exe');
-    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const finalPython = resolvePython();
     const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
 
     event.reply('install-log', { message: '🚀 Starting installation...', type: 'info' });
@@ -352,11 +350,7 @@ ipcMain.on('install-env', (event) => {
 ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
     const { spawn } = require('child_process');
 
-    const pythonPath = isDev
-        ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
-        : path.join(process.resourcesPath, 'python/python.exe');
-
-    const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+    const finalPython = resolvePython();
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_metadata_update.py')
@@ -424,11 +418,7 @@ function createWindow() {
     ipcMain.on('run-pipeline', (event, { filePaths }) => {
         const { spawn } = require('child_process');
 
-        const pythonPath = isDev
-            ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
-            : path.join(process.resourcesPath, 'python/python.exe');
-
-        const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+        const finalPython = resolvePython();
 
         const scriptPath = isDev
             ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
@@ -517,11 +507,7 @@ function createWindow() {
     ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
         const { spawn } = require('child_process');
 
-        const pythonPath = isDev
-            ? path.resolve(__dirname, '../../.venv/Scripts/python.exe')
-            : path.join(process.resourcesPath, 'python/python.exe');
-
-        const finalPython = fs.existsSync(pythonPath) ? pythonPath : 'python';
+        const finalPython = resolvePython();
 
         const scriptPath = isDev
             ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')

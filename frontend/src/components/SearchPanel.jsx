@@ -432,8 +432,10 @@ const SearchResultCard = ({ result, onShowMeta }) => {
             const root = window.electron?.projectRoot || '';
             resolved = root ? `${root}/${p}` : p;
         }
-        const encoded = resolved.replace(/\\/g, '/').split('/').map(s => encodeURIComponent(s)).join('/');
-        return `file:///${encoded}`;
+        const normalized = resolved.replace(/\\/g, '/');
+        const encoded = normalized.split('/').map(s => encodeURIComponent(s)).join('/');
+        // Windows: file:///C:/... | Mac/Linux: file:///home/... (path already starts with /)
+        return /^[A-Za-z]:/.test(normalized) ? `file:///${encoded}` : `file://${encoded}`;
     };
 
     // Prefer DB thumbnail (always generated during Process), fallback to native preview
