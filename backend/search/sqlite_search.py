@@ -500,6 +500,65 @@ class SqliteVectorSearch:
         finally:
             cursor.close()
 
+    def _text_vector_search_by_embedding(
+        self,
+        query_vec: np.ndarray,
+        top_k: int = 20,
+        threshold: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        S-axis search using a pre-computed text embedding vector.
+
+        Same as text_vector_search() but accepts a pre-encoded vector,
+        allowing callers to cache the embedding for reuse.
+        """
+        embedding_json = json.dumps(query_vec.astype(np.float32).tolist())
+
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    f.id,
+                    f.file_path,
+                    f.file_name,
+                    f.format,
+                    f.width,
+                    f.height,
+                    f.mc_caption,
+                    f.ai_tags,
+                    f.ocr_text,
+                    f.metadata,
+                    f.thumbnail_url,
+                    f.user_note,
+                    f.user_tags,
+                    f.user_category,
+                    f.user_rating,
+                    f.folder_path,
+                    f.folder_depth,
+                    f.folder_tags,
+                    (1.0 - vec_distance_cosine(vt.embedding, ?)) AS text_similarity
+                FROM files f
+                JOIN vec_text vt ON f.id = vt.file_id
+                WHERE (1.0 - vec_distance_cosine(vt.embedding, ?)) >= ?
+                ORDER BY vec_distance_cosine(vt.embedding, ?) ASC
+                LIMIT ?
+            """, (embedding_json, embedding_json, threshold, embedding_json, top_k))
+
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                self._parse_json_fields(result)
+                results.append(result)
+
+            logger.info(f"S-axis search (by embedding) returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"S-axis text vector search by embedding failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
     def fts_search(
         self,
         keywords: List[str],
@@ -652,11 +711,19 @@ class SqliteVectorSearch:
         v_threshold = _search_cfg.get("search.threshold.visual", 0.05)
         tv_threshold = _search_cfg.get("search.threshold.text_vec", threshold)
 
-        # Step 2: V-axis vector search (may fail if sqlite-vec not available)
+        # Per-axis candidate pool: larger pool → more cross-axis overlap → better RRF
+        candidate_mul = _search_cfg.get("search.rrf.candidate_multiplier", 5)
+        candidate_k = top_k * candidate_mul
+
+        # Step 2: V-axis vector search (cache embedding for post-merge enrichment)
         vector_results = []
+        v_query_embedding = None
         t0 = time.perf_counter()
         try:
-            vector_results = self.vector_search(vector_query, top_k=top_k * 2, threshold=v_threshold)
+            v_query_embedding = self.encode_text(vector_query)
+            vector_results = self.vector_search_by_embedding(
+                v_query_embedding, top_k=candidate_k, threshold=v_threshold
+            )
         except Exception as e:
             logger.warning(f"V-axis search unavailable: {e}")
             diag["vector_error"] = str(e)
@@ -674,13 +741,15 @@ class SqliteVectorSearch:
             ],
         }
 
-        # Step 2b: S-axis text vector search (if vec_text is populated)
+        # Step 2b: S-axis text vector search (cache embedding for post-merge enrichment)
         text_vec_results = []
+        t_query_embedding = None
         t0 = time.perf_counter()
         if self.text_search_enabled:
             try:
-                text_vec_results = self.text_vector_search(
-                    vector_query, top_k=top_k * 2, threshold=tv_threshold
+                t_query_embedding = self.text_provider.encode(vector_query, is_query=True)
+                text_vec_results = self._text_vector_search_by_embedding(
+                    t_query_embedding, top_k=candidate_k, threshold=tv_threshold
                 )
             except Exception as e:
                 logger.warning(f"S-axis search unavailable: {e}")
@@ -703,7 +772,7 @@ class SqliteVectorSearch:
         fts_results = []
         t0 = time.perf_counter()
         try:
-            fts_results = self.fts_search(fts_keywords, top_k=top_k * 2)
+            fts_results = self.fts_search(fts_keywords, top_k=candidate_k)
         except Exception as e:
             logger.warning(f"FTS search unavailable: {e}")
             diag["fts_error"] = str(e)
@@ -810,6 +879,12 @@ class SqliteVectorSearch:
 
         # Trim to top_k
         merged = merged[:top_k]
+
+        # Step 6: Enrich missing per-axis scores via direct DB lookup
+        # Files in final results may lack V/S scores if they weren't in that axis's
+        # candidate pool. Compute their actual similarity for complete badge display.
+        self._enrich_axis_scores(merged, v_query_embedding, t_query_embedding)
+
         diag["final_results_count"] = len(merged)
         diag["total_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
@@ -972,6 +1047,78 @@ class SqliteVectorSearch:
             merged.append(result)
 
         return merged
+
+    def _enrich_axis_scores(
+        self,
+        merged: List[Dict],
+        v_embedding: Optional[np.ndarray],
+        t_embedding: Optional[np.ndarray],
+    ) -> None:
+        """
+        Enrich merged results with missing per-axis scores via direct DB lookup.
+
+        After RRF merge, some results may lack V-axis or S-axis scores because
+        they weren't in that axis's candidate pool. This method computes the
+        actual similarity for those files so all badges can be displayed in the UI.
+        """
+        if not merged:
+            return
+
+        # Collect file IDs missing V-axis scores
+        v_missing = [r["id"] for r in merged if r.get("vector_score") is None and r.get("id")]
+        # Collect file IDs missing S-axis scores
+        s_missing = [r["id"] for r in merged if r.get("text_vec_score") is None and r.get("id")]
+
+        # Batch-compute V-axis similarity for missing files
+        if v_missing and v_embedding is not None:
+            v_scores = self._batch_similarity("vec_files", v_embedding, v_missing)
+            for r in merged:
+                if r.get("vector_score") is None and r.get("id") in v_scores:
+                    r["vector_score"] = v_scores[r["id"]]
+
+        # Batch-compute S-axis similarity for missing files
+        if s_missing and t_embedding is not None:
+            s_scores = self._batch_similarity("vec_text", t_embedding, s_missing)
+            for r in merged:
+                if r.get("text_vec_score") is None and r.get("id") in s_scores:
+                    r["text_vec_score"] = s_scores[r["id"]]
+
+    def _batch_similarity(
+        self,
+        table: str,
+        query_embedding: np.ndarray,
+        file_ids: List[int],
+    ) -> Dict[int, float]:
+        """
+        Compute cosine similarity for specific files against a query embedding.
+
+        Args:
+            table: "vec_files" or "vec_text"
+            query_embedding: Pre-encoded query embedding vector
+            file_ids: List of file IDs to compute similarity for
+
+        Returns:
+            Dict mapping file_id -> similarity score
+        """
+        if not file_ids:
+            return {}
+
+        embedding_json = json.dumps(query_embedding.astype(np.float32).tolist())
+        placeholders = ",".join("?" * len(file_ids))
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(f"""
+                SELECT file_id,
+                       (1.0 - vec_distance_cosine(embedding, ?)) AS sim
+                FROM {table}
+                WHERE file_id IN ({placeholders})
+            """, (embedding_json, *file_ids))
+            return {row[0]: row[1] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.warning(f"Batch similarity lookup failed ({table}): {e}")
+            return {}
+        finally:
+            cursor.close()
 
     def _apply_user_filters(
         self,
