@@ -2,10 +2,16 @@
 LLM Query Decomposer - Converts natural language queries to structured search parameters.
 
 Uses Ollama Chat API (text-only, no images) to decompose queries into:
-- vector_query: English text for SigLIP2 vector search
+- vector_query: English text for SigLIP2 vector search (positive only)
+- negative_query: English text describing things to exclude (vector penalty)
 - fts_keywords: Keywords for FTS5 full-text search (Korean + English)
+- exclude_keywords: Keywords to exclude from FTS5 results (Korean + English)
 - filters: Structured metadata filters (format, color, etc.)
 - query_type: Query classification for auto-weighted RRF
+
+Handles negation expressions (Korean/English):
+- Korean: ~없어야, ~없는, ~아닌, ~말고, ~빼고, ~제외하고, ~없이
+- English: without, no ~, not ~, except, exclude
 
 Uses assistant prefix with empty <think> block to suppress Qwen3 thinking,
 reducing response time from ~100s to ~3s.
@@ -49,11 +55,13 @@ class QueryDecomposer:
 
         Returns:
             {
-                "vector_query": str,      # English SigLIP2 search query
-                "fts_keywords": list,     # FTS5 keywords (mixed lang)
-                "filters": dict,          # Metadata filters
-                "query_type": str,        # visual/keyword/semantic/balanced
-                "decomposed": bool        # True if LLM was used
+                "vector_query": str,       # English SigLIP2 search query (positive only)
+                "negative_query": str,     # English description of things to exclude
+                "fts_keywords": list,      # FTS5 keywords (mixed lang)
+                "exclude_keywords": list,  # Keywords to exclude from FTS5
+                "filters": dict,           # Metadata filters
+                "query_type": str,         # visual/keyword/semantic/balanced
+                "decomposed": bool         # True if LLM was used
             }
         """
         try:
@@ -82,7 +90,10 @@ class QueryDecomposer:
             parsed = self._parse_response(raw_text, query)
             parsed["decomposed"] = True
             logger.info(f"Query decomposed: '{query}' → vector='{parsed['vector_query']}', "
-                        f"fts={parsed['fts_keywords']}, filters={parsed['filters']}, "
+                        f"negative='{parsed.get('negative_query', '')}', "
+                        f"fts={parsed['fts_keywords']}, "
+                        f"exclude={parsed.get('exclude_keywords', [])}, "
+                        f"filters={parsed['filters']}, "
                         f"query_type={parsed['query_type']}")
             return parsed
 
@@ -129,6 +140,33 @@ Rules:
 5. Keep vector_query concise but descriptive (good for SigLIP2 similarity)
 6. If the query mentions a specific image_type, art_style, or scene_type, add it to filters
 
+Negation handling (CRITICAL):
+7. Detect negation expressions in the query:
+   - Korean: ~없어야, ~없는, ~아닌, ~말고, ~빼고, ~제외하고, ~없이, ~안 되는, ~하지 않은
+   - English: without, no ~, not ~, except, exclude, excluding, other than
+8. When negation is detected:
+   - vector_query: include ONLY positive/desired elements (REMOVE all negated concepts)
+   - negative_query: describe the negated/excluded visual concepts in English
+   - fts_keywords: include ONLY positive search terms
+   - exclude_keywords: list the negated terms in both Korean and English
+9. Examples:
+   - "야간 골목길 배경, 추운 느낌이 없어야 한다"
+     → vector_query: "dark alley at night"
+     → negative_query: "cold winter snowy icy"
+     → fts_keywords: ["야간", "골목길", "배경", "night", "alley", "dark alley"]
+     → exclude_keywords: ["추운", "cold", "winter", "snow"]
+   - "사람이 없는 숲 풍경"
+     → vector_query: "empty forest landscape without people"
+     → negative_query: "person human people crowd"
+     → fts_keywords: ["숲", "풍경", "forest", "landscape"]
+     → exclude_keywords: ["사람", "person", "people", "human"]
+   - "빨간색 제외한 꽃 일러스트"
+     → vector_query: "flower illustration"
+     → negative_query: "red crimson scarlet"
+     → fts_keywords: ["꽃", "일러스트", "flower", "illustration"]
+     → exclude_keywords: ["빨간색", "빨간", "red"]
+10. If no negation is found, set negative_query to "" and exclude_keywords to []
+
 Also classify the query_type:
 - "visual": query focuses on visual style, color, mood, tone, artistic feeling (e.g. "파란 톤", "warm mood illustration")
 - "keyword": query contains specific named objects, scene types, or entities (e.g. "dragon", "castle", "야경")
@@ -138,12 +176,12 @@ Also classify the query_type:
 User query: "{query}"
 
 Return ONLY valid JSON (no markdown, no explanation):
-{{"vector_query": "english description for SigLIP2 search", "fts_keywords": ["keyword1", "keyword2"], "filters": {{}}, "query_type": "visual|keyword|semantic|balanced"}}
+{{"vector_query": "positive english description only", "negative_query": "english terms to exclude", "fts_keywords": ["positive", "keywords"], "exclude_keywords": ["negative", "keywords"], "filters": {{}}, "query_type": "visual|keyword|semantic|balanced"}}
 
 Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name), "image_type", "art_style", "scene_type", "time_of_day", "weather\""""
 
     def _parse_response(self, text: str, original_query: str) -> Dict[str, Any]:
-        """Parse LLM response, extracting JSON."""
+        """Parse LLM response, extracting JSON including negation fields."""
         try:
             # Find JSON in response
             start = text.find("{")
@@ -167,9 +205,23 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                 if query_type not in ("visual", "keyword", "semantic", "balanced"):
                     query_type = "balanced"
 
+                # Parse negation fields
+                negative_query = data.get("negative_query", "")
+                if not isinstance(negative_query, str):
+                    negative_query = str(negative_query) if negative_query else ""
+
+                exclude_keywords = data.get("exclude_keywords", [])
+                # Ensure exclude_keywords is a list
+                if isinstance(exclude_keywords, str):
+                    exclude_keywords = [k.strip() for k in exclude_keywords.split(",") if k.strip()]
+                elif not isinstance(exclude_keywords, list):
+                    exclude_keywords = []
+
                 return {
                     "vector_query": vector_query if vector_query else original_query,
+                    "negative_query": negative_query,
                     "fts_keywords": fts_keywords,
+                    "exclude_keywords": exclude_keywords,
                     "filters": filters if isinstance(filters, dict) else {},
                     "query_type": query_type,
                 }
@@ -195,7 +247,9 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
 
         return {
             "vector_query": vector_query,
+            "negative_query": "",
             "fts_keywords": fts_keywords,
+            "exclude_keywords": [],
             "filters": {},
             "query_type": "balanced",
             "decomposed": False,
