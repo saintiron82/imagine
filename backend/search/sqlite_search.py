@@ -130,6 +130,8 @@ class SqliteVectorSearch:
                     f.folder_path,
                     f.folder_depth,
                     f.folder_tags,
+                    f.storage_root,
+                    f.relative_path,
                     (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
                 FROM files f
                 JOIN vec_files v ON f.id = v.file_id
@@ -265,6 +267,8 @@ class SqliteVectorSearch:
                     f.folder_path,
                     f.folder_depth,
                     f.folder_tags,
+                    f.storage_root,
+                    f.relative_path,
                     (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
                 FROM files f
                 JOIN vec_files v ON f.id = v.file_id
@@ -477,6 +481,8 @@ class SqliteVectorSearch:
                     f.folder_path,
                     f.folder_depth,
                     f.folder_tags,
+                    f.storage_root,
+                    f.relative_path,
                     (1.0 - vec_distance_cosine(vt.embedding, ?)) AS text_similarity
                 FROM files f
                 JOIN vec_text vt ON f.id = vt.file_id
@@ -536,6 +542,8 @@ class SqliteVectorSearch:
                     f.folder_path,
                     f.folder_depth,
                     f.folder_tags,
+                    f.storage_root,
+                    f.relative_path,
                     (1.0 - vec_distance_cosine(vt.embedding, ?)) AS text_similarity
                 FROM files f
                 JOIN vec_text vt ON f.id = vt.file_id
@@ -634,6 +642,8 @@ class SqliteVectorSearch:
                     f.folder_path,
                     f.folder_depth,
                     f.folder_tags,
+                    f.storage_root,
+                    f.relative_path,
                     bm25(files_fts, ?, ?) AS fts_rank
                 FROM files_fts fts
                 JOIN files f ON f.id = fts.rowid
@@ -888,9 +898,17 @@ class SqliteVectorSearch:
         }
 
         # Step 5a: Apply negative filter (demote results matching exclusion terms)
+        # Encode negative_query as V-axis embedding for visual penalty
+        neg_v_embedding = None
+        if negative_query:
+            try:
+                neg_v_embedding = self.encode_text(negative_query)
+            except Exception as e:
+                logger.debug(f"Negative V-axis encoding failed: {e}")
+
         pre_neg_count = len(merged)
         if negative_query:
-            merged = self._apply_negative_filter(merged, negative_query)
+            merged = self._apply_negative_filter(merged, negative_query, neg_v_embedding)
 
         # Step 5b: Apply LLM filters (lenient -- don't exclude results missing the field)
         pre_filter_count = len(merged)
@@ -909,6 +927,7 @@ class SqliteVectorSearch:
         diag["filter_applied"] = bool(user_filters) or bool(llm_filters)
         diag["filter_removed"] = llm_removed + user_removed
         diag["negative_filter_active"] = bool(negative_query)
+        diag["negative_v_axis"] = neg_v_embedding is not None
 
         # Trim to top_k
         merged = merged[:top_k]
@@ -1348,17 +1367,22 @@ class SqliteVectorSearch:
         self,
         results: List[Dict],
         negative_query: str,
+        neg_v_embedding: Optional[np.ndarray] = None,
     ) -> List[Dict]:
         """
-        Post-filter: demote results whose AI caption/tags match the negative query.
+        Post-filter: demote results matching negative concepts via two layers:
 
-        Uses text matching on mc_caption and ai_tags to detect negative matches.
-        Results with strong negative matches are moved to the bottom (not removed),
-        so users can still discover them if needed.
+        Layer 1 (Text): Check mc_caption + ai_tags for negative term text matches.
+        Layer 2 (Visual): If neg_v_embedding is provided, compute V-axis similarity
+                          between each result's stored visual embedding and the
+                          negative concept. High visual similarity → demote.
+
+        Results are scored by negative match strength and reordered (not removed).
 
         Args:
             results: Search results to filter
             negative_query: Space-separated negative terms (e.g. "cold snow winter")
+            neg_v_embedding: Optional SigLIP2 embedding of negative_query for V-axis penalty
 
         Returns:
             Reordered results with negative-matching items demoted to the end
@@ -1370,10 +1394,17 @@ class SqliteVectorSearch:
         if not neg_terms:
             return results
 
-        filtered = []
-        demoted = []
+        # Layer 2: Compute V-axis negative similarity scores
+        neg_v_scores = {}
+        if neg_v_embedding is not None:
+            file_ids = [r["id"] for r in results if r.get("id")]
+            if file_ids:
+                neg_v_scores = self._batch_similarity("vec_files", neg_v_embedding, file_ids)
 
+        # Compute per-result negative match score
+        scored = []
         for r in results:
+            # Layer 1: Text-based negative match
             caption = (r.get("mc_caption") or "").lower()
             tags = r.get("ai_tags") or []
             if isinstance(tags, str):
@@ -1386,22 +1417,39 @@ class SqliteVectorSearch:
             tags_text = " ".join(str(t).lower() for t in tags)
             combined_text = f"{caption} {tags_text}"
 
-            # Check if any negative term appears in the result's AI-generated text
-            neg_match = any(term in combined_text for term in neg_terms)
+            text_neg = sum(1 for term in neg_terms if term in combined_text)
 
-            if neg_match:
-                demoted.append(r)
-            else:
-                filtered.append(r)
+            # Layer 2: Visual negative similarity
+            v_neg_sim = neg_v_scores.get(r.get("id"), 0.0)
+
+            # Combined negative score: higher = more negative match
+            # Text match: strong signal (each term hit = 0.5)
+            # V-axis: continuous signal (similarity value, typically 0.05-0.20)
+            neg_score = (text_neg * 0.5) + (v_neg_sim * 2.0)
+
+            scored.append((r, neg_score, text_neg, v_neg_sim))
+
+        # Threshold: demote if neg_score > 0.2 (catches V-axis-only matches)
+        neg_threshold = 0.20
+        filtered = [(r, ns) for r, ns, _, _ in scored if ns <= neg_threshold]
+        demoted = [(r, ns) for r, ns, _, _ in scored if ns > neg_threshold]
+
+        # Sort demoted by neg_score descending (worst offenders last)
+        demoted.sort(key=lambda x: x[1], reverse=True)
 
         if demoted:
-            logger.debug(
+            demoted_info = [
+                (r.get("file_name", "?"), round(ns, 3))
+                for r, ns in demoted[:5]
+            ]
+            logger.info(
                 f"Negative filter: demoted {len(demoted)} results "
-                f"matching terms {neg_terms}"
+                f"(threshold={neg_threshold}, terms={neg_terms[:5]}, "
+                f"top_demoted={demoted_info})"
             )
 
         # Demoted results go to the end (not removed)
-        return filtered + demoted
+        return [r for r, _ in filtered] + [r for r, _ in demoted]
 
     @staticmethod
     def _parse_json_fields(result: Dict) -> None:
