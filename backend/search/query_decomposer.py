@@ -258,8 +258,8 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
         Rule-based validation: if the original query contains negation patterns
         but the LLM failed to populate negative_query/exclude_keywords, fix it.
 
-        Also strips English negation words from vector_query when negative_query
-        is populated (LLM sometimes leaves "without X" in vector_query).
+        Also strips English negation words from vector_query (LLM sometimes
+        leaves "without X" in vector_query even when negation was detected).
         """
         has_neg = result.get("negative_query", "").strip()
         has_excl = bool(result.get("exclude_keywords"))
@@ -279,22 +279,48 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
             if en_terms:
                 result["negative_query"] = " ".join(en_terms)
 
-        # Step 2: Clean vector_query — strip English negation words and negative subjects
+        # Step 2: Clean vector_query — always strip negation words
+        # Even if negative_query is empty (translation failed), we must still
+        # remove English negation constructs like "without X" from vector_query.
         vq = result.get("vector_query", "")
         neg_q = result.get("negative_query", "")
-        if neg_q and vq:
+        excl_kw = result.get("exclude_keywords", [])
+
+        if vq and (neg_q or excl_kw or self._EN_NEG_WORDS.search(vq)):
             cleaned = self._EN_NEG_WORDS.sub("", vq).strip()
-            # Remove negative subject terms and their morphological variants (e.g. sign→signs)
-            for term in neg_q.split():
-                pattern = re.compile(r'\b' + re.escape(term) + r'\w*\b', re.IGNORECASE)
-                cleaned = pattern.sub("", cleaned)
+
+            # Remove negative subject terms from negative_query
+            if neg_q:
+                for term in neg_q.split():
+                    pattern = re.compile(r'\b' + re.escape(term) + r'\w*\b', re.IGNORECASE)
+                    cleaned = pattern.sub("", cleaned)
+
+            # Also extract and remove English words after negation in VQ
+            # Pattern: captures "without/no/not WORD(s)" constructs that may remain
+            after_neg = re.findall(
+                r'\b(?:without|no|not|except|excluding)\s+(\w+(?:\s+\w+)?)', vq, re.IGNORECASE
+            )
+            for phrase in after_neg:
+                for word in phrase.split():
+                    pattern = re.compile(r'\b' + re.escape(word) + r'\w*\b', re.IGNORECASE)
+                    cleaned = pattern.sub("", cleaned)
+                    # If translation failed, use these English terms as negative_query
+                    if not neg_q and word.lower() not in ('a', 'an', 'the'):
+                        neg_q = (neg_q + " " + word).strip() if neg_q else word
+
             cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
             if cleaned and cleaned != vq:
                 logger.info(f"Negation validation: cleaned vector_query "
                             f"'{vq}' → '{cleaned}'")
                 result["vector_query"] = cleaned
 
+            # Update negative_query if we extracted terms from VQ
+            if neg_q and not result.get("negative_query", "").strip():
+                result["negative_query"] = neg_q
+                logger.info(f"Negation validation: built negative_query from VQ: '{neg_q}'")
+
         # Step 3: Remove negative nouns from fts_keywords
+        neg_q = result.get("negative_query", "")
         excl = set(k.lower() for k in result.get("exclude_keywords", []))
         if excl and result.get("fts_keywords"):
             neg_extra = set(t.lower() for t in neg_q.split()) if neg_q else set()

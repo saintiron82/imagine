@@ -1402,6 +1402,10 @@ class SqliteVectorSearch:
                 neg_v_scores = self._batch_similarity("vec_files", neg_v_embedding, file_ids)
 
         # Compute per-result negative match score
+        # Use relative comparison: neg_sim / pos_sim ratio indicates how much
+        # of the positive match is "contaminated" by the negative concept.
+        # SigLIP2-base has narrow absolute ranges (0.05-0.17) so absolute
+        # thresholds don't work — relative comparison is essential.
         scored = []
         for r in results:
             # Layer 1: Text-based negative match
@@ -1419,18 +1423,26 @@ class SqliteVectorSearch:
 
             text_neg = sum(1 for term in neg_terms if term in combined_text)
 
-            # Layer 2: Visual negative similarity
+            # Layer 2: Visual negative ratio
+            # Compare negative V-sim against positive V-sim (vector_score).
+            # Ratio > 0.45 means the image is nearly as similar to the negative
+            # concept as to the positive query — strong signal to demote.
             v_neg_sim = neg_v_scores.get(r.get("id"), 0.0)
+            v_pos_sim = r.get("vector_score") or r.get("similarity") or 0.0
+            v_neg_ratio = (v_neg_sim / v_pos_sim) if v_pos_sim > 0.01 else 0.0
 
             # Combined negative score: higher = more negative match
-            # Text match: strong signal (each term hit = 0.5)
-            # V-axis: continuous signal (similarity value, typically 0.05-0.20)
-            neg_score = (text_neg * 0.5) + (v_neg_sim * 2.0)
+            # Text match: strong signal (each term hit = 1.0)
+            # V-axis ratio: 0.0-1.0+ range, scaled so ratio>0.45 contributes ~0.5
+            neg_score = (text_neg * 1.0) + (v_neg_ratio * 1.0)
 
-            scored.append((r, neg_score, text_neg, v_neg_sim))
+            scored.append((r, neg_score, text_neg, v_neg_ratio))
 
-        # Threshold: demote if neg_score > 0.2 (catches V-axis-only matches)
-        neg_threshold = 0.20
+        # Threshold: demote if neg_score > 0.45
+        # - Text-only: 1 term hit → 1.0 (always demotes)
+        # - V-axis only: ratio 0.45 → 0.45 (demotes), ratio 0.30 → 0.30 (passes)
+        # - Combined: even weak text + weak visual → demotes
+        neg_threshold = 0.45
         filtered = [(r, ns) for r, ns, _, _ in scored if ns <= neg_threshold]
         demoted = [(r, ns) for r, ns, _, _ in scored if ns > neg_threshold]
 
