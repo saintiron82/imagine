@@ -100,7 +100,7 @@ search:
       meta_strong: 3
       meta_weak: 1.5
   rrf:
-    candidate_multiplier: 2
+    candidate_multiplier: 5
     k: 60
     preset: balanced
     presets:
@@ -108,6 +108,10 @@ search:
         m: 0.3
         s: 0.4
         v: 0.3
+      keyword:
+        m: 0.4
+        s: 0.35
+        v: 0.25
       fact:
         m: 0.6
         s: 0.25
