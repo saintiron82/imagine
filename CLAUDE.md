@@ -43,17 +43,17 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 
 ## 프로젝트 개요
 
-**ImageParser**는 PSD, PNG, JPG 파일을 AI 검색 가능한 데이터로 변환하는 멀티모달 이미지 데이터 추출 및 벡터화 시스템입니다. **3-Axis 아키텍처**를 사용하여 이미지를 다음과 같이 분해합니다:
+**ImageParser**는 PSD, PNG, JPG 파일을 AI 검색 가능한 데이터로 변환하는 멀티모달 이미지 데이터 추출 및 벡터화 시스템입니다. **Triaxis 아키텍처** (V + S + M)를 사용합니다:
 
-1. **Structural Axis (구조적 축)**: 레이어 계층 구조, 텍스트 내용, 메타데이터 (PSD 파싱)
-2. **Latent Axis (잠재적 축)**: CLIP-ViT-L-14를 사용한 시각적 임베딩 (의미 기반 유사도 검색)
-3. **Descriptive Axis (서술적 축)**: AI 생성 캡션 및 태그 (Phase 4, 진행 중)
+1. **V-axis (Visual)**: SigLIP2로 시각적 임베딩 (이미지 픽셀 유사도 검색)
+2. **S-axis (Semantic)**: Qwen3-Embedding으로 AI 캡션/태그 임베딩 (의미 기반 검색)
+3. **M-axis (Metadata)**: FTS5 BM25로 파일명/레이어명/태그 키워드 검색
 
 **기술 스택**:
-- **Backend**: Python 3.x + `psd-tools`, `Pillow`, `sentence-transformers`, `psycopg2`
+- **Backend**: Python 3.x + `psd-tools`, `Pillow`, `transformers`, `sqlite-vec`
 - **Frontend**: React 19 + Electron 40 + Vite + Tailwind CSS
-- **Database**: PostgreSQL 16+ + pgvector (통합 메타데이터 + 벡터 저장소)
-- **AI 모델**: CLIP ViT-L-14 (이미지 임베딩), Qwen-VL/Florence-2 (예정)
+- **Database**: SQLite + sqlite-vec (통합 메타데이터 + 벡터 저장소, Docker 불필요)
+- **AI 모델**: SigLIP2 (시각 임베딩), Qwen3-VL (VLM 캡션/태그), Qwen3-Embedding (텍스트 임베딩)
 
 ## 개발 명령어
 
@@ -78,11 +78,10 @@ python backend/pipeline/ingest_engine.py --discover "C:\path\to\assets" --no-ski
 # 디렉토리 감시 (초기 DFS 스캔 + 실시간 변경 감지)
 python backend/pipeline/ingest_engine.py --watch "C:\path\to\assets"
 
-# 텍스트 쿼리로 이미지 검색 (PostgreSQL + pgvector)
-python backend/cli_search_pg.py "fantasy character with sword"
-
-# 하이브리드 검색 (벡터 + 메타데이터 필터)
-python backend/cli_search_pg.py "cartoon city" --mode hybrid --format PSD --min-width 2000
+# Triaxis 검색 (V + S + M axes, SQLite + sqlite-vec)
+# 프론트엔드 Electron 앱에서 검색 UI 사용
+# 또는 백엔드 API 직접 호출:
+python -c "from backend.search.sqlite_search import SqliteVectorSearch; s=SqliteVectorSearch(); print(s.triaxis_search('fantasy character'))"
 
 # 특정 테스트 실행
 python test_image_parser.py
@@ -150,13 +149,19 @@ ParserFactory.get_parser(file_path)
     ├─ text_content → translated_text (ko/en)
     └─ layer_tree → translated_layer_tree (ko/en)
     ↓
-PostgreSQL Storage (db/pg_client.py)
-    ├─ CLIP 모델 로드 (lazy loading)
-    ├─ 썸네일 인코딩 → CLIP 임베딩 벡터 (768차원)
-    ├─ Metadata → JSONB (nested layer_tree 완벽 지원)
-    └─ PostgreSQL INSERT (files 테이블)
-        ├─ metadata JSONB (구조적 데이터)
-        └─ embedding vector(768) (pgvector)
+STEP 2/4: AI Vision (vision_factory.py)
+    ├─ VLM 캡션/태그/분류 생성 (Qwen3-VL, tier별 backend)
+    └─ 2-Stage Pipeline: 빠른 분류 → 상세 캡션
+    ↓
+STEP 3/4: Embedding (siglip2_encoder.py)
+    ├─ SigLIP2 시각 임베딩 생성 (tier별 차원)
+    └─ Qwen3-Embedding 텍스트 임베딩 생성 (Ollama)
+    ↓
+STEP 4/4: SQLite Storage (db/sqlite_client.py)
+    ├─ 메타데이터 → files 테이블 (JSON 필드)
+    ├─ 시각 임베딩 → vec_files 테이블 (sqlite-vec)
+    ├─ 텍스트 임베딩 → vec_text 테이블 (sqlite-vec)
+    └─ FTS5 인덱스 자동 동기화 (files_fts)
 ```
 
 ### 파서 선택 (Factory Pattern)
@@ -177,55 +182,24 @@ PostgreSQL Storage (db/pg_client.py)
 
 모든 파서는 `AssetMeta`를 포함하는 `ParseResult`를 반환해야 합니다.
 
-### PostgreSQL Database (Phase 3: Vision Data Storage)
+### SQLite Database (v3.1: Triaxis Data Storage)
 
-**통합 스토리지**: 메타데이터 + CLIP 벡터를 단일 데이터베이스에서 관리
+> 상세 DB/검색/모델/Tier 스펙은 아래 **인프라 스펙 (MANDATORY)** 섹션을 참조하세요.
 
-`backend/db/schema.sql`:
-- **files 테이블**: 파일 레벨 메타데이터 + CLIP 임베딩
-  - `metadata JSONB`: Nested 구조 완벽 지원 (layer_tree, translated_layer_tree 등)
-  - `embedding vector(768)`: pgvector를 사용한 CLIP 벡터 (768차원)
-  - `ai_caption`, `ai_tags`, `ocr_text`: AI 생성 필드 (Phase 4)
-  - `folder_path`, `folder_depth`, `folder_tags`: 폴더 탐색 메타데이터 (DFS Discovery)
-- **layers 테이블** (선택): 주요 레이어 레벨 메타데이터 (30% 선별)
+`backend/db/sqlite_client.py` (SQLiteDB):
+- **files 테이블**: 파일 메타데이터 + AI 생성 필드
+  - `mc_caption`, `mc_tags`, `mc_ocr_text`: VLM 생성 캡션/태그 (2-Stage Vision)
+  - `image_type`, `scene_type`, `art_style`: VLM 분류 필드
+  - `folder_path`, `folder_depth`, `folder_tags`: DFS 폴더 탐색 메타데이터
+- **vec_files**: SigLIP2 시각 임베딩 (sqlite-vec, V-axis)
+- **vec_text**: Qwen3-Embedding 텍스트 임베딩 (sqlite-vec, S-axis)
+- **files_fts**: FTS5 전문 검색 인덱스 (M-axis)
 
-`backend/db/pg_client.py`:
-- **PostgresDB**: PostgreSQL 클라이언트 (psycopg2 래퍼)
-- **insert_file()**: 파일 메타데이터 + CLIP 벡터 저장
-- **get_file_by_path()**: 파일 경로로 조회
-- **get_stats()**: 데이터베이스 통계
-
-`backend/search/pg_search.py`:
-- **PgVectorSearch**: pgvector 기반 CLIP 유사도 검색
-- **vector_search()**: 텍스트 쿼리 → CLIP 임베딩 → 벡터 유사도 검색
-- **hybrid_search()**: 벡터 검색 + 메타데이터 필터 (한 번의 SQL 쿼리)
-- **metadata_query()**: 순수 메타데이터 필터링
-- **jsonb_query()**: Nested JSON 구조 쿼리 (layer_tree 등)
-
-**성능**:
-- 검색 속도: ~20ms (194 파일), ~40ms (10,000 파일)
-- 60배 향상: 기존 JSON 파일 방식 대비 (1.2초 → 20ms)
-- HNSW 인덱스: O(log n) 벡터 유사도 검색
-- GIN 인덱스: JSONB 고속 쿼리
-
-**설치 및 마이그레이션**:
-```powershell
-# PostgreSQL 설치 (Docker 권장)
-docker-compose up -d
-
-# 스키마 초기화
-python backend/setup/installer.py --init-db
-
-# 기존 데이터 마이그레이션 (ChromaDB → PostgreSQL)
-python tools/migrate_to_postgres.py
-
-# 검증
-python tools/verify_migration.py
-```
-
-**Legacy (Deprecated)**:
-- `backend/vector/` 모듈: ChromaDB 기반 (deprecated, 마이그레이션 지원용으로 보존)
-- 자세한 내용: `backend/vector/README.md`
+`backend/search/sqlite_search.py` (SqliteVectorSearch):
+- **triaxis_search()**: V + S + M 3축 통합 검색 (RRF 결합)
+- **vector_search()**: SigLIP2 시각 유사도 검색 (V-axis)
+- **text_vector_search()**: Qwen3-Embedding 의미 검색 (S-axis)
+- **fts_search()**: FTS5 BM25 키워드 검색 (M-axis)
 
 ## 유닛 개발 프로토콜 (필수)
 
@@ -304,7 +278,7 @@ for layer in psd.descendants():
 
 ### 메모리 관리
 
-- **Vector Indexer**: 첫 사용 시 CLIP 모델 지연 로드
+- **Visual Encoder**: 첫 사용 시 SigLIP2 모델 지연 로드
 - **CUDA 정리**: 이미지 10개마다 `torch.cuda.empty_cache()` 실행
 - **전역 싱글톤**: `_global_indexer`가 장시간 실행 프로세스에서 모델 재로딩 방지
 
@@ -313,29 +287,30 @@ for layer in psd.descendants():
 | 경로 | 목적 |
 |------|------|
 | `backend/parser/schema.py` | **표준 데이터 스키마** (AssetMeta) |
-| `backend/pipeline/ingest_engine.py` | **모든 처리의 메인 진입점** |
-| `backend/db/schema.sql` | **PostgreSQL 스키마** (테이블, 인덱스 정의) |
-| `backend/db/pg_client.py` | PostgreSQL 클라이언트 (메타데이터 + 벡터 저장) |
-| `backend/search/pg_search.py` | pgvector 검색 엔진 (벡터 + 하이브리드 검색) |
-| `backend/cli_search_pg.py` | CLI 검색 도구 |
-| `tools/migrate_to_postgres.py` | **마이그레이션 스크립트** (ChromaDB → PostgreSQL) |
-| `tools/verify_migration.py` | 마이그레이션 검증 |
+| `backend/pipeline/ingest_engine.py` | **4단계 처리 파이프라인** (메인 진입점) |
+| `backend/db/sqlite_client.py` | **SQLite 클라이언트** (메타데이터 + 벡터 저장) |
+| `backend/db/sqlite_schema.sql` | SQLite 스키마 정의 |
+| `backend/search/sqlite_search.py` | **Triaxis 검색 엔진** (V + S + M) |
+| `backend/search/rrf.py` | RRF 가중치 프리셋 (query_type별) |
+| `backend/search/query_decomposer.py` | LLM 쿼리 분류기 (query_type 판별) |
+| `backend/vision/vision_factory.py` | VLM 백엔드 자동 선택 (Factory) |
+| `backend/vision/analyzer.py` | Transformers VLM 어댑터 (2-Stage) |
+| `backend/vector/siglip2_encoder.py` | SigLIP2 시각 인코더 |
+| `backend/vector/text_embedding.py` | Qwen3-Embedding 텍스트 인코더 (Ollama) |
+| `backend/api_search.py` | 프론트엔드 검색 API 브리지 |
 | `backend/setup/installer.py` | **통합 설치 프로그램** |
+| `config.yaml` | **Tier/검색/배치 설정** (단일 소스) |
 | `output/thumbnails/` | 썸네일 이미지 (gitignore됨) |
-| `docker-compose.yml` | PostgreSQL + pgvector (Docker 설정) |
-| `docs/postgresql_setup.md` | PostgreSQL 상세 설치 가이드 |
 | `docs/troubleshooting.md` | **모든 문제에 대한 필수 로깅** |
 | `INSTALLATION.md` | **신규 설치 가이드** |
-| `.agent/skills/unit_dev_agent/SKILL.md` | 개발 프로토콜 세부사항 |
 | `frontend/src/i18n/` | **프론트엔드 로컬라이제이션 시스템** |
 | `frontend/src/i18n/locales/en-US.json` | 영어 번역 파일 |
 | `frontend/src/i18n/locales/ko-KR.json` | 한국어 번역 파일 |
-| `.agent/skills/localize/SKILL.md` | 로컬라이제이션 에이전트 정의 |
 
 **Legacy (Deprecated)**:
-- `backend/vector/` - ChromaDB 모듈 (마이그레이션 후 삭제 예정)
-- `chroma_db/` - ChromaDB 데이터 (백업용 보존, 1개월 후 삭제)
-- `output/json/` - JSON 메타데이터 (PostgreSQL로 이동됨)
+- `backend/db/pg_client.py` - PostgreSQL 클라이언트 (deprecated, SQLite로 교체)
+- `backend/search/pg_search.py` - pgvector 검색 (deprecated, Triaxis로 교체)
+- `backend/vector/chroma_indexer.py` - ChromaDB 모듈 (deprecated)
 
 ## 테스트 전략
 
@@ -367,53 +342,32 @@ python -m pytest tests/
 
 ## 일반적인 문제 및 해결책
 
-### 문제: CLIP 모델 로드 실패
+### 문제: SigLIP2 모델 로드 실패
 **원인**: PyTorch 누락 또는 CUDA 불일치
-**해결**: `python backend/setup/installer.py` 실행하여 진단 및 의존성 설치
+**해결**: `python backend/setup/installer.py --check` 실행하여 진단
 
-### 문제: PostgreSQL 연결 실패 ("connection refused")
-**원인**: PostgreSQL 서버가 실행되지 않음
+### 문제: Ollama 연결 실패 ("connection refused")
+**원인**: Ollama 서버가 실행되지 않음
 **해결**:
 ```powershell
-# Docker: 컨테이너 상태 확인
-docker-compose ps
+# Ollama 상태 확인
+ollama list
 
-# Docker: 컨테이너 재시작
-docker-compose restart
-
-# 로컬 설치: PostgreSQL 서비스 확인 (services.msc)
+# Ollama 서비스 시작 (Windows: 자동 시작됨)
+# 필요 모델 확인
+ollama pull qwen3-embedding:0.6b
 ```
 
-### 문제: pgvector extension not found
-**원인**: pgvector 확장이 설치되지 않음
-**해결**:
+### 문제: 검색 결과가 너무 적음
+**원인**: SigLIP2 점수 범위 (0.06~0.17)와 threshold 불일치
+**해결**: 프론트엔드 threshold를 0으로 설정 (기본값). config.yaml의 `search.thresholds` 확인.
+
+### 문제: S-axis 결과 없음 (vec_text 비어있음)
+**원인**: STEP 2 (AI Vision)가 실행되지 않은 파일은 텍스트 임베딩이 없음
+**해결**: `--no-skip` 옵션으로 파일 재처리
 ```powershell
-# Docker: 데이터베이스 재생성
-docker-compose down -v
-docker-compose up -d
-python backend/setup/installer.py --init-db
-
-# 로컬: pgvector 설치 (docs/postgresql_setup.md 참조)
+python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 ```
-
-### 문제: 마이그레이션 실패
-**원인**: ChromaDB 데이터 손상 또는 PostgreSQL 연결 문제
-**해결**:
-```powershell
-# 진단 실행
-python backend/setup/installer.py --check
-
-# PostgreSQL 연결 확인
-python -c "from backend.db.pg_client import PostgresDB; db = PostgresDB(); print('OK')"
-
-# ChromaDB 없이 마이그레이션 (zero embeddings 사용)
-# 이후 파일 재처리로 embeddings 생성
-python tools/migrate_to_postgres.py
-```
-
-### 문제: ChromaDB 권한 오류 (Legacy)
-**원인**: 다른 프로세스가 데이터베이스를 잠금
-**참고**: ChromaDB는 deprecated. PostgreSQL로 마이그레이션 권장
 
 ### 문제: 번역 API 속도 제한
 **원인**: Google Translate에 대한 요청이 너무 많음
@@ -430,14 +384,16 @@ python tools/migrate_to_postgres.py
 ## 단계별 로드맵
 
 - ✅ **Phase 1**: 구조적 파싱 (PSD 레이어, 메타데이터 추출)
-- ✅ **Phase 2**: 잠재적 벡터화 (CLIP 임베딩)
-- ✅ **Phase 3**: PostgreSQL + pgvector 통합 (Vision Data Storage)
-  - ChromaDB → PostgreSQL 마이그레이션
-  - 통합 스토리지 (메타데이터 + 벡터)
-  - 60배 성능 향상 (1.2s → 20ms)
-  - JSONB 지원 (nested layer_tree)
-  - 하이브리드 검색 (벡터 + 메타데이터)
-- 🚧 **Phase 4**: 서술적 비전 (Qwen-VL/Florence-2 캡션 생성) - **진행 중**
+- ✅ **Phase 2**: 시각 벡터화 (SigLIP2 임베딩, ChromaDB → SQLite 마이그레이션 완료)
+- ✅ **Phase 3**: SQLite + sqlite-vec 통합 (Triaxis Data Storage)
+  - PostgreSQL → SQLite 전환 (Docker 불필요)
+  - Triaxis 검색 (V + S + M axes, RRF 결합)
+  - FTS5 전문 검색 (M-axis)
+  - Tier 시스템 (standard/pro/ultra)
+- ✅ **Phase 4**: 서술적 비전 (Qwen3-VL 2-Stage 캡션/태그/분류 생성)
+  - Transformers 백엔드 (standard/pro)
+  - Ollama 백엔드 (ultra)
+  - Qwen3-Embedding 텍스트 임베딩 (S-axis)
 - ⏳ **Phase 5**: 최적화 (레이어 단위 인덱싱, 전체 패키징)
 
 자세한 마일스톤 추적은 `docs/phase_roadmap.md` 참조.
@@ -582,8 +538,8 @@ python test_new_parser.py
 # 6. 테스트 파일 처리
 python backend/pipeline/ingest_engine.py --file "test.psd"
 
-# 7. PostgreSQL 검색 검증
-python backend/cli_search_pg.py "테스트 쿼리"
+# 7. Triaxis 검색 검증 (프론트엔드 Electron 앱 사용)
+npm run electron:dev  # frontend/ 에서 실행
 ```
 
 ## 프론트엔드 로컬라이제이션 (i18n) 규칙
@@ -645,7 +601,7 @@ const { t } = useLocale();
 
 1. **5단계 유닛 프로토콜 준수**: 모든 개발은 정의된 워크플로우를 따라야 함
 2. **AssetMeta 스키마 준수**: 모든 파서 출력은 표준 스키마를 따라야 함
-3. **3-Axis 데이터 분해**: 구조적, 잠재적, 서술적 데이터를 모두 추출
+3. **Triaxis 데이터 분해**: Visual(V) + Semantic(S) + Metadata(M) 축으로 검색
 4. **Factory Pattern 사용**: 새 파서는 BaseParser를 상속하고 can_parse() 구현
 5. **문제 발생 시 기록 필수**: troubleshooting.md에 모든 이슈와 해결책 문서화
 6. **UI 문자열 로컬라이제이션 필수**: 모든 프론트엔드 텍스트는 i18n 키 사용
