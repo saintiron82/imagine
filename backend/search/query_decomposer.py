@@ -83,30 +83,40 @@ class QueryDecomposer:
 
             if response.status_code != 200:
                 logger.warning(f"Ollama returned status {response.status_code}")
-                return self._fallback(query)
+                return self._finalize(self._fallback(query), query)
 
             result = response.json()
             msg = result.get("message", {})
             raw_text = "{" + msg.get("content", "")
             parsed = self._parse_response(raw_text, query)
             parsed["decomposed"] = True
-            logger.info(f"Query decomposed: '{query}' → vector='{parsed['vector_query']}', "
-                        f"negative='{parsed.get('negative_query', '')}', "
-                        f"fts={parsed['fts_keywords']}, "
-                        f"exclude={parsed.get('exclude_keywords', [])}, "
-                        f"filters={parsed['filters']}, "
-                        f"query_type={parsed['query_type']}")
-            return parsed
+            return self._finalize(parsed, query)
 
         except requests.exceptions.ConnectionError:
             logger.info("Ollama not running, using fallback")
-            return self._fallback(query)
+            return self._finalize(self._fallback(query), query)
         except requests.exceptions.Timeout:
             logger.warning("Ollama timeout (>30s), using fallback")
-            return self._fallback(query)
+            return self._finalize(self._fallback(query), query)
         except Exception as e:
             logger.warning(f"Query decomposition failed: {e}, using fallback")
-            return self._fallback(query)
+            return self._finalize(self._fallback(query), query)
+
+    def _finalize(self, result: Dict[str, Any], original_query: str) -> Dict[str, Any]:
+        """
+        Final validation pass applied to ALL decomposition results
+        (LLM success, LLM parse failure, fallback).
+
+        Ensures negation is always detected and cleaned regardless of path.
+        """
+        result = self._validate_negation(result, original_query)
+        logger.info(f"Query decomposed: '{original_query}' → vector='{result['vector_query']}', "
+                    f"negative='{result.get('negative_query', '')}', "
+                    f"fts={result['fts_keywords']}, "
+                    f"exclude={result.get('exclude_keywords', [])}, "
+                    f"filters={result['filters']}, "
+                    f"query_type={result['query_type']}")
+        return result
 
     def _build_prompt(self, query: str) -> str:
         return f"""You are a search query decomposer for an image asset database.
@@ -218,7 +228,7 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                 elif not isinstance(exclude_keywords, list):
                     exclude_keywords = []
 
-                result = {
+                return {
                     "vector_query": vector_query if vector_query else original_query,
                     "negative_query": negative_query,
                     "fts_keywords": fts_keywords,
@@ -226,10 +236,7 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                     "filters": filters if isinstance(filters, dict) else {},
                     "query_type": query_type,
                 }
-
-                # Rule-based validation: fix when LLM fails to separate negation
-                result = self._validate_negation(result, original_query)
-                return result
+                # Note: _validate_negation is called by _finalize() in decompose()
 
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"Failed to parse LLM response: {e}")

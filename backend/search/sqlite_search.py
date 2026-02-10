@@ -1401,11 +1401,35 @@ class SqliteVectorSearch:
             if file_ids:
                 neg_v_scores = self._batch_similarity("vec_files", neg_v_embedding, file_ids)
 
-        # Compute per-result negative match score
-        # Use relative comparison: neg_sim / pos_sim ratio indicates how much
-        # of the positive match is "contaminated" by the negative concept.
-        # SigLIP2-base has narrow absolute ranges (0.05-0.17) so absolute
-        # thresholds don't work — relative comparison is essential.
+        # Compute per-result negative match score using two layers:
+        # Layer 1 (Text): direct term matching on captions/tags
+        # Layer 2 (Visual): statistical outlier detection on neg_v_sim distribution
+        #
+        # V-axis scoring uses distribution-based outlier detection because
+        # text-to-image and image-to-image similarities live on different scales:
+        #   - Text-only search: pos ~0.10-0.17, neg ~0.04-0.08 (same scale)
+        #   - Image+text search: pos ~0.70-0.80, neg ~0.04-0.08 (different scales)
+        # A simple ratio fails for image search. Instead, we flag results whose
+        # neg_v_sim is significantly above the group mean (statistical outlier).
+
+        # Pre-compute visual negative outlier threshold
+        v_outlier_flag = {}
+        if neg_v_scores:
+            all_neg_sims = list(neg_v_scores.values())
+            if len(all_neg_sims) >= 3:
+                mean_neg = sum(all_neg_sims) / len(all_neg_sims)
+                variance = sum((x - mean_neg) ** 2 for x in all_neg_sims) / len(all_neg_sims)
+                std_neg = variance ** 0.5
+                # Outlier: neg_v_sim > mean + 1.0 * std (top ~16% of distribution)
+                outlier_thresh = mean_neg + 1.0 * std_neg
+                for fid, sim in neg_v_scores.items():
+                    if sim > outlier_thresh:
+                        v_outlier_flag[fid] = sim
+                logger.debug(
+                    f"Negative V-axis stats: mean={mean_neg:.4f}, std={std_neg:.4f}, "
+                    f"outlier_thresh={outlier_thresh:.4f}, outliers={len(v_outlier_flag)}"
+                )
+
         scored = []
         for r in results:
             # Layer 1: Text-based negative match
@@ -1423,25 +1447,19 @@ class SqliteVectorSearch:
 
             text_neg = sum(1 for term in neg_terms if term in combined_text)
 
-            # Layer 2: Visual negative ratio
-            # Compare negative V-sim against positive V-sim (vector_score).
-            # Ratio > 0.45 means the image is nearly as similar to the negative
-            # concept as to the positive query — strong signal to demote.
-            v_neg_sim = neg_v_scores.get(r.get("id"), 0.0)
-            v_pos_sim = r.get("vector_score") or r.get("similarity") or 0.0
-            v_neg_ratio = (v_neg_sim / v_pos_sim) if v_pos_sim > 0.01 else 0.0
+            # Layer 2: Visual outlier detection
+            fid = r.get("id")
+            v_is_outlier = fid in v_outlier_flag
 
-            # Combined negative score: higher = more negative match
-            # Text match: strong signal (each term hit = 1.0)
-            # V-axis ratio: 0.0-1.0+ range, scaled so ratio>0.45 contributes ~0.5
-            neg_score = (text_neg * 1.0) + (v_neg_ratio * 1.0)
+            # Combined: text match = 1.0 per hit, visual outlier = 0.6
+            neg_score = (text_neg * 1.0) + (0.6 if v_is_outlier else 0.0)
 
-            scored.append((r, neg_score, text_neg, v_neg_ratio))
+            scored.append((r, neg_score, text_neg, v_is_outlier))
 
         # Threshold: demote if neg_score > 0.45
         # - Text-only: 1 term hit → 1.0 (always demotes)
-        # - V-axis only: ratio 0.45 → 0.45 (demotes), ratio 0.30 → 0.30 (passes)
-        # - Combined: even weak text + weak visual → demotes
+        # - V-axis outlier: 0.6 (demotes alone)
+        # - Combined: even weak signals add up
         neg_threshold = 0.45
         filtered = [(r, ns) for r, ns, _, _ in scored if ns <= neg_threshold]
         demoted = [(r, ns) for r, ns, _, _ in scored if ns > neg_threshold]
@@ -1457,6 +1475,7 @@ class SqliteVectorSearch:
             logger.info(
                 f"Negative filter: demoted {len(demoted)} results "
                 f"(threshold={neg_threshold}, terms={neg_terms[:5]}, "
+                f"outlier_count={len(v_outlier_flag)}, "
                 f"top_demoted={demoted_info})"
             )
 
