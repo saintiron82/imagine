@@ -1,8 +1,8 @@
 # ImageParser 종합 개발 계획서
 
-**최종 갱신**: 2026-02-08
-**현재 단계**: P0~P2 완료, P2+ 대기
-**검색 적중률**: 30~40% → **90~97%** (달성)
+**최종 갱신**: 2026-02-10
+**현재 단계**: P0~P2+ 코드 완료, Tier 시스템 정착, **데이터 재구축 대기**
+**검색 적중률**: 30~40% → **90~97%** (코드 기준, 데이터 재구축 후 달성 예상)
 
 ---
 
@@ -21,9 +21,9 @@
 | **Backend** | Python 3.x | psd-tools, Pillow, watchdog |
 | **Database** | SQLite + sqlite-vec + FTS5 | 벡터 + 전문검색 + 메타데이터 통합 |
 | **Frontend** | React 19 + Electron 40 + Vite 7 + Tailwind CSS 4 | 데스크톱 앱 |
-| **Vision LLM** | Qwen3-VL-8B (Ollama) | 2-Stage 분류/분석, ~6GB VRAM |
-| **V축 임베딩** | SigLIP 2 So400m | 1152차원, 109언어, ~0.8GB |
-| **T축 임베딩** | Qwen3-Embedding-0.6B (Ollama) | 1024차원, 100+언어, ~0.4GB |
+| **Vision LLM** | Tier별: Qwen3-VL-2B (transformers, standard) / 8B (Ollama, ultra) | 2-Stage 분류/분석 |
+| **V-axis 임베딩** | SigLIP2 (tier별: base=768d, so400m=1152d, giant=1664d) | 시각 유사도 |
+| **S-axis 임베딩** | Qwen3-Embedding (Ollama, tier별: 256d/1024d/4096d) | 의미 유사도 |
 | **i18n** | 커스텀 LocaleContext | ko-KR, en-US |
 
 ---
@@ -42,9 +42,9 @@
   │     Stage 2: 타입별 전용 구조화 분석
   │     → ai_caption, ai_tags, image_type, art_style, scene_type ...
   │
-  ├─ [V축] SigLIP 2 → 1152차원 시각 벡터 → vec_files
+  ├─ [V-axis] SigLIP2 → tier별 시각 벡터 → vec_files
   │
-  ├─ [T축] caption+tags → Qwen3-Embedding → 1024차원 텍스트 벡터 → vec_text
+  ├─ [S-axis] caption+tags → Qwen3-Embedding → tier별 텍스트 벡터 → vec_text
   │
   └─ [DB] SQLite: files + vec_files + vec_text + files_fts(FTS5)
 
@@ -53,9 +53,9 @@
 
 쿼리 → QueryDecomposer (vector_query + fts_keywords + query_type)
   │
-  ├─ [V축] SigLIP 2 인코딩 → vec_files 코사인 유사도
-  ├─ [T축] Qwen3-Embedding 인코딩 → vec_text 코사인 유사도
-  ├─ [F축] FTS5 키워드 매칭 (16컬럼)
+  ├─ [V-axis] SigLIP2 인코딩 → vec_files 코사인 유사도
+  ├─ [S-axis] Qwen3-Embedding 인코딩 → vec_text 코사인 유사도
+  ├─ [M-axis] FTS5 키워드 매칭 (16컬럼)
   │
   └─ Auto-Weighted RRF 병합 (query_type별 가중치, k=60) → 최종 결과
      ※ 구조화 필터(scene_type 등)는 하드 게이트로 사용하지 않음
@@ -68,13 +68,109 @@
 | 단계 | 작업 | 상태 | 적중률 효과 | 비고 |
 |------|------|------|-----------|------|
 | **P0** | 2-Stage Vision + DB 스키마 | **완료** | +45~55%p | 99파일 처리, 11개 image_type |
-| **P1** | V축 SigLIP 2 교체 | **완료** | +2~5%p | 768→1152차원, 109언어 |
-| **P2** | T축 Qwen3-Embedding 추가 | **완료** | +3~7%p | 1024차원, 3축 RRF 완성 |
-| **P2+** | Auto-Weighted RRF | **완료** | +2~5%p | 쿼리 유형별 동적 가중치, LLM 하드 필터 폐기 |
+| **P1** | V-axis SigLIP2 교체 | **완료** | +2~5%p | tier별 차원, 109언어 |
+| **P2** | S-axis Qwen3-Embedding 추가 | **완료** | +3~7%p | tier별 차원, 3축 RRF 완성 |
+| **P2+** | Auto-Weighted RRF + Tier 시스템 | **완료** | +2~5%p | 쿼리 유형별 동적 가중치, standard/pro/ultra |
 | **P3** | 인프라 개선 | 미구현 | 성능/안정성 | FastAPI 서버, 큐 영속성 |
 | **P4** | 서버형 전환 | 미구현 | 확장성 | PostgreSQL, 멀티테넌시 |
 
 **누적 적중률:** 30~40% → 85~95% (P0) → 87~97% (P1) → **90~97%** (P2)
+
+---
+
+## 4.1 현재 시스템 상태 (2026-02-10)
+
+### Tier 시스템
+
+| 항목 | 값 |
+|------|------|
+| **활성 Tier** | `standard` (config.yaml override) |
+| **VLM** | Qwen3-VL-2B-Instruct (transformers, CUDA) |
+| **V-axis 모델** | google/siglip2-base-patch16-224 (768d) |
+| **S-axis 모델** | qwen3-embedding:0.6b (Ollama, 256d) |
+
+### 데이터 현황 (232파일)
+
+| 항목 | 현재 | 정상 | 상태 |
+|------|------|------|------|
+| **files** (메타데이터) | 232/232 | 232 | **정상** |
+| **files_fts** (M-axis) | 232/232 | 232 | **정상** |
+| **vec_files** (V-axis) | 217/232 | 232 | **15건 누락** |
+| **vec_text** (S-axis) | 1/232 | 232 | **미구축 (1건만 테스트 완료)** |
+| **mc_caption** | 1/232 | 232 | **미구축** |
+| **ai_tags** | 1/232 | 232 | **미구축** |
+| **image_type** | 1/232 | 232 | **미구축** |
+| **embedding_model** 기록 | 1/232 | 232 | 231건 NULL (pre-v3.1 데이터) |
+
+### 원인 분석
+
+**왜 231파일이 AI Vision 미처리 상태인가?**
+
+1. **device='auto' 버그 (2026-02-10 수정)**: `config.yaml`의 `vlm.device: auto`가 PyTorch에서 유효하지 않은 디바이스 문자열. VisionAnalyzer가 모델은 로드하지만 추론 시 `.to('auto')` 에러 → Stage 1/2 모두 실패 → `image_type=other`, `mc_caption=NULL`로 저장
+2. **pre-v3.1 데이터**: 232파일 중 231파일은 v3.0 이전(CLIP/PostgreSQL 시대)에 인제스트됨. STEP 2(AI Vision)가 존재하지 않던 시점의 데이터
+3. **vec_files 15건 누락**: SigLIP2 마이그레이션(v3_p1_vec) 시 일부 파일 누락 추정
+
+### 코드 정상 동작 확인 (2026-02-10)
+
+테스트 파일 1건(`20120206_2219701.jpg`)으로 전체 파이프라인 검증 완료:
+
+| 단계 | 결과 | 시간 |
+|------|------|------|
+| STEP 1/4 Parse | JPG 파싱 완료 | 0.04s |
+| STEP 2/4 AI Vision | Stage1→photo(high), Stage2→caption+tags 생성 | 22.5s |
+| STEP 3/4 Embedding | SigLIP2 768d 벡터 저장 | 12.4s |
+| STEP 4/4 Storing | SQLite + S-axis 256d 텍스트 임베딩 | 2.4s |
+| **총합** | **전 단계 정상** | **38.5s** |
+
+### 검색 기능 상태
+
+| 축 | 상태 | 비고 |
+|----|------|------|
+| **V-axis** (SigLIP2) | **부분 동작** | 217/232 파일에 벡터 존재. 점수 범위 0.06~0.17 |
+| **S-axis** (Qwen3-Emb) | **미동작** | vec_text 1건만 존재. 재구축 필요 |
+| **M-axis** (FTS5) | **정상** | 232/232 인덱싱 완료 |
+| **RRF 병합** | **정상** | V+M 2축으로 동작 중. S축 추가 시 3축 완성 |
+| **프론트엔드 뱃지** | **정상** | VV/MV/MC 표시, i18n 연결 완료 |
+| **threshold** | **정상** | post-merge 필터 제거, 기본값 0 |
+
+### 다음 작업: 데이터 재구축
+
+```powershell
+# 전체 232파일 재처리 (STEP 1~4 모두 재실행)
+python backend/pipeline/ingest_engine.py --discover "C:\Images" --no-skip
+
+# 예상 소요: 232파일 × ~25초/파일 ≈ 1.5시간
+```
+
+**재구축 후 기대 결과:**
+- mc_caption: 232/232 (모든 파일에 AI 캡션)
+- ai_tags: 232/232 (모든 파일에 AI 태그)
+- image_type: 232/232 (11종 자동 분류)
+- vec_text (S-axis): 232/232 (3축 검색 완성)
+- vec_files (V-axis): 232/232 (15건 누락 해소)
+
+---
+
+## 4.2 2026-02-10 수정 내역
+
+### 코드 수정 (5건)
+
+| 커밋 | 유형 | 내용 |
+|------|------|------|
+| `4ed22d8` | fix | 코드 주석 정규화: T-axis→S-axis, F-axis→M-axis, CLIP→SigLIP2 (9개 파일) |
+| `3456227` | fix | 프론트엔드 뱃지 라벨 i18n 연결 (V/S/M → vv/mv/mc) |
+| `05c98a3` | fix | **검색 결과 3개 버그 수정**: post-merge threshold 필터 제거. SigLIP2 점수 범위(0.06~0.17)와 threshold(0.15) 불일치로 V-axis 결과 37/40개 삭제되던 문제 |
+| `066f79d` | fix | **device='auto' 크래시 수정**: VisionAnalyzer에서 `device='auto'` → `cuda`/`cpu` 자동 해석. 이 버그로 STEP 2 전체가 실패하고 있었음 |
+| `abe397e` | refactor | RRF 레거시 vv/mv 폴백 키 제거 |
+
+### 문서 수정 (4건)
+
+| 커밋 | 내용 |
+|------|------|
+| `927327c` | **CLAUDE.md 전면 재작성**: PostgreSQL/CLIP → SQLite/SigLIP2/Triaxis |
+| `ec8035d` | 문서 축 이름 정규화 (triaxis_search_architecture.md, triaxis_redesign_proposal.md, v3.md) |
+| `6fa161b` | 마이그레이션 스크립트 레거시 주석 |
+| `61d0ad8` | UTF-8 인코딩 필수 규칙 추가 |
 
 ---
 
@@ -89,21 +185,21 @@
 - 구현: `backend/vision/` (prompts.py, schemas.py, ollama_adapter.py, repair.py)
 - 검증: 99파일 100% 처리 — illustration(52), photo(41), background(5), texture(1)
 
-### P1: V축 SigLIP 2 교체
+### P1: V-axis SigLIP2 교체
 
-- CLIP ViT-L-14 (768차원) → **SigLIP 2 So400m** (1152차원) 교체
-- ImageNet 75% → 85%, VRAM 1.5GB → 0.8GB, 109언어 지원
+- CLIP ViT-L-14 → **SigLIP2** (tier별: base=768d, so400m=1152d, giant=1664d)
+- ImageNet 75% → 85%, 109언어 지원
 - 구현: `backend/vector/siglip2_encoder.py`
 - 마이그레이션: `backend/db/migrations/v3_p1_vec.py`
 - 검증: 한국어 "야경" → yakei.psd 정확 매칭
 
-### P2: T축 텍스트 임베딩
+### P2: S-axis 텍스트 임베딩
 
-- Qwen3-Embedding-0.6B (1024차원) 통합, Ollama embed API 사용
+- Qwen3-Embedding (tier별: 256d/1024d/4096d) 통합, Ollama embed API 사용
 - ai_caption + ai_tags → 텍스트 벡터 생성 → `vec_text` 테이블 저장
 - 3축 RRF 병합 완성 (`_rrf_merge_multi`)
 - 구현: `backend/vector/text_embedding.py`, `backend/db/migrations/v3_p2_text_vec.py`
-- 검증: 99/99 성공, avg 2.23s/file, T축 유사도 0.73 (V축 0.05 대비 14배 정확)
+- 검증: 99/99 성공 (v3.0 테스트 기준), avg 2.23s/file, S-axis 유사도 0.73 (V-axis 0.05 대비 14배 정확)
 
 ---
 
@@ -111,7 +207,7 @@
 
 ### P2+: Auto-Weighted RRF — ✅ 완료
 
-**목표:** 쿼리 유형에 따라 V/T/F 축 가중치를 동적 조절
+**목표:** 쿼리 유형에 따라 V/S/M 축 가중치를 동적 조절
 **상태:** 완료 (2026-02-08)
 **구현 내용:**
 - `backend/search/rrf.py` (신규) — 가중치 프리셋 4종 + 비활성 축 재분배
@@ -176,8 +272,8 @@ backend/
     ollama_adapter.py      # Ollama 호출 + 2-Stage 실행
     repair.py              # 3단계 JSON Repair
   vector/
-    siglip2_encoder.py     # [P1] V축 인코더 (1152차원)
-    text_embedding.py      # [P2] T축 Provider (1024차원)
+    siglip2_encoder.py     # [P1] V-axis 인코더 (tier별 차원)
+    text_embedding.py      # [P2] S-axis Provider (tier별 차원)
   search/
     sqlite_search.py       # 3축 RRF 검색 엔진
     query_decomposer.py    # 쿼리 분석
@@ -207,8 +303,8 @@ tools/reindex_v3.py        # 재인덱싱 (--vision-only, --embedding-only, --te
 
 | 시나리오 | 모델 | VRAM |
 |---------|------|------|
-| **검색 시** | SigLIP 2 + Qwen3-Embedding | **~1.2GB** |
-| **인제스트 시** | Qwen3-VL + SigLIP 2 + Qwen3-Embedding | **~7.2GB** |
+| **검색 시** | SigLIP2 + Qwen3-Embedding (standard) | **~1.2GB** |
+| **인제스트 시** | Qwen3-VL-2B + SigLIP2 + Qwen3-Embedding (standard) | **~4GB** |
 
 ### 적중률 추이
 
@@ -223,10 +319,11 @@ tools/reindex_v3.py        # 재인덱싱 (--vision-only, --embedding-only, --te
 
 | 작업 | 시간 |
 |------|------|
-| 인제스트 (1파일) | 8~19초 |
-| V축 인코딩 | ~200ms |
-| T축 인코딩 | ~2.2초 |
-| 3축 검색 (99파일) | ~25ms |
+| 인제스트 (1파일, standard tier) | ~25~38초 (초기 모델 로딩 포함) |
+| STEP 2 AI Vision (2-Stage) | ~22초 |
+| V-axis 인코딩 (SigLIP2) | ~5초 (모델 로딩 포함) |
+| S-axis 인코딩 (Qwen3-Emb) | ~2초 |
+| 3축 검색 (232파일) | ~25ms |
 
 ---
 
@@ -244,14 +341,14 @@ python tools/reindex_v3.py --embedding-only        # V축 재생성
 python tools/reindex_v3.py --text-embedding        # T축 재생성
 python tools/reindex_v3.py --all                   # 전체
 
-# 검색 (CLI)
-python backend/cli_search_pg.py "fantasy character"
+# 검색 (프론트엔드 Electron 앱)
+cd frontend && npm run electron:dev
 
 # 프론트엔드
 cd frontend && npm install && npm run electron:dev
 
 # 마이그레이션
-python -m backend.db.migrations.v3_p2_text_vec     # T축 테이블 생성
+python -m backend.db.migrations.v3_p2_text_vec     # S-axis 테이블 생성
 ```
 
 ---
