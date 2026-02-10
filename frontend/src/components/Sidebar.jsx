@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare, Square } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare } from 'lucide-react';
 import { useLocale } from '../i18n';
 
-const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMode = false, selectedPaths = new Set(), onFolderToggle, isRoot = false, onRemoveRoot }) => {
+const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, onRemoveRoot }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(isRoot); // Roots start open
     const [children, setChildren] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
-    const isSelected = multiSelectMode ? selectedPaths.has(path) : currentPath === path;
+    const isCtrlSelected = selectedPaths.has(path);
+    const isCurrentPath = currentPath === path;
 
     // Auto-load children for root nodes
     useEffect(() => {
@@ -39,17 +40,19 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMod
         setIsOpen(!isOpen);
     };
 
-    const handleClick = () => {
-        if (multiSelectMode) {
+    const handleClick = (e) => {
+        if (e.ctrlKey || e.metaKey) {
+            // Ctrl+click: toggle multi-select
             onFolderToggle?.(path);
         } else {
+            // Normal click: single folder select
             onSelect(path);
         }
     };
 
-    const highlightClass = multiSelectMode
-        ? (isSelected ? 'bg-purple-900/50 border-l-4 border-purple-500' : '')
-        : (isSelected ? 'bg-blue-900 border-l-4 border-blue-500' : '');
+    const highlightClass = isCtrlSelected
+        ? 'bg-purple-900/50 border-l-4 border-purple-500'
+        : (isCurrentPath ? 'bg-blue-900 border-l-4 border-blue-500' : '');
 
     return (
         <div className="select-none">
@@ -59,17 +62,11 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMod
                 onClick={handleClick}
             >
                 <div onClick={handleToggle} className="p-1 mr-1 text-gray-400 hover:text-white">
-                    {children.length > 0 || isOpen ? (
-                        isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />
-                    ) : (
-                        <ChevronRight size={14} className="opacity-0" />
-                    )}
+                    {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </div>
 
-                {multiSelectMode && (
-                    isSelected
-                        ? <CheckSquare size={14} className="text-purple-400 mr-1.5 flex-shrink-0" />
-                        : <Square size={14} className="text-gray-500 mr-1.5 flex-shrink-0" />
+                {isCtrlSelected && (
+                    <CheckSquare size={14} className="text-purple-400 mr-1.5 flex-shrink-0" />
                 )}
 
                 {isOpen ? (
@@ -101,7 +98,6 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMod
                             onSelect={onSelect}
                             currentPath={currentPath}
                             level={level + 1}
-                            multiSelectMode={multiSelectMode}
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
                         />
@@ -117,7 +113,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, multiSelectMod
     );
 };
 
-const Sidebar = ({ currentPath, onFolderSelect, multiSelectMode = false, selectedPaths = new Set(), onMultiSelectToggle, onFolderToggle }) => {
+const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFolderToggle }) => {
     const { t } = useLocale();
     const [roots, setRoots] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -177,30 +173,19 @@ const Sidebar = ({ currentPath, onFolderSelect, multiSelectMode = false, selecte
 
     return (
         <div>
-            {/* Add Folder + Multi-Select Buttons */}
-            <div className="flex gap-1 mb-2">
+            {/* Add Folder Button */}
+            <div className="mb-2">
                 <button
                     onClick={handleAddFolder}
-                    className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded flex items-center justify-center space-x-2"
+                    className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded flex items-center justify-center space-x-2"
                 >
                     <FolderPlus size={16} />
                     <span>{t('action.add_folder')}</span>
                 </button>
-                <button
-                    onClick={() => onMultiSelectToggle?.(!multiSelectMode)}
-                    className={`px-3 py-2 text-sm font-medium rounded transition-colors ${
-                        multiSelectMode
-                            ? 'bg-purple-600 hover:bg-purple-500 text-white'
-                            : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                    }`}
-                    title={multiSelectMode ? t('action.exit_multi_select') : t('action.multi_select')}
-                >
-                    {multiSelectMode ? <CheckSquare size={16} /> : <Square size={16} />}
-                </button>
             </div>
 
-            {/* Multi-select info */}
-            {multiSelectMode && selectedPaths.size > 0 && (
+            {/* Ctrl+click multi-select info */}
+            {selectedPaths.size > 0 && (
                 <div className="text-xs text-purple-400 mb-2 px-2">
                     {t('status.folders_selected', { count: selectedPaths.size })}
                 </div>
@@ -222,7 +207,6 @@ const Sidebar = ({ currentPath, onFolderSelect, multiSelectMode = false, selecte
                             currentPath={currentPath}
                             isRoot={true}
                             onRemoveRoot={handleRemoveRoot}
-                            multiSelectMode={multiSelectMode}
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
                         />
