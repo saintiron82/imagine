@@ -22,13 +22,12 @@ def _load_presets() -> Dict[str, Dict[str, float]]:
     presets_raw = cfg.get('search.rrf.presets', {})
 
     # Triaxis: Convert config keys (v, s, m) to internal keys (visual, text_vec, fts)
-    # For backward compatibility, also support old keys (vv, mv, fts)
     presets = {}
     for name, weights in presets_raw.items():
         presets[name] = {
-            'visual': weights.get('v', weights.get('vv', 0.34)),
-            'text_vec': weights.get('s', weights.get('mv', 0.33)),
-            'fts': weights.get('m', weights.get('fts', 0.33)),
+            'visual': weights.get('v', 0.34),
+            'text_vec': weights.get('s', 0.33),
+            'fts': weights.get('m', 0.33),
         }
 
     # Fallback presets if config is empty
