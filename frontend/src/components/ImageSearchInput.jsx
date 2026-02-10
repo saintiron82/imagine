@@ -1,9 +1,10 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Upload, X, ImageIcon, Clipboard, Plus } from 'lucide-react';
+import { Upload, X, ImageIcon, Clipboard, Plus, Link, Loader2 } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 const MAX_SIZE = 512;
 const MAX_IMAGES = 10;
+const URL_PATTERN = /^https?:\/\/.+/i;
 
 function resizeToBase64(file) {
     return new Promise((resolve, reject) => {
@@ -33,9 +34,34 @@ function resizeToBase64(file) {
     });
 }
 
+function fetchImageFromUrl(url) {
+    return new Promise((resolve, reject) => {
+        const img = new window.Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            let w = img.width;
+            let h = img.height;
+            if (w > MAX_SIZE || h > MAX_SIZE) {
+                const ratio = Math.min(MAX_SIZE / w, MAX_SIZE / h);
+                w = Math.round(w * ratio);
+                h = Math.round(h * ratio);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = () => reject(new Error('Failed to load image from URL'));
+        img.src = url;
+    });
+}
+
 export default function ImageSearchInput({ queryImages, onImagesChange }) {
     const { t } = useLocale();
     const [isDragging, setIsDragging] = useState(false);
+    const [isLoadingUrl, setIsLoadingUrl] = useState(false);
     const [error, setError] = useState(null);
     const fileInputRef = useRef(null);
 
@@ -80,9 +106,29 @@ export default function ImageSearchInput({ queryImages, onImagesChange }) {
         setIsDragging(false);
     }, []);
 
+    const processUrl = useCallback(async (url) => {
+        const remaining = MAX_IMAGES - queryImages.length;
+        if (remaining <= 0) {
+            setError(t('msg.max_images_reached'));
+            return;
+        }
+        setIsLoadingUrl(true);
+        setError(null);
+        try {
+            const base64 = await fetchImageFromUrl(url.trim());
+            onImagesChange([...queryImages, base64]);
+        } catch {
+            setError(t('msg.url_fetch_failed'));
+        } finally {
+            setIsLoadingUrl(false);
+        }
+    }, [queryImages, onImagesChange, t]);
+
     const handlePaste = useCallback((e) => {
         const items = e.clipboardData?.items;
         if (!items) return;
+
+        // Check for image blobs first
         const imageFiles = [];
         for (const item of items) {
             if (item.type.startsWith('image/')) {
@@ -92,8 +138,16 @@ export default function ImageSearchInput({ queryImages, onImagesChange }) {
         if (imageFiles.length > 0) {
             e.preventDefault();
             processFiles(imageFiles);
+            return;
         }
-    }, [processFiles]);
+
+        // Check for pasted URL text
+        const text = e.clipboardData.getData('text/plain')?.trim();
+        if (text && URL_PATTERN.test(text)) {
+            e.preventDefault();
+            processUrl(text);
+        }
+    }, [processFiles, processUrl]);
 
     const handleFileSelect = useCallback((e) => {
         const files = e.target.files;
@@ -155,6 +209,12 @@ export default function ImageSearchInput({ queryImages, onImagesChange }) {
                     <span className="text-[10px] text-gray-500">
                         {t('label.image_count', { count: queryImages.length })}
                     </span>
+                    {isLoadingUrl && (
+                        <span className="flex items-center gap-1 text-[10px] text-blue-400">
+                            <Loader2 size={10} className="animate-spin" />
+                            {t('status.fetching_url')}
+                        </span>
+                    )}
                 </div>
 
                 <input
@@ -189,13 +249,18 @@ export default function ImageSearchInput({ queryImages, onImagesChange }) {
                         : 'border-gray-600 hover:border-gray-500 bg-gray-800/50 hover:bg-gray-800'
                     }`}
             >
-                <div className="flex items-center gap-3 text-gray-400">
-                    <ImageIcon size={24} />
-                    <Upload size={20} />
-                    <Clipboard size={18} />
-                </div>
+                {isLoadingUrl ? (
+                    <Loader2 size={24} className="text-blue-400 animate-spin" />
+                ) : (
+                    <div className="flex items-center gap-3 text-gray-400">
+                        <ImageIcon size={24} />
+                        <Upload size={20} />
+                        <Clipboard size={18} />
+                        <Link size={18} />
+                    </div>
+                )}
                 <p className="text-sm text-gray-400 text-center">
-                    {t('placeholder.drag_images')}
+                    {isLoadingUrl ? t('status.fetching_url') : t('placeholder.drag_images_or_url')}
                 </p>
                 <button
                     type="button"
