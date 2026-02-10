@@ -141,14 +141,12 @@ def process_file(
             meta.folder_depth = folder_depth
             meta.folder_tags = folder_tags or []
         else:
-            # --file mode: extract folder metadata from file path
-            # v3.1 Context Injection: ensure folder_path is always populated
+            # --file/--files mode: extract folder metadata from file path
+            # Use folder name only (not absolute path) for consistency with --discover mode
             parent = file_path.parent
             if parent.name and parent.name not in (".", ""):
-                meta.folder_path = str(parent)
-                # Calculate depth (number of parent directories)
-                meta.folder_depth = len(parent.parts) - 1 if len(parent.parts) > 1 else 0
-                # Use folder name as tag
+                meta.folder_path = parent.name
+                meta.folder_depth = 0
                 meta.folder_tags = [parent.name]
 
         # === Extract Thumbnail Path (used by Vision & Vector Indexing) ===
@@ -276,25 +274,6 @@ def process_file(
                     meta.dominant_color = vision_result.get('color', '')
                     meta.ai_style = vision_result.get('style', '')
 
-                # v3 P0: path normalization (POSIX)
-                normalized = str(file_path).replace('\\', '/')
-                # Derive storage_root + relative_path
-                for marker in ['/assets/', '/Assets/', '/resources/', '/Resources/']:
-                    idx = normalized.find(marker)
-                    if idx != -1:
-                        meta.storage_root = normalized[:idx]
-                        meta.relative_path = normalized[idx:].lstrip('/')
-                        break
-                else:
-                    parts = normalized.rsplit('/', 1)
-                    meta.storage_root = parts[0] if len(parts) > 1 else ''
-                    meta.relative_path = parts[-1]
-
-                # (tier metadata already set before STEP 2 try block)
-
-                # Save metadata with AI fields
-                parser._save_json(meta, file_path)
-
                 vision_duration = time.time() - vision_start
                 logger.info(f"  → AI Vision completed in {vision_duration:.2f}s")
                 logger.info(f"   MC Caption: {meta.mc_caption[:80]}..." if len(meta.mc_caption or '') > 80 else f"   MC Caption: {meta.mc_caption}")
@@ -313,6 +292,22 @@ def process_file(
 
         step2_duration = time.time() - step2_start
         logger.info(f"STEP 2/4 completed in {step2_duration:.2f}s")
+
+        # === Path normalization (always runs, regardless of Vision success) ===
+        normalized = str(file_path).replace('\\', '/')
+        for marker in ['/assets/', '/Assets/', '/resources/', '/Resources/']:
+            idx = normalized.find(marker)
+            if idx != -1:
+                meta.storage_root = normalized[:idx]
+                meta.relative_path = normalized[idx:].lstrip('/')
+                break
+        else:
+            parts = normalized.rsplit('/', 1)
+            meta.storage_root = parts[0] if len(parts) > 1 else ''
+            meta.relative_path = parts[-1]
+
+        # Save metadata JSON (always runs, regardless of Vision success)
+        parser._save_json(meta, file_path)
 
         # === STEP 3/4: Embedding ===
         step3_start = time.time()
