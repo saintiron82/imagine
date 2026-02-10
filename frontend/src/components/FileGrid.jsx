@@ -5,8 +5,8 @@ import { useLocale } from '../i18n';
 const SUPPORTED_EXTS = ['.psd', '.png', '.jpg', '.jpeg'];
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
-// Global thumbnail cache
-const thumbnailCache = new Map();
+// Global thumbnail path cache (stores disk paths, not base64 - memory efficient)
+const thumbnailPathCache = new Map();
 
 // --- Priority Queue System ---
 const thumbnailQueue = [];          // [filePath, filePath, ...]
@@ -16,7 +16,7 @@ const inFlightPaths = new Set();    // Currently being processed by generateThum
 
 function prioritizeFolder(filePaths) {
     // Skip cached and in-flight (currently being processed)
-    const needed = filePaths.filter(fp => !thumbnailCache.has(fp) && !inFlightPaths.has(fp));
+    const needed = filePaths.filter(fp => !thumbnailPathCache.has(fp) && !inFlightPaths.has(fp));
     if (needed.length === 0) return;
 
     // Remove these files from queue (prevent duplicates)
@@ -41,8 +41,8 @@ async function runQueue() {
         try {
             const results = await window.electron?.pipeline?.generateThumbnailsBatch(chunk);
             if (results) {
-                for (const [fp, dataUrl] of Object.entries(results)) {
-                    if (dataUrl) thumbnailCache.set(fp, dataUrl);
+                for (const [fp, thumbPath] of Object.entries(results)) {
+                    if (thumbPath) thumbnailPathCache.set(fp, thumbPath);
                 }
                 queueListeners.forEach(cb => cb());
             }
@@ -515,7 +515,7 @@ const FileCard = React.forwardRef(({ file, isSelected, onMouseDown, thumbnail, l
                 ) : loading ? (
                     <Loader2 size={32} className="animate-spin text-gray-500" />
                 ) : thumbnail ? (
-                    <img src={thumbnail} alt={file.name} className="w-full h-full object-cover" />
+                    <img src={toFileUrl(thumbnail)} alt={file.name} className="w-full h-full object-cover" onError={e => { e.target.style.display = 'none'; }} />
                 ) : (
                     <div className="flex flex-col items-center text-gray-500"><File size={48} /><span className="text-xs font-bold mt-1">PSD</span></div>
                 )}
@@ -593,7 +593,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles }) => {
         return () => clearInterval(interval);
     }, [files]);
 
-    // Load thumbnails via priority queue (fast track current folder)
+    // Load thumbnails: 2-stage (check disk first, generate missing via queue)
     useEffect(() => {
         const psdFiles = files.filter(f => f.extension === '.psd');
         if (psdFiles.length === 0) {
@@ -601,39 +601,65 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles }) => {
             return;
         }
 
-        // Show cached thumbnails immediately
+        // Stage 1: Show in-memory cached paths immediately
         const cached = {};
         psdFiles.forEach(f => {
-            if (thumbnailCache.has(f.path)) cached[f.path] = thumbnailCache.get(f.path);
+            if (thumbnailPathCache.has(f.path)) cached[f.path] = thumbnailPathCache.get(f.path);
         });
         setThumbnails(cached);
 
-        const uncachedPaths = psdFiles.filter(f => !thumbnailCache.has(f.path)).map(f => f.path);
-        if (uncachedPaths.length === 0) {
+        const unknownPaths = psdFiles.filter(f => !thumbnailPathCache.has(f.path)).map(f => f.path);
+        if (unknownPaths.length === 0) {
             setLoadingThumbnails(false);
             return;
         }
 
         setLoadingThumbnails(true);
 
-        // Fast track: push current folder to front of queue
-        prioritizeFolder(uncachedPaths);
+        // Stage 2: Check disk thumbnails (no Python needed), then generate missing
+        const checkAndGenerate = async () => {
+            const existResults = await window.electron?.pipeline?.checkThumbnailsExist(unknownPaths);
+            if (existResults) {
+                const nowCached = {};
+                const stillMissing = [];
+                for (const [fp, thumbPath] of Object.entries(existResults)) {
+                    if (thumbPath) {
+                        thumbnailPathCache.set(fp, thumbPath);
+                        nowCached[fp] = thumbPath;
+                    } else {
+                        stillMissing.push(fp);
+                    }
+                }
+                if (Object.keys(nowCached).length > 0) {
+                    setThumbnails(prev => ({ ...prev, ...nowCached }));
+                }
+                if (stillMissing.length === 0) {
+                    setLoadingThumbnails(false);
+                    return;
+                }
+                // Generate only missing thumbnails via queue
+                prioritizeFolder(stillMissing);
+            } else {
+                // Fallback: generate all via queue
+                prioritizeFolder(unknownPaths);
+            }
+        };
+        checkAndGenerate().catch(console.error);
 
-        // Listen for chunk completions and merge newly cached thumbnails
+        // Listen for chunk completions and merge newly cached thumbnail paths
         const onChunkDone = () => {
             setThumbnails(prev => {
                 const merged = { ...prev };
                 let changed = false;
                 psdFiles.forEach(f => {
-                    if (!merged[f.path] && thumbnailCache.has(f.path)) {
-                        merged[f.path] = thumbnailCache.get(f.path);
+                    if (!merged[f.path] && thumbnailPathCache.has(f.path)) {
+                        merged[f.path] = thumbnailPathCache.get(f.path);
                         changed = true;
                     }
                 });
                 return changed ? merged : prev;
             });
-            // All PSD files for this folder cached -> loading done
-            const allDone = uncachedPaths.every(fp => thumbnailCache.has(fp));
+            const allDone = psdFiles.every(f => thumbnailPathCache.has(f.path));
             if (allDone) setLoadingThumbnails(false);
         };
 

@@ -6,9 +6,6 @@ import { useLocale } from '../i18n';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
-// Thumbnail cache shared across renders
-const searchThumbnailCache = new Map();
-
 // Category options (value keys for DB storage, labels via i18n)
 const CATEGORY_OPTIONS = [
     { value: '', key: 'filter.all' },

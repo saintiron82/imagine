@@ -55,16 +55,20 @@ def load_from_cache(thumb_path: Path) -> str | None:
     return None
 
 
-def process_single(file_path: str, size: int = DEFAULT_SIZE) -> tuple[Image.Image | None, str]:
+def process_single(file_path: str, size: int = DEFAULT_SIZE, return_paths: bool = False) -> tuple[Image.Image | None, str]:
     """Process a single file in memory (no disk write yet)."""
     path = Path(file_path)
     ext = path.suffix.lower()
 
     # Check existing thumbnail first (shared with parsers)
     thumb_path = get_thumb_path(file_path)
-    cached = load_from_cache(thumb_path)
-    if cached:
-        return None, cached  # Already exists, return base64
+    if return_paths:
+        if thumb_path.exists():
+            return None, str(thumb_path)  # Already exists, return path
+    else:
+        cached = load_from_cache(thumb_path)
+        if cached:
+            return None, cached  # Already exists, return base64
     
     try:
         if ext == '.psd':
@@ -121,15 +125,15 @@ def generate_single(file_path: str, size: int = DEFAULT_SIZE) -> str:
     return save_to_cache_sequential(img, file_path, size)
 
 
-def generate_batch(file_paths: list[str], size: int = DEFAULT_SIZE) -> dict:
+def generate_batch(file_paths: list[str], size: int = DEFAULT_SIZE, return_paths: bool = False) -> dict:
     """Generate thumbnails in parallel, save sequentially."""
     results = {}
     pending_saves = []
-    
+
     # Phase 1: Parallel processing in memory
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(process_single, fp, size): fp for fp in file_paths}
-        
+        futures = {executor.submit(process_single, fp, size, return_paths): fp for fp in file_paths}
+
         for future in as_completed(futures):
             fp = futures[future]
             try:
@@ -142,16 +146,20 @@ def generate_batch(file_paths: list[str], size: int = DEFAULT_SIZE) -> dict:
             except Exception as e:
                 print(f"ERROR: {fp}: {e}", file=sys.stderr)
                 results[fp] = None
-    
+
     # Phase 2: Sequential disk saves
     for img, fp in pending_saves:
         try:
-            b64 = save_to_cache_sequential(img, fp, size)
-            results[fp] = b64
+            if return_paths:
+                save_to_cache_sequential(img, fp, size)
+                results[fp] = str(get_thumb_path(fp))
+            else:
+                b64 = save_to_cache_sequential(img, fp, size)
+                results[fp] = b64
         except Exception as e:
             print(f"ERROR saving {fp}: {e}", file=sys.stderr)
             results[fp] = None
-    
+
     return results
 
 
@@ -249,12 +257,13 @@ if __name__ == '__main__':
     parser.add_argument('file_path', nargs='?', help='Single file path')
     parser.add_argument('--batch', type=str, help='JSON array of file paths for batch mode')
     parser.add_argument('--size', type=int, default=DEFAULT_SIZE)
+    parser.add_argument('--return-paths', action='store_true', help='Return disk paths instead of base64')
     args = parser.parse_args()
 
     if args.batch:
         # Batch mode
         paths = json.loads(args.batch)
-        results = generate_batch(paths, args.size)
+        results = generate_batch(paths, args.size, return_paths=args.return_paths)
         print(json.dumps(results))
     elif args.file_path:
         # Single file mode
