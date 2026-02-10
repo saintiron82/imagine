@@ -2,7 +2,7 @@
 LLM Query Decomposer - Converts natural language queries to structured search parameters.
 
 Uses Ollama Chat API (text-only, no images) to decompose queries into:
-- vector_query: English text for CLIP vector search
+- vector_query: English text for SigLIP2 vector search
 - fts_keywords: Keywords for FTS5 full-text search (Korean + English)
 - filters: Structured metadata filters (format, color, etc.)
 - query_type: Query classification for auto-weighted RRF
@@ -49,7 +49,7 @@ class QueryDecomposer:
 
         Returns:
             {
-                "vector_query": str,      # English CLIP search query
+                "vector_query": str,      # English SigLIP2 search query
                 "fts_keywords": list,     # FTS5 keywords (mixed lang)
                 "filters": dict,          # Metadata filters
                 "query_type": str,        # visual/keyword/semantic/balanced
@@ -122,11 +122,11 @@ Structural (file parsing + user input):
 - folder_tags: folder name tags
 
 Rules:
-1. vector_query MUST be in English (for CLIP model compatibility)
+1. vector_query MUST be in English (for SigLIP2 model compatibility)
 2. fts_keywords should include BOTH the original language terms AND English translations
 3. Include style/color/font terms when relevant (they match ai_style, dominant_color, used_fonts)
 4. filters should only include fields that are clearly specified
-5. Keep vector_query concise but descriptive (good for CLIP similarity)
+5. Keep vector_query concise but descriptive (good for SigLIP2 similarity)
 6. If the query mentions a specific image_type, art_style, or scene_type, add it to filters
 
 Also classify the query_type:
@@ -138,7 +138,7 @@ Also classify the query_type:
 User query: "{query}"
 
 Return ONLY valid JSON (no markdown, no explanation):
-{{"vector_query": "english description for CLIP search", "fts_keywords": ["keyword1", "keyword2"], "filters": {{}}, "query_type": "visual|keyword|semantic|balanced"}}
+{{"vector_query": "english description for SigLIP2 search", "fts_keywords": ["keyword1", "keyword2"], "filters": {{}}, "query_type": "visual|keyword|semantic|balanced"}}
 
 Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name), "image_type", "art_style", "scene_type", "time_of_day", "weather\""""
 

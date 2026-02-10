@@ -134,7 +134,7 @@ class ImageParser(BaseParser):
         try:
             thumbnail_path = self.get_thumbnail_path(file_path)
             
-            # Convert to RGB if necessary (for CLIP compatibility)
+            # Convert to RGB if necessary (for visual encoder compatibility)
             if img.mode in ('RGBA', 'P'):
                 # Create white background
                 background = Image.new('RGB', img.size, (255, 255, 255))

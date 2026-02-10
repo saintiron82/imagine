@@ -41,8 +41,8 @@ def format_result(result: dict) -> dict:
     formatted = {
         "path": result["file_path"],
         "vector_score": result.get("vector_score", result.get("similarity")),     # V-axis: SigLIP visual
-        "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),  # T-axis: Qwen3 text vector
-        "text_score": result.get("text_score"),          # F-axis: FTS5 keyword
+        "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),  # S-axis: Qwen3 text vector
+        "text_score": result.get("text_score"),          # M-axis: FTS5 keyword
         "combined_score": result.get("rrf_score", result.get("similarity", 0)),
         "metadata": metadata,
         "thumbnail_path": result.get("thumbnail_url", ""),

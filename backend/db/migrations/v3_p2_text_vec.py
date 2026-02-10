@@ -1,5 +1,5 @@
 """
-Migration: Create vec_text virtual table for T-axis text embeddings.
+Migration: Create vec_text virtual table for S-axis text embeddings.
 
 Adds a sqlite-vec virtual table (1024-dim) for text embeddings
 generated from ai_caption + ai_tags via Qwen3-Embedding-0.6B.
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def migrate():
-    """Create vec_text virtual table for T-axis text embeddings."""
+    """Create vec_text virtual table for S-axis text embeddings."""
     from backend.db.sqlite_client import SQLiteDB
     from backend.utils.config import get_config
 
@@ -61,7 +61,7 @@ def migrate():
         db.conn.commit()
 
         total = cursor.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-        logger.info(f"Migration complete. {total} files need T-axis embedding.")
+        logger.info(f"Migration complete. {total} files need S-axis embedding.")
         logger.info(f"Run: python tools/reindex_v3.py --text-embedding")
 
     except Exception as e:

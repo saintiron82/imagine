@@ -462,12 +462,12 @@ class SQLiteDB:
         embedding: np.ndarray
     ) -> int:
         """
-        Insert or update file metadata + CLIP vector.
+        Insert or update file metadata + visual embedding vector (SigLIP2).
 
         Args:
             file_path: Absolute file path (unique identifier)
             metadata: Full metadata dict from AssetMeta.model_dump()
-            embedding: CLIP embedding vector (768 dimensions)
+            embedding: Visual embedding vector (dimension from active tier)
 
         Returns:
             Database ID of inserted/updated record
@@ -681,7 +681,7 @@ class SQLiteDB:
             file_id: Parent file database ID
             layer_path: Layer path (e.g., "Root/Group 1/Layer 2")
             layer_metadata: Layer properties dict
-            embedding: Optional CLIP embedding for this layer
+            embedding: Optional visual embedding for this layer
 
         Returns:
             Database ID of inserted/updated layer

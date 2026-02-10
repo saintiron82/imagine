@@ -1,5 +1,5 @@
 """
-Text Embedding Provider for T-axis semantic search.
+Text Embedding Provider for S-axis semantic search.
 
 Uses Ollama's embed API with Qwen3-Embedding-0.6B (1024-dim) by default.
 Encodes mc_caption + ai_tags into a dense vector for text-to-text retrieval,

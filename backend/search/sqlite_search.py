@@ -43,8 +43,8 @@ class SqliteVectorSearch:
         """
         self.db = db if db else SQLiteDB()
         self._encoder = None  # Lazy loading (V-axis)
-        self._text_provider = None  # Lazy loading (T-axis)
-        self._text_enabled = None  # Cache for T-axis availability check
+        self._text_provider = None  # Lazy loading (S-axis)
+        self._text_enabled = None  # Cache for S-axis availability check
 
         logger.info("SqliteVectorSearch initialized")
 
@@ -59,7 +59,7 @@ class SqliteVectorSearch:
 
     @property
     def text_provider(self):
-        """Lazy load T-axis text embedding provider."""
+        """Lazy load S-axis text embedding provider."""
         if self._text_provider is None:
             from backend.vector.text_embedding import get_text_embedding_provider
             self._text_provider = get_text_embedding_provider()
@@ -67,7 +67,7 @@ class SqliteVectorSearch:
 
     @property
     def text_search_enabled(self) -> bool:
-        """Check if T-axis text vector search is available (vec_text table exists with data)."""
+        """Check if S-axis text vector search is available (vec_text table exists with data)."""
         if self._text_enabled is None:
             try:
                 count = self.db.conn.execute("SELECT COUNT(*) FROM vec_text").fetchone()[0]
@@ -159,10 +159,10 @@ class SqliteVectorSearch:
         threshold: float = 0.0
     ) -> List[Dict[str, Any]]:
         """
-        Perform vector similarity search using CLIP embeddings.
+        Perform vector similarity search using SigLIP2 embeddings.
 
         Args:
-            query: Text query (will be encoded with CLIP)
+            query: Text query (will be encoded with SigLIP2)
             top_k: Number of results to return
             threshold: Minimum similarity threshold (0.0 to 1.0)
 
@@ -439,7 +439,7 @@ class SqliteVectorSearch:
         threshold: float = 0.0,
     ) -> List[Dict[str, Any]]:
         """
-        T-axis: Text vector similarity search using Qwen3-Embedding.
+        S-axis: Text vector similarity search using Qwen3-Embedding.
 
         Searches vec_text table (caption+tags embeddings) for semantic text matching.
         Complements V-axis (visual similarity) with textual semantic similarity.
@@ -491,11 +491,11 @@ class SqliteVectorSearch:
                 self._parse_json_fields(result)
                 results.append(result)
 
-            logger.info(f"T-axis search '{query[:50]}' returned {len(results)} results")
+            logger.info(f"S-axis search '{query[:50]}' returned {len(results)} results")
             return results
 
         except Exception as e:
-            logger.error(f"T-axis text vector search failed: {e}")
+            logger.error(f"S-axis text vector search failed: {e}")
             return []
         finally:
             cursor.close()
@@ -646,7 +646,7 @@ class SqliteVectorSearch:
         soft_filters = llm_filters  # applied as score boost, never removes results
 
         # Per-axis thresholds: SigLIP (V) and Qwen3 (Tv) have very different score ranges
-        # V-axis: 0.10-0.17 typical match, Tv-axis: 0.65-0.78 typical match
+        # V-axis: 0.10-0.17 typical match, S-axis: 0.65-0.78 typical match
         from backend.utils.config import get_config as _cfg
         _search_cfg = _cfg()
         v_threshold = _search_cfg.get("search.threshold.visual", 0.05)
@@ -674,7 +674,7 @@ class SqliteVectorSearch:
             ],
         }
 
-        # Step 2b: T-axis text vector search (if vec_text is populated)
+        # Step 2b: S-axis text vector search (if vec_text is populated)
         text_vec_results = []
         t0 = time.perf_counter()
         if self.text_search_enabled:
@@ -683,7 +683,7 @@ class SqliteVectorSearch:
                     vector_query, top_k=top_k * 2, threshold=tv_threshold
                 )
             except Exception as e:
-                logger.warning(f"T-axis search unavailable: {e}")
+                logger.warning(f"S-axis search unavailable: {e}")
                 diag["text_vec_error"] = str(e)
         diag["text_vec_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
@@ -699,7 +699,7 @@ class SqliteVectorSearch:
             ],
         }
 
-        # Step 3: F-axis FTS5 search
+        # Step 3: M-axis FTS5 search
         fts_results = []
         t0 = time.perf_counter()
         try:

@@ -1,13 +1,15 @@
 """
-Search module for PostgreSQL + pgvector queries.
+Search module for SQLite + sqlite-vec Triaxis queries.
 
 This module provides search functionality including:
-- Vector similarity search (CLIP embeddings)
-- Hybrid search (vector + metadata filters)
-- JSONB queries (nested structures)
-- Full-text search (AI captions, tags)
+- V-axis: Visual similarity search (SigLIP2 embeddings)
+- S-axis: Semantic text vector search (Qwen3-Embedding)
+- M-axis: Metadata keyword search (FTS5 BM25)
+- Triaxis RRF merge (V + S + M)
+
+Legacy: PgVectorSearch (PostgreSQL, deprecated)
 """
 
-from .pg_search import PgVectorSearch
+from .sqlite_search import SqliteVectorSearch
 
-__all__ = ['PgVectorSearch']
+__all__ = ['SqliteVectorSearch']

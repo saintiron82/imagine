@@ -317,9 +317,9 @@ def process_file(
         # === STEP 3/4: Embedding ===
         step3_start = time.time()
         logger.info(f"STEP 3/4 Embedding")
-        # === 5. PostgreSQL Storage (Vector + Metadata) ===
+        # === 5. SQLite Storage (Vector + Metadata) ===
         try:
-            # Lazy load SQLite client and CLIP model
+            # Lazy load SQLite client and SigLIP2 encoder
             global _global_sqlite_db, _global_clip_model
 
             if '_global_sqlite_db' not in globals() or _global_sqlite_db is None:
@@ -366,7 +366,7 @@ def process_file(
                 embedding=embedding
             )
 
-            # T-axis: Generate text embedding from caption + tags
+            # S-axis: Generate text embedding from caption + tags
             try:
                 from backend.utils.config import get_config as _get_cfg
                 if _get_cfg().get("embedding.text.enabled"):
@@ -398,9 +398,9 @@ def process_file(
                                 (file_id, _json2.dumps(text_emb_list))
                             )
                             _global_sqlite_db.conn.commit()
-                            logger.info(f"   T-axis: text embedding stored ({len(text_emb)}-dim)")
+                            logger.info(f"   S-axis: text embedding stored ({len(text_emb)}-dim)")
             except Exception as e:
-                logger.warning(f"T-axis embedding failed (non-fatal): {e}")
+                logger.warning(f"S-axis embedding failed (non-fatal): {e}")
 
         except Exception as e:
             logger.error(f"SQLite Storage Failed: {e}")
