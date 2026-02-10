@@ -885,7 +885,7 @@ class SqliteVectorSearch:
         # candidate pool. Compute their actual similarity for complete badge display.
         v_missing_before = sum(1 for r in merged if r.get("vector_score") is None)
         s_missing_before = sum(1 for r in merged if r.get("text_vec_score") is None)
-        self._enrich_axis_scores(merged, v_query_embedding, t_query_embedding)
+        self._enrich_axis_scores(merged, v_query_embedding, t_query_embedding, fts_keywords)
         v_missing_after = sum(1 for r in merged if r.get("vector_score") is None)
         s_missing_after = sum(1 for r in merged if r.get("text_vec_score") is None)
         diag["enrichment"] = {
@@ -1072,13 +1072,13 @@ class SqliteVectorSearch:
         merged: List[Dict],
         v_embedding: Optional[np.ndarray],
         t_embedding: Optional[np.ndarray],
+        fts_keywords: Optional[List[str]] = None,
     ) -> None:
         """
         Enrich merged results with missing per-axis scores via direct DB lookup.
 
-        After RRF merge, some results may lack V-axis or S-axis scores because
-        they weren't in that axis's candidate pool. This method computes the
-        actual similarity for those files so all badges can be displayed in the UI.
+        Display-only: does NOT affect ranking (runs after RRF + trim).
+        Computes actual V/S/M scores so all badges can be displayed in the UI.
         """
         if not merged:
             return
@@ -1087,6 +1087,8 @@ class SqliteVectorSearch:
         v_missing = [r["id"] for r in merged if r.get("vector_score") is None and r.get("id")]
         # Collect file IDs missing S-axis scores
         s_missing = [r["id"] for r in merged if r.get("text_vec_score") is None and r.get("id")]
+        # Collect file IDs missing M-axis scores
+        m_missing = [r["id"] for r in merged if r.get("text_score") is None and r.get("id")]
 
         # Batch-compute V-axis similarity for missing files
         if v_missing and v_embedding is not None:
@@ -1101,6 +1103,13 @@ class SqliteVectorSearch:
             for r in merged:
                 if r.get("text_vec_score") is None and r.get("id") in s_scores:
                     r["text_vec_score"] = s_scores[r["id"]]
+
+        # Batch-compute M-axis (FTS5 BM25) scores for missing files
+        if m_missing and fts_keywords:
+            m_scores = self._batch_fts_score(fts_keywords, m_missing)
+            for r in merged:
+                if r.get("text_score") is None and r.get("id") in m_scores:
+                    r["text_score"] = m_scores[r["id"]]
 
     def _batch_similarity(
         self,
@@ -1139,6 +1148,54 @@ class SqliteVectorSearch:
             return {row[0]: row[1] for row in cursor.fetchall()}
         except Exception as e:
             logger.warning(f"Batch similarity lookup failed ({table}): {e}")
+            return {}
+        finally:
+            cursor.close()
+
+    def _batch_fts_score(
+        self,
+        fts_keywords: List[str],
+        file_ids: List[int],
+    ) -> Dict[int, float]:
+        """
+        Compute normalized FTS5 BM25 scores for specific files.
+
+        Returns scores normalized to 0-1 range. Files not matching
+        the keywords at all are omitted from the result.
+        """
+        if not file_ids or not fts_keywords:
+            return {}
+
+        # Build FTS5 MATCH expression (OR of all keywords)
+        safe_kw = [kw.replace('"', '""') for kw in fts_keywords if kw.strip()]
+        if not safe_kw:
+            return {}
+        match_expr = " OR ".join(f'"{kw}"' for kw in safe_kw)
+
+        placeholders = ",".join("?" * len(file_ids))
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(f"""
+                SELECT rowid, rank
+                FROM files_fts
+                WHERE files_fts MATCH ? AND rowid IN ({placeholders})
+            """, (match_expr, *file_ids))
+            raw = {row[0]: row[1] for row in cursor.fetchall()}
+
+            if not raw:
+                return {}
+
+            # Normalize BM25 ranks to 0-1 (more negative = better)
+            ranks = list(raw.values())
+            best = min(ranks)
+            worst = max(ranks)
+            span = worst - best
+            return {
+                fid: (worst - r) / span if span else 1.0
+                for fid, r in raw.items()
+            }
+        except Exception as e:
+            logger.warning(f"Batch FTS score lookup failed: {e}")
             return {}
         finally:
             cursor.close()
