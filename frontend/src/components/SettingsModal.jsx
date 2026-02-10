@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2, CheckCircle, AlertTriangle, Terminal, X, Download } from 'lucide-react';
 import { useLocale } from '../i18n';
+import RegisteredFoldersPanel from './RegisteredFoldersPanel';
 
 const SettingsModal = ({ onClose }) => {
     const { t } = useLocale();
@@ -248,6 +249,9 @@ const SettingsModal = ({ onClose }) => {
                                     </div>
                                 </div>
                             )}
+
+                            {/* Registered Folders */}
+                            <RegisteredFoldersPanel />
 
                             {/* Install Button */}
                             {!installing && !status?.dependencies_ok && (
