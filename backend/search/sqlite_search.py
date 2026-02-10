@@ -776,12 +776,10 @@ class SqliteVectorSearch:
         else:
             merged = []
 
-        # OR-condition threshold: pass if any axis matched
-        if threshold > 0 and merged:
-            merged = [r for r in merged
-                      if (r.get("vector_score") or 0) >= threshold
-                      or (r.get("text_vec_score") or 0) >= threshold
-                      or r.get("text_score") is not None]
+        # NOTE: Per-axis thresholds are already applied at the SQL level
+        # (v_threshold for V-axis, tv_threshold for S-axis, MATCH for M-axis).
+        # No post-merge threshold filter needed — it caused scale mismatch
+        # (frontend 0.15 vs SigLIP2 range 0.06-0.17, killing most V-axis results).
 
         diag["rrf_merge"] = {
             "axes": len(all_result_lists),

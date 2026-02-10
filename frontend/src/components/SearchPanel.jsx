@@ -522,7 +522,7 @@ export default function SearchPanel() {
     const [error, setError] = useState(null);
     const [showFilters, setShowFilters] = useState(false);
     const [activeFilters, setActiveFilters] = useState({});
-    const [threshold, setThreshold] = useState(0.15);
+    const [threshold, setThreshold] = useState(0);
     const [metadata, setMetadata] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
     const [dbStats, setDbStats] = useState(null);
@@ -933,7 +933,7 @@ export default function SearchPanel() {
                             {/* Clear Filters */}
                             {hasActiveFilters && (
                                 <button
-                                    onClick={() => { setActiveFilters({}); setThreshold(0.15); }}
+                                    onClick={() => { setActiveFilters({}); setThreshold(0); }}
                                     className="text-[10px] text-red-400 hover:text-red-300 px-2 py-1 rounded bg-red-900/20 border border-red-800/30"
                                 >
                                     {t('action.clear')}
