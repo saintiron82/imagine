@@ -444,43 +444,48 @@ function createWindow() {
 
         proc.stdout.on('data', (data) => {
             const message = data.toString().trim();
-            if (message) {
-                event.reply('pipeline-log', { message, type: 'info' });
+            if (!message) return;
 
-                // Detect file processing progress
-                const processingMatch = message.match(/Processing: (.+)/);
-                const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
-                if (processingMatch) {
-                    event.reply('pipeline-progress', {
-                        processed: processedCount,
-                        total: totalFiles,
-                        currentFile: path.basename(processingMatch[1])
-                    });
-                } else if (stepMatch) {
-                    // Per-file step progress: STEP 1/5 Parsing
-                    event.reply('pipeline-step', {
-                        step: parseInt(stepMatch[1]),
-                        totalSteps: parseInt(stepMatch[2]),
-                        stepName: stepMatch[3]
-                    });
-                } else if (message.includes('[OK] Parsed successfully')) {
-                    processedCount++;
-                    event.reply('pipeline-progress', {
-                        processed: processedCount,
-                        total: totalFiles,
-                        currentFile: ''
-                    });
-                }
+            // Detect file processing progress
+            const processingMatch = message.match(/Processing: (.+)/);
+            const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+            if (processingMatch) {
+                event.reply('pipeline-progress', {
+                    processed: processedCount,
+                    total: totalFiles,
+                    currentFile: path.basename(processingMatch[1])
+                });
+            } else if (stepMatch) {
+                // Per-file step progress: STEP 1/5 Parsing
+                event.reply('pipeline-step', {
+                    step: parseInt(stepMatch[1]),
+                    totalSteps: parseInt(stepMatch[2]),
+                    stepName: stepMatch[3]
+                });
+            } else if (message.includes('[OK] Parsed successfully')) {
+                processedCount++;
+                event.reply('pipeline-progress', {
+                    processed: processedCount,
+                    total: totalFiles,
+                    currentFile: ''
+                });
+            }
+
+            // Only forward log-worthy messages (reduces ~22 lines/file to ~4)
+            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
+            if (isLogWorthy) {
+                event.reply('pipeline-log', { message, type: 'info' });
             }
         });
 
         proc.stderr.on('data', (data) => {
             const message = data.toString().trim();
             if (!message) return;
-            // Only treat as error if it contains actual error keywords
+            // Only forward actual errors, drop library noise (transformers/torch/tqdm warnings)
             const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
-            const type = isError ? 'error' : 'info';
-            event.reply('pipeline-log', { message, type });
+            if (isError) {
+                event.reply('pipeline-log', { message, type: 'error' });
+            }
         });
 
         proc.on('close', (code) => {
@@ -534,7 +539,6 @@ function createWindow() {
         proc.stdout.on('data', (data) => {
             const message = data.toString().trim();
             if (!message) return;
-            event.reply('discover-log', { message, type: 'info' });
 
             const processingMatch = message.match(/Processing: (.+)/);
             const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
@@ -560,13 +564,22 @@ function createWindow() {
                     folderPath
                 });
             }
+
+            // Only forward log-worthy messages
+            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
+            if (isLogWorthy) {
+                event.reply('discover-log', { message, type: 'info' });
+            }
         });
 
         proc.stderr.on('data', (data) => {
             const message = data.toString().trim();
             if (!message) return;
+            // Only forward actual errors, drop library noise
             const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
-            event.reply('discover-log', { message, type: isError ? 'error' : 'info' });
+            if (isError) {
+                event.reply('discover-log', { message, type: 'error' });
+            }
         });
 
         proc.on('close', (code) => {

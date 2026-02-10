@@ -23,6 +23,16 @@ function App() {
   const [discoverProgress, setDiscoverProgress] = useState('');
   const [selectedPaths, setSelectedPaths] = useState(new Set());
 
+  const MAX_LOGS = 200;
+
+  const appendLog = (data) => {
+    const entry = { ...data, timestamp: new Date().toLocaleTimeString() };
+    setLogs((prev) => {
+      const next = [...prev, entry];
+      return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next;
+    });
+  };
+
   // Initialize with Home Directory & stable IPC listeners (never removed during app lifetime)
   useEffect(() => {
     if (window.electron) {
@@ -33,7 +43,7 @@ function App() {
       if (window.electron.pipeline) {
         // Stable log listener - feeds StatusBar (never removed mid-session)
         window.electron.pipeline.onLog((data) => {
-          setLogs((prev) => [...prev, data]);
+          appendLog(data);
         });
 
         // Per-file step progress listener
@@ -51,7 +61,7 @@ function App() {
 
         // Discover event listeners (for auto-scan)
         window.electron.pipeline.onDiscoverLog((data) => {
-          setLogs((prev) => [...prev, data]);
+          appendLog(data);
           setDiscoverProgress(data.message);
         });
         window.electron.pipeline.onDiscoverFileDone((data) => {
@@ -80,10 +90,10 @@ function App() {
 
         setIsDiscovering(true);
         discoverQueueRef.current = { folders: validFolders, index: 0, scanning: true };
-        setLogs((prev) => [...prev, {
+        appendLog({
           message: `Auto-scanning ${validFolders.length} registered folder(s)...`,
           type: 'info'
-        }]);
+        });
         window.electron.pipeline.runDiscover({ folderPath: validFolders[0], noSkip: false });
       } catch (e) {
         console.error('Auto-scan failed:', e);
@@ -134,10 +144,10 @@ function App() {
 
     // Add to queue
     setProcessQueue((prev) => [...prev, ...fileArray]);
-    setLogs((prev) => [...prev, {
+    appendLog({
       message: `Added ${fileArray.length} files to queue (Total: ${processQueue.length + fileArray.length})`,
       type: 'info'
-    }]);
+    });
 
     // Clear selection after adding to queue
     setSelectedFiles(new Set());
@@ -153,10 +163,10 @@ function App() {
     if (!isProcessing || processQueue.length === 0 || queueIndex >= processQueue.length) {
       if (queueIndex >= processQueue.length && processQueue.length > 0) {
         // Queue finished
-        setLogs((prev) => [...prev, {
+        appendLog({
           message: `All ${processQueue.length} files processed!`,
           type: 'success'
-        }]);
+        });
         setProcessQueue([]);
         setQueueIndex(0);
         setIsProcessing(false);
@@ -173,10 +183,10 @@ function App() {
       currentFile: currentFile,
     });
 
-    setLogs((prev) => [...prev, {
+    appendLog({
       message: `Processing [${queueIndex + 1}/${processQueue.length}]: ${currentFile}`,
       type: 'info'
-    }]);
+    });
 
     if (window.electron?.pipeline) {
       window.electron.pipeline.run([currentFile]);
@@ -189,7 +199,7 @@ function App() {
     setIsProcessing(false);
     setProcessProgress({ processed: 0, total: 0, currentFile: '' });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
-    setLogs((prev) => [...prev, { message: 'Processing stopped by user.', type: 'warning' }]);
+    appendLog({ message: 'Processing stopped by user.', type: 'warning' });
   };
 
   const clearLogs = () => setLogs([]);

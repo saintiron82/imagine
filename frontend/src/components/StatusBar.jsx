@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Terminal, X, Loader2, Square, Cpu } from 'lucide-react';
 import { useLocale } from '../i18n';
 
@@ -35,8 +35,8 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
         }
     }, [logs, isOpen]);
 
-    // Count errors
-    const errorCount = logs.filter(l => l.type === 'error').length;
+    // Count errors (memoized to avoid re-scanning on every render)
+    const errorCount = useMemo(() => logs.filter(l => l.type === 'error').length, [logs]);
     const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
     const queuePct = total > 0 ? Math.round((processed / total) * 100) : 0;
     const stepPct = fileStep.totalSteps > 0 ? Math.round((fileStep.step / fileStep.totalSteps) * 100) : 0;
@@ -134,7 +134,7 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
                                 log.type === 'success' ? 'text-green-400' :
                                 log.type === 'warning' ? 'text-yellow-400' : 'text-gray-300'
                             }`}>
-                            <span className="opacity-50 mr-2">[{new Date().toLocaleTimeString()}]</span>
+                            <span className="opacity-50 mr-2">[{log.timestamp || ''}]</span>
                             {log.message}
                         </div>
                     ))}
