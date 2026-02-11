@@ -435,8 +435,7 @@ def process_file(
         logger.info(f"STEP 4/4 completed in {step4_duration:.2f}s")
 
         total_duration = time.time() - step_start
-        logger.info(f"[OK] Total processing time: {total_duration:.2f}s")
-        logger.info(f"[OK] Parsed successfully in {parse_duration:.2f}s")
+        logger.info(f"[OK] Parsed successfully in {total_duration:.2f}s")
         logger.info(f"   Format: {meta.format}, Layers: {meta.layer_count}")
         logger.info(f"   Tags: {meta.semantic_tags}")
         if meta.thumbnail_url:

@@ -49,7 +49,7 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
     // Count errors (memoized to avoid re-scanning on every render)
     const errorCount = useMemo(() => logs.filter(l => l.type === 'error').length, [logs]);
     const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
-    const queuePct = total > 0 ? Math.round((processed / total) * 100) : 0;
+    const queuePct = total > 0 ? Math.round(((processed + skipped) / total) * 100) : 0;
     const stepPct = fileStep.totalSteps > 0 ? Math.round((fileStep.step / fileStep.totalSteps) * 100) : 0;
 
     return (
@@ -91,7 +91,7 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
                         {/* Queue progress (outer) */}
                         <div className="flex items-center space-x-1.5">
                             <span className="text-blue-300 font-medium">
-                                {processed}/{total}{skipped > 0 && <span className="text-gray-500 ml-0.5">({skipped} skip)</span>}
+                                {processed}/{total - skipped}{skipped > 0 && <span className="text-gray-500 ml-0.5">({t('status.skipped', { count: skipped })})</span>}
                             </span>
                             <div className="w-24 bg-gray-700 rounded-full h-1.5 overflow-hidden">
                                 <div
