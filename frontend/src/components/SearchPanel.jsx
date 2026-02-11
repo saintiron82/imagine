@@ -449,7 +449,7 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
 
     return (
         <div
-            className="group bg-gray-800 border border-gray-700 rounded-lg overflow-hidden hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-900/10 cursor-pointer h-full flex flex-col"
+            className="group bg-gray-800 border border-gray-700 rounded-lg overflow-hidden hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-900/10 cursor-pointer h-full flex flex-col transition-[border-color,box-shadow] duration-150"
             onClick={() => onShowMeta(result.path)}
         >
             {/* Thumbnail */}
@@ -458,8 +458,7 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
                     <img
                         src={thumbnailSrc}
                         alt={fileName}
-                        loading="lazy"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                        className="w-full h-full object-cover"
                         onError={(e) => { e.target.style.display = 'none'; }}
                     />
                 ) : (
@@ -573,6 +572,96 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
     );
 });
 
+// Isolated search input — manages its own typing state so keystrokes
+// never re-render the parent SearchPanel (fixes backspace flicker).
+const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, showFilters, hasActiveFilters, onToggleFilters, onOpenSettings, inputRef, resetSignal }) => {
+    const { t } = useLocale();
+    const [localQuery, setLocalQuery] = useState('');
+
+    // Reset input when parent signals a clear
+    useEffect(() => {
+        if (resetSignal > 0) setLocalQuery('');
+    }, [resetSignal]);
+
+    // Auto-focus on mount
+    useEffect(() => {
+        if (inputRef.current) inputRef.current.focus();
+    }, []);
+
+    const handleKeyPress = (e) => {
+        if (e.key === 'Enter' && (localQuery.trim() || hasImages)) {
+            onSearch(localQuery);
+        }
+    };
+
+    const handleSearchClick = () => {
+        if (localQuery.trim() || hasImages) {
+            onSearch(localQuery);
+        }
+    };
+
+    const handleClear = () => {
+        setLocalQuery('');
+        onClear();
+    };
+
+    return (
+        <div className="flex items-center space-x-2">
+            <div className="flex-1 relative">
+                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={localQuery}
+                    onChange={(e) => setLocalQuery(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    placeholder={t('placeholder.search')}
+                    className="w-full pl-10 pr-10 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 text-base"
+                />
+                {(localQuery || hasImages) && (
+                    <button
+                        onClick={handleClear}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                    >
+                        <X size={16} />
+                    </button>
+                )}
+            </div>
+            <button
+                onClick={handleSearchClick}
+                disabled={(!localQuery.trim() && !hasImages) || isSearching}
+                className="px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg flex items-center space-x-2 transition-colors"
+            >
+                {isSearching ? (
+                    <Loader2 size={18} className="animate-spin" />
+                ) : (
+                    <Search size={18} />
+                )}
+            </button>
+            {/* Filter Toggle */}
+            <button
+                onClick={onToggleFilters}
+                className={`p-3 rounded-lg transition-colors ${
+                    showFilters || hasActiveFilters
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600'
+                }`}
+                title={t('search.filters_title')}
+            >
+                <SlidersHorizontal size={18} />
+            </button>
+            {/* Settings Button */}
+            <button
+                onClick={onOpenSettings}
+                className="p-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600 transition-colors"
+                title={t('search.settings_title')}
+            >
+                <Settings size={18} />
+            </button>
+        </div>
+    );
+});
+
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
@@ -594,7 +683,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
         count: totalRows,
         getScrollElement: () => scrollRef.current,
         estimateSize: (index) => index < rowCount ? rowHeight : 64,
-        overscan: 3,
+        overscan: 5,
     });
 
     useEffect(() => {
@@ -707,6 +796,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
 
 function SearchPanel() {
     const { t } = useLocale();
+    // query stores the last *submitted* search text (not live typing)
     const [query, setQuery] = useState('');
     const [queryImages, setQueryImages] = useState([]); // base64 string array
     const [imageSearchMode, setImageSearchMode] = useState('and'); // 'and' | 'or'
@@ -722,14 +812,8 @@ function SearchPanel() {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [currentLimit, setCurrentLimit] = useState(20);
     const [noMoreResults, setNoMoreResults] = useState(false);
+    const [resetSignal, setResetSignal] = useState(0);
     const inputRef = useRef(null);
-
-    // Auto-focus search input on mount
-    useEffect(() => {
-        if (inputRef.current) {
-            inputRef.current.focus();
-        }
-    }, []);
 
     // Load DB stats on mount
     useEffect(() => {
@@ -740,11 +824,17 @@ function SearchPanel() {
         }
     }, []);
 
-    const handleSearch = async () => {
-        const hasText = query.trim().length > 0;
+    // Ref to capture latest state for stable callbacks
+    const searchStateRef = useRef();
+    searchStateRef.current = { query, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
+
+    const handleSearch = useCallback(async (searchQuery) => {
+        const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
+        const hasText = searchQuery.trim().length > 0;
         const hasImages = queryImages.length > 0;
         if (!hasText && !hasImages) return;
 
+        setQuery(searchQuery);
         setIsSearching(true);
         setError(null);
 
@@ -763,7 +853,7 @@ function SearchPanel() {
             };
 
             // Text
-            if (hasText) searchOptions.query = query;
+            if (hasText) searchOptions.query = searchQuery;
 
             // Images
             if (hasImages) {
@@ -798,11 +888,7 @@ function SearchPanel() {
         } finally {
             setIsSearching(false);
         }
-    };
-
-    // Ref to capture latest state for stable callbacks
-    const searchStateRef = useRef();
-    searchStateRef.current = { query, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
+    }, []);
 
     const handleLoadMore = useCallback(async () => {
         const { query, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore } = searchStateRef.current;
@@ -862,12 +948,6 @@ function SearchPanel() {
         }
     }, []);
 
-    const handleKeyPress = (e) => {
-        if (e.key === 'Enter') {
-            handleSearch();
-        }
-    };
-
     const clearSearch = useCallback(() => {
         setResults([]);
         setQuery('');
@@ -875,6 +955,15 @@ function SearchPanel() {
         setError(null);
         setCurrentLimit(20);
         setNoMoreResults(false);
+        setResetSignal(c => c + 1);
+    }, []);
+
+    const toggleFilters = useCallback(() => {
+        setShowFilters(prev => !prev);
+    }, []);
+
+    const openSettings = useCallback(() => {
+        setShowSettings(true);
     }, []);
 
     const handleShowMeta = useCallback(async (filePath) => {
@@ -916,60 +1005,19 @@ function SearchPanel() {
 
                 {/* Unified Search Bar: Text + Images */}
                 <div className="w-full max-w-2xl">
-                    {/* Text Input Row */}
-                    <div className="flex items-center space-x-2">
-                        <div className="flex-1 relative">
-                            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-                            <input
-                                ref={inputRef}
-                                type="text"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                onKeyPress={handleKeyPress}
-                                placeholder={t('placeholder.search')}
-                                className="w-full pl-10 pr-10 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 text-base"
-                            />
-                            {(query || queryImages.length > 0) && (
-                                <button
-                                    onClick={clearSearch}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-                                >
-                                    <X size={16} />
-                                </button>
-                            )}
-                        </div>
-                        <button
-                            onClick={handleSearch}
-                            disabled={(!query.trim() && queryImages.length === 0) || isSearching}
-                            className="px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg flex items-center space-x-2 transition-colors"
-                        >
-                            {isSearching ? (
-                                <Loader2 size={18} className="animate-spin" />
-                            ) : (
-                                <Search size={18} />
-                            )}
-                        </button>
-                        {/* Filter Toggle */}
-                        <button
-                            onClick={() => setShowFilters(!showFilters)}
-                            className={`p-3 rounded-lg transition-colors ${
-                                showFilters || hasActiveFilters
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600'
-                            }`}
-                            title={t('search.filters_title')}
-                        >
-                            <SlidersHorizontal size={18} />
-                        </button>
-                        {/* Settings Button */}
-                        <button
-                            onClick={() => setShowSettings(true)}
-                            className="p-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600 transition-colors"
-                            title={t('search.settings_title')}
-                        >
-                            <Settings size={18} />
-                        </button>
-                    </div>
+                    {/* Text Input Row (isolated — typing only re-renders SearchInput) */}
+                    <SearchInput
+                        onSearch={handleSearch}
+                        onClear={clearSearch}
+                        hasImages={queryImages.length > 0}
+                        isSearching={isSearching}
+                        showFilters={showFilters}
+                        hasActiveFilters={hasActiveFilters}
+                        onToggleFilters={toggleFilters}
+                        onOpenSettings={openSettings}
+                        inputRef={inputRef}
+                        resetSignal={resetSignal}
+                    />
 
                     {/* Image Input Area (always visible) */}
                     <ImageSearchInput

@@ -85,7 +85,7 @@ async function fetchImageFromUrl(url) {
     });
 }
 
-export default function ImageSearchInput({ queryImages, onImagesChange }) {
+function ImageSearchInput({ queryImages, onImagesChange }) {
     const { t } = useLocale();
     const [isDragging, setIsDragging] = useState(false);
     const [isLoadingUrl, setIsLoadingUrl] = useState(false);
@@ -324,3 +324,5 @@ export default function ImageSearchInput({ queryImages, onImagesChange }) {
         </div>
     );
 }
+
+export default React.memo(ImageSearchInput);
