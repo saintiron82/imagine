@@ -18,7 +18,7 @@ function App() {
   const [processQueue, setProcessQueue] = useState([]); // Processing queue
   const [queueIndex, setQueueIndex] = useState(0); // Current processing index
   const queueRef = useRef({ queue: [], index: 0, processing: false });
-  const batchStartRef = useRef(null);
+  const etaRef = useRef({ startTime: null, lastFileTime: null, emaMs: null });
   const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoverProgress, setDiscoverProgress] = useState('');
@@ -156,7 +156,7 @@ function App() {
     // Start processing if not already running
     if (!isProcessing) {
       setIsProcessing(true);
-      batchStartRef.current = Date.now();
+      etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
     }
   };
 
@@ -173,19 +173,28 @@ function App() {
         setQueueIndex(0);
         setIsProcessing(false);
         setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null });
-        batchStartRef.current = null;
+        etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
       }
       return;
     }
 
     const currentFile = processQueue[queueIndex];
 
-    // ETA calculation based on average time per file
+    // ETA: exponential moving average (α=0.3) — reacts quickly to batch speed changes
     let etaMs = null;
-    if (queueIndex > 0 && batchStartRef.current) {
-      const elapsed = Date.now() - batchStartRef.current;
-      const avgPerFile = elapsed / queueIndex;
-      etaMs = (processQueue.length - queueIndex) * avgPerFile;
+    const eta = etaRef.current;
+    if (queueIndex > 0 && eta.startTime) {
+      const now = Date.now();
+      const fileDuration = now - eta.lastFileTime;
+      eta.lastFileTime = now;
+
+      const EMA_ALPHA = 0.3;
+      if (eta.emaMs === null) {
+        eta.emaMs = fileDuration; // seed with first file duration
+      } else {
+        eta.emaMs = EMA_ALPHA * fileDuration + (1 - EMA_ALPHA) * eta.emaMs;
+      }
+      etaMs = (processQueue.length - queueIndex) * eta.emaMs;
     }
 
     setProcessProgress({
@@ -211,7 +220,7 @@ function App() {
     setIsProcessing(false);
     setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
-    batchStartRef.current = null;
+    etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
     appendLog({ message: 'Processing stopped by user.', type: 'warning' });
   };
 
