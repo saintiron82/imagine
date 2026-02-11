@@ -66,7 +66,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 |------|----------|------|---------------|
 | **VV** | Visual Vector | SigLIP2가 이미지 픽셀로부터 생성하는 시각 임베딩 벡터. 이미지↔이미지 유사도 검색에 사용 | `vec_files.embedding` |
 | **MV** | Meaning Vector | Qwen3-Embedding이 MC 텍스트로부터 생성하는 의미 임베딩 벡터. 텍스트↔텍스트 유사도 검색에 사용 | `vec_text.embedding` |
-| **MC** | Meta-Context Caption | VLM(Qwen3-VL)이 이미지를 보고 생성한 캡션 텍스트와 태그. MV의 입력 소스 | `files.mc_caption`, `files.ai_tags` |
+| **MC** | Meta-Context Caption | VLM이 이미지 + 파일 메타데이터(경로, 레이어 등) 컨텍스트를 보고 생성한 캡션과 태그. "Meta-Context"는 단순 AI 캡션이 아닌 메타데이터 맥락 포함을 의미. MV의 입력 소스 | `files.mc_caption`, `files.ai_tags` |
 | **FTS** | Full-Text Search | FTS5 BM25 기반 키워드 전문 검색. 파일명, 레이어명, 태그 등 메타데이터 검색 | `files_fts` |
 | **VLM** | Vision-Language Model | 이미지를 보고 자연어를 생성하는 AI 모델 (현재: Qwen3-VL). MC를 생성하는 주체 | — |
 | **RRF** | Reciprocal Rank Fusion | VV, MV, FTS 3축 검색 결과를 하나로 결합하는 랭킹 알고리즘 | — |
@@ -105,7 +105,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 | V-axis, V축 | **VV** (Visual Vector) |
 | S-axis, S축, Semantic축 | **MV** (Meaning Vector) |
 | M-axis, M축 | **FTS** (Full-Text Search) |
-| ai_caption | **mc_caption** (MC) |
+| ai_caption | **mc_caption** (MC = Meta-Context Caption, AI 캡션뿐 아니라 파일 메타데이터 컨텍스트 포함) |
 | 시각 임베딩, visual embedding | **VV** |
 | 텍스트 임베딩, text embedding | **MV** |
 | 캡션/태그 | **MC** (VLM이 생성한 경우) |
