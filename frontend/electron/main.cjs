@@ -489,6 +489,7 @@ ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
 // IPC Handler: Run Python Pipeline (global — registered once)
 // Guard: only one pipeline at a time
 let activePipelineProc = null;
+let pipelineStoppedByUser = false;
 
 ipcMain.on('run-pipeline', (event, { filePaths }) => {
     if (activePipelineProc) {
@@ -508,8 +509,12 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     let skippedCount = 0;
     let batchDoneSent = false;
     const totalFiles = filePaths.length;
+    pipelineStoppedByUser = false;
 
-    const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], { cwd: projectRoot });
+    const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], {
+        cwd: projectRoot,
+        detached: true,  // Own process group for clean tree kill
+    });
     activePipelineProc = proc;
 
     proc.stdout.on('data', (data) => {
@@ -594,6 +599,8 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
 
     proc.on('close', (code) => {
         activePipelineProc = null;
+        const wasStopped = pipelineStoppedByUser;
+        pipelineStoppedByUser = false;
 
         event.reply('pipeline-progress', {
             processed: processedCount,
@@ -603,16 +610,18 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
         });
 
         event.reply('pipeline-log', {
-            message: code === 0
-                ? `✅ Pipeline complete! (${processedCount} processed, ${skippedCount} skipped)`
-                : `⚠️ Pipeline exited with code ${code}`,
-            type: code === 0 ? 'success' : 'error'
+            message: wasStopped
+                ? 'Pipeline stopped by user.'
+                : code === 0
+                    ? `Pipeline complete! (${processedCount} processed, ${skippedCount} skipped)`
+                    : `Pipeline exited with code ${code}`,
+            type: wasStopped ? 'warning' : code === 0 ? 'success' : 'error'
         });
 
         if (!batchDoneSent) {
             batchDoneSent = true;
             event.reply('pipeline-batch-done', {
-                success: code === 0,
+                success: code === 0 && !wasStopped,
                 processed: processedCount,
                 skipped: skippedCount,
                 total: totalFiles
@@ -626,13 +635,19 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     });
 });
 
-// IPC Handler: Stop running pipeline
-ipcMain.on('stop-pipeline', (event) => {
+// IPC Handler: Stop running pipeline (kill entire process group to avoid orphans)
+ipcMain.on('stop-pipeline', () => {
     if (activePipelineProc) {
-        activePipelineProc.kill('SIGTERM');
-        activePipelineProc = null;
-        event.reply('pipeline-log', { message: 'Pipeline stopped by user.', type: 'warning' });
-        event.reply('pipeline-batch-done', { success: false, processed: 0, skipped: 0, total: 0 });
+        pipelineStoppedByUser = true;
+        const pid = activePipelineProc.pid;
+        // Kill entire process group (detached=true gives child its own PGID=PID)
+        try {
+            process.kill(-pid, 'SIGKILL');
+        } catch {
+            // Fallback: kill just the main process
+            try { activePipelineProc.kill('SIGKILL'); } catch {}
+        }
+        // Don't send events here — proc.on('close') handles cleanup
     }
 });
 
@@ -660,7 +675,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
 
     let processedCount = 0;
 
-    const proc = spawn(finalPython, args, { cwd: projectRoot });
+    const proc = spawn(finalPython, args, { cwd: projectRoot, detached: true });
     activeDiscoverProcs.set(folderPath, proc);
 
     proc.stdout.on('data', (data) => {
@@ -903,17 +918,40 @@ app.on('window-all-closed', () => {
     }
 });
 
+// Kill active pipeline/discover process groups (prevents orphans on quit)
+function killActivePipeline() {
+    if (activePipelineProc) {
+        try {
+            process.kill(-activePipelineProc.pid, 'SIGKILL');
+        } catch {
+            try { activePipelineProc.kill('SIGKILL'); } catch {}
+        }
+        activePipelineProc = null;
+    }
+    for (const [, proc] of activeDiscoverProcs) {
+        try {
+            process.kill(-proc.pid, 'SIGKILL');
+        } catch {
+            try { proc.kill('SIGKILL'); } catch {}
+        }
+    }
+    activeDiscoverProcs.clear();
+}
+
 app.on('before-quit', () => {
+    killActivePipeline();
     killSearchDaemon();
 });
 
 // Ensure daemon cleanup on unexpected termination signals
 process.on('SIGINT', () => {
+    killActivePipeline();
     killSearchDaemon();
     app.quit();
 });
 
 process.on('SIGTERM', () => {
+    killActivePipeline();
     killSearchDaemon();
     app.quit();
 });
