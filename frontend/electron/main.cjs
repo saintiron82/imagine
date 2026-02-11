@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawn, execSync } = require('child_process');
 const isDev = process.env.NODE_ENV === 'development';
 const projectRoot = isDev
     ? path.resolve(__dirname, '../../')
@@ -22,6 +23,155 @@ function resolvePython() {
     const pythonPath = getPythonPath();
     return fs.existsSync(pythonPath) ? pythonPath : 'python3';
 }
+
+// ── Search Daemon (lazy-start, idle-kill) ────────────────────────
+// Daemon is NOT started on app launch. It spawns on first search,
+// stays alive for IDLE_TIMEOUT_MS after last search, then auto-kills.
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+let searchDaemon = null;
+let searchReady = false;
+let pendingRequests = [];
+let responseBuffer = '';
+let idleTimer = null;
+
+function getSearchScriptPath() {
+    return isDev
+        ? path.resolve(__dirname, '../../backend/api_search.py')
+        : path.join(process.resourcesPath, 'backend/api_search.py');
+}
+
+/** Kill any orphaned Imagine-Search processes from previous runs. */
+function cleanupOrphanDaemons() {
+    try {
+        if (process.platform === 'win32') {
+            // Windows: taskkill by window title or image name
+            execSync('taskkill /F /FI "WINDOWTITLE eq Imagine-Search" 2>nul', { stdio: 'ignore' });
+        } else {
+            // macOS/Linux: pkill by process name set via setproctitle
+            execSync('pkill -f "Imagine-Search" 2>/dev/null || true', { stdio: 'ignore' });
+        }
+    } catch (e) {
+        // No orphan found — that's fine
+    }
+}
+
+function resetIdleTimer() {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+        console.log(`[SearchDaemon] Idle for ${IDLE_TIMEOUT_MS / 1000}s — shutting down`);
+        killSearchDaemon();
+    }, IDLE_TIMEOUT_MS);
+}
+
+function spawnSearchDaemon() {
+    if (searchDaemon) return;
+
+    const finalPython = resolvePython();
+    const scriptPath = getSearchScriptPath();
+
+    console.log('[SearchDaemon] Starting search process (lazy)...');
+
+    searchDaemon = spawn(finalPython, [scriptPath, '--daemon'], {
+        cwd: projectRoot,
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    searchDaemon.stderr.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg) console.error('[SearchDaemon:stderr]', msg);
+    });
+
+    searchDaemon.stdout.on('data', (chunk) => {
+        responseBuffer += chunk.toString();
+        let newlineIdx;
+        while ((newlineIdx = responseBuffer.indexOf('\n')) !== -1) {
+            const line = responseBuffer.slice(0, newlineIdx).trim();
+            responseBuffer = responseBuffer.slice(newlineIdx + 1);
+            if (!line) continue;
+
+            try {
+                const parsed = JSON.parse(line);
+                // Daemon ready signal
+                if (!searchReady && parsed.status === 'ok' && parsed.mode === 'daemon') {
+                    searchReady = true;
+                    console.log(`[SearchDaemon] Ready (PID: ${parsed.pid})`);
+                    searchDaemon.stdin.write(JSON.stringify({ cmd: 'warmup' }) + '\n');
+                    continue;
+                }
+                // Warmup complete — flush queued requests
+                if (parsed.status === 'ready') {
+                    console.log(`[SearchDaemon] Models loaded (${parsed.warmup_ms}ms)`);
+                    for (const req of pendingRequests) {
+                        searchDaemon.stdin.write(JSON.stringify(req.data) + '\n');
+                    }
+                    continue;
+                }
+                // Normal search response
+                if (pendingRequests.length > 0) {
+                    const { resolve: res } = pendingRequests.shift();
+                    res(parsed);
+                    resetIdleTimer();
+                }
+            } catch (e) {
+                console.error('[SearchDaemon] JSON parse error:', e, line);
+                if (pendingRequests.length > 0) {
+                    const { resolve: res } = pendingRequests.shift();
+                    res({ success: false, error: 'JSON parse error', results: [] });
+                }
+            }
+        }
+    });
+
+    searchDaemon.on('close', (code) => {
+        console.log(`[SearchDaemon] Exited (code: ${code})`);
+        searchDaemon = null;
+        searchReady = false;
+        responseBuffer = '';
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+        const pending = pendingRequests.splice(0);
+        for (const { resolve: res } of pending) {
+            res({ success: false, error: 'Search daemon exited', results: [] });
+        }
+    });
+
+    searchDaemon.on('error', (err) => {
+        console.error('[SearchDaemon] Spawn error:', err);
+        searchDaemon = null;
+        searchReady = false;
+    });
+}
+
+function sendSearchRequest(data) {
+    return new Promise((resolve) => {
+        if (!searchDaemon) {
+            spawnSearchDaemon();
+        }
+        pendingRequests.push({ resolve, data });
+        if (searchReady && searchDaemon) {
+            searchDaemon.stdin.write(JSON.stringify(data) + '\n');
+        }
+    });
+}
+
+function killSearchDaemon() {
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    if (!searchDaemon) return;
+
+    const proc = searchDaemon;
+    searchDaemon = null;
+    searchReady = false;
+    responseBuffer = '';
+
+    try {
+        proc.stdin.write(JSON.stringify({ cmd: 'quit' }) + '\n');
+    } catch (e) { /* ignore */ }
+    setTimeout(() => {
+        try { proc.kill('SIGTERM'); } catch (e) { /* already dead */ }
+    }, 2000);
+}
+
+// ── IPC Handlers (global scope — registered once) ────────────────
 
 // IPC Handler: Open Folder Dialog
 ipcMain.handle('open-folder-dialog', async () => {
@@ -85,8 +235,6 @@ ipcMain.handle('check-metadata-exists', async (_, filePaths) => {
 
 // IPC Handler: Generate Thumbnail (single file)
 ipcMain.handle('generate-thumbnail', async (_, filePath) => {
-    const { spawn } = require('child_process');
-
     const finalPython = resolvePython();
 
     const scriptPath = isDev
@@ -124,8 +272,6 @@ ipcMain.handle('generate-thumbnail', async (_, filePath) => {
 
 // IPC Handler: Generate Thumbnails Batch
 ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
-    const { spawn } = require('child_process');
-
     const finalPython = resolvePython();
 
     const scriptPath = isDev
@@ -199,19 +345,8 @@ ipcMain.handle('fetch-image-url', async (_, url) => {
 });
 
 // IPC Handler: Triaxis Search (Vector + FTS5 + Filters)
-// Accepts either:
-//   - string query (backward compatible): searchVector("dragon")
-//   - object options: searchVector({query, limit, mode, filters})
+// Daemon spawns lazily on first search, auto-kills after idle timeout.
 ipcMain.handle('search-vector', async (_, searchOptions) => {
-    const { spawn } = require('child_process');
-
-    const finalPython = resolvePython();
-
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_search.py')
-        : path.join(process.resourcesPath, 'backend/api_search.py');
-
-    // Normalize input: string → object
     let inputData;
     if (typeof searchOptions === 'string') {
         inputData = { query: searchOptions, limit: 20, mode: 'triaxis' };
@@ -228,48 +363,11 @@ ipcMain.handle('search-vector', async (_, searchOptions) => {
         };
     }
 
-    return new Promise((resolve) => {
-        // Use stdin JSON protocol
-        const proc = spawn(finalPython, [scriptPath], {
-            cwd: projectRoot,
-            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
-        });
-
-        let output = '';
-        let error = '';
-
-        proc.stdout.on('data', (data) => output += data.toString());
-        proc.stderr.on('data', (data) => error += data.toString());
-
-        proc.on('close', (code) => {
-            if (code === 0) {
-                try {
-                    const result = JSON.parse(output);
-                    resolve(result);
-                } catch (e) {
-                    console.error('[Search JSON Parse Error]', e, output);
-                    resolve({ success: false, error: 'JSON parse error', results: [] });
-                }
-            } else {
-                console.error('[Search Execution Error]', error);
-                resolve({ success: false, error: error || 'Search failed', results: [] });
-            }
-        });
-
-        proc.on('error', (err) => {
-            console.error('[Search Spawn Error]', err);
-            resolve({ success: false, error: err.message, results: [] });
-        });
-
-        // Send search options via stdin
-        proc.stdin.write(JSON.stringify(inputData));
-        proc.stdin.end();
-    });
+    return sendSearchRequest(inputData);
 });
 
 // IPC Handler: Database Stats (archived image count)
 ipcMain.handle('get-db-stats', async () => {
-    const { spawn } = require('child_process');
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_stats.py')
@@ -299,7 +397,6 @@ ipcMain.handle('get-db-stats', async () => {
 
 // IPC Handler: Environment Check
 ipcMain.handle('check-env', async () => {
-    const { spawn } = require('child_process');
     const finalPython = resolvePython();
     const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
 
@@ -320,13 +417,11 @@ ipcMain.handle('check-env', async () => {
 
 // IPC Handler: Install Environment
 ipcMain.on('install-env', (event) => {
-    const { spawn } = require('child_process');
     const finalPython = resolvePython();
     const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
 
     event.reply('install-log', { message: '🚀 Starting installation...', type: 'info' });
 
-    // Run install + download model
     const proc = spawn(finalPython, [scriptPath, '--install', '--download-model'], { cwd: projectRoot });
 
     proc.stdout.on('data', (data) => {
@@ -348,8 +443,6 @@ ipcMain.on('install-env', (event) => {
 
 // IPC Handler: Update User Metadata
 ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
-    const { spawn } = require('child_process');
-
     const finalPython = resolvePython();
 
     const scriptPath = isDev
@@ -387,207 +480,172 @@ ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
             reject(new Error('Failed to spawn Python process: ' + err.message));
         });
 
-        // Send input data via stdin
         const inputData = JSON.stringify({ file_path: filePath, updates });
         proc.stdin.write(inputData);
         proc.stdin.end();
     });
 });
 
-function createWindow() {
-    const mainWindow = new BrowserWindow({
-        width: 1280,
-        height: 800,
-        webPreferences: {
-            preload: path.join(__dirname, 'preload.cjs'),
-            nodeIntegration: false,
-            contextIsolation: true,
-            webSecurity: false,
-            sandbox: false,
-        },
-    });
+// IPC Handler: Run Python Pipeline (global — registered once)
+ipcMain.on('run-pipeline', (event, { filePaths }) => {
+    const finalPython = resolvePython();
 
-    if (isDev) {
-        mainWindow.loadURL('http://localhost:9274');
-        mainWindow.webContents.openDevTools();
-    } else {
-        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-    }
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
+        : path.join(process.resourcesPath, 'backend/ingest_engine.py');
 
-    // IPC Handler: Run Python Pipeline
-    ipcMain.on('run-pipeline', (event, { filePaths }) => {
-        const { spawn } = require('child_process');
+    event.reply('pipeline-log', { message: `Starting batch processing: ${filePaths.length} files...`, type: 'info' });
 
-        const finalPython = resolvePython();
+    let processedCount = 0;
+    const totalFiles = filePaths.length;
 
-        const scriptPath = isDev
-            ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
-            : path.join(process.resourcesPath, 'backend/ingest_engine.py');
+    const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], { cwd: projectRoot });
 
-        event.reply('pipeline-log', { message: `Starting batch processing: ${filePaths.length} files...`, type: 'info' });
+    proc.stdout.on('data', (data) => {
+        const message = data.toString().trim();
+        if (!message) return;
 
-        // Track progress
-        let processedCount = 0;
-        const totalFiles = filePaths.length;
-
-        const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], { cwd: projectRoot });
-
-        proc.stdout.on('data', (data) => {
-            const message = data.toString().trim();
-            if (!message) return;
-
-            // Detect file processing progress
-            const processingMatch = message.match(/Processing: (.+)/);
-            const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
-            if (processingMatch) {
-                event.reply('pipeline-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: path.basename(processingMatch[1])
-                });
-            } else if (stepMatch) {
-                // Per-file step progress: STEP 1/5 Parsing
-                event.reply('pipeline-step', {
-                    step: parseInt(stepMatch[1]),
-                    totalSteps: parseInt(stepMatch[2]),
-                    stepName: stepMatch[3]
-                });
-            } else if (message.includes('[OK] Parsed successfully')) {
-                processedCount++;
-                event.reply('pipeline-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: ''
-                });
-            }
-
-            // Only forward log-worthy messages (reduces ~22 lines/file to ~4)
-            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
-            if (isLogWorthy) {
-                event.reply('pipeline-log', { message, type: 'info' });
-            }
-        });
-
-        proc.stderr.on('data', (data) => {
-            const message = data.toString().trim();
-            if (!message) return;
-            // Only forward actual errors, drop library noise (transformers/torch/tqdm warnings)
-            const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
-            if (isError) {
-                event.reply('pipeline-log', { message, type: 'error' });
-            }
-        });
-
-        proc.on('close', (code) => {
-            // Final progress update
+        const processingMatch = message.match(/Processing: (.+)/);
+        const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+        if (processingMatch) {
             event.reply('pipeline-progress', {
-                processed: totalFiles,
+                processed: processedCount,
+                total: totalFiles,
+                currentFile: path.basename(processingMatch[1])
+            });
+        } else if (stepMatch) {
+            event.reply('pipeline-step', {
+                step: parseInt(stepMatch[1]),
+                totalSteps: parseInt(stepMatch[2]),
+                stepName: stepMatch[3]
+            });
+        } else if (message.includes('[OK] Parsed successfully')) {
+            processedCount++;
+            event.reply('pipeline-progress', {
+                processed: processedCount,
                 total: totalFiles,
                 currentFile: ''
             });
+        }
 
-            event.reply('pipeline-log', {
-                message: code === 0 ? '✅ Pipeline complete!' : `⚠️ Pipeline exited with code ${code}`,
-                type: code === 0 ? 'success' : 'error'
-            });
+        const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
+        if (isLogWorthy) {
+            event.reply('pipeline-log', { message, type: 'info' });
+        }
+    });
 
-            // Dedicated completion signal for queue advancement
-            event.reply('pipeline-file-done', {
-                success: code === 0,
-                filePaths: filePaths
-            });
+    proc.stderr.on('data', (data) => {
+        const message = data.toString().trim();
+        if (!message) return;
+        const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
+        if (isError) {
+            event.reply('pipeline-log', { message, type: 'error' });
+        }
+    });
+
+    proc.on('close', (code) => {
+        event.reply('pipeline-progress', {
+            processed: totalFiles,
+            total: totalFiles,
+            currentFile: ''
         });
 
-        proc.on('error', (err) => {
-            event.reply('pipeline-log', { message: `Pipeline error: ${err.message}`, type: 'error' });
+        event.reply('pipeline-log', {
+            message: code === 0 ? '✅ Pipeline complete!' : `⚠️ Pipeline exited with code ${code}`,
+            type: code === 0 ? 'success' : 'error'
+        });
+
+        event.reply('pipeline-file-done', {
+            success: code === 0,
+            filePaths: filePaths
         });
     });
 
-    // IPC Handler: Run discover (DFS folder scan)
-    ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
-        const { spawn } = require('child_process');
+    proc.on('error', (err) => {
+        event.reply('pipeline-log', { message: `Pipeline error: ${err.message}`, type: 'error' });
+    });
+});
 
-        const finalPython = resolvePython();
+// IPC Handler: Run discover (DFS folder scan) (global — registered once)
+ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
+    const finalPython = resolvePython();
 
-        const scriptPath = isDev
-            ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
-            : path.join(process.resourcesPath, 'backend/ingest_engine.py');
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
+        : path.join(process.resourcesPath, 'backend/ingest_engine.py');
 
-        const args = [scriptPath, '--discover', folderPath];
-        if (noSkip) args.push('--no-skip');
+    const args = [scriptPath, '--discover', folderPath];
+    if (noSkip) args.push('--no-skip');
 
-        event.reply('discover-log', { message: `Scanning folder: ${folderPath}`, type: 'info' });
+    event.reply('discover-log', { message: `Scanning folder: ${folderPath}`, type: 'info' });
 
-        let processedCount = 0;
+    let processedCount = 0;
 
-        const proc = spawn(finalPython, args, { cwd: projectRoot });
+    const proc = spawn(finalPython, args, { cwd: projectRoot });
 
-        proc.stdout.on('data', (data) => {
-            const message = data.toString().trim();
-            if (!message) return;
+    proc.stdout.on('data', (data) => {
+        const message = data.toString().trim();
+        if (!message) return;
 
-            const processingMatch = message.match(/Processing: (.+)/);
-            const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
-            if (processingMatch) {
-                event.reply('discover-progress', {
-                    processed: processedCount,
-                    currentFile: path.basename(processingMatch[1]),
-                    folderPath
-                });
-            } else if (stepMatch) {
-                event.reply('discover-progress', {
-                    processed: processedCount,
-                    step: parseInt(stepMatch[1]),
-                    totalSteps: parseInt(stepMatch[2]),
-                    stepName: stepMatch[3],
-                    folderPath
-                });
-            } else if (message.includes('[OK] Parsed successfully') || message.includes('[SKIP]')) {
-                processedCount++;
-                event.reply('discover-progress', {
-                    processed: processedCount,
-                    currentFile: '',
-                    folderPath
-                });
-            }
-
-            // Only forward log-worthy messages
-            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
-            if (isLogWorthy) {
-                event.reply('discover-log', { message, type: 'info' });
-            }
-        });
-
-        proc.stderr.on('data', (data) => {
-            const message = data.toString().trim();
-            if (!message) return;
-            // Only forward actual errors, drop library noise
-            const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
-            if (isError) {
-                event.reply('discover-log', { message, type: 'error' });
-            }
-        });
-
-        proc.on('close', (code) => {
-            event.reply('discover-log', {
-                message: code === 0
-                    ? `Scan complete: ${folderPath} (${processedCount} files)`
-                    : `Scan failed: ${folderPath} (code ${code})`,
-                type: code === 0 ? 'success' : 'error'
+        const processingMatch = message.match(/Processing: (.+)/);
+        const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+        if (processingMatch) {
+            event.reply('discover-progress', {
+                processed: processedCount,
+                currentFile: path.basename(processingMatch[1]),
+                folderPath
             });
-            event.reply('discover-file-done', {
-                success: code === 0,
-                folderPath,
-                processedCount
+        } else if (stepMatch) {
+            event.reply('discover-progress', {
+                processed: processedCount,
+                step: parseInt(stepMatch[1]),
+                totalSteps: parseInt(stepMatch[2]),
+                stepName: stepMatch[3],
+                folderPath
             });
-        });
+        } else if (message.includes('[OK] Parsed successfully') || message.includes('[SKIP]')) {
+            processedCount++;
+            event.reply('discover-progress', {
+                processed: processedCount,
+                currentFile: '',
+                folderPath
+            });
+        }
 
-        proc.on('error', (err) => {
-            event.reply('discover-log', { message: `Discover error: ${err.message}`, type: 'error' });
-            event.reply('discover-file-done', { success: false, folderPath, processedCount: 0 });
+        const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
+        if (isLogWorthy) {
+            event.reply('discover-log', { message, type: 'info' });
+        }
+    });
+
+    proc.stderr.on('data', (data) => {
+        const message = data.toString().trim();
+        if (!message) return;
+        const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
+        if (isError) {
+            event.reply('discover-log', { message, type: 'error' });
+        }
+    });
+
+    proc.on('close', (code) => {
+        event.reply('discover-log', {
+            message: code === 0
+                ? `Scan complete: ${folderPath} (${processedCount} files)`
+                : `Scan failed: ${folderPath} (code ${code})`,
+            type: code === 0 ? 'success' : 'error'
+        });
+        event.reply('discover-file-done', {
+            success: code === 0,
+            folderPath,
+            processedCount
         });
     });
-}
+
+    proc.on('error', (err) => {
+        event.reply('discover-log', { message: `Discover error: ${err.message}`, type: 'error' });
+        event.reply('discover-file-done', { success: false, folderPath, processedCount: 0 });
+    });
+});
 
 // IPC Handler: Get config.yaml
 ipcMain.handle('get-config', async () => {
@@ -700,7 +758,6 @@ ipcMain.handle('update-config', async (_, key, value) => {
         const fileContents = fs.readFileSync(configPath, 'utf8');
         const config = yaml.load(fileContents);
 
-        // Update nested key (e.g., "ai_mode.override")
         const keys = key.split('.');
         let current = config;
         for (let i = 0; i < keys.length - 1; i++) {
@@ -709,7 +766,6 @@ ipcMain.handle('update-config', async (_, key, value) => {
         }
         current[keys[keys.length - 1]] = value;
 
-        // Write back to file
         const newYaml = yaml.dump(config, { lineWidth: -1 });
         fs.writeFileSync(configPath, newYaml, 'utf8');
 
@@ -720,7 +776,36 @@ ipcMain.handle('update-config', async (_, key, value) => {
     }
 });
 
+// ── Window creation (pure UI — no IPC registration) ──────────────
+
+function createWindow() {
+    const mainWindow = new BrowserWindow({
+        width: 1280,
+        height: 800,
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.cjs'),
+            nodeIntegration: false,
+            contextIsolation: true,
+            webSecurity: false,
+            sandbox: false,
+        },
+    });
+
+    if (isDev) {
+        mainWindow.loadURL('http://localhost:9274');
+        mainWindow.webContents.openDevTools();
+    } else {
+        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    }
+}
+
+// ── App lifecycle ────────────────────────────────────────────────
+
 app.whenReady().then(() => {
+    // Kill any orphaned search daemons from previous crashed sessions
+    cleanupOrphanDaemons();
+
+    // Do NOT start search daemon here — it starts lazily on first search
     createWindow();
 
     app.on('activate', () => {
@@ -734,4 +819,19 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
     }
+});
+
+app.on('before-quit', () => {
+    killSearchDaemon();
+});
+
+// Ensure daemon cleanup on unexpected termination signals
+process.on('SIGINT', () => {
+    killSearchDaemon();
+    app.quit();
+});
+
+process.on('SIGTERM', () => {
+    killSearchDaemon();
+    app.quit();
 });
