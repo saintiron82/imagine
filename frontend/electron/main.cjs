@@ -498,6 +498,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
 
     let processedCount = 0;
     let skippedCount = 0;
+    let batchDoneSent = false;
     const totalFiles = filePaths.length;
 
     const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], { cwd: projectRoot });
@@ -555,7 +556,8 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             }
 
             // [DONE] = batch complete
-            if (/\[DONE\]/.test(message)) {
+            if (/\[DONE\]/.test(message) && !batchDoneSent) {
+                batchDoneSent = true;
                 event.reply('pipeline-batch-done', {
                     processed: processedCount,
                     skipped: skippedCount,
@@ -563,9 +565,11 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
                 });
             }
 
-            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
+            const isLogWorthy = /Processing:|(\[OK\])|(\[FAIL\])|(\[DONE\])|(\[DISCOVER\])|(\[SKIP\])|(\[BATCH\])|(\[TIER)/.test(message);
             if (isLogWorthy) {
-                event.reply('pipeline-log', { message, type: 'info' });
+                // Strip logger prefix (timestamp - name - level - ) for cleaner UI
+                const cleaned = message.replace(/^\d{4}-\d{2}-\d{2}\s[\d:,.]+ - \w+ - \w+ - /, '');
+                event.reply('pipeline-log', { message: cleaned, type: 'info' });
             }
         }
     });
@@ -594,12 +598,15 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             type: code === 0 ? 'success' : 'error'
         });
 
-        event.reply('pipeline-batch-done', {
-            success: code === 0,
-            processed: processedCount,
-            skipped: skippedCount,
-            total: totalFiles
-        });
+        if (!batchDoneSent) {
+            batchDoneSent = true;
+            event.reply('pipeline-batch-done', {
+                success: code === 0,
+                processed: processedCount,
+                skipped: skippedCount,
+                total: totalFiles
+            });
+        }
     });
 
     proc.on('error', (err) => {
