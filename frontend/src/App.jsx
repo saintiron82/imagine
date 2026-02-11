@@ -13,11 +13,10 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [logs, setLogs] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processProgress, setProcessProgress] = useState({ processed: 0, total: 0, currentFile: '' });
+  const [processProgress, setProcessProgress] = useState({
+    processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0
+  });
   const [fileStep, setFileStep] = useState({ step: 0, totalSteps: 5, stepName: '' });
-  const [processQueue, setProcessQueue] = useState([]); // Processing queue
-  const [queueIndex, setQueueIndex] = useState(0); // Current processing index
-  const queueRef = useRef({ queue: [], index: 0, processing: false });
   const etaRef = useRef({ startTime: null, lastFileTime: null, emaMs: null });
   const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
   const [isDiscovering, setIsDiscovering] = useState(false);
@@ -52,12 +51,44 @@ function App() {
           setFileStep(data);
         });
 
-        // Stable file-done listener - advances queue via ref
+        // Progress updates (processed count, current file, skipped)
+        window.electron.pipeline.onProgress((data) => {
+          setProcessProgress(prev => {
+            const newProcessed = data.processed ?? prev.processed;
+            const newSkipped = data.skipped ?? prev.skipped;
+            const currentFile = data.currentFile ?? prev.currentFile;
+            return { ...prev, processed: newProcessed, skipped: newSkipped, currentFile };
+          });
+        });
+
+        // File-done: update ETA using EMA
         window.electron.pipeline.onFileDone((data) => {
-          const { processing, index, queue } = queueRef.current;
-          if (processing && index < queue.length) {
-            setQueueIndex((prev) => prev + 1);
+          const eta = etaRef.current;
+          if (eta.startTime) {
+            const now = Date.now();
+            const fileDuration = now - eta.lastFileTime;
+            eta.lastFileTime = now;
+            const ALPHA = 0.3;
+            eta.emaMs = eta.emaMs === null ? fileDuration : ALPHA * fileDuration + (1 - ALPHA) * eta.emaMs;
           }
+          setProcessProgress(prev => {
+            const newProcessed = data.processed ?? prev.processed;
+            const remaining = prev.total - (prev.skipped ?? 0) - newProcessed;
+            const etaMs = (eta.emaMs && remaining > 0) ? remaining * eta.emaMs : null;
+            return { ...prev, processed: newProcessed, etaMs };
+          });
+        });
+
+        // Batch done: reset all processing state
+        window.electron.pipeline.onBatchDone((data) => {
+          setIsProcessing(false);
+          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0 });
+          setFileStep({ step: 0, totalSteps: 5, stepName: '' });
+          etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
+          const msg = data.skipped > 0
+            ? `All done! ${data.processed} processed, ${data.skipped} skipped (total: ${data.total})`
+            : `All ${data.processed} files processed!`;
+          appendLog({ message: msg, type: 'success' });
         });
 
         // Discover event listeners (for auto-scan)
@@ -106,21 +137,14 @@ function App() {
       if (window.electron?.pipeline) {
         window.electron.pipeline.offLog();
         window.electron.pipeline.offStep();
+        window.electron.pipeline.offProgress();
         window.electron.pipeline.offFileDone();
+        window.electron.pipeline.offBatchDone();
         window.electron.pipeline.offDiscoverLog();
         window.electron.pipeline.offDiscoverFileDone();
       }
     };
   }, []);
-
-  // Keep ref in sync with state
-  useEffect(() => {
-    queueRef.current = {
-      queue: processQueue,
-      index: queueIndex,
-      processing: isProcessing,
-    };
-  }, [processQueue, queueIndex, isProcessing]);
 
   const handleFolderSelect = (path) => {
     setCurrentPath(path);
@@ -138,87 +162,31 @@ function App() {
     setSelectedFiles(new Set());
   };
 
+  // Send all selected files to backend in one batch call
   const handleProcess = () => {
-    if (selectedFiles.size === 0) return;
+    if (selectedFiles.size === 0 || isProcessing) return;
 
     const fileArray = Array.from(selectedFiles);
 
-    // Add to queue
-    setProcessQueue((prev) => [...prev, ...fileArray]);
+    setIsProcessing(true);
+    etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
+    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0 });
+    setSelectedFiles(new Set());
+
     appendLog({
-      message: `Added ${fileArray.length} files to queue (Total: ${processQueue.length + fileArray.length})`,
+      message: `Starting batch: ${fileArray.length} files`,
       type: 'info'
     });
 
-    // Clear selection after adding to queue
-    setSelectedFiles(new Set());
-
-    // Start processing if not already running
-    if (!isProcessing) {
-      setIsProcessing(true);
-      etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
+    // Single batch call — backend handles smart skip + phase pipeline
+    if (window.electron?.pipeline) {
+      window.electron.pipeline.run(fileArray);
     }
   };
 
-  // Queue processor - only dispatches pipeline.run(), no listener management
-  useEffect(() => {
-    if (!isProcessing || processQueue.length === 0 || queueIndex >= processQueue.length) {
-      if (queueIndex >= processQueue.length && processQueue.length > 0) {
-        // Queue finished
-        appendLog({
-          message: `All ${processQueue.length} files processed!`,
-          type: 'success'
-        });
-        setProcessQueue([]);
-        setQueueIndex(0);
-        setIsProcessing(false);
-        setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null });
-        etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
-      }
-      return;
-    }
-
-    const currentFile = processQueue[queueIndex];
-
-    // ETA: exponential moving average (α=0.3) — reacts quickly to batch speed changes
-    let etaMs = null;
-    const eta = etaRef.current;
-    if (queueIndex > 0 && eta.startTime) {
-      const now = Date.now();
-      const fileDuration = now - eta.lastFileTime;
-      eta.lastFileTime = now;
-
-      const EMA_ALPHA = 0.3;
-      if (eta.emaMs === null) {
-        eta.emaMs = fileDuration; // seed with first file duration
-      } else {
-        eta.emaMs = EMA_ALPHA * fileDuration + (1 - EMA_ALPHA) * eta.emaMs;
-      }
-      etaMs = (processQueue.length - queueIndex) * eta.emaMs;
-    }
-
-    setProcessProgress({
-      processed: queueIndex,
-      total: processQueue.length,
-      currentFile: currentFile,
-      etaMs,
-    });
-
-    appendLog({
-      message: `Processing [${queueIndex + 1}/${processQueue.length}]: ${currentFile}`,
-      type: 'info'
-    });
-
-    if (window.electron?.pipeline) {
-      window.electron.pipeline.run([currentFile]);
-    }
-  }, [processQueue, queueIndex, isProcessing]);
-
   const handleStopProcess = () => {
-    setProcessQueue([]);
-    setQueueIndex(0);
     setIsProcessing(false);
-    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null });
+    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0 });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
     etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
     appendLog({ message: 'Processing stopped by user.', type: 'warning' });
@@ -271,11 +239,11 @@ function App() {
               </div>
               <button
                 onClick={handleProcess}
-                disabled={selectedFiles.size === 0}
+                disabled={selectedFiles.size === 0 || isProcessing}
                 className={`
                   flex items-center space-x-1 px-4 py-1.5 rounded text-sm font-medium transition-colors
                   ${
-                    selectedFiles.size > 0
+                    selectedFiles.size > 0 && !isProcessing
                       ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/50'
                       : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                   }
@@ -344,8 +312,9 @@ function App() {
             isProcessing={isProcessing}
             isDiscovering={isDiscovering}
             discoverProgress={discoverProgress}
-            processed={queueIndex}
-            total={processQueue.length}
+            processed={processProgress.processed}
+            total={processProgress.total}
+            skipped={processProgress.skipped}
             currentFile={processProgress.currentFile}
             etaMs={processProgress.etaMs}
             fileStep={fileStep}

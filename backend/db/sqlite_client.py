@@ -456,6 +456,21 @@ class SQLiteDB:
         row = cursor.fetchone()
         return row[0] if row else None
 
+    def get_file_mode_tier(self, file_path: str) -> Optional[str]:
+        """
+        Get stored mode_tier for a file.
+
+        Args:
+            file_path: Absolute file path
+
+        Returns:
+            Tier name string (e.g. 'standard', 'pro', 'ultra'), or None if not found
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT mode_tier FROM files WHERE file_path = ?", (file_path,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
     def insert_file(
         self,
         file_path: str,

@@ -998,6 +998,31 @@ def should_skip_file(file_path: Path, db) -> bool:
     return stored_normalized == current_normalized
 
 
+def should_skip_file_enhanced(file_path: Path, db, current_tier: str) -> bool:
+    """
+    Enhanced skip: mtime comparison + tier change detection.
+    Returns True if file is unchanged AND was processed with the same tier.
+    """
+    resolved = str(file_path.resolve())
+    stored = db.get_file_modified_at(resolved)
+    if stored is None:
+        return False  # Not in DB → must process
+
+    # mtime comparison
+    current_mtime = datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+    stored_normalized = stored.replace('T', ' ')
+    current_normalized = current_mtime.replace('T', ' ')
+    if stored_normalized != current_normalized:
+        return False  # File changed → must reprocess
+
+    # Tier comparison: if DB tier differs from current, reprocess
+    stored_tier = db.get_file_mode_tier(resolved)
+    if stored_tier and stored_tier != current_tier:
+        return False  # Tier changed → must reprocess
+
+    return True  # Unchanged + same tier → skip
+
+
 def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 5):
     """
     DFS discover all supported files and process them.
@@ -1170,7 +1195,7 @@ def main():
         # v3.2: Always use Phase-based pipeline (ignore legacy batch_size)
         run_discovery(args.discover, skip_processed=not args.no_skip)
     elif args.files:
-        # v3.2: Phase-based batch pipeline for multiple files
+        # v3.4: Phase-based batch pipeline with smart skip
         import json
         try:
             file_list = json.loads(args.files)
@@ -1178,19 +1203,36 @@ def main():
 
             if total == 0:
                 logger.info("[DONE] No files to process")
-            elif total == 1:
-                # Single file: use process_file directly
-                logger.info(f"Processing: {file_list[0]}")
-                process_file(Path(file_list[0]))
-                logger.info(f"[DONE] 1 processed (total: 1)")
             else:
-                # Multiple files: Phase-based batch pipeline
-                file_infos = [(Path(fp), None, 0, []) for fp in file_list]
-                stored, parse_errors, store_errors = process_batch_phased(file_infos)
-                logger.info(
-                    f"[DONE] Batch complete: {stored} processed, "
-                    f"{parse_errors + store_errors} errors (total: {total})"
-                )
+                # Smart skip: filter unchanged files (mtime + tier check)
+                skip_db = SQLiteDB()
+                to_process = []
+                skipped = 0
+                for fp_str in file_list:
+                    fp = Path(fp_str)
+                    if not args.no_skip and should_skip_file_enhanced(fp, skip_db, tier_name):
+                        skipped += 1
+                        logger.info(f"[SKIP] {fp.name} (unchanged, tier={tier_name})")
+                    else:
+                        to_process.append((fp, None, 0, []))
+                skip_db.close()
+
+                if skipped > 0:
+                    logger.info(f"[SKIP] {skipped}/{total} files skipped (unchanged)")
+
+                if len(to_process) == 0:
+                    logger.info(f"[DONE] 0 processed, 0 errors (total: {total}, {skipped} skipped)")
+                elif len(to_process) == 1:
+                    logger.info(f"Processing: {to_process[0][0]}")
+                    process_file(to_process[0][0])
+                    logger.info(f"[DONE] 1 processed (total: {total}, {skipped} skipped)")
+                else:
+                    file_infos = to_process
+                    stored, parse_errors, store_errors = process_batch_phased(file_infos)
+                    logger.info(
+                        f"[DONE] Batch complete: {stored} processed, "
+                        f"{parse_errors + store_errors} errors (total: {total}, {skipped} skipped)"
+                    )
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON: {e}")
     elif args.file:

@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld('electron', {
         offStep: () => ipcRenderer.removeAllListeners('pipeline-step'),
         onFileDone: (callback) => ipcRenderer.on('pipeline-file-done', (_, data) => callback(data)),
         offFileDone: () => ipcRenderer.removeAllListeners('pipeline-file-done'),
+        onBatchDone: (callback) => ipcRenderer.on('pipeline-batch-done', (_, data) => callback(data)),
+        offBatchDone: () => ipcRenderer.removeAllListeners('pipeline-batch-done'),
         openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
         generateThumbnail: (filePath) => ipcRenderer.invoke('generate-thumbnail', filePath),
         generateThumbnailsBatch: (filePaths) => ipcRenderer.invoke('generate-thumbnails-batch', filePaths),

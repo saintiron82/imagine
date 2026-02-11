@@ -497,40 +497,76 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     event.reply('pipeline-log', { message: `Starting batch processing: ${filePaths.length} files...`, type: 'info' });
 
     let processedCount = 0;
+    let skippedCount = 0;
     const totalFiles = filePaths.length;
 
     const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], { cwd: projectRoot });
 
     proc.stdout.on('data', (data) => {
-        const message = data.toString().trim();
-        if (!message) return;
+        const raw = data.toString().trim();
+        if (!raw) return;
 
-        const processingMatch = message.match(/Processing: (.+)/);
-        const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
-        if (processingMatch) {
-            event.reply('pipeline-progress', {
-                processed: processedCount,
-                total: totalFiles,
-                currentFile: path.basename(processingMatch[1])
-            });
-        } else if (stepMatch) {
-            event.reply('pipeline-step', {
-                step: parseInt(stepMatch[1]),
-                totalSteps: parseInt(stepMatch[2]),
-                stepName: stepMatch[3]
-            });
-        } else if (message.includes('[OK] Parsed successfully')) {
-            processedCount++;
-            event.reply('pipeline-progress', {
-                processed: processedCount,
-                total: totalFiles,
-                currentFile: ''
-            });
-        }
+        // Handle multi-line output (batch mode emits multiple lines at once)
+        const lines = raw.split('\n');
+        for (const line of lines) {
+            const message = line.trim();
+            if (!message) continue;
 
-        const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
-        if (isLogWorthy) {
-            event.reply('pipeline-log', { message, type: 'info' });
+            const processingMatch = message.match(/Processing: (.+)/);
+            const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+
+            if (processingMatch) {
+                event.reply('pipeline-progress', {
+                    processed: processedCount,
+                    total: totalFiles,
+                    currentFile: path.basename(processingMatch[1])
+                });
+            } else if (stepMatch) {
+                event.reply('pipeline-step', {
+                    step: parseInt(stepMatch[1]),
+                    totalSteps: parseInt(stepMatch[2]),
+                    stepName: stepMatch[3]
+                });
+            }
+
+            // [OK] = file stored (Phase 4) or single-file parse success
+            if (/\[OK\]/.test(message)) {
+                processedCount++;
+                event.reply('pipeline-progress', {
+                    processed: processedCount,
+                    total: totalFiles,
+                    currentFile: ''
+                });
+                event.reply('pipeline-file-done', {
+                    processed: processedCount,
+                    skipped: skippedCount
+                });
+            }
+
+            // [SKIP] = smart skip (unchanged file)
+            if (/\[SKIP\]/.test(message) && !/files skipped/.test(message)) {
+                skippedCount++;
+                event.reply('pipeline-progress', {
+                    processed: processedCount,
+                    total: totalFiles,
+                    currentFile: '',
+                    skipped: skippedCount
+                });
+            }
+
+            // [DONE] = batch complete
+            if (/\[DONE\]/.test(message)) {
+                event.reply('pipeline-batch-done', {
+                    processed: processedCount,
+                    skipped: skippedCount,
+                    total: totalFiles
+                });
+            }
+
+            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
+            if (isLogWorthy) {
+                event.reply('pipeline-log', { message, type: 'info' });
+            }
         }
     });
 
@@ -545,19 +581,24 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
 
     proc.on('close', (code) => {
         event.reply('pipeline-progress', {
-            processed: totalFiles,
+            processed: processedCount,
             total: totalFiles,
-            currentFile: ''
+            currentFile: '',
+            skipped: skippedCount
         });
 
         event.reply('pipeline-log', {
-            message: code === 0 ? '✅ Pipeline complete!' : `⚠️ Pipeline exited with code ${code}`,
+            message: code === 0
+                ? `✅ Pipeline complete! (${processedCount} processed, ${skippedCount} skipped)`
+                : `⚠️ Pipeline exited with code ${code}`,
             type: code === 0 ? 'success' : 'error'
         });
 
-        event.reply('pipeline-file-done', {
+        event.reply('pipeline-batch-done', {
             success: code === 0,
-            filePaths: filePaths
+            processed: processedCount,
+            skipped: skippedCount,
+            total: totalFiles
         });
     });
 

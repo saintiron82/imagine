@@ -13,7 +13,7 @@ function formatEta(ms) {
     return `${hr}h ${remMin}m`;
 }
 
-const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, currentFile = '', etaMs = null, fileStep = {}, onStop }) => {
+const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null, fileStep = {}, onStop }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
     const [aiTier, setAiTier] = useState(null);
@@ -90,7 +90,9 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
 
                         {/* Queue progress (outer) */}
                         <div className="flex items-center space-x-1.5">
-                            <span className="text-blue-300 font-medium">{processed}/{total}</span>
+                            <span className="text-blue-300 font-medium">
+                                {processed}/{total}{skipped > 0 && <span className="text-gray-500 ml-0.5">({skipped} skip)</span>}
+                            </span>
                             <div className="w-24 bg-gray-700 rounded-full h-1.5 overflow-hidden">
                                 <div
                                     className="h-full bg-blue-400 transition-all duration-300 rounded-full"
