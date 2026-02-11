@@ -5,6 +5,10 @@ Handles:
 1. File detection (CLI or Watchdog)
 2. Parser selection (Factory Pattern)
 3. Execution and Result Logging
+
+v3.2: Phase-based batch pipeline for true model-level batch inference.
+      Phase 1: Parse (CPU parallel) → Phase 2: VLM (sequential, model hot)
+      → Phase 3: Embed (true batch forward) → Phase 4: Store (sequential DB)
 """
 
 import argparse
@@ -12,7 +16,9 @@ import logging
 import sys
 import time
 import io
+import json as _json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -36,7 +42,8 @@ from backend.parser.base_parser import BaseParser
 from backend.parser.psd_parser import PSDParser
 from backend.parser.image_parser import ImageParser
 from backend.parser.schema import AssetMeta
-from backend.utils.auto_batch_calibrator import AutoBatchCalibrator
+# Legacy: AutoBatchCalibrator kept for reference but no longer used in main pipeline
+# from backend.utils.auto_batch_calibrator import AutoBatchCalibrator
 
 
 # Configure Logging
@@ -50,6 +57,21 @@ logging.basicConfig(
 logger = logging.getLogger("IngestEngine")
 
 SUPPORTED_EXTENSIONS = {'.psd', '.png', '.jpg', '.jpeg'}
+
+
+@dataclass
+class ParsedFile:
+    """Intermediate state for Phase-based batch pipeline."""
+    file_path: Path
+    folder_path: str = None
+    folder_depth: int = 0
+    folder_tags: list = field(default_factory=list)
+    meta: "AssetMeta" = None
+    parser: "BaseParser" = None
+    thumb_path: Path = None
+    thumb_image_rgb: "Image.Image" = None  # Pre-loaded for Phase 2/3
+    mc_raw: dict = None
+    error: str = None
 
 
 class ParserFactory:
@@ -416,6 +438,504 @@ def process_file(
         logger.error(f"[FAIL] Parsing failed: {result.errors}")
 
 
+# ── Phase-based Batch Pipeline (v3.2) ───────────────────────────────────
+
+def _resolve_thumb_path(meta) -> Optional[Path]:
+    """Extract thumbnail path from AssetMeta."""
+    if not meta.thumbnail_url:
+        return None
+    if meta.thumbnail_url.startswith('file:///'):
+        import urllib.parse
+        p = urllib.parse.unquote(meta.thumbnail_url[8:])
+        return Path(p)
+    thumb_path = Path(meta.thumbnail_url)
+    if not thumb_path.is_absolute():
+        thumb_path = PROJECT_ROOT / thumb_path
+    return thumb_path
+
+
+def _load_and_composite_thumbnail(thumb_path: Path) -> Optional["Image.Image"]:
+    """Load thumbnail and composite RGBA to RGB."""
+    from PIL import Image
+    thumb_img = Image.open(thumb_path)
+    if thumb_img.mode == 'RGBA':
+        from backend.utils.config import get_config
+        cfg = get_config()
+        bg_color = cfg.get('thumbnail.index_composite_bg', '#FFFFFF')
+        bg_rgb = tuple(int(bg_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+        background = Image.new('RGB', thumb_img.size, bg_rgb)
+        background.paste(thumb_img, mask=thumb_img.split()[-1])
+        return background
+    return thumb_img.convert("RGB")
+
+
+def _build_mc_raw(meta) -> dict:
+    """Build MC.raw context dict for VLM Stage 2."""
+    return {
+        "file_name": meta.file_name,
+        "folder_path": meta.folder_path or "",
+        "layer_names": meta.semantic_tags[:200] if meta.semantic_tags else [],
+        "used_fonts": meta.used_fonts[:5] if meta.used_fonts else [],
+        "ocr_text": "",
+        "text_content": meta.text_content[:3] if meta.text_content else [],
+    }
+
+
+def _set_tier_metadata(meta):
+    """Set tier-related metadata fields on AssetMeta."""
+    from backend.utils.config import get_config
+    from backend.utils.tier_config import get_active_tier
+
+    cfg = get_config()
+    tier_name, tier_config = get_active_tier()
+
+    meta.mode_tier = tier_name
+    meta.caption_model = tier_config.get("vlm", {}).get("model", "")
+    meta.text_embed_model = tier_config.get("text_embed", {}).get("model", "")
+    meta.runtime_version = cfg.get("runtime.ollama_version", "")
+    meta.preprocess_params = tier_config.get("preprocess", {})
+    meta.embedding_model = tier_config.get("visual", {}).get("model") or cfg.get(
+        "embedding.visual.model", "google/siglip2-so400m-patch14-384"
+    )
+    meta.embedding_version = 1
+
+
+def _normalize_paths(meta, file_path: Path):
+    """Normalize storage_root and relative_path."""
+    normalized = str(file_path).replace('\\', '/')
+    for marker in ['/assets/', '/Assets/', '/resources/', '/Resources/']:
+        idx = normalized.find(marker)
+        if idx != -1:
+            meta.storage_root = normalized[:idx]
+            meta.relative_path = normalized[idx:].lstrip('/')
+            return
+    parts = normalized.rsplit('/', 1)
+    meta.storage_root = parts[0] if len(parts) > 1 else ''
+    meta.relative_path = parts[-1]
+
+
+def _apply_vision_result(meta, vision_result: dict):
+    """Apply VLM result fields to AssetMeta."""
+    meta.mc_caption = vision_result.get('caption', '')
+    meta.ai_tags = vision_result.get('tags', [])
+    meta.ocr_text = vision_result.get('ocr', '') or vision_result.get('text_content', '')
+    meta.dominant_color = vision_result.get('color', '') or vision_result.get('color_palette', '')
+    meta.ai_style = vision_result.get('style', '') or vision_result.get('art_style', '')
+    # Structured fields
+    meta.image_type = vision_result.get('image_type')
+    meta.art_style = vision_result.get('art_style')
+    meta.color_palette = vision_result.get('color_palette')
+    meta.scene_type = vision_result.get('scene_type')
+    meta.time_of_day = vision_result.get('time_of_day')
+    meta.weather = vision_result.get('weather')
+    meta.character_type = vision_result.get('character_type')
+    meta.item_type = vision_result.get('item_type')
+    meta.ui_type = vision_result.get('ui_type')
+    meta.structured_meta = _json.dumps(vision_result, ensure_ascii=False)
+
+
+def _parse_single_file(file_info: tuple) -> ParsedFile:
+    """Parse a single file (CPU-bound). Used by Phase 1 ThreadPool."""
+    fp, folder, depth, tags = file_info
+
+    pf = ParsedFile(file_path=fp, folder_path=folder, folder_depth=depth, folder_tags=tags or [])
+
+    if not fp.exists():
+        pf.error = f"File not found: {fp}"
+        return pf
+
+    parser = ParserFactory.get_parser(fp)
+    if not parser:
+        pf.error = f"No parser found for: {fp}"
+        return pf
+
+    try:
+        result = parser.parse(fp)
+    except Exception as e:
+        pf.error = f"Parse error: {e}"
+        return pf
+
+    if not result.success:
+        pf.error = f"Parsing failed: {result.errors}"
+        return pf
+
+    meta = result.asset_meta
+    pf.meta = meta
+    pf.parser = parser
+
+    # Inject folder metadata
+    if folder is not None:
+        meta.folder_path = folder
+        meta.folder_depth = depth
+        meta.folder_tags = tags or []
+    else:
+        parent = fp.parent
+        if parent.name and parent.name not in (".", ""):
+            meta.folder_path = parent.name
+            meta.folder_depth = 0
+            meta.folder_tags = [parent.name]
+
+    # Resolve thumbnail
+    pf.thumb_path = _resolve_thumb_path(meta)
+
+    # Load thumbnail and compute dHash (CPU work)
+    if pf.thumb_path and pf.thumb_path.exists():
+        try:
+            pf.thumb_image_rgb = _load_and_composite_thumbnail(pf.thumb_path)
+        except Exception as e:
+            logger.warning(f"Thumbnail load failed for {fp.name}: {e}")
+
+        # dHash (CPU, independent of vision)
+        if pf.thumb_image_rgb is not None:
+            try:
+                from backend.utils.dhash import dhash64
+                hash_val = dhash64(pf.thumb_image_rgb)
+                if hash_val >= 2**63:
+                    hash_val -= 2**64
+                meta.perceptual_hash = hash_val
+            except Exception as e:
+                logger.warning(f"dHash failed for {fp.name}: {e}")
+
+    # Build MC.raw context
+    pf.mc_raw = _build_mc_raw(meta)
+
+    # Set tier metadata
+    _set_tier_metadata(meta)
+
+    # Normalize paths
+    _normalize_paths(meta, fp)
+
+    return pf
+
+
+def phase1_parse_all(
+    file_infos: List[tuple], max_workers: int = 4
+) -> List[ParsedFile]:
+    """Phase 1: CPU-parallel parsing, thumbnail loading, dHash."""
+    t0 = time.perf_counter()
+    logger.info(f"STEP 1/4 Parsing ({len(file_infos)} files, workers={max_workers})")
+
+    if max_workers > 1 and len(file_infos) > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(_parse_single_file, file_infos))
+    else:
+        results = [_parse_single_file(fi) for fi in file_infos]
+
+    ok = sum(1 for r in results if r.error is None)
+    fail = sum(1 for r in results if r.error is not None)
+    elapsed = time.perf_counter() - t0
+    logger.info(f"STEP 1/4 completed in {elapsed:.1f}s ({ok} ok, {fail} errors)")
+
+    for pf in results:
+        if pf.error:
+            logger.warning(f"  [FAIL] {pf.file_path.name}: {pf.error}")
+
+    return results
+
+
+def phase2_vision_all(
+    parsed_files: List[ParsedFile], progress_callback=None
+) -> None:
+    """Phase 2: VLM sequential analysis with model kept hot."""
+    # Filter files that have thumbnails
+    vision_items = []
+    vision_indices = []
+    for idx, pf in enumerate(parsed_files):
+        if pf.error is None and pf.thumb_image_rgb is not None:
+            vision_items.append((pf.thumb_image_rgb, pf.mc_raw))
+            vision_indices.append(idx)
+
+    if not vision_items:
+        logger.info("STEP 2/4 AI Vision — no images to analyze")
+        return
+
+    t0 = time.perf_counter()
+    logger.info(f"STEP 2/4 AI Vision ({len(vision_items)} images)")
+
+    from backend.vision.vision_factory import get_vision_analyzer
+    analyzer = get_vision_analyzer()
+
+    def _progress(i, total, result):
+        pf = parsed_files[vision_indices[i]]
+        logger.info(f"  [{i+1}/{total}] {pf.file_path.name} → {result.get('image_type', '?')}")
+        if progress_callback:
+            progress_callback(i, total, result)
+
+    if hasattr(analyzer, 'classify_and_analyze_sequence'):
+        vision_results = analyzer.classify_and_analyze_sequence(
+            vision_items, progress_callback=_progress
+        )
+    else:
+        # Legacy fallback
+        vision_results = []
+        for i, (img, ctx) in enumerate(vision_items):
+            try:
+                r = analyzer.classify_and_analyze(img, context=ctx)
+            except Exception:
+                r = {"caption": "", "tags": [], "image_type": "other"}
+            vision_results.append(r)
+            _progress(i, len(vision_items), r)
+
+    # Apply results back to ParsedFile.meta
+    for i, result in enumerate(vision_results):
+        pf = parsed_files[vision_indices[i]]
+        _apply_vision_result(pf.meta, result)
+        logger.info(
+            f"   MC Caption: {(pf.meta.mc_caption or '')[:80]}"
+            + ("..." if len(pf.meta.mc_caption or '') > 80 else "")
+        )
+
+    elapsed = time.perf_counter() - t0
+    logger.info(f"STEP 2/4 completed in {elapsed:.1f}s")
+
+
+def phase3_embed_all(
+    parsed_files: List[ParsedFile], vv_batch: int = None, mv_batch: int = None
+) -> List[tuple]:
+    """
+    Phase 3: True batch embedding (VV + MV).
+
+    vv_batch=None uses adaptive batch sizing (auto-discovery inside encoder).
+    vv_batch=int forces a specific batch size.
+
+    Returns list of (vv_vec, mv_vec, mv_text) tuples aligned with parsed_files.
+    Failed entries get zero vectors.
+    """
+    import numpy as np
+
+    t0 = time.perf_counter()
+
+    # Collect valid files for embedding
+    valid_indices = [i for i, pf in enumerate(parsed_files) if pf.error is None]
+    total = len(parsed_files)
+
+    logger.info(f"STEP 3/4 Embedding ({len(valid_indices)} files)")
+
+    # Initialize result list with zero placeholders
+    from backend.utils.tier_config import get_active_tier
+    _, tier_config = get_active_tier()
+    vv_dims = tier_config.get("visual", {}).get("dimensions", 768)
+
+    from backend.utils.config import get_config
+    cfg = get_config()
+    text_enabled = cfg.get("embedding.text.enabled", False)
+
+    # Default zeros
+    results = [(
+        np.zeros(vv_dims, dtype=np.float32),
+        None,
+        None
+    ) for _ in range(total)]
+
+    # === VV: SigLIP2 batch encoding (adaptive) ===
+    vv_images = []
+    vv_indices = []
+    for i in valid_indices:
+        pf = parsed_files[i]
+        if pf.thumb_image_rgb is not None:
+            vv_images.append(pf.thumb_image_rgb)
+            vv_indices.append(i)
+
+    if vv_images:
+        from backend.vector.siglip2_encoder import SigLIP2Encoder
+        global _global_encoder
+        if '_global_encoder' not in globals() or _global_encoder is None:
+            _global_encoder = SigLIP2Encoder()
+            logger.info(f"SigLIP2 encoder loaded: {_global_encoder.model_name}")
+
+        # v3.3: Encoder handles adaptive batch sizing internally
+        # (probe → scale-up → fine-tune → OOM recovery)
+        vv_vectors = _global_encoder.encode_image_batch(
+            vv_images, batch_size=vv_batch
+        )
+
+        for j, vec in enumerate(vv_vectors):
+            idx = vv_indices[j]
+            vv, mv, mv_text = results[idx]
+            results[idx] = (vec, mv, mv_text)
+
+        logger.info(f"  VV: {len(vv_images)} images encoded")
+
+    # === MV: Text embedding batch encoding ===
+    if text_enabled:
+        from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
+
+        global _global_text_provider
+        if '_global_text_provider' not in globals() or _global_text_provider is None:
+            _global_text_provider = get_text_embedding_provider()
+
+        mv_texts = []
+        mv_indices = []
+        for i in valid_indices:
+            pf = parsed_files[i]
+            meta = pf.meta
+            facts = {
+                "image_type": meta.image_type,
+                "scene_type": meta.scene_type,
+                "art_style": meta.art_style,
+                "fonts": ", ".join(meta.used_fonts[:5]) if meta.used_fonts else None,
+                "path": meta.relative_path or meta.folder_path,
+            }
+            doc_text = build_document_text(meta.mc_caption, meta.ai_tags, facts=facts)
+            if doc_text:
+                mv_texts.append(doc_text)
+                mv_indices.append(i)
+
+        if mv_texts:
+            if mv_batch is None:
+                mv_batch = 16  # Text embedding is lightweight, safe default
+
+            try:
+                mv_vectors = []
+                if hasattr(_global_text_provider, 'encode_batch'):
+                    # Sub-batch MV encoding
+                    for sb_start in range(0, len(mv_texts), mv_batch):
+                        sub = mv_texts[sb_start:sb_start + mv_batch]
+                        mv_vectors.extend(_global_text_provider.encode_batch(sub))
+                else:
+                    mv_vectors = [_global_text_provider.encode(t) for t in mv_texts]
+
+                for j, vec in enumerate(mv_vectors):
+                    idx = mv_indices[j]
+                    vv, _, _ = results[idx]
+                    results[idx] = (vv, vec, mv_texts[j])
+
+                logger.info(f"  MV batch: {len(mv_vectors)} texts encoded (batch_size={mv_batch})")
+            except Exception as e:
+                logger.warning(f"  MV batch encoding failed: {e}")
+                # Fallback: individual encoding
+                for j, text in enumerate(mv_texts):
+                    try:
+                        vec = _global_text_provider.encode(text)
+                        idx = mv_indices[j]
+                        vv, _, _ = results[idx]
+                        results[idx] = (vv, vec, text)
+                    except Exception:
+                        pass
+
+    elapsed = time.perf_counter() - t0
+    logger.info(f"STEP 3/4 completed in {elapsed:.1f}s")
+
+    return results
+
+
+def phase4_store_all(
+    parsed_files: List[ParsedFile], embeddings: List[tuple], progress_callback=None
+) -> Tuple[int, int]:
+    """Phase 4: Sequential DB storage."""
+    import numpy as np
+
+    t0 = time.perf_counter()
+    logger.info(f"STEP 4/4 Storing ({len(parsed_files)} files)")
+
+    from backend.db.sqlite_client import SQLiteDB
+    global _global_sqlite_db
+    if '_global_sqlite_db' not in globals() or _global_sqlite_db is None:
+        _global_sqlite_db = SQLiteDB()
+        logger.info("SQLite database initialized")
+
+    stored, errors = 0, 0
+
+    for i, pf in enumerate(parsed_files):
+        if pf.error is not None:
+            continue
+
+        vv_vec, mv_vec, mv_text = embeddings[i]
+
+        try:
+            # Save metadata JSON
+            pf.parser._save_json(pf.meta, pf.file_path)
+
+            # Insert file + VV embedding
+            file_id = _global_sqlite_db.insert_file(
+                file_path=str(pf.file_path),
+                metadata=pf.meta.model_dump(),
+                embedding=vv_vec
+            )
+
+            # Insert MV embedding
+            if mv_vec is not None and np.any(mv_vec):
+                mv_list = mv_vec.astype(np.float32).tolist()
+                cursor = _global_sqlite_db.conn.cursor()
+                cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (file_id,))
+                cursor.execute(
+                    "INSERT INTO vec_text (file_id, embedding) VALUES (?, ?)",
+                    (file_id, _json.dumps(mv_list))
+                )
+                _global_sqlite_db.conn.commit()
+                logger.debug(f"  MV stored for {pf.file_path.name} ({len(mv_vec)}-dim)")
+
+            stored += 1
+            logger.info(f"  [OK] {pf.file_path.name}")
+
+            if progress_callback:
+                progress_callback(i, len(parsed_files), pf)
+
+        except Exception as e:
+            errors += 1
+            logger.error(f"  [FAIL] {pf.file_path.name}: {e}")
+
+    elapsed = time.perf_counter() - t0
+    logger.info(f"STEP 4/4 completed in {elapsed:.1f}s ({stored} stored, {errors} errors)")
+
+    return stored, errors
+
+
+def process_batch_phased(
+    file_infos: List[tuple],
+    vv_batch: int = None,
+    mv_batch: int = None,
+    parse_workers: int = 4,
+    progress_callback=None
+) -> Tuple[int, int, int]:
+    """
+    Phase-based batch pipeline orchestrator.
+
+    Args:
+        file_infos: List of (file_path, folder, depth, tags) tuples
+        vv_batch: SigLIP2 sub-batch size (None=auto-calibrate)
+        mv_batch: Text embedding sub-batch size (None=default 16)
+        parse_workers: Phase 1 CPU thread count
+        progress_callback: Optional fn(phase, idx, total, detail)
+
+    Returns:
+        (stored, skipped_or_failed, errors) counts
+    """
+    t_total = time.perf_counter()
+    total = len(file_infos)
+    logger.info(f"[BATCH] Phase-based pipeline: {total} files")
+
+    # Phase 1: Parse
+    parsed = phase1_parse_all(file_infos, max_workers=parse_workers)
+
+    # Phase 2: Vision
+    phase2_vision_all(parsed, progress_callback=progress_callback)
+
+    # Phase 3: Embed
+    embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch)
+
+    # Phase 4: Store
+    stored, errors = phase4_store_all(parsed, embeddings, progress_callback=progress_callback)
+
+    # Unload VLM to free VRAM
+    try:
+        from backend.vision.vision_factory import get_vision_analyzer
+        analyzer = get_vision_analyzer()
+        if hasattr(analyzer, 'unload_model'):
+            analyzer.unload_model()
+    except Exception:
+        pass
+
+    parse_errors = sum(1 for pf in parsed if pf.error is not None)
+    elapsed = time.perf_counter() - t_total
+    logger.info(
+        f"[DONE] {stored} processed, {parse_errors} parse-errors, "
+        f"{errors} store-errors (total: {total}, {elapsed:.1f}s)"
+    )
+
+    return stored, parse_errors, errors
+
+
 def discover_files(root_dir: Path) -> List[Tuple[Path, str, int, List[str]]]:
     """
     DFS recursive discovery of supported image files.
@@ -475,17 +995,19 @@ def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 
     """
     DFS discover all supported files and process them.
 
+    v3.2: Uses Phase-based batch pipeline for 2+ files.
+
     Args:
         root_dir: Root directory to scan
         skip_processed: Skip files unchanged since last processing
-        batch_size: Number of files to process concurrently (default: 5)
+        batch_size: (Legacy, ignored) Batch size parameter kept for API compat
     """
     root_path = Path(root_dir).resolve()
     if not root_path.exists() or not root_path.is_dir():
         logger.error(f"Directory not found: {root_dir}")
         return
 
-    # Phase 1: DFS discovery
+    # DFS discovery
     logger.info(f"[DISCOVER] Scanning: {root_path}")
     discovered = discover_files(root_path)
     total = len(discovered)
@@ -494,7 +1016,7 @@ def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 
     if total == 0:
         return
 
-    # Phase 2: Filter files (smart skip)
+    # Filter files (smart skip)
     db = None
     if skip_processed:
         try:
@@ -503,7 +1025,6 @@ def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 
         except Exception as e:
             logger.warning(f"Cannot open DB for smart skip: {e}")
 
-    # Filter out skipped files
     to_process = []
     skipped = 0
     for fp, folder, depth, tags in discovered:
@@ -516,47 +1037,25 @@ def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 
     if skipped > 0:
         logger.info(f"[SKIP] {skipped} files unchanged, {len(to_process)} to process")
 
-    # Phase 3: Batch processing with ThreadPoolExecutor
-    def process_wrapper(args):
-        """Wrapper for parallel processing"""
-        idx, fp, folder, depth, tags = args
-        logger.info(f"[{idx}/{len(to_process)}] Processing: {fp.name}")
+    if not to_process:
+        logger.info("[DONE] No files to process")
+        return
+
+    # v3.2: Phase-based batch pipeline
+    if len(to_process) > 1:
+        stored, parse_errors, store_errors = process_batch_phased(to_process)
+        logger.info(f"[DONE] {stored} stored, {skipped} skipped, "
+                     f"{parse_errors + store_errors} errors (total: {total})")
+    else:
+        # Single file: use original process_file for simplicity
+        fp, folder, depth, tags = to_process[0]
+        logger.info(f"Processing: {fp.name}")
         try:
             process_file(fp, folder_path=folder, folder_depth=depth, folder_tags=tags)
-            return ('success', fp.name)
+            logger.info(f"[DONE] 1 processed, {skipped} skipped (total: {total})")
         except Exception as e:
             logger.error(f"[ERROR] {fp.name}: {e}")
-            return ('error', fp.name, str(e))
-
-    processed, errors = 0, 0
-
-    if batch_size > 1 and len(to_process) > 1:
-        logger.info(f"[BATCH] Processing {len(to_process)} files with batch_size={batch_size}")
-
-        with ThreadPoolExecutor(max_workers=batch_size) as executor:
-            # Submit all tasks
-            futures = []
-            for idx, (fp, folder, depth, tags) in enumerate(to_process, 1):
-                future = executor.submit(process_wrapper, (idx, fp, folder, depth, tags))
-                futures.append(future)
-
-            # Collect results
-            for future in as_completed(futures):
-                result = future.result()
-                if result[0] == 'success':
-                    processed += 1
-                elif result[0] == 'error':
-                    errors += 1
-    else:
-        # Sequential processing for batch_size=1
-        for idx, (fp, folder, depth, tags) in enumerate(to_process, 1):
-            result = process_wrapper((idx, fp, folder, depth, tags))
-            if result[0] == 'success':
-                processed += 1
-            elif result[0] == 'error':
-                errors += 1
-
-    logger.info(f"[DONE] {processed} processed, {skipped} skipped, {errors} errors (total: {total})")
+            logger.info(f"[DONE] 0 processed, {skipped} skipped, 1 error (total: {total})")
 
 
 def start_watcher(path: str):
@@ -603,15 +1102,11 @@ def main():
     parser.add_argument("--watch", help="Watch a directory for changes (includes initial scan)")
     parser.add_argument("--discover", help="DFS scan directory and process all supported images")
     parser.add_argument("--no-skip", action="store_true", help="Disable smart skip (reprocess all files)")
+    # v3.2: --batch-size kept for backward compat but ignored (Phase pipeline handles batching)
     parser.add_argument("--batch-size", type=parse_batch_size, default='adaptive',
-                       help="Batch size: integer (e.g. 5), 'auto' (use cached optimal), or 'adaptive' (find optimal at runtime, default)")
+                       help="(Legacy, ignored) Batch size parameter")
 
     args = parser.parse_args()
-
-    # Check batch_processing.enabled config
-    from backend.utils.config import get_config
-    config = get_config()
-    batch_enabled = config.get("batch_processing", {}).get("enabled", True)
 
     # ===== TIER COMPATIBILITY CHECK =====
     from backend.utils.tier_config import get_active_tier
@@ -623,7 +1118,6 @@ def main():
 
     logger.info(f"[TIER CHECK] Current tier: {tier_name}, Expected dimension: {expected_dimension}")
 
-    # Check DB compatibility
     db = SQLiteDB()
     compat = db.check_tier_compatibility(tier_name, expected_dimension)
 
@@ -640,192 +1134,56 @@ def main():
         logger.error(f"  Reason: {compat['reason']}")
         logger.error("")
 
-        # Show user prompt if available
         if compat['user_prompt']:
             logger.error("Details:")
             for line in compat['user_prompt'].split('\n'):
                 logger.error(f"  {line}")
             logger.error("")
 
-        # Show migration steps
         logger.error("Migration Steps:")
         steps = get_migration_steps(compat['db_tier'], compat['current_tier'])
         for step in steps:
             logger.error(f"  {step}")
         logger.error("")
 
-        # Alternative: revert config
         logger.error("OR revert config.yaml to previous tier:")
         logger.error(f"  ai_mode.override: {compat['db_tier']}")
         logger.error("=" * 60)
 
-        # Block execution
-        logger.error("\n⛔ Execution blocked. Please migrate tier or revert config.")
+        logger.error("\nExecution blocked. Please migrate tier or revert config.")
         sys.exit(1)
 
-    logger.info(f"[TIER CHECK] ✅ Compatibility OK")
+    logger.info(f"[TIER CHECK] Compatibility OK")
     logger.info(f"  DB Tier: {compat['db_tier'] or 'empty'}")
     logger.info(f"  Current Tier: {compat['current_tier']}")
     logger.info(f"  Action: {compat['action']}")
     db.close()
 
-    if not batch_enabled and args.batch_size in ['auto', 'adaptive']:
-        logger.info("[CONFIG] Batch processing disabled in config.yaml")
-        logger.info("[CONFIG] Forcing batch_size=1 (sequential processing)")
-        args.batch_size = 1
-
-    # AUTO/ADAPTIVE batch size
-    if args.batch_size in ['auto', 'adaptive']:
-        from backend.utils.tier_config import get_active_tier
-        from backend.utils.platform_detector import get_optimal_batch_size, get_platform_info
-        import platform as platform_module
-
-        tier_name, _ = get_active_tier()
-
-        if args.batch_size == 'auto':
-            # Use cached optimal batch size
-            logger.info("[AUTO] Using cached optimal batch size")
-
-            cached = AutoBatchCalibrator.load_latest_calibration(tier_name)
-            if cached:
-                logger.info(f"[AUTO] Cached batch size for {tier_name}: {cached['recommended']}")
-                args.batch_size = cached['recommended']
-            else:
-                # Fallback to platform detector
-                logger.info("[AUTO] No cache found, using platform detector")
-                backend = 'auto'  # Let platform detector decide
-                args.batch_size = get_optimal_batch_size(backend, tier_name)
-                logger.info(f"[AUTO] Platform-recommended batch size: {args.batch_size}")
-
-        elif args.batch_size == 'adaptive':
-            # Adaptive mode: Start with 1, increase gradually
-            logger.info("[ADAPTIVE] Adaptive batch sizing enabled")
-            logger.info("[ADAPTIVE] Will start with batch_size=1 and increase during processing")
-
-            platform_info = get_platform_info()
-            logger.info(f"[ADAPTIVE] Platform: {platform_info['os']}, Tier: {tier_name}")
-
-            # Note: Actual adaptive logic will be applied during processing
-            args.batch_size = 'adaptive'  # Keep as string for later processing
-
     if args.discover:
-        if args.batch_size == 'adaptive':
-            # Adaptive batch processing
-            from backend.utils.adaptive_batch_processor import AdaptiveBatchProcessor
-            logger.info("[ADAPTIVE] Using adaptive batch processor")
-
-            # Discover files first
-            root_path = Path(args.discover).resolve()
-            discovered = discover_files(root_path)
-            total = len(discovered)
-            logger.info(f"[DISCOVER] Found {total} supported files")
-
-            if total == 0:
-                return
-
-            # Filter files (smart skip)
-            db = None
-            if not args.no_skip:
-                try:
-                    from backend.db.sqlite_client import SQLiteDB
-                    db = SQLiteDB()
-                except Exception as e:
-                    logger.warning(f"Cannot open DB for smart skip: {e}")
-
-            to_process = []
-            skipped = 0
-            for fp, folder, depth, tags in discovered:
-                if not args.no_skip and db and should_skip_file(fp, db):
-                    skipped += 1
-                    logger.debug(f"[SKIP] {fp.name} (unchanged)")
-                else:
-                    to_process.append((fp, folder, depth, tags))
-
-            if skipped > 0:
-                logger.info(f"[SKIP] {skipped} files unchanged, {len(to_process)} to process")
-
-            if len(to_process) == 0:
-                logger.info("[DONE] No files to process")
-                return
-
-            # Adaptive processing
-            def process_single(args_tuple):
-                fp, folder, depth, tags = args_tuple
-                process_file(fp, folder_path=folder, folder_depth=depth, folder_tags=tags)
-                return fp
-
-            processor = AdaptiveBatchProcessor(
-                process_func=process_single,
-                platform=platform_module.system(),
-                tier=tier_name
-            )
-
-            results, optimal_batch_size = processor.process_adaptive(to_process, use_cache=True)
-
-            logger.info(f"[ADAPTIVE] Optimal batch size found: {optimal_batch_size}")
-            logger.info(f"\n{processor.get_metrics_summary()}")
-            logger.info(f"[DONE] {len(to_process)} processed, {skipped} skipped (total: {total})")
-        else:
-            # Standard batch processing
-            run_discovery(args.discover, skip_processed=not args.no_skip, batch_size=args.batch_size)
+        # v3.2: Always use Phase-based pipeline (ignore legacy batch_size)
+        run_discovery(args.discover, skip_processed=not args.no_skip)
     elif args.files:
-        # Batch mode - process files with parallel processing
+        # v3.2: Phase-based batch pipeline for multiple files
         import json
         try:
             file_list = json.loads(args.files)
             total = len(file_list)
-            logger.info(f"[BATCH] Processing {total} files with batch_size={args.batch_size}...")
 
-            def process_indexed_file(args_tuple):
-                idx, fp = args_tuple
-                logger.info(f"[{idx}/{total}] Processing: {fp}")
-                try:
-                    process_file(Path(fp))
-                    return ('success', fp)
-                except Exception as e:
-                    logger.error(f"[ERROR] {fp}: {e}")
-                    return ('error', fp, str(e))
-
-            processed, errors = 0, 0
-            if args.batch_size == 'adaptive':
-                # Adaptive batch processing
-                from backend.utils.adaptive_batch_processor import AdaptiveBatchProcessor
-                logger.info("[ADAPTIVE] Using adaptive batch processor")
-
-                def process_single(fp):
-                    process_file(Path(fp))
-                    return fp
-
-                processor = AdaptiveBatchProcessor(
-                    process_func=process_single,
-                    platform=platform_module.system(),
-                    tier=tier_name
-                )
-
-                results, optimal_batch_size = processor.process_adaptive(file_list, use_cache=True)
-                processed = len(file_list)
-                errors = 0
-
-                logger.info(f"[ADAPTIVE] Optimal batch size found: {optimal_batch_size}")
-                logger.info(f"\n{processor.get_metrics_summary()}")
-            elif args.batch_size > 1 and total > 1:
-                with ThreadPoolExecutor(max_workers=args.batch_size) as executor:
-                    futures = [executor.submit(process_indexed_file, (i, fp)) for i, fp in enumerate(file_list, 1)]
-                    for future in as_completed(futures):
-                        result = future.result()
-                        if result[0] == 'success':
-                            processed += 1
-                        else:
-                            errors += 1
+            if total == 0:
+                logger.info("[DONE] No files to process")
+            elif total == 1:
+                # Single file: use process_file directly
+                logger.info(f"Processing: {file_list[0]}")
+                process_file(Path(file_list[0]))
+                logger.info(f"[DONE] 1 processed (total: 1)")
             else:
-                for i, fp in enumerate(file_list, 1):
-                    result = process_indexed_file((i, fp))
-                    if result[0] == 'success':
-                        processed += 1
-                    else:
-                        errors += 1
-
-            logger.info(f"[DONE] Batch complete: {processed} processed, {errors} errors (total: {total})")
+                # Multiple files: Phase-based batch pipeline
+                file_infos = [(Path(fp), None, 0, []) for fp in file_list]
+                stored, parse_errors, store_errors = process_batch_phased(file_infos)
+                logger.info(
+                    f"[DONE] Batch complete: {stored} processed, "
+                    f"{parse_errors + store_errors} errors (total: {total})"
+                )
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON: {e}")
     elif args.file:

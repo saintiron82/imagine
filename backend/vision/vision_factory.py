@@ -184,6 +184,33 @@ class BaseVisionAnalyzer:
         """Full 2-Stage pipeline: classify → analyze_structured."""
         raise NotImplementedError
 
+    def classify_and_analyze_sequence(
+        self,
+        items: list,
+        progress_callback=None,
+    ) -> list:
+        """
+        Process multiple images sequentially through 2-stage pipeline.
+        Model stays loaded across calls to avoid repeated lazy-load overhead.
+
+        Args:
+            items: List of (PIL Image, context dict) tuples
+            progress_callback: Optional fn(index, total, result)
+
+        Returns:
+            List of vision result dicts (same order as input)
+        """
+        results = []
+        for idx, (image, context) in enumerate(items):
+            try:
+                result = self.classify_and_analyze(image, context=context)
+            except Exception:
+                result = {"caption": "", "tags": [], "image_type": "other"}
+            results.append(result)
+            if progress_callback:
+                progress_callback(idx, len(items), result)
+        return results
+
     def unload_model(self):
         """Explicitly unload model from VRAM."""
         pass

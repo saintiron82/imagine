@@ -685,3 +685,20 @@ class VisionAnalyzer:
         logger.info(f"2-Stage total: {total_elapsed:.1f}s ({image_type})")
 
         return analysis
+
+    def classify_and_analyze_sequence(
+        self, items: list, progress_callback=None
+    ) -> list:
+        """Process multiple images sequentially, keeping model loaded."""
+        self._load_model()
+        results = []
+        for idx, (image, context) in enumerate(items):
+            try:
+                result = self.classify_and_analyze(image, context=context)
+            except Exception as e:
+                logger.warning(f"Vision failed for item {idx}: {e}")
+                result = {"caption": "", "tags": [], "image_type": "other"}
+            results.append(result)
+            if progress_callback:
+                progress_callback(idx, len(items), result)
+        return results

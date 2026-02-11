@@ -367,6 +367,22 @@ Format your response as JSON:
 
         return analysis
 
+    def classify_and_analyze_sequence(
+        self, items: list, progress_callback=None
+    ) -> list:
+        """Process multiple images sequentially via Ollama API."""
+        results = []
+        for idx, (image, context) in enumerate(items):
+            try:
+                result = self.classify_and_analyze(image, context=context)
+            except Exception as e:
+                logger.warning(f"Vision failed for item {idx}: {e}")
+                result = {"caption": "", "tags": [], "image_type": "other"}
+            results.append(result)
+            if progress_callback:
+                progress_callback(idx, len(items), result)
+        return results
+
     def unload_model(self):
         """Explicitly unload model from VRAM after batch processing."""
         try:
