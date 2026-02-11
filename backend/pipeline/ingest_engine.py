@@ -29,6 +29,13 @@ from typing import List, Optional, Tuple
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
+# Set process title for Activity Monitor visibility
+try:
+    import setproctitle
+    setproctitle.setproctitle("Imagine-Pipeline")
+except ImportError:
+    pass
+
 # Add project root to sys.path for module resolution
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:

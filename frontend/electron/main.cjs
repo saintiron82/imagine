@@ -567,7 +567,16 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
 });
 
 // IPC Handler: Run discover (DFS folder scan) (global — registered once)
+// Guard: only one discover process at a time per folder
+let activeDiscoverProcs = new Map(); // folderPath → proc
+
 ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
+    // Prevent duplicate discover for the same folder
+    if (activeDiscoverProcs.has(folderPath)) {
+        event.reply('discover-log', { message: `Already scanning: ${folderPath}`, type: 'info' });
+        return;
+    }
+
     const finalPython = resolvePython();
 
     const scriptPath = isDev
@@ -582,6 +591,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     let processedCount = 0;
 
     const proc = spawn(finalPython, args, { cwd: projectRoot });
+    activeDiscoverProcs.set(folderPath, proc);
 
     proc.stdout.on('data', (data) => {
         const message = data.toString().trim();
@@ -628,6 +638,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     });
 
     proc.on('close', (code) => {
+        activeDiscoverProcs.delete(folderPath);
         event.reply('discover-log', {
             message: code === 0
                 ? `Scan complete: ${folderPath} (${processedCount} files)`
@@ -642,6 +653,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     });
 
     proc.on('error', (err) => {
+        activeDiscoverProcs.delete(folderPath);
         event.reply('discover-log', { message: `Discover error: ${err.message}`, type: 'error' });
         event.reply('discover-file-done', { success: false, folderPath, processedCount: 0 });
     });
