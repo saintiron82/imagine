@@ -487,7 +487,15 @@ ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
 });
 
 // IPC Handler: Run Python Pipeline (global — registered once)
+// Guard: only one pipeline at a time
+let activePipelineProc = null;
+
 ipcMain.on('run-pipeline', (event, { filePaths }) => {
+    if (activePipelineProc) {
+        event.reply('pipeline-log', { message: 'Pipeline already running. Wait for it to finish.', type: 'error' });
+        return;
+    }
+
     const finalPython = resolvePython();
 
     const scriptPath = isDev
@@ -502,6 +510,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     const totalFiles = filePaths.length;
 
     const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], { cwd: projectRoot });
+    activePipelineProc = proc;
 
     proc.stdout.on('data', (data) => {
         const raw = data.toString().trim();
@@ -584,6 +593,8 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     });
 
     proc.on('close', (code) => {
+        activePipelineProc = null;
+
         event.reply('pipeline-progress', {
             processed: processedCount,
             total: totalFiles,
@@ -610,8 +621,19 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     });
 
     proc.on('error', (err) => {
+        activePipelineProc = null;
         event.reply('pipeline-log', { message: `Pipeline error: ${err.message}`, type: 'error' });
     });
+});
+
+// IPC Handler: Stop running pipeline
+ipcMain.on('stop-pipeline', (event) => {
+    if (activePipelineProc) {
+        activePipelineProc.kill('SIGTERM');
+        activePipelineProc = null;
+        event.reply('pipeline-log', { message: 'Pipeline stopped by user.', type: 'warning' });
+        event.reply('pipeline-batch-done', { success: false, processed: 0, skipped: 0, total: 0 });
+    }
 });
 
 // IPC Handler: Run discover (DFS folder scan) (global — registered once)

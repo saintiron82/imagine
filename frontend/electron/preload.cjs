@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('electron', {
     // Pipeline Bridge
     pipeline: {
         run: (filePaths) => ipcRenderer.send('run-pipeline', { filePaths }),
+        stop: () => ipcRenderer.send('stop-pipeline'),
         onLog: (callback) => ipcRenderer.on('pipeline-log', (_, data) => callback(data)),
         offLog: () => ipcRenderer.removeAllListeners('pipeline-log'),
         onProgress: (callback) => ipcRenderer.on('pipeline-progress', (_, data) => callback(data)),

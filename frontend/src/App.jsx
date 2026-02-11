@@ -185,11 +185,12 @@ function App() {
   };
 
   const handleStopProcess = () => {
+    // Kill the actual Python process
+    window.electron?.pipeline?.stop();
     setIsProcessing(false);
     setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0 });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
     etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
-    appendLog({ message: 'Processing stopped by user.', type: 'warning' });
   };
 
   const clearLogs = () => setLogs([]);
