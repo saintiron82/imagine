@@ -420,8 +420,8 @@ const MetadataModal = ({ metadata, onClose }) => {
     );
 };
 
-// Search Result Card Component
-const SearchResultCard = ({ result, onShowMeta }) => {
+// Search Result Card Component (memoized to avoid re-renders on scroll/parent update)
+const SearchResultCard = React.memo(({ result, onShowMeta }) => {
     const { t } = useLocale();
     const fileName = result.path.split(/[/\\]/).pop();
     const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
@@ -458,6 +458,7 @@ const SearchResultCard = ({ result, onShowMeta }) => {
                     <img
                         src={thumbnailSrc}
                         alt={fileName}
+                        loading="lazy"
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                         onError={(e) => { e.target.style.display = 'none'; }}
                     />
@@ -570,7 +571,7 @@ const SearchResultCard = ({ result, onShowMeta }) => {
             </div>
         </div>
     );
-};
+});
 
 const SEARCH_GAP = 16;
 
@@ -605,30 +606,32 @@ const SearchResults = ({ results, isSearching, hasResults, onShowMeta, onClear, 
         if (scrollRef.current) scrollRef.current.scrollTop = 0;
     }, [results.length > 0 && results[0]?.path]);
 
-    if (isSearching) {
-        return (
-            <div className="flex-1 flex items-center justify-center px-6 pb-6">
-                <div className="flex items-center gap-2 text-blue-400">
-                    <Loader2 className="animate-spin" size={20} />
-                    <span>{t('status.searching')}</span>
-                </div>
-            </div>
-        );
-    }
-
-    if (!hasResults) return <div className="flex-1" />;
+    if (!hasResults && !isSearching) return <div className="flex-1" />;
 
     return (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6">
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-medium text-gray-400">
-                    {t('status.results_found', { count: results.length })}
-                </h3>
-                <button onClick={onClear} className="text-xs text-gray-500 hover:text-gray-300">
-                    {t('action.clear_results')}
-                </button>
-            </div>
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6 relative">
+            {/* Searching overlay (keeps results visible underneath) */}
+            {isSearching && (
+                <div className="sticky top-0 z-10 flex justify-center py-3">
+                    <div className="flex items-center gap-2 text-blue-400 bg-gray-900/90 px-4 py-2 rounded-full border border-blue-800/50 backdrop-blur-sm">
+                        <Loader2 className="animate-spin" size={16} />
+                        <span className="text-sm">{t('status.searching')}</span>
+                    </div>
+                </div>
+            )}
 
+            {hasResults && (
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-medium text-gray-400">
+                        {t('status.results_found', { count: results.length })}
+                    </h3>
+                    <button onClick={onClear} className="text-xs text-gray-500 hover:text-gray-300">
+                        {t('action.clear_results')}
+                    </button>
+                </div>
+            )}
+
+            {hasResults && (
             <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
                 {rowVirtualizer.getVirtualItems().map(virtualRow => {
                     // Last virtual row = load more button
@@ -697,11 +700,12 @@ const SearchResults = ({ results, isSearching, hasResults, onShowMeta, onClear, 
                     );
                 })}
             </div>
+            )}
         </div>
     );
 };
 
-export default function SearchPanel() {
+function SearchPanel() {
     const { t } = useLocale();
     const [query, setQuery] = useState('');
     const [queryImages, setQueryImages] = useState([]); // base64 string array
@@ -882,7 +886,7 @@ export default function SearchPanel() {
     return (
         <div className="flex flex-col h-full bg-gray-900">
             {/* Search Header Area */}
-            <div className={`flex flex-col items-center transition-all duration-300 ${isEmptyState ? 'pt-[20vh]' : 'pt-6'} px-6 pb-4 shrink-0`}>
+            <div className={`flex flex-col items-center ${isEmptyState ? 'pt-[20vh]' : 'pt-6'} px-6 pb-4 shrink-0`}>
                 {/* Title (only in empty state) */}
                 {isEmptyState && (
                     <div className="mb-6 text-center">
@@ -1147,3 +1151,5 @@ export default function SearchPanel() {
         </div>
     );
 }
+
+export default React.memo(SearchPanel);

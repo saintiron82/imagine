@@ -85,7 +85,7 @@ batch_processing:
 registered_folders:
   folders:
     - /Users/saintiron/imageDB/마캬베리즈무
-  auto_scan: true
+  auto_scan: false
 search:
   candidate:
     fts_topn_cut: 2000
