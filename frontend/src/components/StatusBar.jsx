@@ -2,7 +2,18 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Terminal, X, Loader2, Square, Cpu } from 'lucide-react';
 import { useLocale } from '../i18n';
 
-const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, currentFile = '', fileStep = {}, onStop }) => {
+function formatEta(ms) {
+    const sec = Math.ceil(ms / 1000);
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    const remSec = sec % 60;
+    if (min < 60) return `${min}m ${remSec}s`;
+    const hr = Math.floor(min / 60);
+    const remMin = min % 60;
+    return `${hr}h ${remMin}m`;
+}
+
+const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, currentFile = '', etaMs = null, fileStep = {}, onStop }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
     const [aiTier, setAiTier] = useState(null);
@@ -86,6 +97,9 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
                                     style={{ width: `${queuePct}%` }}
                                 />
                             </div>
+                            {etaMs != null && (
+                                <span className="text-gray-500 font-mono text-[11px]">{formatEta(etaMs)}</span>
+                            )}
                         </div>
 
                         {/* Current file name */}

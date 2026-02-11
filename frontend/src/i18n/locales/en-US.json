@@ -137,6 +137,7 @@
   "label.search_mode_or_desc": "Similar to any image",
   "msg.max_images_reached": "Maximum 10 images allowed",
   "msg.url_fetch_failed": "Failed to load image from URL",
+  "status.eta": "~{time} remaining",
   "status.fetching_url": "Loading image from URL...",
   "msg.invalid_image": "Please select a valid image file",
   "msg.no_image_selected": "Select an image to search",

@@ -18,6 +18,7 @@ function App() {
   const [processQueue, setProcessQueue] = useState([]); // Processing queue
   const [queueIndex, setQueueIndex] = useState(0); // Current processing index
   const queueRef = useRef({ queue: [], index: 0, processing: false });
+  const batchStartRef = useRef(null);
   const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoverProgress, setDiscoverProgress] = useState('');
@@ -155,6 +156,7 @@ function App() {
     // Start processing if not already running
     if (!isProcessing) {
       setIsProcessing(true);
+      batchStartRef.current = Date.now();
     }
   };
 
@@ -170,17 +172,27 @@ function App() {
         setProcessQueue([]);
         setQueueIndex(0);
         setIsProcessing(false);
-        setProcessProgress({ processed: 0, total: 0, currentFile: '' });
+        setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null });
+        batchStartRef.current = null;
       }
       return;
     }
 
     const currentFile = processQueue[queueIndex];
 
+    // ETA calculation based on average time per file
+    let etaMs = null;
+    if (queueIndex > 0 && batchStartRef.current) {
+      const elapsed = Date.now() - batchStartRef.current;
+      const avgPerFile = elapsed / queueIndex;
+      etaMs = (processQueue.length - queueIndex) * avgPerFile;
+    }
+
     setProcessProgress({
       processed: queueIndex,
       total: processQueue.length,
       currentFile: currentFile,
+      etaMs,
     });
 
     appendLog({
@@ -197,8 +209,9 @@ function App() {
     setProcessQueue([]);
     setQueueIndex(0);
     setIsProcessing(false);
-    setProcessProgress({ processed: 0, total: 0, currentFile: '' });
+    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
+    batchStartRef.current = null;
     appendLog({ message: 'Processing stopped by user.', type: 'warning' });
   };
 
@@ -325,6 +338,7 @@ function App() {
             processed={queueIndex}
             total={processQueue.length}
             currentFile={processProgress.currentFile}
+            etaMs={processProgress.etaMs}
             fileStep={fileStep}
             onStop={handleStopProcess}
           />

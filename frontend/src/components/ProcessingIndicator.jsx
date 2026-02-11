@@ -2,7 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { Loader2, Square } from 'lucide-react';
 import { useLocale } from '../i18n';
 
-const ProcessingIndicator = ({ isProcessing, processed = 0, total = 0, currentFile = '', onStop }) => {
+function formatEta(ms) {
+    const sec = Math.ceil(ms / 1000);
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    const remSec = sec % 60;
+    if (min < 60) return `${min}m ${remSec}s`;
+    const hr = Math.floor(min / 60);
+    const remMin = min % 60;
+    return `${hr}h ${remMin}m`;
+}
+
+const ProcessingIndicator = ({ isProcessing, processed = 0, total = 0, currentFile = '', etaMs = null, onStop }) => {
   const { t } = useLocale();
   const [dots, setDots] = useState('');
 
@@ -64,6 +75,11 @@ const ProcessingIndicator = ({ isProcessing, processed = 0, total = 0, currentFi
                 style={{ width: `${percentage}%` }}
               />
             </div>
+            {etaMs != null && (
+              <div className="text-xs text-gray-500 mt-1 text-right">
+                {t('status.eta', { time: formatEta(etaMs) })}
+              </div>
+            )}
           </div>
         )}
       </div>
