@@ -5,9 +5,9 @@ This module replaces pg_search.py with SQLite-based vector search,
 maintaining API compatibility for minimal code changes.
 
 Triaxis Search (V + S + M):
-- V-axis (Visual): SigLIP 2 embedding similarity (image pixels)
-- S-axis (Semantic): Qwen3 text embedding (AI-interpreted captions + context)
-- M-axis (Metadata): FTS5 metadata-only search (file facts, no AI content)
+- VV (Visual): SigLIP 2 embedding similarity (image pixels)
+- MV (Meaning Vector): Qwen3 text embedding (AI-interpreted captions + context)
+- FTS (Metadata): FTS5 metadata-only search (file facts, no AI content)
 
 User Filters: Format, category, rating, tags, folder paths
 """
@@ -42,15 +42,15 @@ class SqliteVectorSearch:
             db: SQLiteDB instance (creates new if None)
         """
         self.db = db if db else SQLiteDB()
-        self._encoder = None  # Lazy loading (V-axis)
-        self._text_provider = None  # Lazy loading (S-axis)
-        self._text_enabled = None  # Cache for S-axis availability check
+        self._encoder = None  # Lazy loading (VV)
+        self._text_provider = None  # Lazy loading (MV)
+        self._text_enabled = None  # Cache for MV availability check
 
         logger.info("SqliteVectorSearch initialized")
 
     @property
     def encoder(self):
-        """Lazy load V-axis embedding encoder (SigLIP 2)."""
+        """Lazy load VV embedding encoder (SigLIP 2)."""
         if self._encoder is None:
             from backend.vector.siglip2_encoder import SigLIP2Encoder
             self._encoder = SigLIP2Encoder()
@@ -59,7 +59,7 @@ class SqliteVectorSearch:
 
     @property
     def text_provider(self):
-        """Lazy load S-axis text embedding provider."""
+        """Lazy load MV provider."""
         if self._text_provider is None:
             from backend.vector.text_embedding import get_text_embedding_provider
             self._text_provider = get_text_embedding_provider()
@@ -67,7 +67,7 @@ class SqliteVectorSearch:
 
     @property
     def text_search_enabled(self) -> bool:
-        """Check if S-axis text vector search is available (vec_text table exists with data)."""
+        """Check if MV search is available (vec_text table exists with data)."""
         if self._text_enabled is None:
             try:
                 count = self.db.conn.execute("SELECT COUNT(*) FROM vec_text").fetchone()[0]
@@ -78,7 +78,7 @@ class SqliteVectorSearch:
 
     def encode_text(self, text: str) -> np.ndarray:
         """
-        Encode text query to V-axis embedding vector (SigLIP 2).
+        Encode text query to VV embedding vector (SigLIP 2).
 
         Args:
             text: Text query
@@ -443,13 +443,13 @@ class SqliteVectorSearch:
         threshold: float = 0.0,
     ) -> List[Dict[str, Any]]:
         """
-        S-axis: Text vector similarity search using Qwen3-Embedding.
+        MV: Text vector similarity search using Qwen3-Embedding.
 
         Searches vec_text table (caption+tags embeddings) for semantic text matching.
-        Complements V-axis (visual similarity) with textual semantic similarity.
+        Complements VV (visual similarity) with textual semantic similarity.
 
         Args:
-            query: Text query (encoded with text embedding model)
+            query: Text query (encoded with MV model)
             top_k: Number of results
             threshold: Minimum similarity threshold
 
@@ -497,11 +497,11 @@ class SqliteVectorSearch:
                 self._parse_json_fields(result)
                 results.append(result)
 
-            logger.info(f"S-axis search '{query[:50]}' returned {len(results)} results")
+            logger.info(f"MV search '{query[:50]}' returned {len(results)} results")
             return results
 
         except Exception as e:
-            logger.error(f"S-axis text vector search failed: {e}")
+            logger.error(f"MV text vector search failed: {e}")
             return []
         finally:
             cursor.close()
@@ -513,7 +513,7 @@ class SqliteVectorSearch:
         threshold: float = 0.0,
     ) -> List[Dict[str, Any]]:
         """
-        S-axis search using a pre-computed text embedding vector.
+        MV search using a pre-computed embedding vector.
 
         Same as text_vector_search() but accepts a pre-encoded vector,
         allowing callers to cache the embedding for reuse.
@@ -558,11 +558,11 @@ class SqliteVectorSearch:
                 self._parse_json_fields(result)
                 results.append(result)
 
-            logger.info(f"S-axis search (by embedding) returned {len(results)} results")
+            logger.info(f"MV search (by embedding) returned {len(results)} results")
             return results
 
         except Exception as e:
-            logger.error(f"S-axis text vector search by embedding failed: {e}")
+            logger.error(f"MV text vector search by embedding failed: {e}")
             return []
         finally:
             cursor.close()
@@ -574,7 +574,7 @@ class SqliteVectorSearch:
         exclude_keywords: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Full-text search using FTS5 (M-axis: Metadata-only).
+        Full-text search using FTS5 (FTS: Metadata-only).
 
         Args:
             keywords: List of keywords to search (combined with OR)
@@ -732,7 +732,7 @@ class SqliteVectorSearch:
         user_filters = filters or {}
 
         # Per-axis thresholds: SigLIP (V) and Qwen3 (Tv) have very different score ranges
-        # V-axis: 0.10-0.17 typical match, S-axis: 0.65-0.78 typical match
+        # VV: 0.10-0.17 typical match, MV: 0.65-0.78 typical match
         from backend.utils.config import get_config as _cfg
         _search_cfg = _cfg()
         v_threshold = _search_cfg.get("search.threshold.visual", 0.05)
@@ -742,7 +742,7 @@ class SqliteVectorSearch:
         candidate_mul = _search_cfg.get("search.rrf.candidate_multiplier", 5)
         candidate_k = top_k * candidate_mul
 
-        # Step 2: V-axis vector search (cache embedding for post-merge enrichment)
+        # Step 2: VV vector search (cache embedding for post-merge enrichment)
         vector_results = []
         v_query_embedding = None
         t0 = time.perf_counter()
@@ -752,7 +752,7 @@ class SqliteVectorSearch:
                 v_query_embedding, top_k=candidate_k, threshold=v_threshold
             )
         except Exception as e:
-            logger.warning(f"V-axis search unavailable: {e}")
+            logger.warning(f"VV search unavailable: {e}")
             diag["vector_error"] = str(e)
         diag["vector_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
@@ -768,7 +768,7 @@ class SqliteVectorSearch:
             ],
         }
 
-        # Step 2b: S-axis text vector search (cache embedding for post-merge enrichment)
+        # Step 2b: MV text vector search (cache embedding for post-merge enrichment)
         text_vec_results = []
         t_query_embedding = None
         t0 = time.perf_counter()
@@ -779,7 +779,7 @@ class SqliteVectorSearch:
                     t_query_embedding, top_k=candidate_k, threshold=tv_threshold
                 )
             except Exception as e:
-                logger.warning(f"S-axis search unavailable: {e}")
+                logger.warning(f"MV search unavailable: {e}")
                 diag["text_vec_error"] = str(e)
         diag["text_vec_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
@@ -795,7 +795,7 @@ class SqliteVectorSearch:
             ],
         }
 
-        # Step 3: M-axis FTS5 search
+        # Step 3: FTS FTS5 search
         fts_results = []
         t0 = time.perf_counter()
         try:
@@ -873,9 +873,9 @@ class SqliteVectorSearch:
             merged = []
 
         # NOTE: Per-axis thresholds are already applied at the SQL level
-        # (v_threshold for V-axis, tv_threshold for S-axis, MATCH for M-axis).
+        # (v_threshold for VV, tv_threshold for MV, MATCH for FTS).
         # No post-merge threshold filter needed — it caused scale mismatch
-        # (frontend 0.15 vs SigLIP2 range 0.06-0.17, killing most V-axis results).
+        # (frontend 0.15 vs SigLIP2 range 0.06-0.17, killing most VV results).
 
         diag["rrf_merge"] = {
             "axes": len(all_result_lists),
@@ -898,13 +898,13 @@ class SqliteVectorSearch:
         }
 
         # Step 5a: Apply negative filter (demote results matching exclusion terms)
-        # Encode negative_query as V-axis embedding for visual penalty
+        # Encode negative_query as VV embedding for visual penalty
         neg_v_embedding = None
         if negative_query:
             try:
                 neg_v_embedding = self.encode_text(negative_query)
             except Exception as e:
-                logger.debug(f"Negative V-axis encoding failed: {e}")
+                logger.debug(f"Negative VV encoding failed: {e}")
 
         pre_neg_count = len(merged)
         if negative_query:
@@ -1135,28 +1135,28 @@ class SqliteVectorSearch:
         if not merged:
             return
 
-        # Collect file IDs missing V-axis scores
+        # Collect file IDs missing VV scores
         v_missing = [r["id"] for r in merged if r.get("vector_score") is None and r.get("id")]
-        # Collect file IDs missing S-axis scores
+        # Collect file IDs missing MV scores
         s_missing = [r["id"] for r in merged if r.get("text_vec_score") is None and r.get("id")]
-        # Collect file IDs missing M-axis scores
+        # Collect file IDs missing FTS scores
         m_missing = [r["id"] for r in merged if r.get("text_score") is None and r.get("id")]
 
-        # Batch-compute V-axis similarity for missing files
+        # Batch-compute VV similarity for missing files
         if v_missing and v_embedding is not None:
             v_scores = self._batch_similarity("vec_files", v_embedding, v_missing)
             for r in merged:
                 if r.get("vector_score") is None and r.get("id") in v_scores:
                     r["vector_score"] = v_scores[r["id"]]
 
-        # Batch-compute S-axis similarity for missing files
+        # Batch-compute MV similarity for missing files
         if s_missing and t_embedding is not None:
             s_scores = self._batch_similarity("vec_text", t_embedding, s_missing)
             for r in merged:
                 if r.get("text_vec_score") is None and r.get("id") in s_scores:
                     r["text_vec_score"] = s_scores[r["id"]]
 
-        # Batch-compute M-axis (FTS5 BM25) scores for missing files
+        # Batch-compute FTS (FTS5 BM25) scores for missing files
         if m_missing and fts_keywords:
             m_scores = self._batch_fts_score(fts_keywords, m_missing)
             for r in merged:
@@ -1373,7 +1373,7 @@ class SqliteVectorSearch:
         Post-filter: demote results matching negative concepts via two layers:
 
         Layer 1 (Text): Check mc_caption + ai_tags for negative term text matches.
-        Layer 2 (Visual): If neg_v_embedding is provided, compute V-axis similarity
+        Layer 2 (Visual): If neg_v_embedding is provided, compute VV similarity
                           between each result's stored visual embedding and the
                           negative concept. High visual similarity → demote.
 
@@ -1382,7 +1382,7 @@ class SqliteVectorSearch:
         Args:
             results: Search results to filter
             negative_query: Space-separated negative terms (e.g. "cold snow winter")
-            neg_v_embedding: Optional SigLIP2 embedding of negative_query for V-axis penalty
+            neg_v_embedding: Optional SigLIP2 embedding of negative_query for VV penalty
 
         Returns:
             Reordered results with negative-matching items demoted to the end
@@ -1394,7 +1394,7 @@ class SqliteVectorSearch:
         if not neg_terms:
             return results
 
-        # Layer 2: Compute V-axis negative similarity scores
+        # Layer 2: Compute VV negative similarity scores
         neg_v_scores = {}
         if neg_v_embedding is not None:
             file_ids = [r["id"] for r in results if r.get("id")]
@@ -1405,7 +1405,7 @@ class SqliteVectorSearch:
         # Layer 1 (Text): direct term matching on captions/tags
         # Layer 2 (Visual): statistical outlier detection on neg_v_sim distribution
         #
-        # V-axis scoring uses distribution-based outlier detection because
+        # VV scoring uses distribution-based outlier detection because
         # text-to-image and image-to-image similarities live on different scales:
         #   - Text-only search: pos ~0.10-0.17, neg ~0.04-0.08 (same scale)
         #   - Image+text search: pos ~0.70-0.80, neg ~0.04-0.08 (different scales)
@@ -1426,7 +1426,7 @@ class SqliteVectorSearch:
                     if sim > outlier_thresh:
                         v_outlier_flag[fid] = sim
                 logger.debug(
-                    f"Negative V-axis stats: mean={mean_neg:.4f}, std={std_neg:.4f}, "
+                    f"Negative VV stats: mean={mean_neg:.4f}, std={std_neg:.4f}, "
                     f"outlier_thresh={outlier_thresh:.4f}, outliers={len(v_outlier_flag)}"
                 )
 
@@ -1458,7 +1458,7 @@ class SqliteVectorSearch:
 
         # Threshold: demote if neg_score > 0.45
         # - Text-only: 1 term hit → 1.0 (always demotes)
-        # - V-axis outlier: 0.6 (demotes alone)
+        # - VV outlier: 0.6 (demotes alone)
         # - Combined: even weak signals add up
         neg_threshold = 0.45
         filtered = [(r, ns) for r, ns, _, _ in scored if ns <= neg_threshold]
@@ -1517,10 +1517,10 @@ class SqliteVectorSearch:
     ) -> List[Dict[str, Any]]:
         """
         Combined text + image triaxis search.
-        V-axis uses image embeddings, S-axis and M-axis use text query.
+        VV uses image embeddings, MV and FTS use text query.
 
         Args:
-            query: Text query for S-axis and M-axis
+            query: Text query for MV and FTS
             image_embeddings: Pre-computed SigLIP2 image embeddings
             image_mode: "and" (average) or "or" (union)
             filters: Optional metadata filters
@@ -1536,7 +1536,7 @@ class SqliteVectorSearch:
         v_threshold = _search_cfg.get("search.threshold.visual", 0.05)
         tv_threshold = _search_cfg.get("search.threshold.text_vec", threshold)
 
-        # V-axis: image embeddings
+        # VV: image embeddings
         if image_mode == "and":
             mean_emb = np.mean(image_embeddings, axis=0).astype(np.float32)
             norm = np.linalg.norm(mean_emb)
@@ -1554,7 +1554,7 @@ class SqliteVectorSearch:
                 all_v.values(), key=lambda x: x.get("similarity", 0), reverse=True
             )[:candidate_k]
 
-        # S-axis: text query (Qwen3-Embedding)
+        # MV: text query (Qwen3-Embedding)
         decomposer = QueryDecomposer()
         plan = decomposer.decompose(query)
         vector_query = plan.get("vector_query", query)
@@ -1569,16 +1569,16 @@ class SqliteVectorSearch:
                     t_query_embedding, top_k=candidate_k, threshold=tv_threshold
                 )
             except Exception as e:
-                logger.warning(f"S-axis search unavailable in triaxis_image: {e}")
+                logger.warning(f"MV search unavailable in triaxis_image: {e}")
 
-        # M-axis: FTS5 keywords (text query)
+        # FTS: FTS5 keywords (text query)
         fts_keywords = plan.get("fts_keywords", [query])
         exclude_kw = plan.get("exclude_keywords", [])
         fts_results = []
         try:
             fts_results = self.fts_search(fts_keywords, top_k=candidate_k, exclude_keywords=exclude_kw)
         except Exception as e:
-            logger.warning(f"M-axis search unavailable in triaxis_image: {e}")
+            logger.warning(f"FTS search unavailable in triaxis_image: {e}")
 
         # RRF merge (3 axes)
         all_result_lists = []
@@ -1606,13 +1606,13 @@ class SqliteVectorSearch:
         llm_filters = plan.get("filters", {})
         negative_query = plan.get("negative_query", "")
 
-        # V-axis negative embedding for visual penalty
+        # VV negative embedding for visual penalty
         neg_v_embedding = None
         if negative_query:
             try:
                 neg_v_embedding = self.encode_text(negative_query)
             except Exception as e:
-                logger.debug(f"Negative V-axis encoding failed in image search: {e}")
+                logger.debug(f"Negative VV encoding failed in image search: {e}")
             merged = self._apply_negative_filter(merged, negative_query, neg_v_embedding)
 
         if llm_filters:
@@ -1622,7 +1622,7 @@ class SqliteVectorSearch:
 
         merged = merged[:top_k]
 
-        # Enrich missing axis scores (V uses image embedding for enrichment)
+        # Enrich missing axis scores (VV uses image embedding for enrichment)
         if image_mode == "and" and len(image_embeddings) > 0:
             v_emb_for_enrich = np.mean(image_embeddings, axis=0).astype(np.float32)
             norm = np.linalg.norm(v_emb_for_enrich)
@@ -1759,7 +1759,7 @@ class SqliteVectorSearch:
             Search results. If return_diagnostic=True with triaxis mode,
             returns (results, diagnostic_dict).
         """
-        # Combined text + image search (triaxis with V=image, S+M=text)
+        # Combined text + image search (triaxis with VV=image, MV+FTS=text)
         has_images = (query_images and len(query_images) > 0) or query_image
         has_text = bool(query and query.strip())
 

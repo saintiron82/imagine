@@ -1,11 +1,15 @@
 """
-Database module for PostgreSQL + pgvector storage.
+Database module for SQLite + sqlite-vec storage.
 
-This module provides database access for the ImageParser project,
-replacing the JSON file + ChromaDB dual storage system with a unified
-PostgreSQL database using the pgvector extension.
+This module provides database access for the ImageParser project.
+SQLite is the primary database (PostgreSQL is deprecated).
 """
 
-from .pg_client import PostgresDB
+from .sqlite_client import SQLiteDB
 
-__all__ = ['PostgresDB']
+try:
+    from .pg_client import PostgresDB
+except ImportError:
+    PostgresDB = None
+
+__all__ = ['SQLiteDB', 'PostgresDB']

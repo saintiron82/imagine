@@ -42,11 +42,11 @@ class AssetMeta(BaseModel):
     # These fields are used to generate vectors in Phase 2
     visual_source_path: Optional[str] = Field(
         None, 
-        description="Path to the thumbnail image for visual embedding"
+        description="Path to the thumbnail image for VV generation"
     )
     semantic_tags: str = Field(
         "",
-        description="Cleaned layer names joined for semantic embedding"
+        description="Cleaned layer names joined for MV generation"
     )
     text_content: List[str] = Field(
         default_factory=list,
@@ -198,7 +198,7 @@ class AssetMeta(BaseModel):
     )
     text_embed_model: str = Field(
         "",
-        description="Text embedding model (e.g., qwen3-embedding:0.6b)"
+        description="MV model (e.g., qwen3-embedding:0.6b)"
     )
     runtime_version: str = Field(
         "",

@@ -130,7 +130,7 @@ class ImageParser(BaseParser):
             return ParseResult(success=False, errors=errors)
     
     def _create_thumbnail(self, img: Image.Image, file_path: Path) -> Optional[Path]:
-        """Create a thumbnail for visual embedding."""
+        """Create a thumbnail for VV generation."""
         try:
             thumbnail_path = self.get_thumbnail_path(file_path)
             

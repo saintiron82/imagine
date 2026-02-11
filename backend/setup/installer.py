@@ -3,8 +3,8 @@ Env Installer - Handles dependency installation, model download, and SQLite setu
 
 This script ensures all dependencies are installed including:
 - Python packages (torch, transformers, sqlite-vec, etc.)
-- SigLIP2 visual embedding model (tier-based)
-- Ollama VLM + text embedding models
+- SigLIP2 VV model (tier-based)
+- Ollama VLM + MV models
 - SQLite + sqlite-vec setup verification
 """
 import sys
@@ -68,7 +68,7 @@ def _get_tier_config():
         return "standard", {}
 
 def check_model():
-    """Check if SigLIP2 visual embedding model is cached (tier-based)."""
+    """Check if SigLIP2 VV model is cached (tier-based)."""
     try:
         tier_name, tier_config = _get_tier_config()
         model_name = tier_config.get("visual", {}).get("model", "google/siglip2-base-patch16-224")
@@ -205,11 +205,11 @@ def install_packages():
         return False
 
 def download_model():
-    """Download SigLIP2 visual embedding model (tier-based)."""
+    """Download SigLIP2 VV model (tier-based)."""
     tier_name, tier_config = _get_tier_config()
     model_name = tier_config.get("visual", {}).get("model", "google/siglip2-base-patch16-224")
 
-    logger.info(f"Downloading visual embedding model ({tier_name} tier): {model_name}")
+    logger.info(f"Downloading VV model ({tier_name} tier): {model_name}")
     logger.info("This may take a while on first run...")
     try:
         from transformers import AutoModel, AutoProcessor
@@ -317,7 +317,7 @@ def main():
     parser.add_argument("--install", action="store_true",
                        help="Install Python dependencies")
     parser.add_argument("--download-model", action="store_true",
-                       help="Download SigLIP2 visual embedding model")
+                       help="Download SigLIP2 VV model")
     parser.add_argument("--setup-sqlite", action="store_true",
                        help="Show SQLite setup guide")
     parser.add_argument("--init-db", action="store_true",

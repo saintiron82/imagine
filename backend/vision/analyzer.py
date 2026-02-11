@@ -46,8 +46,12 @@ class VisionAnalyzer:
         """
         if device and device != 'auto':
             self.device = device
+        elif torch.cuda.is_available():
+            self.device = 'cuda'
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            self.device = 'mps'
         else:
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.device = 'cpu'
         # Default model: BLIP for stability, Qwen2-VL for quality
         # Options: "Salesforce/blip-image-captioning-large", "Qwen/Qwen2-VL-2B-Instruct"
         self.model_id = model_id if model_id else "Qwen/Qwen2-VL-2B-Instruct"
@@ -110,16 +114,23 @@ class VisionAnalyzer:
 
             elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
                 # Qwen3-VL model (Standard/Pro/Ultra tiers)
-                # Use direct module import to avoid lazy import race conditions
                 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLForConditionalGeneration
                 from transformers.models.qwen3_vl.processing_qwen3_vl import Qwen3VLProcessor
 
                 self.processor = Qwen3VLProcessor.from_pretrained(self.model_id)
-                self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-                    self.model_id,
-                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                    device_map="auto"
-                )
+
+                # MPS does not support device_map="auto"
+                if self.device == "mps":
+                    self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                        self.model_id,
+                        torch_dtype=torch.float16,
+                    ).to(self.device)
+                else:
+                    self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                        self.model_id,
+                        torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                        device_map="auto"
+                    )
 
             else:
                 # Florence-2 or other models

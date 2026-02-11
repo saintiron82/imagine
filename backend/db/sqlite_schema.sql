@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS files (
     -- v3.1: 3-Tier AI Mode metadata
     mode_tier TEXT DEFAULT '{DEFAULT_TIER}',           -- standard | pro | ultra
     caption_model TEXT,                              -- VLM model (e.g., Qwen/Qwen3-VL-4B-Instruct)
-    text_embed_model TEXT,                           -- Text embedding model (e.g., qwen3-embedding:0.6b)
+    text_embed_model TEXT,                           -- MV model (e.g., qwen3-embedding:0.6b)
     runtime_version TEXT,                            -- Ollama/runtime version (e.g., ollama-0.15.2)
     preprocess_params TEXT                           -- JSON: {max_edge, aspect_ratio_mode, padding_color}
 );
@@ -112,8 +112,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_layers USING vec0(
     embedding FLOAT[{VISUAL_DIM}]
 );
 
--- Virtual table for T-axis text embeddings (sqlite-vec)
--- Generated from mc_caption + ai_tags via text embedding model
+-- Virtual table for MV (Meaning Vector) (sqlite-vec)
+-- Generated from MC (mc_caption + ai_tags) via MV model
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_text USING vec0(
     file_id INTEGER PRIMARY KEY,
     embedding FLOAT[{TEXT_DIM}]

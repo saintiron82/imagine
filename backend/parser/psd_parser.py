@@ -30,7 +30,7 @@ class PSDParser(BaseParser):
     Parser for Adobe Photoshop PSD files.
     
     Extracts full layer hierarchy, text content, fonts,
-    and generates thumbnails for visual embedding.
+    and generates thumbnails for VV generation.
     """
     
     supported_extensions = ['psd']

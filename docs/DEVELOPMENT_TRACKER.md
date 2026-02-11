@@ -22,8 +22,8 @@
 | **Database** | SQLite + sqlite-vec + FTS5 | 벡터 + 전문검색 + 메타데이터 통합 |
 | **Frontend** | React 19 + Electron 40 + Vite 7 + Tailwind CSS 4 | 데스크톱 앱 |
 | **Vision LLM** | Tier별: Qwen3-VL-2B (standard) / 4B (pro) / 8B (ultra) | 2-Stage 분류/분석, transformers 또는 Ollama |
-| **V-axis 임베딩** | SigLIP2 (tier별: base=768d, so400m=1152d, giant=1664d) | 시각 유사도 |
-| **S-axis 임베딩** | Qwen3-Embedding (Ollama, tier별: 256d/1024d/4096d) | 의미 유사도 |
+| **VV 임베딩** | SigLIP2 (tier별: base=768d, so400m=1152d, giant=1664d) | 시각 유사도 |
+| **MV 임베딩** | Qwen3-Embedding (Ollama, tier별: 256d/1024d/4096d) | 의미 유사도 |
 | **i18n** | 커스텀 LocaleContext | ko-KR, en-US |
 
 ---
@@ -42,9 +42,9 @@
   │     Stage 2: 타입별 전용 구조화 분석
   │     → ai_caption, ai_tags, image_type, art_style, scene_type ...
   │
-  ├─ [V-axis] SigLIP2 → tier별 시각 벡터 → vec_files
+  ├─ [VV] SigLIP2 → tier별 시각 벡터 → vec_files
   │
-  ├─ [S-axis] caption+tags → Qwen3-Embedding → tier별 텍스트 벡터 → vec_text
+  ├─ [MV] caption+tags → Qwen3-Embedding → tier별 텍스트 벡터 → vec_text
   │
   └─ [DB] SQLite: files + vec_files + vec_text + files_fts(FTS5)
 
@@ -53,9 +53,9 @@
 
 쿼리 → QueryDecomposer (vector_query + fts_keywords + query_type)
   │
-  ├─ [V-axis] SigLIP2 인코딩 → vec_files 코사인 유사도
-  ├─ [S-axis] Qwen3-Embedding 인코딩 → vec_text 코사인 유사도
-  ├─ [M-axis] FTS5 키워드 매칭 (16컬럼)
+  ├─ [VV] SigLIP2 인코딩 → vec_files 코사인 유사도
+  ├─ [MV] Qwen3-Embedding 인코딩 → vec_text 코사인 유사도
+  ├─ [FTS] FTS5 키워드 매칭 (16컬럼)
   │
   └─ Auto-Weighted RRF 병합 (query_type별 가중치, k=60) → 최종 결과
      ※ 구조화 필터(scene_type 등)는 하드 게이트로 사용하지 않음
@@ -68,8 +68,8 @@
 | 단계 | 작업 | 상태 | 적중률 효과 | 비고 |
 |------|------|------|-----------|------|
 | **P0** | 2-Stage Vision + DB 스키마 | **완료** | +45~55%p | 99파일 처리, 11개 image_type |
-| **P1** | V-axis SigLIP2 교체 | **완료** | +2~5%p | tier별 차원, 109언어 |
-| **P2** | S-axis Qwen3-Embedding 추가 | **완료** | +3~7%p | tier별 차원, 3축 RRF 완성 |
+| **P1** | VV SigLIP2 교체 | **완료** | +2~5%p | tier별 차원, 109언어 |
+| **P2** | MV (Meaning Vector) Qwen3-Embedding 추가 | **완료** | +3~7%p | tier별 차원, 3축 RRF 완성 |
 | **P2+** | Auto-Weighted RRF + Tier 시스템 | **완료** | +2~5%p | 쿼리 유형별 동적 가중치, standard/pro/ultra |
 | **v3.1.1** | 플랫폼별 최적화 | **완료** | 성능 | AUTO 모드, Windows: Ollama(1), Mac: vLLM(16) |
 | **P3** | 인프라 개선 | 미구현 | 성능/안정성 | FastAPI 서버, 큐 영속성 |
@@ -87,17 +87,17 @@
 |------|------|
 | **활성 Tier** | `standard` (config.yaml override) |
 | **VLM** | Qwen3-VL-2B-Instruct (transformers, CUDA) |
-| **V-axis 모델** | google/siglip2-base-patch16-224 (768d) |
-| **S-axis 모델** | qwen3-embedding:0.6b (Ollama, 256d) |
+| **VV 모델** | google/siglip2-base-patch16-224 (768d) |
+| **MV 모델** | qwen3-embedding:0.6b (Ollama, 256d) |
 
 ### 데이터 현황 (232파일)
 
 | 항목 | 현재 | 정상 | 상태 |
 |------|------|------|------|
 | **files** (메타데이터) | 232/232 | 232 | **정상** |
-| **files_fts** (M-axis) | 232/232 | 232 | **정상** |
-| **vec_files** (V-axis) | 217/232 | 232 | **15건 누락** |
-| **vec_text** (S-axis) | 1/232 | 232 | **미구축 (1건만 테스트 완료)** |
+| **files_fts** (FTS) | 232/232 | 232 | **정상** |
+| **vec_files** (VV) | 217/232 | 232 | **15건 누락** |
+| **vec_text** (MV) | 1/232 | 232 | **미구축 (1건만 테스트 완료)** |
 | **mc_caption** | 1/232 | 232 | **미구축** |
 | **ai_tags** | 1/232 | 232 | **미구축** |
 | **image_type** | 1/232 | 232 | **미구축** |
@@ -120,17 +120,17 @@
 | STEP 1/4 Parse | JPG 파싱 완료 | 0.04s |
 | STEP 2/4 AI Vision | Stage1→photo(high), Stage2→caption+tags 생성 | 22.5s |
 | STEP 3/4 Embedding | SigLIP2 768d 벡터 저장 | 12.4s |
-| STEP 4/4 Storing | SQLite + S-axis 256d 텍스트 임베딩 | 2.4s |
+| STEP 4/4 Storing | SQLite + MV 256d | 2.4s |
 | **총합** | **전 단계 정상** | **38.5s** |
 
 ### 검색 기능 상태
 
 | 축 | 상태 | 비고 |
 |----|------|------|
-| **V-axis** (SigLIP2) | **부분 동작** | 217/232 파일에 벡터 존재. 점수 범위 0.06~0.17 |
-| **S-axis** (Qwen3-Emb) | **미동작** | vec_text 1건만 존재. 재구축 필요 |
-| **M-axis** (FTS5) | **정상** | 232/232 인덱싱 완료 |
-| **RRF 병합** | **정상** | V+M 2축으로 동작 중. S축 추가 시 3축 완성 |
+| **VV** (SigLIP2) | **부분 동작** | 217/232 파일에 벡터 존재. 점수 범위 0.06~0.17 |
+| **MV** (Qwen3-Emb) | **미동작** | vec_text 1건만 존재. 재구축 필요 |
+| **FTS** (FTS5) | **정상** | 232/232 인덱싱 완료 |
+| **RRF 병합** | **정상** | VV+FTS 2축으로 동작 중. MV 추가 시 3축 완성 |
 | **프론트엔드 뱃지** | **정상** | VV/MV/MC 표시, i18n 연결 완료 |
 | **threshold** | **정상** | post-merge 필터 제거, 기본값 0 |
 
@@ -147,8 +147,8 @@ python backend/pipeline/ingest_engine.py --discover "C:\Images" --no-skip
 - mc_caption: 232/232 (모든 파일에 AI 캡션)
 - ai_tags: 232/232 (모든 파일에 AI 태그)
 - image_type: 232/232 (11종 자동 분류)
-- vec_text (S-axis): 232/232 (3축 검색 완성)
-- vec_files (V-axis): 232/232 (15건 누락 해소)
+- vec_text (MV): 232/232 (3축 검색 완성)
+- vec_files (VV): 232/232 (15건 누락 해소)
 
 ---
 
@@ -158,9 +158,9 @@ python backend/pipeline/ingest_engine.py --discover "C:\Images" --no-skip
 
 | 커밋 | 유형 | 내용 |
 |------|------|------|
-| `4ed22d8` | fix | 코드 주석 정규화: T-axis→S-axis, F-axis→M-axis, CLIP→SigLIP2 (9개 파일) |
+| `4ed22d8` | fix | 코드 주석 정규화: T-axis→MV, F-axis→FTS, CLIP→SigLIP2 (9개 파일) |
 | `3456227` | fix | 프론트엔드 뱃지 라벨 i18n 연결 (V/S/M → vv/mv/mc) |
-| `05c98a3` | fix | **검색 결과 3개 버그 수정**: post-merge threshold 필터 제거. SigLIP2 점수 범위(0.06~0.17)와 threshold(0.15) 불일치로 V-axis 결과 37/40개 삭제되던 문제 |
+| `05c98a3` | fix | **검색 결과 3개 버그 수정**: post-merge threshold 필터 제거. SigLIP2 점수 범위(0.06~0.17)와 threshold(0.15) 불일치로 VV 결과 37/40개 삭제되던 문제 |
 | `066f79d` | fix | **device='auto' 크래시 수정**: VisionAnalyzer에서 `device='auto'` → `cuda`/`cpu` 자동 해석. 이 버그로 STEP 2 전체가 실패하고 있었음 |
 | `abe397e` | refactor | RRF 레거시 vv/mv 폴백 키 제거 |
 
@@ -187,7 +187,7 @@ python backend/pipeline/ingest_engine.py --discover "C:\Images" --no-skip
 - 구현: `backend/vision/` (vision_factory.py, analyzer.py, ollama_adapter.py, prompts.py, schemas.py, repair.py)
 - 검증: 99파일 100% 처리 — illustration(52), photo(41), background(5), texture(1)
 
-### P1: V-axis SigLIP2 교체
+### P1: VV SigLIP2 교체
 
 - CLIP ViT-L-14 → **SigLIP2** (tier별: base=768d, so400m=1152d, giant=1664d)
 - ImageNet 75% → 85%, 109언어 지원
@@ -195,13 +195,13 @@ python backend/pipeline/ingest_engine.py --discover "C:\Images" --no-skip
 - 마이그레이션: `backend/db/migrations/v3_p1_vec.py`
 - 검증: 한국어 "야경" → yakei.psd 정확 매칭
 
-### P2: S-axis 텍스트 임베딩
+### P2: MV (Meaning Vector)
 
 - Qwen3-Embedding (tier별: 256d/1024d/4096d) 통합, Ollama embed API 사용
 - ai_caption + ai_tags → 텍스트 벡터 생성 → `vec_text` 테이블 저장
 - 3축 RRF 병합 완성 (`_rrf_merge_multi`)
 - 구현: `backend/vector/text_embedding.py`, `backend/db/migrations/v3_p2_text_vec.py`
-- 검증: 99/99 성공 (v3.0 테스트 기준), avg 2.23s/file, S-axis 유사도 0.73 (V-axis 0.05 대비 14배 정확)
+- 검증: 99/99 성공 (v3.0 테스트 기준), avg 2.23s/file, MV 유사도 0.73 (VV 0.05 대비 14배 정확)
 
 ---
 
@@ -228,7 +228,7 @@ AND 조건 하드 게이트로 적용하면 **검색 결과가 전부 0건**으�
 2. **근본적 중복**: 구조화 필드가 하는 일을 3축이 이미 더 잘 수행함.
    - `scene_type = "alley"` → FTS가 caption/tags의 "alley" 키워드를 이미 검색
    - `art_style = "anime"` → V축(SigLIP2 tier별 차원)이 시각적 스타일을 이미 인코딩
-   - `time_of_day = "night"` → S축이 caption "night scene" 의미를 이미 벡터화
+   - `time_of_day = "night"` → MV가 caption "night scene" 의미를 이미 벡터화
 3. **정보 손실**: Qwen3-VL이 생산하는 자유형 caption/tags는 풍부한 서술 정보를 포함하지만,
    구조화 필드는 동일 AI가 같은 이미지를 보고 ~10개 카테고리로 강제 분류한 축소 정보.
    1152차원 벡터가 인코딩하는 정보를 ~10개 체크박스로 대체하려는 시도.
@@ -236,7 +236,7 @@ AND 조건 하드 게이트로 적용하면 **검색 결과가 전부 0건**으�
 **결론:**
 - LLM 필터는 검색 시 하드 게이트로 사용하지 않음 (코드에서 제거)
 - 구조화 필드(image_type, scene_type 등)는 DB에 저장은 유지 (프론트엔드 수동 필터 용도)
-- 검색 품질은 V축+S축+M축(FTS) 3축 RRF가 전담
+- 검색 품질은 VV+MV+FTS 3축 RRF가 전담
 - 2-Stage Vision 파이프라인은 유지 (타입별 전용 프롬프트가 caption/tags 품질 향상에 기여)
 
 #### 가중치 튜닝 결과
@@ -286,8 +286,8 @@ backend/
     schemas.py             # 11개 image_type JSON 스키마
     repair.py              # 3단계 JSON Repair
   vector/
-    siglip2_encoder.py     # [P1] V-axis 인코더 (tier별 차원)
-    text_embedding.py      # [P2] S-axis Provider (tier별 차원)
+    siglip2_encoder.py     # [P1] VV 인코더 (tier별 차원)
+    text_embedding.py      # [P2] MV Provider (tier별 차원)
   search/
     sqlite_search.py       # 3축 RRF 검색 엔진
     rrf.py                 # [P2+] RRF 가중치 프리셋 (query_type별)
@@ -336,8 +336,8 @@ tools/reindex_v3.py        # 재인덱싱 (--vision-only, --embedding-only, --te
 |------|------|
 | 인제스트 (1파일, standard tier) | ~25~38초 (초기 모델 로딩 포함) |
 | STEP 2 AI Vision (2-Stage) | ~22초 |
-| V-axis 인코딩 (SigLIP2) | ~5초 (모델 로딩 포함) |
-| S-axis 인코딩 (Qwen3-Emb) | ~2초 |
+| VV 인코딩 (SigLIP2) | ~5초 (모델 로딩 포함) |
+| MV 인코딩 (Qwen3-Emb) | ~2초 |
 | 3축 검색 (232파일) | ~25ms |
 
 ---
@@ -353,7 +353,7 @@ python backend/pipeline/ingest_engine.py --watch "C:\assets"
 # 재인덱싱
 python tools/reindex_v3.py --vision-only          # Vision 재처리
 python tools/reindex_v3.py --embedding-only        # V축 재생성
-python tools/reindex_v3.py --text-embedding        # S축 재생성
+python tools/reindex_v3.py --text-embedding        # MV 재생성
 python tools/reindex_v3.py --all                   # 전체
 
 # 검색 (프론트엔드 Electron 앱)
@@ -363,7 +363,7 @@ cd frontend && npm run electron:dev
 cd frontend && npm install && npm run electron:dev
 
 # 마이그레이션
-python -m backend.db.migrations.v3_p2_text_vec     # S-axis 테이블 생성
+python -m backend.db.migrations.v3_p2_text_vec     # MV 테이블 생성
 ```
 
 ---

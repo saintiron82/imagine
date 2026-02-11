@@ -1,5 +1,5 @@
 """
-SigLIP 2 NaFlex Vision-Language Encoder for image/text embeddings.
+SigLIP 2 NaFlex VV (Visual Vector) Encoder.
 
 Uses SigLIP 2 So400m NaFlex (1152-dim) with dynamic resolution.
 NaFlex preserves native aspect ratio for better embedding quality.
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class SigLIP2Encoder:
     """
-    Lazy-loaded SigLIP 2 NaFlex encoder for image and text embeddings.
+    Lazy-loaded SigLIP 2 NaFlex encoder for VV generation.
 
     Usage:
         encoder = SigLIP2Encoder()                        # config-driven
@@ -68,23 +68,23 @@ class SigLIP2Encoder:
         if self._model is not None and self._processor is not None:
             return
 
-        from transformers import AutoModel, AutoProcessor
+        from transformers import AutoModel, AutoImageProcessor
 
         logger.info(f"Loading SigLIP 2 model: {self.model_name}...")
         try:
             self._model = AutoModel.from_pretrained(
-                self.model_name, dtype=torch.float16, local_files_only=True
+                self.model_name, torch_dtype=torch.float16, local_files_only=True
             ).to(self._device).eval()
-            self._processor = AutoProcessor.from_pretrained(
+            self._processor = AutoImageProcessor.from_pretrained(
                 self.model_name, local_files_only=True
             )
             logger.info(f"SigLIP 2 model loaded ({self._device}, fp16)")
         except OSError:
             logger.info("Local cache not found, downloading from HuggingFace...")
             self._model = AutoModel.from_pretrained(
-                self.model_name, dtype=torch.float16
+                self.model_name, torch_dtype=torch.float16
             ).to(self._device).eval()
-            self._processor = AutoProcessor.from_pretrained(self.model_name)
+            self._processor = AutoImageProcessor.from_pretrained(self.model_name)
             logger.info(f"SigLIP 2 model downloaded and loaded ({self._device}, fp16)")
         except Exception as e:
             logger.error(f"Failed to load SigLIP 2 model: {e}")

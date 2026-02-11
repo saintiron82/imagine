@@ -26,7 +26,7 @@ def migrate_tier_columns(db_path: str):
     Columns added:
     - mode_tier: AI tier (standard/pro/ultra)
     - caption_model: VLM model used
-    - text_embed_model: Text embedding model used
+    - text_embed_model: MV model used
     - runtime_version: Ollama/runtime version
     - preprocess_params: JSON preprocessing parameters
 

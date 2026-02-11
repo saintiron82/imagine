@@ -62,7 +62,7 @@ class ParserFactory:
         """Return an instantiated parser capable of handling the file."""
         for parser_cls in cls._parsers:
             if parser_cls.can_parse(file_path):
-                return parser_cls(output_dir=Path("output"))
+                return parser_cls(output_dir=PROJECT_ROOT / "output")
         return None
 
 
@@ -361,7 +361,7 @@ def process_file(
                 embedding=embedding
             )
 
-            # S-axis: Generate text embedding from caption + tags
+            # MV: Generate meaning vector from MC (caption + tags)
             try:
                 from backend.utils.config import get_config as _get_cfg
                 if _get_cfg().get("embedding.text.enabled"):
@@ -393,9 +393,9 @@ def process_file(
                                 (file_id, _json2.dumps(text_emb_list))
                             )
                             _global_sqlite_db.conn.commit()
-                            logger.info(f"   S-axis: text embedding stored ({len(text_emb)}-dim)")
+                            logger.info(f"   MV stored ({len(text_emb)}-dim)")
             except Exception as e:
-                logger.warning(f"S-axis embedding failed (non-fatal): {e}")
+                logger.warning(f"MV generation failed (non-fatal): {e}")
 
         except Exception as e:
             logger.error(f"SQLite Storage Failed: {e}")

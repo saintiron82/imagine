@@ -74,7 +74,7 @@ def test_weights():
 def test_bm25_weights():
     """Test 3: BM25 weights from config (2 values only)."""
     print("\n" + "=" * 70)
-    print("Test 3: BM25 Weights (2-column M-axis)")
+    print("Test 3: BM25 Weights (2-column FTS)")
     print("=" * 70)
 
     cfg = get_config()

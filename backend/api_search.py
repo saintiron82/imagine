@@ -43,9 +43,9 @@ def format_result(result: dict) -> dict:
         "folder_path": result.get("folder_path", ""),
         "relative_path": result.get("relative_path", ""),
         "storage_root": result.get("storage_root", ""),
-        "vector_score": result.get("vector_score", result.get("similarity")),     # V-axis: SigLIP visual
-        "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),  # S-axis: Qwen3 text vector
-        "text_score": result.get("text_score"),          # M-axis: FTS5 keyword
+        "vector_score": result.get("vector_score", result.get("similarity")),     # VV: SigLIP visual
+        "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),  # MV: Qwen3 text vector
+        "text_score": result.get("text_score"),          # FTS: FTS5 keyword
         "combined_score": result.get("rrf_score", result.get("similarity", 0)),
         "metadata": metadata,
         "thumbnail_path": result.get("thumbnail_url", ""),

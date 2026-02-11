@@ -23,7 +23,7 @@ ImageParser v3의 검색 시스템 해설.
                │
      ┌─────────┼─────────┐
      ▼         ▼         ▼
-  V-axis    S-axis     M-axis
+  VV    MV     FTS
   (시각)    (의미)    (키워드)
      │         │         │
      ▼         ▼         ▼
@@ -35,7 +35,7 @@ ImageParser v3의 검색 시스템 해설.
 
 ---
 
-## 축 1: V-axis (Visual) — "이 이미지가 눈에 어떻게 보이는가"
+## 축 1: VV (Visual) — "이 이미지가 눈에 어떻게 보이는가"
 
 ### 개념
 
@@ -103,14 +103,14 @@ SigLIP 코사인 유사도의 절대값이 낮은 이유:
 
 ---
 
-## 축 2: S-axis (Semantic) — "AI가 쓴 설명이 쿼리와 의미적으로 통하는가"
+## 축 2: MV (Semantic) — "AI가 쓴 설명이 쿼리와 의미적으로 통하는가"
 
 ### 개념
 
 AI 비전 모델이 이미지를 보고 쓴 **캡션과 태그를 텍스트 벡터로 변환**한다.
 검색할 때 쿼리도 텍스트 벡터로 변환해서 **텍스트↔텍스트 의미 비교**를 한다.
 
-V-axis가 "눈으로 보는" 것이라면, S-axis는 "설명을 읽고 이해하는" 것.
+VV가 "눈으로 보는" 것이라면, MV는 "설명을 읽고 이해하는" 것.
 
 ### 모델
 
@@ -158,7 +158,7 @@ V-axis가 "눈으로 보는" 것이라면, S-axis는 "설명을 읽고 이해하
 | < 0.15 | 무관 |
 | **임계값** | **0.15** (config.yaml) |
 
-텍스트↔텍스트 비교이므로 V-axis보다 절대값이 훨씬 높다.
+텍스트↔텍스트 비교이므로 VV보다 절대값이 훨씬 높다.
 
 ### 강점과 약점
 
@@ -174,14 +174,14 @@ V-axis가 "눈으로 보는" 것이라면, S-axis는 "설명을 읽고 이해하
 
 ---
 
-## 축 3: M-axis (Metadata) — "검색어가 글자 그대로 데이터에 있는가"
+## 축 3: FTS (Metadata) — "검색어가 글자 그대로 데이터에 있는가"
 
 ### 개념
 
 이미지에 연결된 **모든 텍스트 데이터**를 FTS5 전문 검색 인덱스에 넣는다.
 검색할 때 키워드가 **문자열로 그대로 존재하는지** 찾는다.
 
-V-axis가 "눈으로 보기", S-axis가 "뜻을 이해하기"라면, M-axis는 **"Ctrl+F 찾기"**.
+VV가 "눈으로 보기", MV가 "뜻을 이해하기"라면, FTS는 **"Ctrl+F 찾기"**.
 
 ### 기술
 
@@ -237,7 +237,7 @@ FTS5 인덱스에 들어가는 **16개 컬럼**:
 - **강점**: 정확한 키워드 매칭. "warrior"를 검색하면 "warrior"가 들어간 것만 나옴
 - **강점**: 16개 컬럼을 한 번에 검색 (파일명, 레이어명, 캡션, 태그, 메모, 폰트 등)
 - **강점**: 다국어 지원 (원본 + 한국어 + 영어 모두 인덱싱)
-- **약점**: 동의어 불가. "전사"를 검색해도 "warrior"는 안 나옴 (그건 S-axis의 역할)
+- **약점**: 동의어 불가. "전사"를 검색해도 "warrior"는 안 나옴 (그건 MV의 역할)
 - **약점**: 오타에 취약
 
 ### 코드 위치
@@ -268,9 +268,9 @@ k = 60 (고정 상수, config.yaml)
 "건널목과 상점가" 검색 시:
 
 107.psd:
-  V-axis 1등 (rank=0):  0.20 / (60 + 0 + 1) = 0.00328
-  S-axis 5등 (rank=4): 0.30 / (60 + 4 + 1) = 0.00462
-  M-axis 3등 (rank=2):  0.50 / (60 + 2 + 1) = 0.00794
+  VV 1등 (rank=0):  0.20 / (60 + 0 + 1) = 0.00328
+  MV 5등 (rank=4): 0.30 / (60 + 4 + 1) = 0.00462
+  FTS 3등 (rank=2):  0.50 / (60 + 2 + 1) = 0.00794
   ───────────────────────────────────────────
   RRF 합산 = 0.01584
 ```
@@ -298,13 +298,13 @@ QueryDecomposer가 쿼리를 분석해서 유형을 판단하고, 유형에 맞�
 ```
 이미지 파일
   │
-  ├─→ 썸네일 생성 → SigLIP2 인코더 → N차원 벡터 → vec_files (V-axis)
+  ├─→ 썸네일 생성 → SigLIP2 인코더 → N차원 벡터 → vec_files (VV)
   │
   ├─→ qwen3-vl 비전 분석 → ai_caption + ai_tags 생성
   │     │
-  │     ├─→ qwen3-embedding → N차원 벡터 → vec_text (S-axis)
+  │     ├─→ qwen3-embedding → N차원 벡터 → vec_text (MV)
   │     │
-  │     └─→ 캡션+태그+레이어명+메모+... → files_fts 인덱스 (M-axis)
+  │     └─→ 캡션+태그+레이어명+메모+... → files_fts 인덱스 (FTS)
   │
   └─→ 메타데이터 → files 테이블 (format, resolution, layer_tree, ...)
 ```
@@ -316,9 +316,9 @@ QueryDecomposer가 쿼리를 분석해서 유형을 판단하고, 유형에 맞�
   │
   ├─→ QueryDecomposer → vector_query (영문) + fts_keywords (다국어)
   │
-  ├─→ V-axis:  SigLIP2 텍스트 인코더 → vec_files 코사인 유사도 → 상위 40개
-  ├─→ S-axis: qwen3-embedding 인코더 → vec_text 코사인 유사도 → 상위 40개
-  ├─→ M-axis:  FTS5 MATCH 키워드 검색 → 상위 40개
+  ├─→ VV:  SigLIP2 텍스트 인코더 → vec_files 코사인 유사도 → 상위 40개
+  ├─→ MV: qwen3-embedding 인코더 → vec_text 코사인 유사도 → 상위 40개
+  ├─→ FTS:  FTS5 MATCH 키워드 검색 → 상위 40개
   │
   └─→ RRF Merge (가중 순위 합산) → 최종 top 20 반환
 ```
@@ -339,13 +339,13 @@ files (
     image_type, art_style, scene_type, ...
 )
 
--- V-axis 벡터 저장 (SigLIP2, tier별 차원: standard=768, pro=1152, ultra=1664)
+-- VV 벡터 저장 (SigLIP2, tier별 차원: standard=768, pro=1152, ultra=1664)
 vec_files (file_id, embedding FLOAT[dim])
 
--- S-axis 벡터 저장 (Qwen3-Embedding, tier별 차원: standard=256, pro=1024, ultra=4096)
+-- MV 벡터 저장 (Qwen3-Embedding, tier별 차원: standard=256, pro=1024, ultra=4096)
 vec_text (file_id, embedding FLOAT[dim])
 
--- M-axis 전문 검색 인덱스 (16컬럼)
+-- FTS 전문 검색 인덱스 (16컬럼)
 files_fts (
     file_path, file_name,
     ai_caption, ai_tags, ai_style, ocr_text, dominant_color,
@@ -361,7 +361,7 @@ files_fts (
 
 | 뱃지 | 색상 | 축 | 의미 (한줄 요약) |
 |-------|------|-----|-----------------|
-| **VV 12** | 파랑 | V-axis | 이미지 자체가 쿼리와 시각적으로 12% 유사 |
-| **MV 67** | 보라 | S-axis | AI 설명이 쿼리와 의미적으로 67% 유사 |
-| **MC 85** | 초록 | M-axis | 키워드가 데이터에 85% 수준으로 매칭 |
+| **VV 12** | 파랑 | VV | 이미지 자체가 쿼리와 시각적으로 12% 유사 |
+| **MV 67** | 보라 | MV | AI 설명이 쿼리와 의미적으로 67% 유사 |
+| **MC 85** | 초록 | FTS | 키워드가 데이터에 85% 수준으로 매칭 |
 | **★ 98%** | 노랑 | RRF 종합 | 3축 가중 합산 순위 기준 상위 98% |

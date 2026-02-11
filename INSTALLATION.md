@@ -35,13 +35,13 @@ python backend/setup/installer.py --full-setup
 
 This will:
 - Install all Python packages
-- Download SigLIP2 visual embedding model (~600MB-3GB depending on tier)
+- Download SigLIP2 VV model (~600MB-3GB depending on tier)
 - Initialize SQLite database
 - Check and pull Ollama models (if Ollama is running)
 
 ### 3. Install Ollama (AI Models)
 
-Ollama provides the text embedding and VLM (Vision Language Model) backends.
+Ollama provides the MV and VLM (Vision Language Model) backends.
 
 | Platform | Install Method |
 |----------|---------------|
@@ -119,7 +119,7 @@ Expected output:
 
 ImageParser supports 3 tiers configured in `config.yaml` (`ai_mode.override`):
 
-| Tier | VRAM | Visual Model | VLM | Text Embedding |
+| Tier | VRAM | VV Model | VLM | MV Model |
 |------|------|-------------|-----|----------------|
 | **standard** (default) | ~6GB | SigLIP2-base (768d) | Qwen3-VL-2B | qwen3-embedding:0.6b |
 | **pro** | 8-16GB | SigLIP2-so400m (1152d) | Qwen3-VL-4B | qwen3-embedding:0.6b |
@@ -144,7 +144,7 @@ python backend/setup/installer.py --setup-ollama
 # Install Python packages only
 python backend/setup/installer.py --install
 
-# Download visual embedding model only
+# Download VV model only
 python backend/setup/installer.py --download-model
 
 # Pull Ollama models only

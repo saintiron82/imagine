@@ -202,7 +202,7 @@ def reindex_embedding(limit: int = 0, dry_run: bool = False):
 
 
 def reindex_text_embedding(limit: int = 0, dry_run: bool = False):
-    """Re-generate T-axis text embeddings from ai_caption + ai_tags."""
+    """Re-generate MV from MC (mc_caption + ai_tags)."""
     from backend.db.sqlite_client import SQLiteDB
     from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
     import numpy as np
@@ -211,7 +211,7 @@ def reindex_text_embedding(limit: int = 0, dry_run: bool = False):
     cursor = db.conn.cursor()
 
     provider = get_text_embedding_provider()
-    logger.info(f"Loading T-axis model: {provider.model} ({provider.dimensions}-dim)")
+    logger.info(f"Loading MV model: {provider.model} ({provider.dimensions}-dim)")
 
     # Ensure vec_text table exists
     try:
@@ -230,7 +230,7 @@ def reindex_text_embedding(limit: int = 0, dry_run: bool = False):
 
     rows = cursor.execute(query).fetchall()
     total = len(rows)
-    logger.info(f"T-axis reindex: {total} files to process")
+    logger.info(f"MV reindex: {total} files to process")
 
     if dry_run:
         for row in rows:
@@ -279,7 +279,7 @@ def reindex_text_embedding(limit: int = 0, dry_run: bool = False):
     batch_elapsed = time.perf_counter() - batch_start
     avg = batch_elapsed / total if total > 0 else 0
     logger.info(
-        f"T-axis reindex complete: {success}/{total} succeeded — "
+        f"MV reindex complete: {success}/{total} succeeded — "
         f"total {batch_elapsed:.1f}s (avg {avg:.2f}s/file)"
     )
     db.close()
@@ -289,9 +289,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="v3 Reindex Tool")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--vision-only", action="store_true", help="Re-run 2-Stage Vision analysis")
-    group.add_argument("--embedding-only", action="store_true", help="Re-generate V-axis embeddings")
-    group.add_argument("--text-embedding", action="store_true", help="Re-generate T-axis text embeddings")
-    group.add_argument("--all", action="store_true", help="Vision + V-axis + T-axis embedding")
+    group.add_argument("--embedding-only", action="store_true", help="Re-generate VV")
+    group.add_argument("--text-embedding", action="store_true", help="Re-generate MV")
+    group.add_argument("--all", action="store_true", help="Vision + VV + MV")
     parser.add_argument("--limit", type=int, default=0, help="Limit files to process")
     parser.add_argument("--dry-run", action="store_true", help="Show without processing")
     parser.add_argument("--unprocessed", action="store_true", help="Only process files without image_type")

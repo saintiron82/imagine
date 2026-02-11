@@ -80,7 +80,7 @@ class SQLiteDB:
             raise
 
     def _get_default_embedding_model(self) -> str:
-        """Get the visual embedding model name from active tier config."""
+        """Get the VV model name from active tier config."""
         try:
             from backend.utils.tier_config import get_active_tier
             _, tier_config = get_active_tier()
@@ -439,7 +439,7 @@ class SQLiteDB:
 
         return ' '.join(str(p) for p in parts if p)
 
-    # Triaxis: _build_fts_caption() removed - AI content now handled by S-axis
+    # Triaxis: _build_fts_caption() removed - AI content now handled by MV
 
     def get_file_modified_at(self, file_path: str) -> Optional[str]:
         """
@@ -463,12 +463,12 @@ class SQLiteDB:
         embedding: np.ndarray
     ) -> int:
         """
-        Insert or update file metadata + visual embedding vector (SigLIP2).
+        Insert or update file metadata + VV (SigLIP2).
 
         Args:
             file_path: Absolute file path (unique identifier)
             metadata: Full metadata dict from AssetMeta.model_dump()
-            embedding: Visual embedding vector (dimension from active tier)
+            embedding: VV (Visual Vector) (dimension from active tier)
 
         Returns:
             Database ID of inserted/updated record
@@ -682,7 +682,7 @@ class SQLiteDB:
             file_id: Parent file database ID
             layer_path: Layer path (e.g., "Root/Group 1/Layer 2")
             layer_metadata: Layer properties dict
-            embedding: Optional visual embedding for this layer
+            embedding: Optional VV for this layer
 
         Returns:
             Database ID of inserted/updated layer

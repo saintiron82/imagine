@@ -43,17 +43,72 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 
 ## 프로젝트 개요
 
-**ImageParser**는 PSD, PNG, JPG 파일을 AI 검색 가능한 데이터로 변환하는 멀티모달 이미지 데이터 추출 및 벡터화 시스템입니다. **Triaxis 아키텍처** (V + S + M)를 사용합니다:
+**ImageParser**는 PSD, PNG, JPG 파일을 AI 검색 가능한 데이터로 변환하는 멀티모달 이미지 데이터 추출 및 벡터화 시스템입니다. **Triaxis 아키텍처** (VV + MV + FTS)를 사용합니다:
 
-1. **V-axis (Visual)**: SigLIP2로 시각적 임베딩 (이미지 픽셀 유사도 검색)
-2. **S-axis (Semantic)**: Qwen3-Embedding으로 AI 캡션/태그 임베딩 (의미 기반 검색)
-3. **M-axis (Metadata)**: FTS5 BM25로 파일명/레이어명/태그 키워드 검색
+1. **VV (Visual Vector)**: SigLIP2로 시각적 임베딩 (이미지 픽셀 유사도 검색, `vec_files`)
+2. **MV (Meaning Vector)**: Qwen3-Embedding으로 MC를 벡터화 (의미 기반 검색, `vec_text`)
+3. **MC (Meta-Context Caption)**: VLM(Qwen3-VL)이 생성한 캡션/태그 (`mc_caption`, `ai_tags`)
+4. **FTS (Full-Text Search)**: FTS5 BM25로 파일명/레이어명/태그 키워드 검색 (`files_fts`)
 
 **기술 스택**:
 - **Backend**: Python 3.x + `psd-tools`, `Pillow`, `transformers`, `sqlite-vec`
 - **Frontend**: React 19 + Electron 40 + Vite + Tailwind CSS
 - **Database**: SQLite + sqlite-vec (통합 메타데이터 + 벡터 저장소, Docker 불필요)
-- **AI 모델**: SigLIP2 (시각 임베딩), Qwen3-VL (VLM 캡션/태그), Qwen3-Embedding (텍스트 임베딩)
+- **AI 모델**: SigLIP2 (VV), Qwen3-VL (VLM/MC), Qwen3-Embedding (MV)
+
+## 용어 사전 (MANDATORY)
+
+**이 프로젝트의 공식 용어입니다. 코드 주석, 문서, 대화에서 반드시 이 용어를 사용하세요.**
+
+### 핵심 약어
+
+| 약어 | 정식 명칭 | 설명 | DB 테이블/컬럼 |
+|------|----------|------|---------------|
+| **VV** | Visual Vector | SigLIP2가 이미지 픽셀로부터 생성하는 시각 임베딩 벡터. 이미지↔이미지 유사도 검색에 사용 | `vec_files.embedding` |
+| **MV** | Meaning Vector | Qwen3-Embedding이 MC 텍스트로부터 생성하는 의미 임베딩 벡터. 텍스트↔텍스트 유사도 검색에 사용 | `vec_text.embedding` |
+| **MC** | Meta-Context Caption | VLM(Qwen3-VL)이 이미지를 보고 생성한 캡션 텍스트와 태그. MV의 입력 소스 | `files.mc_caption`, `files.ai_tags` |
+| **FTS** | Full-Text Search | FTS5 BM25 기반 키워드 전문 검색. 파일명, 레이어명, 태그 등 메타데이터 검색 | `files_fts` |
+| **VLM** | Vision-Language Model | 이미지를 보고 자연어를 생성하는 AI 모델 (현재: Qwen3-VL). MC를 생성하는 주체 | — |
+| **RRF** | Reciprocal Rank Fusion | VV, MV, FTS 3축 검색 결과를 하나로 결합하는 랭킹 알고리즘 | — |
+| **MRL** | Matryoshka Representation Learning | 고차원 임베딩을 저차원으로 잘라도 품질이 유지되는 학습 기법. MV 차원 조절에 사용 | — |
+
+### 데이터 흐름 관계
+
+```
+이미지 파일 ──→ [Parser] ──→ 메타데이터 (AssetMeta)
+                                 │
+                                 ▼
+                            [VLM: Qwen3-VL]
+                                 │
+                                 ├──→ MC (mc_caption + ai_tags)  ──→ [Qwen3-Embedding] ──→ MV (vec_text)
+                                 │
+이미지 픽셀  ──→ [SigLIP2] ──→ VV (vec_files)
+                                 │
+메타데이터   ──→ [FTS5 Indexer] ──→ FTS (files_fts)
+                                 │
+                                 ▼
+                         [Triaxis Search: VV + MV + FTS → RRF 결합]
+```
+
+### 모델 역할 매핑
+
+| 모델 | 입력 | 출력 | 역할 |
+|------|------|------|------|
+| **SigLIP2** | 이미지 픽셀 | VV 벡터 | 이미지를 시각적으로 벡터화 (비전 인코더) |
+| **Qwen3-VL** | 이미지 + 프롬프트 | MC 텍스트 | 이미지를 보고 캡션/태그 생성 (VLM, 생성형) |
+| **Qwen3-Embedding** | MC 텍스트 | MV 벡터 | 텍스트를 의미 벡터로 변환 (텍스트 인코더, 비전 없음) |
+
+### 금지 용어 → 올바른 용어
+
+| 금지 | 올바른 표현 |
+|------|-----------|
+| V-axis, V축 | **VV** (Visual Vector) |
+| S-axis, S축, Semantic축 | **MV** (Meaning Vector) |
+| M-axis, M축 | **FTS** (Full-Text Search) |
+| ai_caption | **mc_caption** (MC) |
+| 시각 임베딩, visual embedding | **VV** |
+| 텍스트 임베딩, text embedding | **MV** |
+| 캡션/태그 | **MC** (VLM이 생성한 경우) |
 
 ## 개발 명령어
 
@@ -78,7 +133,7 @@ python backend/pipeline/ingest_engine.py --discover "C:\path\to\assets" --no-ski
 # 디렉토리 감시 (초기 DFS 스캔 + 실시간 변경 감지)
 python backend/pipeline/ingest_engine.py --watch "C:\path\to\assets"
 
-# Triaxis 검색 (V + S + M axes, SQLite + sqlite-vec)
+# Triaxis 검색 (VV + MV + FTS, SQLite + sqlite-vec)
 # 프론트엔드 Electron 앱에서 검색 UI 사용
 # 또는 백엔드 API 직접 호출:
 python -c "from backend.search.sqlite_search import SqliteVectorSearch; s=SqliteVectorSearch(); print(s.triaxis_search('fantasy character'))"
@@ -153,15 +208,15 @@ STEP 2/4: AI Vision (vision_factory.py)
     ├─ VLM 캡션/태그/분류 생성 (Qwen3-VL, tier별 backend)
     └─ 2-Stage Pipeline: 빠른 분류 → 상세 캡션
     ↓
-STEP 3/4: Embedding (siglip2_encoder.py)
-    ├─ SigLIP2 시각 임베딩 생성 (tier별 차원)
-    └─ Qwen3-Embedding 텍스트 임베딩 생성 (Ollama)
+STEP 3/4: Embedding (siglip2_encoder.py + text_embedding.py)
+    ├─ SigLIP2 → VV 생성 (이미지 시각 벡터, tier별 차원)
+    └─ Qwen3-Embedding → MV 생성 (MC 텍스트 의미 벡터)
     ↓
 STEP 4/4: SQLite Storage (db/sqlite_client.py)
-    ├─ 메타데이터 → files 테이블 (JSON 필드)
-    ├─ 시각 임베딩 → vec_files 테이블 (sqlite-vec)
-    ├─ 텍스트 임베딩 → vec_text 테이블 (sqlite-vec)
-    └─ FTS5 인덱스 자동 동기화 (files_fts)
+    ├─ 메타데이터 + MC → files 테이블 (JSON 필드)
+    ├─ VV → vec_files 테이블 (sqlite-vec)
+    ├─ MV → vec_text 테이블 (sqlite-vec)
+    └─ FTS 인덱스 자동 동기화 (files_fts)
 ```
 
 ### 파서 선택 (Factory Pattern)
@@ -188,18 +243,18 @@ STEP 4/4: SQLite Storage (db/sqlite_client.py)
 
 `backend/db/sqlite_client.py` (SQLiteDB):
 - **files 테이블**: 파일 메타데이터 + AI 생성 필드
-  - `mc_caption`, `mc_tags`, `mc_ocr_text`: VLM 생성 캡션/태그 (2-Stage Vision)
+  - `mc_caption`, `ai_tags`: VLM이 생성한 MC (2-Stage Vision)
   - `image_type`, `scene_type`, `art_style`: VLM 분류 필드
   - `folder_path`, `folder_depth`, `folder_tags`: DFS 폴더 탐색 메타데이터
-- **vec_files**: SigLIP2 시각 임베딩 (sqlite-vec, V-axis)
-- **vec_text**: Qwen3-Embedding 텍스트 임베딩 (sqlite-vec, S-axis)
-- **files_fts**: FTS5 전문 검색 인덱스 (M-axis)
+- **vec_files**: SigLIP2 VV (sqlite-vec)
+- **vec_text**: Qwen3-Embedding MV (sqlite-vec)
+- **files_fts**: FTS5 전문 검색 인덱스 (BM25 키워드)
 
 `backend/search/sqlite_search.py` (SqliteVectorSearch):
-- **triaxis_search()**: V + S + M 3축 통합 검색 (RRF 결합)
-- **vector_search()**: SigLIP2 시각 유사도 검색 (V-axis)
-- **text_vector_search()**: Qwen3-Embedding 의미 검색 (S-axis)
-- **fts_search()**: FTS5 BM25 키워드 검색 (M-axis)
+- **triaxis_search()**: VV + MV + FTS 3축 통합 검색 (RRF 결합)
+- **vector_search()**: SigLIP2 VV 시각 유사도 검색
+- **text_vector_search()**: Qwen3-Embedding MV 의미 검색
+- **fts_search()**: FTS5 BM25 키워드 검색
 
 ## 유닛 개발 프로토콜 (필수)
 
@@ -278,7 +333,7 @@ for layer in psd.descendants():
 
 ### 메모리 관리
 
-- **Visual Encoder**: 첫 사용 시 SigLIP2 모델 지연 로드
+- **VV 인코더**: 첫 사용 시 SigLIP2 모델 지연 로드
 - **CUDA 정리**: 이미지 10개마다 `torch.cuda.empty_cache()` 실행
 - **전역 싱글톤**: `_global_indexer`가 장시간 실행 프로세스에서 모델 재로딩 방지
 
@@ -288,15 +343,15 @@ for layer in psd.descendants():
 |------|------|
 | `backend/parser/schema.py` | **표준 데이터 스키마** (AssetMeta) |
 | `backend/pipeline/ingest_engine.py` | **4단계 처리 파이프라인** (메인 진입점) |
-| `backend/db/sqlite_client.py` | **SQLite 클라이언트** (메타데이터 + 벡터 저장) |
+| `backend/db/sqlite_client.py` | **SQLite 클라이언트** (메타데이터 + VV + MV 저장) |
 | `backend/db/sqlite_schema.sql` | SQLite 스키마 정의 |
-| `backend/search/sqlite_search.py` | **Triaxis 검색 엔진** (V + S + M) |
+| `backend/search/sqlite_search.py` | **Triaxis 검색 엔진** (VV + MV + FTS) |
 | `backend/search/rrf.py` | RRF 가중치 프리셋 (query_type별) |
 | `backend/search/query_decomposer.py` | LLM 쿼리 분류기 (query_type 판별) |
 | `backend/vision/vision_factory.py` | VLM 백엔드 자동 선택 (Factory) |
 | `backend/vision/analyzer.py` | Transformers VLM 어댑터 (2-Stage) |
-| `backend/vector/siglip2_encoder.py` | SigLIP2 시각 인코더 |
-| `backend/vector/text_embedding.py` | Qwen3-Embedding 텍스트 인코더 (Ollama) |
+| `backend/vector/siglip2_encoder.py` | SigLIP2 VV 인코더 |
+| `backend/vector/text_embedding.py` | Qwen3-Embedding MV 인코더 (Transformers/Ollama) |
 | `backend/api_search.py` | 프론트엔드 검색 API 브리지 |
 | `backend/setup/installer.py` | **통합 설치 프로그램** |
 | `config.yaml` | **Tier/검색/배치 설정** (단일 소스) |
@@ -362,8 +417,8 @@ ollama pull qwen3-embedding:0.6b
 **원인**: SigLIP2 점수 범위 (0.06~0.17)와 threshold 불일치
 **해결**: 프론트엔드 threshold를 0으로 설정 (기본값). config.yaml의 `search.thresholds` 확인.
 
-### 문제: S-axis 결과 없음 (vec_text 비어있음)
-**원인**: STEP 2 (AI Vision)가 실행되지 않은 파일은 텍스트 임베딩이 없음
+### 문제: MV 결과 없음 (vec_text 비어있음)
+**원인**: STEP 2 (AI Vision)가 실행되지 않은 파일은 MC가 없으므로 MV도 생성 불가
 **해결**: `--no-skip` 옵션으로 파일 재처리
 ```powershell
 python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
@@ -384,19 +439,16 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 ## 단계별 로드맵
 
 - ✅ **Phase 1**: 구조적 파싱 (PSD 레이어, 메타데이터 추출)
-- ✅ **Phase 2**: 시각 벡터화 (SigLIP2 임베딩, ChromaDB → SQLite 마이그레이션 완료)
+- ✅ **Phase 2**: VV 벡터화 (SigLIP2 임베딩, ChromaDB → SQLite 마이그레이션 완료)
 - ✅ **Phase 3**: SQLite + sqlite-vec 통합 (Triaxis Data Storage)
-  - PostgreSQL → SQLite 전환 (Docker 불필요)
-  - Triaxis 검색 (V + S + M axes, RRF 결합)
-  - FTS5 전문 검색 (M-axis)
-  - Tier 시스템 (standard/pro/ultra)
-- ✅ **Phase 4**: 서술적 비전 (Qwen3-VL 2-Stage 캡션/태그/분류 생성)
-  - Transformers 백엔드 (standard/pro)
-  - Ollama 백엔드 (ultra)
-  - Qwen3-Embedding 텍스트 임베딩 (S-axis)
-- ⏳ **Phase 5**: 최적화 (레이어 단위 인덱싱, 전체 패키징)
+- ✅ **Phase 4**: VLM + MC 생성 + Electron GUI
+- ⏳ **Phase 5**: UI/UX 개선 (라이트박스 뷰어, 검색 히스토리, 뷰 모드)
+- ⏳ **Phase 6**: 검색 고도화 (고급 필터, 컬렉션, 유사 이미지)
+- ⏳ **Phase 7**: 성능 최적화 (증분 인덱싱, 병렬 파싱, 캐싱)
+- ⏳ **Phase 8**: 패키징/배포 (인스톨러, 자동 업데이트)
+- ⏳ **Phase 9**: 협업 기능 (DB 공유, 코멘트)
 
-자세한 마일스톤 추적은 `docs/phase_roadmap.md` 참조.
+자세한 로드맵은 `phase.md`, 기능 명세는 `Spec.md` 참조.
 
 ## 인프라 스펙 (MANDATORY)
 
@@ -408,31 +460,31 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 |------|------|
 | **주력 DB** | SQLite (`imageparser.db`, 프로젝트 루트) |
 | **벡터 확장** | sqlite-vec (vec0 가상 테이블) |
-| **전문 검색** | FTS5 (BM25, Triaxis M-axis) |
+| **전문 검색** | FTS5 (BM25, Triaxis FTS축) |
 | **스키마 파일** | `backend/db/sqlite_schema.sql` |
 | **클라이언트** | `backend/db/sqlite_client.py` (SQLiteDB) |
 | **자동 마이그레이션** | 연결 시 자동 스키마 업그레이드 |
 
 **PostgreSQL은 미사용** (레거시 마이그레이션 코드만 보존). Docker 불필요.
 
-### 검색: Triaxis (V + S + M)
+### 검색: Triaxis (VV + MV + FTS)
 
 | 축 | 역할 | 모델 | DB 테이블 |
 |----|------|------|----------|
-| **V-axis** (Visual) | 이미지 픽셀 유사도 | SigLIP2 (tier별, HuggingFace) | `vec_files` |
-| **S-axis** (Semantic) | AI 캡션/태그 유사도 | Qwen3-embedding (Ollama) | `vec_text` |
-| **M-axis** (Metadata) | 파일명/레이어명/태그 | FTS5 BM25 | `files_fts` |
+| **VV** (Visual Vector) | 이미지 픽셀 유사도 | SigLIP2 (tier별, HuggingFace) | `vec_files` |
+| **MV** (Meaning Vector) | MC 캡션/태그 텍스트 유사도 | Qwen3-Embedding (Transformers/Ollama) | `vec_text` |
+| **FTS** (Full-Text Search) | 파일명/레이어명/태그 키워드 | FTS5 BM25 | `files_fts` |
 
 **결합**: RRF (Reciprocal Rank Fusion), 가중치는 `config.yaml` > `search.rrf.presets` 설정.
 **검색 엔진**: `backend/search/sqlite_search.py` (SqliteVectorSearch)
 
 ### Tier 시스템 (config.yaml)
 
-| Tier | VRAM | Visual Encoder | VLM | Text Embed (Ollama) |
-|------|------|----------------|-----|---------------------|
-| **standard** | ~6GB | `google/siglip2-base-patch16-224` (768d) | `Qwen/Qwen3-VL-2B-Instruct` (transformers) | `qwen3-embedding:0.6b` (256d) |
-| **pro** | 8-16GB | `google/siglip2-so400m-patch14-384` (1152d) | `Qwen/Qwen3-VL-4B-Instruct` (transformers) | `qwen3-embedding:0.6b` (1024d) |
-| **ultra** | 20GB+ | `google/siglip2-giant-opt-patch16-256` (1664d) | `qwen3-vl:8b` (auto: ollama/vllm) | `qwen3-embedding:8b` (4096d) |
+| Tier | VRAM | VV 모델 (SigLIP2) | VLM (MC 생성) | MV 모델 (Qwen3-Embedding) |
+|------|------|-------------------|---------------|----------------------|
+| **standard** | ~6GB | `siglip2-base-patch16-224` (768d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (256d) |
+| **pro** | 8-16GB | `siglip2-so400m-patch14-384` (1152d) | `Qwen3-VL-4B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) |
+| **ultra** | 20GB+ | `siglip2-giant-opt-patch16-256` (1664d) | `Qwen3-VL-8B` (auto: ollama/vllm) | `Qwen3-Embedding-8B` (4096d) |
 
 **설정 파일**: `config.yaml` > `ai_mode.override` (현재: `standard`)
 **Tier 로더**: `backend/utils/tier_config.py` > `get_active_tier()`
@@ -442,8 +494,8 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 ```
 STEP 1/4: Parse       → PSD/PNG/JPG 파싱, 썸네일 생성, 메타데이터 추출
 STEP 2/4: AI Vision   → VLM으로 캡션/태그/분류 생성 (tier별 backend: transformers/ollama/auto)
-STEP 3/4: Embedding   → SigLIP2로 시각 임베딩 생성
-STEP 4/4: Storing     → SQLite 저장 (메타데이터 + 벡터 + 텍스트 임베딩)
+STEP 3/4: Embedding   → SigLIP2로 VV 생성, Qwen3-Embedding으로 MV 생성
+STEP 4/4: Storing     → SQLite 저장 (메타데이터 + VV + MV)
 ```
 
 **핵심**: Tier 메타데이터(mode_tier, embedding_model 등)는 STEP 2 전에 설정되므로 Vision 실패와 무관하게 항상 기록됨.
@@ -456,7 +508,7 @@ STEP 4/4: Storing     → SQLite 저장 (메타데이터 + 벡터 + 텍스트 �
 | **백엔드 통신** | IPC → Python subprocess (stdio JSON) |
 | **DB** | SQLite (로컬 파일, Docker 불필요) |
 | **VLM** | transformers (standard/pro) 또는 Ollama (ultra) |
-| **Visual Encoder** | SigLIP2 (HuggingFace, 로컬 캐시) |
+| **VV 인코더** | SigLIP2 (HuggingFace, 로컬 캐시) |
 | **API 서버** | 없음 (subprocess 직접 호출) |
 
 ### 필수 설치 요소 (standard tier 기준)
@@ -465,8 +517,8 @@ STEP 4/4: Storing     → SQLite 저장 (메타데이터 + 벡터 + 텍스트 �
 # 1. Python 3.11+ (venv)
 python -m venv .venv && .venv\Scripts\activate
 
-# 2. Ollama 설치 (https://ollama.com/download) - text embedding용
-# 3. Ollama 모델 pull (text embedding만, VLM은 HuggingFace 자동 다운로드)
+# 2. Ollama 설치 (https://ollama.com/download) - MV 모델용
+# 3. Ollama 모델 pull (MV용만, VLM은 HuggingFace 자동 다운로드)
 ollama pull qwen3-embedding:0.6b
 
 # 4. Python 패키지 + SigLIP2/Qwen3-VL 모델 + DB 초기화
@@ -475,7 +527,7 @@ python backend/setup/installer.py --full-setup
 # 또는 개별 실행:
 python backend/setup/installer.py --install          # pip 패키지
 python backend/setup/installer.py --download-model    # SigLIP2 + Qwen3-VL (HuggingFace)
-python backend/setup/installer.py --setup-ollama      # Ollama text embedding 모델 확인/pull
+python backend/setup/installer.py --setup-ollama      # Ollama MV 모델 확인/pull
 python backend/setup/installer.py --init-db           # SQLite 스키마
 
 # 5. 상태 진단
@@ -494,7 +546,7 @@ python backend/setup/installer.py --check
 | `backend/vision/vision_factory.py` | VLM 백엔드 자동 선택 | ❌ |
 | `backend/vision/analyzer.py` | Transformers VLM 어댑터 (2-Stage) | ❌ |
 | `backend/vision/ollama_adapter.py` | Ollama VLM 어댑터 (2-Stage) | ❌ |
-| `backend/vector/siglip2_encoder.py` | SigLIP2 시각 인코더 | ❌ |
+| `backend/vector/siglip2_encoder.py` | SigLIP2 VV 인코더 | ❌ |
 | `backend/utils/tier_config.py` | Tier 설정 로더 | ❌ |
 | `backend/setup/installer.py` | 통합 설치 프로그램 | ❌ |
 | `tools/setup_models.py` | Ollama 모델 설치 스크립트 | ❌ |
@@ -602,7 +654,7 @@ const { t } = useLocale();
 
 1. **5단계 유닛 프로토콜 준수**: 모든 개발은 정의된 워크플로우를 따라야 함
 2. **AssetMeta 스키마 준수**: 모든 파서 출력은 표준 스키마를 따라야 함
-3. **Triaxis 데이터 분해**: Visual(V) + Semantic(S) + Metadata(M) 축으로 검색
+3. **Triaxis 데이터 분해**: VV (시각 벡터) + MV (의미 벡터) + FTS (키워드) 3축 검색
 4. **Factory Pattern 사용**: 새 파서는 BaseParser를 상속하고 can_parse() 구현
 5. **문제 발생 시 기록 필수**: troubleshooting.md에 모든 이슈와 해결책 문서화
 6. **UI 문자열 로컬라이제이션 필수**: 모든 프론트엔드 텍스트는 i18n 키 사용
@@ -694,3 +746,40 @@ optimal_batch = get_optimal_batch_size(backend='auto', tier='ultra')
 
 **심각도**: ⚠️ HIGH - 성능에 직접적인 영향
 **적용 시기**: v3.1.1부터 필수
+
+## 개발/테스트 환경 (macOS)
+
+### 현재 시스템
+- **HW**: Apple M5, 32GB Unified Memory, Metal 4
+- **OS**: macOS 26.2 (Darwin 25.2.0, arm64)
+- **Tier**: pro (8-16GB VRAM range)
+- **Python**: 3.12.12 (.venv)
+- **Node**: v24.13.0
+- **Vite dev port**: 9274
+
+### 테스트 이미지 경로
+- **테스트 폴더**: `/Users/saintiron/imageDB/마캬베리즈무/실내소품`
+  - PSD 파일 다수 (실내 소품 배경 원화)
+  - 파이프라인 E2E 테스트용
+
+### 알려진 이슈
+- **Ollama + M5 Metal 4**: `mlx_metal_device_info` 심볼 로드 실패 → 모델 로딩 불가
+  - 원인: Ollama 0.15.5의 Metal shader가 M5 Metal 4 bfloat 미지원
+  - 해결: MV 생성을 TransformersEmbeddingProvider로 전환 (Ollama 우회)
+  - Ollama는 현재 MV 생성에 사용하지 않음
+- **VLM (Qwen3-VL-4B)**: transformers 5.1.0의 video_processing_auto.py TypeError 가능성
+  - 모델 파일은 캐시됨, 런타임 로딩 시 확인 필요
+
+### 양자화 옵션 (조사 완료, 미적용)
+
+Mac MPS (Apple Silicon)에서 사용 가능한 양자화 방법 3가지. 현재는 적용하지 않음.
+
+| 방법 | 지원 | 장점 | 단점 |
+|------|------|------|------|
+| **optimum-quanto** | MPS int4/int8 | HuggingFace 공식, `QuantoConfig` 추가만으로 적용, 메모리 ~40-50% 절감 | 속도 동일~약간 느림 |
+| **torchao** | MPS int4 weight-only | PyTorch 공식, `quantize_(model, int4_weight_only())` | quanto보다 생태계 작음 |
+| **MLX** | M-시리즈 네이티브 int4 | Apple 공식, Neural Engine TensorOps 활용, 최고 속도 | transformers API 비호환, 코드 전면 재작성 필요 |
+
+**현재 상태**: pro tier fp16 기준 ~11GB 사용, 32GB 시스템에서 여유 충분 → 양자화 불필요
+**적용 시점**: ultra tier 지원 또는 저메모리(8GB) 기기 타겟 시 검토
+**참고**: bitsandbytes는 여전히 CUDA 전용 (MPS 미지원)

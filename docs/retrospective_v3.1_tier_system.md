@@ -154,7 +154,7 @@ def generate_thumbnail_with_tier(file_path: str) -> Image.Image:
 ```python
 mode_tier: str = "pro"                    # 티어
 caption_model: str = ""                   # VLM 모델
-text_embed_model: str = ""                # Text embedding 모델
+text_embed_model: str = ""                # MV 모델
 runtime_version: str = ""                 # Ollama 버전
 preprocess_params: Dict = {}              # 전처리 파라미터
 ```
