@@ -1,6 +1,6 @@
 ai_mode:
   auto_detect: false
-  override: standard
+  override: pro
   tiers:
     pro:
       preprocess:
@@ -48,34 +48,27 @@ ai_mode:
         dimensions: 1664
         model: google/siglip2-giant-opt-patch16-256
       vlm:
-        # Backend: 'auto' enables platform-specific optimization
         backend: auto
         device: auto
         dtype: bfloat16
         model: qwen3-vl:8b
-
-        # Platform-specific configurations (used when backend=auto)
         backends:
           windows:
             backend: ollama
             model: qwen3-vl:8b
-            batch_size: 1  # Ollama Vision API: sequential only
-
-          darwin:  # macOS
-            backend: vllm  # Preferred for batch processing
+            batch_size: 1
+          darwin:
+            backend: vllm
             model: Qwen/Qwen3-VL-8B-Instruct
-            batch_size: 16  # vLLM supports excellent batching
-            fallback: ollama  # If vLLM not installed
-
+            batch_size: 16
+            fallback: ollama
           linux:
-            backend: vllm  # Preferred for batch processing
+            backend: vllm
             model: Qwen/Qwen3-VL-8B-Instruct
             batch_size: 16
             fallback: ollama
       vram_min: 20480
 embedding:
-  # NOTE: These are FALLBACK values. Tier-specific config (ai_mode.tiers.{tier})
-  # takes precedence at runtime. These values are only used when tier config is missing.
   text:
     dimensions: 1024
     enabled: true
@@ -88,10 +81,11 @@ runtime:
   ollama_version: 0.15.2
   pin_version: false
 batch_processing:
-  enabled: true  # Enable adaptive batch processing (GUI configurable)
+  enabled: true
 registered_folders:
-  folders: []          # Registered folder paths for auto-discovery
-  auto_scan: true      # Auto-scan registered folders on app start
+  folders:
+    - /Users/saintiron/imageDB/마캬베리즈무
+  auto_scan: true
 search:
   candidate:
     fts_topn_cut: 2000

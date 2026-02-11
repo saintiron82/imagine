@@ -19,7 +19,7 @@ exifread>=3.0.0
 # CLI & Progress
 tqdm>=4.65.0
 
-# SQLite Vector Database (Triaxis V/S-axis)
+# SQLite Vector Database (Triaxis VV/MV)
 sqlite-vec>=0.1.0
 
 # AI Models (SigLIP2, Qwen3-VL)
