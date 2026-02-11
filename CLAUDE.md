@@ -436,6 +436,11 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 **원인**: 프론트엔드 개발 서버가 준비되지 않음
 **해결**: `wait-on`이 Electron 전에 Vite가 시작되도록 보장; 포트 5173 가용성 확인
 
+### 문제: 검색 그리드 깜빡임 (스크롤바 진동)
+**원인**: `overflow-y: auto` 컨테이너에서 ResizeObserver 무한 루프 발생. 스크롤바 등장 → 컨테이너 ~48px 축소 → 카드 축소 → 콘텐츠 줄어듬 → 스크롤바 소멸 → 컨테이너 확대 → 카드 확대 → 콘텐츠 넘침 → 스크롤바 등장 (반복)
+**해결**: `useResponsiveColumns` 훅에서 **최대 관측 너비 래치** 적용. 60px 이내 너비 감소(스크롤바)는 무시하고 넓은 값 유지. 500ms 안정 후 리셋하여 실제 창 크기 변경은 정상 반영.
+**교훈**: `overflow-y: auto` + `ResizeObserver` 조합은 스크롤바 toggle로 인한 무한 루프 위험이 있다. 항상 스크롤바 폭 변동을 고려해야 한다.
+
 ## 단계별 로드맵
 
 - ✅ **Phase 1**: 구조적 파싱 (PSD 레이어, 메타데이터 추출)
