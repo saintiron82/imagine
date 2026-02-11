@@ -449,11 +449,11 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
 
     return (
         <div
-            className="group bg-gray-800 border border-gray-700 rounded-lg overflow-hidden hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-900/10 cursor-pointer"
+            className="group bg-gray-800 border border-gray-700 rounded-lg overflow-hidden hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-900/10 cursor-pointer h-full flex flex-col"
             onClick={() => onShowMeta(result.path)}
         >
             {/* Thumbnail */}
-            <div className="aspect-square bg-gray-900 overflow-hidden relative">
+            <div className="aspect-square bg-gray-900 overflow-hidden relative shrink-0">
                 {thumbnailSrc ? (
                     <img
                         src={thumbnailSrc}
@@ -503,7 +503,7 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
             </div>
 
             {/* Info */}
-            <div className="p-3">
+            <div className="p-3 flex-1 min-h-0 overflow-hidden flex flex-col">
                 <div className="flex items-center gap-1">
                     <div className="text-sm font-medium text-white truncate flex-1">{fileName}</div>
                     <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -551,7 +551,7 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
                     </div>
                 )}
 
-                <div className="flex items-center gap-2 mt-2 text-[10px] text-gray-500">
+                <div className="flex items-center gap-2 mt-auto pt-2 text-[10px] text-gray-500">
                     <span className="uppercase font-medium">{result.format || ext.replace('.', '')}</span>
                     {result.width && result.height && (
                         <span>{result.width}x{result.height}</span>
@@ -575,8 +575,8 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
 
 const SEARCH_GAP = 16;
 
-// Virtualized search results grid
-const SearchResults = ({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore }) => {
+// Virtualized search results grid (memoized — only re-renders when its own props change)
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -688,7 +688,7 @@ const SearchResults = ({ results, isSearching, hasResults, onShowMeta, onClear, 
                         >
                             <div className="flex" style={{ gap: `${SEARCH_GAP}px` }}>
                                 {rowResults.map((result, colIdx) => (
-                                    <div key={result.path || colIdx} style={{ width: `${cardWidth}px`, flexShrink: 0 }}>
+                                    <div key={result.path || colIdx} style={{ width: `${cardWidth}px`, height: `${rowHeight - SEARCH_GAP}px`, flexShrink: 0 }}>
                                         <SearchResultCard
                                             result={result}
                                             onShowMeta={onShowMeta}
@@ -703,7 +703,7 @@ const SearchResults = ({ results, isSearching, hasResults, onShowMeta, onClear, 
             )}
         </div>
     );
-};
+});
 
 function SearchPanel() {
     const { t } = useLocale();
@@ -800,7 +800,12 @@ function SearchPanel() {
         }
     };
 
-    const handleLoadMore = async () => {
+    // Ref to capture latest state for stable callbacks
+    const searchStateRef = useRef();
+    searchStateRef.current = { query, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
+
+    const handleLoadMore = useCallback(async () => {
+        const { query, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore } = searchStateRef.current;
         const hasText = query.trim().length > 0;
         const hasImages = queryImages.length > 0;
         if (!hasText && !hasImages) return;
@@ -855,7 +860,7 @@ function SearchPanel() {
         } finally {
             setIsLoadingMore(false);
         }
-    };
+    }, []);
 
     const handleKeyPress = (e) => {
         if (e.key === 'Enter') {
@@ -863,21 +868,21 @@ function SearchPanel() {
         }
     };
 
-    const clearSearch = () => {
+    const clearSearch = useCallback(() => {
         setResults([]);
         setQuery('');
         setQueryImages([]);
         setError(null);
         setCurrentLimit(20);
         setNoMoreResults(false);
-    };
+    }, []);
 
-    const handleShowMeta = async (filePath) => {
+    const handleShowMeta = useCallback(async (filePath) => {
         const meta = await window.electron?.pipeline?.readMetadata(filePath);
         if (meta) {
             setMetadata(meta);
         }
-    };
+    }, []);
 
     const hasActiveFilters = Object.values(activeFilters).some(v => v);
     const hasResults = results.length > 0;
