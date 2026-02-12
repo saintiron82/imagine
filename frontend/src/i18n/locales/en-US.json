@@ -143,6 +143,7 @@
   "status.phase.caption": "Caption",
   "status.phase.vector": "Vector",
   "status.phase.save": "Save",
+  "status.batch_size": "Current batch size",
   "status.fetching_url": "Loading image from URL...",
   "msg.invalid_image": "Please select a valid image file",
   "msg.no_image_selected": "Select an image to search",

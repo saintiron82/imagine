@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Terminal, X, Loader2, Square, Cpu } from 'lucide-react';
+import { Terminal, X, Loader2, Square, Cpu, Layers } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 function formatEta(ms) {
@@ -149,12 +149,19 @@ const StatusBar = ({
                             )}
                         </div>
 
-                        {/* Batch info */}
-                        {batchInfo && (
-                            <span className="text-yellow-400 font-mono text-[10px] border border-yellow-700/50 px-1 rounded">
-                                {batchInfo}
-                            </span>
-                        )}
+                        {/* Batch size indicator */}
+                        {batchInfo && (() => {
+                            const parts = batchInfo.split(':');
+                            const batchNum = parts[0];
+                            const batchTag = parts[1] || '';
+                            return (
+                                <div className="flex items-center gap-1 bg-yellow-900/40 border border-yellow-600/50 px-1.5 py-0.5 rounded" title={t('status.batch_size')}>
+                                    <Layers size={11} className="text-yellow-400 flex-shrink-0" />
+                                    <span className="text-yellow-300 font-mono font-bold text-[11px]">{batchNum}</span>
+                                    {batchTag && <span className="text-yellow-500 font-mono text-[9px]">{batchTag}</span>}
+                                </div>
+                            );
+                        })()}
 
                         {/* Current file name */}
                         <span className="text-gray-400 truncate max-w-[100px]">{currentFile?.split(/[/\\]/).pop()}</span>

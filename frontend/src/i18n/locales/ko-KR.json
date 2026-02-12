@@ -143,6 +143,7 @@
   "status.phase.caption": "캡션",
   "status.phase.vector": "벡터",
   "status.phase.save": "저장",
+  "status.batch_size": "현재 배치 크기",
   "status.fetching_url": "URL에서 이미지 로딩 중...",
   "msg.invalid_image": "유효한 이미지 파일을 선택하세요",
   "msg.no_image_selected": "검색할 이미지를 선택하세요",
