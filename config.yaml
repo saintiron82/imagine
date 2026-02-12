@@ -84,6 +84,12 @@ runtime:
   pin_version: false
 batch_processing:
   enabled: true
+  adaptive:
+    enabled: true
+    memory_budget_gb: 20.0
+    vlm_initial_batch: 2
+    vv_initial_batch: 4
+    mv_initial_batch: 16
 registered_folders:
   folders:
     - /Users/saintiron/imageDB/마캬베리즈무

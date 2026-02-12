@@ -509,3 +509,12 @@ def get_text_embedding_provider() -> EmbeddingProvider:
             )
 
     return _provider_instance
+
+
+def reset_provider():
+    """Reset singleton provider instance (for memory cleanup between phases)."""
+    global _provider_instance
+    if _provider_instance is not None:
+        if hasattr(_provider_instance, 'unload'):
+            _provider_instance.unload()
+        _provider_instance = None
