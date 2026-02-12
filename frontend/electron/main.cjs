@@ -492,17 +492,21 @@ let activePipelineProc = null;
 let pipelineStoppedByUser = false;
 
 ipcMain.on('run-pipeline', (event, { filePaths }) => {
+    console.log('[run-pipeline] Received request:', filePaths.length, 'files');
     if (activePipelineProc) {
+        console.log('[run-pipeline] BLOCKED: pipeline already running (pid:', activePipelineProc.pid, ')');
         event.reply('pipeline-log', { message: 'Pipeline already running. Wait for it to finish.', type: 'error' });
         return;
     }
 
     const finalPython = resolvePython();
+    console.log('[run-pipeline] Python:', finalPython);
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
         : path.join(process.resourcesPath, 'backend/ingest_engine.py');
 
+    console.log('[run-pipeline] Script:', scriptPath);
     event.reply('pipeline-log', { message: `Starting batch processing: ${filePaths.length} files...`, type: 'info' });
 
     let processedCount = 0;
@@ -514,7 +518,9 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], {
         cwd: projectRoot,
         detached: true,  // Own process group for clean tree kill
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
+    console.log('[run-pipeline] Spawned PID:', proc.pid);
     activePipelineProc = proc;
 
     proc.stdout.on('data', (data) => {
@@ -598,6 +604,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     });
 
     proc.on('close', (code) => {
+        console.log('[run-pipeline] Process closed, code:', code, 'processed:', processedCount, 'skipped:', skippedCount, 'batchDoneSent:', batchDoneSent);
         activePipelineProc = null;
         const wasStopped = pipelineStoppedByUser;
         pipelineStoppedByUser = false;
@@ -675,7 +682,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
 
     let processedCount = 0;
 
-    const proc = spawn(finalPython, args, { cwd: projectRoot, detached: true });
+    const proc = spawn(finalPython, args, { cwd: projectRoot, detached: true, env: { ...process.env, PYTHONUNBUFFERED: '1' } });
     activeDiscoverProcs.set(folderPath, proc);
 
     proc.stdout.on('data', (data) => {

@@ -26,8 +26,10 @@ from typing import List, Optional, Tuple
 # Cross-language search is handled at query time by QueryDecomposer.
 
 # Force UTF-8 for stdout/stderr to handle generic unicode characters
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+# line_buffering=True ensures each log line is flushed immediately
+# (critical for subprocess → Electron IPC stdout parsing)
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
 
 # Set process title for Activity Monitor visibility
 try:
