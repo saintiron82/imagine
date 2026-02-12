@@ -51,13 +51,16 @@
     ],
     "mac": {
       "target": "dmg",
+      "icon": "resources/icon.icns",
       "category": "public.app-category.developer-tools"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "public/icon-256.png"
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "icon": "public/icon-512.png"
     }
   }
 }

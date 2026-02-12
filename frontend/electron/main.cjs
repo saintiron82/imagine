@@ -930,8 +930,13 @@ ipcMain.handle('update-config', async (_, key, value) => {
 // ── Window creation (pure UI — no IPC registration) ──────────────
 
 function createWindow() {
+    const iconPath = isDev
+        ? path.join(__dirname, '../public/icon-512.png')
+        : path.join(__dirname, '../dist/icon-512.png');
+
     const mainWindow = new BrowserWindow({
         title: 'Imagine',
+        icon: iconPath,
         width: 1280,
         height: 800,
         webPreferences: {
@@ -956,6 +961,17 @@ function createWindow() {
 app.setName('Imagine');
 
 app.whenReady().then(() => {
+    // Set macOS dock icon
+    if (process.platform === 'darwin' && app.dock) {
+        const { nativeImage } = require('electron');
+        const dockIconPath = isDev
+            ? path.join(__dirname, '../public/icon-512.png')
+            : path.join(__dirname, '../dist/icon-512.png');
+        if (fs.existsSync(dockIconPath)) {
+            app.dock.setIcon(nativeImage.createFromPath(dockIconPath));
+        }
+    }
+
     // Kill any orphaned search daemons from previous crashed sessions
     cleanupOrphanDaemons();
 
