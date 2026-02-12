@@ -1,7 +1,7 @@
 {
-  "name": "frontend",
+  "name": "imagine",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -40,8 +40,8 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "com.imageparser.app",
-    "productName": "ImageParser",
+    "appId": "com.imagine.app",
+    "productName": "Imagine",
     "directories": {
       "output": "dist-electron"
     },

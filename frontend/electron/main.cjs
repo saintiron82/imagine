@@ -931,6 +931,7 @@ ipcMain.handle('update-config', async (_, key, value) => {
 
 function createWindow() {
     const mainWindow = new BrowserWindow({
+        title: 'Imagine',
         width: 1280,
         height: 800,
         webPreferences: {
@@ -951,6 +952,8 @@ function createWindow() {
 }
 
 // ── App lifecycle ────────────────────────────────────────────────
+
+app.setName('Imagine');
 
 app.whenReady().then(() => {
     // Kill any orphaned search daemons from previous crashed sessions
