@@ -598,8 +598,9 @@ class VisionAnalyzer:
                 trimmed, skip_special_tokens=True
             )[0]
 
-            # Free GPU tensors immediately (MPS doesn't auto-reclaim)
+            # Free GPU tensors + CPU intermediates (MPS doesn't auto-reclaim)
             del inputs, generated_ids, trimmed
+            import gc; gc.collect()
             if self.device == "mps":
                 torch.mps.empty_cache()
 
@@ -745,8 +746,9 @@ class VisionAnalyzer:
         ]
         decoded = self.processor.batch_decode(trimmed, skip_special_tokens=True)
 
-        # Free GPU tensors immediately (MPS doesn't auto-reclaim)
+        # Free GPU tensors + CPU intermediates (MPS doesn't auto-reclaim)
         del inputs, generated_ids, trimmed
+        import gc; gc.collect()
         if self.device == "mps":
             torch.mps.empty_cache()
 

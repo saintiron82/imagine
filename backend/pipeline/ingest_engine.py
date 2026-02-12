@@ -743,6 +743,9 @@ def phase2_vision_all(
 
         global_progress_idx += len(valid_chunk)
 
+        # Force GC to reclaim CPU memory from processor intermediates
+        import gc; gc.collect()
+
         # Emit intermediate phase progress after each sub-batch
         if phase_progress_callback:
             phase_progress_callback(global_progress_idx)
