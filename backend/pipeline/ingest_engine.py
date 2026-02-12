@@ -1128,7 +1128,7 @@ def process_batch_phased(
     t_total = time.perf_counter()
     total = len(file_infos)
 
-    logger.info(f"[BATCH] Phase-based pipeline: {total} files")
+    logger.info(f"[BATCH] Phase-based pipeline v3.3: {total} files (sequential model load + MPS GC)")
 
     # Cumulative phase counters (emitted as [PHASE] for frontend tracking)
     cum_parse = 0
