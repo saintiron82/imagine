@@ -650,8 +650,9 @@ def phase2_vision_adaptive(
     parsed_files: List[ParsedFile], controller, monitor,
     progress_callback=None, phase_progress_callback=None
 ) -> None:
-    """Phase 2: VLM analysis with adaptive batch sizing and JIT thumbnails."""
+    """Phase 2: VLM analysis with adaptive batch sizing, JIT thumbnails, and incremental DB storage."""
     import gc
+    global _global_sqlite_db
 
     # Filter files that need vision processing
     vision_indices = []
@@ -736,6 +737,35 @@ def phase2_vision_adaptive(
         for idx in chunk:
             parsed_files[idx].thumb_image_rgb = None
 
+        # Incremental DB storage: save vision results immediately per sub-batch
+        if valid_chunk and _global_sqlite_db:
+            for idx in valid_chunk:
+                pf = parsed_files[idx]
+                try:
+                    fields = {
+                        'mc_caption': pf.meta.mc_caption,
+                        'ai_tags': pf.meta.ai_tags,
+                        'ocr_text': pf.meta.ocr_text,
+                        'dominant_color': pf.meta.dominant_color,
+                        'ai_style': pf.meta.ai_style,
+                        'image_type': pf.meta.image_type,
+                        'art_style': pf.meta.art_style,
+                        'color_palette': pf.meta.color_palette,
+                        'scene_type': pf.meta.scene_type,
+                        'time_of_day': pf.meta.time_of_day,
+                        'weather': pf.meta.weather,
+                        'character_type': pf.meta.character_type,
+                        'item_type': pf.meta.item_type,
+                        'ui_type': pf.meta.ui_type,
+                        'structured_meta': pf.meta.structured_meta,
+                        'perceptual_hash': pf.meta.perceptual_hash,
+                    }
+                    _global_sqlite_db.update_vision_fields(str(pf.file_path), fields)
+                except Exception as e:
+                    logger.error(f"  [FAIL:vision-store] {pf.file_path.name}: {e}")
+                # Release VLM input context (mc_caption/ai_tags kept for Phase 3b MV)
+                pf.mc_raw = None
+
         processed += len(chunk)
         gc.collect()
 
@@ -759,12 +789,13 @@ def phase3a_vv_adaptive(
     phase_progress_callback=None
 ) -> dict:
     """
-    Phase 3a: SigLIP2 VV encoding with adaptive batch sizing.
+    Phase 3a: SigLIP2 VV encoding with adaptive batch sizing and incremental DB storage.
 
-    Returns dict of {file_index: vv_vector}.
+    Returns empty dict (vectors saved to DB immediately per sub-batch).
     """
     import gc
     import numpy as np
+    global _global_sqlite_db
 
     valid_indices = [i for i, pf in enumerate(parsed_files) if pf.error is None]
 
@@ -820,9 +851,16 @@ def phase3a_vv_adaptive(
 
         if images:
             vv_vectors = _global_encoder.encode_image_batch(images)
+            # Incremental DB storage: save VV vectors immediately per sub-batch
             for j, vec in enumerate(vv_vectors):
-                vv_results[chunk_valid[j]] = vec
-            del images  # Release thumbnails
+                idx = chunk_valid[j]
+                pf = parsed_files[idx]
+                if pf.db_file_id and vec is not None and _global_sqlite_db:
+                    try:
+                        _global_sqlite_db.upsert_vectors(pf.db_file_id, vv_vec=vec, mv_vec=None)
+                    except Exception as e:
+                        logger.error(f"  [FAIL:vv-store] {pf.file_path.name}: {e}")
+            del images, vv_vectors  # Release thumbnails + vectors
 
         processed += len(chunk)
         gc.collect()
@@ -838,8 +876,7 @@ def phase3a_vv_adaptive(
             break
 
     elapsed = time.perf_counter() - t0
-    logger.info(f"STEP 3a/4 VV completed in {elapsed:.1f}s ({len(vv_results)} encoded)")
-    return vv_results
+    logger.info(f"STEP 3a/4 VV completed in {elapsed:.1f}s ({processed}/{total_vv} encoded + stored)")
 
 
 def phase3b_mv_adaptive(
@@ -847,11 +884,12 @@ def phase3b_mv_adaptive(
     phase_progress_callback=None
 ) -> dict:
     """
-    Phase 3b: Qwen3-Embedding MV encoding with adaptive batch sizing.
+    Phase 3b: Qwen3-Embedding MV encoding with adaptive batch sizing and incremental DB storage.
 
-    Returns dict of {file_index: (mv_vector, mv_text)}.
+    Returns empty dict (vectors saved to DB immediately per sub-batch).
     """
     import gc
+    global _global_sqlite_db
 
     from backend.utils.config import get_config
     cfg = get_config()
@@ -910,6 +948,7 @@ def phase3b_mv_adaptive(
         chunk = mv_items[processed:processed + batch_size]
 
         texts = [text for _, text in chunk]
+        encoded_pairs = []  # (file_idx, vec) for incremental storage
         try:
             if hasattr(_global_text_provider, 'encode_batch'):
                 vecs = _global_text_provider.encode_batch(texts)
@@ -918,16 +957,27 @@ def phase3b_mv_adaptive(
 
             for j, vec in enumerate(vecs):
                 file_idx = chunk[j][0]
-                mv_results[file_idx] = (vec, chunk[j][1])
+                encoded_pairs.append((file_idx, vec))
         except Exception as e:
             logger.warning(f"  MV batch encoding failed: {e}")
             # Fallback: individual encoding
             for j, (file_idx, text) in enumerate(chunk):
                 try:
                     vec = _global_text_provider.encode(text)
-                    mv_results[file_idx] = (vec, text)
+                    encoded_pairs.append((file_idx, vec))
                 except Exception:
                     pass
+
+        # Incremental DB storage: save MV vectors immediately per sub-batch
+        if encoded_pairs and _global_sqlite_db:
+            for file_idx, vec in encoded_pairs:
+                pf = parsed_files[file_idx]
+                if pf.db_file_id and vec is not None:
+                    try:
+                        _global_sqlite_db.upsert_vectors(pf.db_file_id, vv_vec=None, mv_vec=vec)
+                    except Exception as e:
+                        logger.error(f"  [FAIL:mv-store] {pf.file_path.name}: {e}")
+            del encoded_pairs
 
         processed += len(chunk)
         gc.collect()
@@ -942,8 +992,7 @@ def phase3b_mv_adaptive(
             break
 
     elapsed = time.perf_counter() - t0
-    logger.info(f"STEP 3b/4 MV completed in {elapsed:.1f}s ({len(mv_results)} encoded)")
-    return mv_results
+    logger.info(f"STEP 3b/4 MV completed in {elapsed:.1f}s ({processed}/{total_mv} encoded + stored)")
 
 
 def phase_store_metadata(parsed_files: List[ParsedFile]) -> int:
@@ -1333,16 +1382,10 @@ def process_batch_phased(
     active_batch_info = ""
     _emit_phase_progress()
 
-    # Store Phase 2: vision fields
-    phase_store_vision(parsed)
+    # Phase 2 vision fields already saved incrementally per sub-batch
 
     # Unload VLM completely + verify
     _unload_vlm_verified(monitor)
-
-    # Release mc_raw after Phase 2
-    for pf in parsed:
-        pf.mc_raw = None
-    gc.collect()
 
     # ── Phase 3a: VV (adaptive batch) ──
     def _on_vv_progress(count, kind, batch_size=4):
@@ -1351,10 +1394,11 @@ def process_batch_phased(
         active_batch_info = f"B:{batch_size}:{kind.upper()}"
         _emit_phase_progress()
 
-    vv_results = phase3a_vv_adaptive(
+    phase3a_vv_adaptive(
         parsed, controller, monitor,
         phase_progress_callback=_on_vv_progress,
     )
+    # VV vectors already saved incrementally per sub-batch
 
     # Unload SigLIP2 completely + verify
     _unload_siglip2_verified(monitor)
@@ -1366,10 +1410,11 @@ def process_batch_phased(
         active_batch_info = f"B:{batch_size}:{kind.upper()}"
         _emit_phase_progress()
 
-    mv_results = phase3b_mv_adaptive(
+    phase3b_mv_adaptive(
         parsed, controller, monitor,
         phase_progress_callback=_on_mv_progress,
     )
+    # MV vectors already saved incrementally per sub-batch
     cum_embed = valid_count
     active_batch_info = ""
     _emit_phase_progress()
@@ -1377,24 +1422,12 @@ def process_batch_phased(
     # Unload MV completely
     _unload_mv_verified(monitor)
 
-    # ── Phase 4: Store vectors ──
-    # Merge VV + MV results into embeddings list
-    from backend.utils.tier_config import get_active_tier
-    _, tier_config = get_active_tier()
-    vv_dims = tier_config.get("visual", {}).get("dimensions", 768)
-
-    embeddings = []
-    for i, pf in enumerate(parsed):
-        vv_vec = vv_results.get(i, np.zeros(vv_dims, dtype=np.float32))
-        mv_data = mv_results.get(i)
-        if mv_data:
-            mv_vec, mv_text = mv_data
-        else:
-            mv_vec, mv_text = None, None
-        embeddings.append((vv_vec, mv_vec, mv_text))
-
-    stored, store_errors = phase_store_vectors(parsed, embeddings)
-    cum_store = stored
+    # ── Phase 4: Summary (all data already stored per sub-batch) ──
+    # Emit [OK] per file for frontend processedCount tracking
+    for pf in parsed:
+        if pf.error is None:
+            logger.info(f"  [OK] {pf.file_path.name}")
+    cum_store = valid_count
     _emit_phase_progress()
 
     parse_errors = sum(1 for pf in parsed if pf.error is not None)
@@ -1402,11 +1435,11 @@ def process_batch_phased(
     elapsed = time.perf_counter() - t_total
     monitor.log_status("pipeline_done")
     logger.info(
-        f"[DONE] {stored} processed, {parse_errors} parse-errors, "
-        f"{store_errors} store-errors (total: {total}, {elapsed:.1f}s)"
+        f"[DONE] {valid_count} processed, {parse_errors} parse-errors "
+        f"(total: {total}, {elapsed:.1f}s)"
     )
 
-    return stored, parse_errors, store_errors
+    return valid_count, parse_errors, 0
 
 
 def discover_files(root_dir: Path) -> List[Tuple[Path, str, int, List[str]]]:
