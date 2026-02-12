@@ -970,13 +970,22 @@ def phase3b_mv_adaptive(
 
         # Incremental DB storage: save MV vectors immediately per sub-batch
         if encoded_pairs and _global_sqlite_db:
+            stored_count = 0
             for file_idx, vec in encoded_pairs:
                 pf = parsed_files[file_idx]
-                if pf.db_file_id and vec is not None:
-                    try:
-                        _global_sqlite_db.upsert_vectors(pf.db_file_id, vv_vec=None, mv_vec=vec)
-                    except Exception as e:
-                        logger.error(f"  [FAIL:mv-store] {pf.file_path.name}: {e}")
+                if not pf.db_file_id:
+                    logger.warning(f"  [SKIP:mv-store] {pf.file_path.name}: no db_file_id")
+                    continue
+                if vec is None:
+                    logger.warning(f"  [SKIP:mv-store] {pf.file_path.name}: vec is None")
+                    continue
+                try:
+                    _global_sqlite_db.upsert_vectors(pf.db_file_id, vv_vec=None, mv_vec=vec)
+                    stored_count += 1
+                except Exception as e:
+                    logger.error(f"  [FAIL:mv-store] {pf.file_path.name}: {e}")
+            if stored_count < len(encoded_pairs):
+                logger.warning(f"  [MV-STORE] {stored_count}/{len(encoded_pairs)} saved")
             del encoded_pairs
 
         processed += len(chunk)
