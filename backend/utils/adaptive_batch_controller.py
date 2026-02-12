@@ -9,12 +9,15 @@ v3.4: Central controller used by all pipeline phases (VLM, VV, MV).
 Algorithm:
     1. Start at initial_batch (2 for VLM, 4 for VV, 16 for MV)
     2. After each sub-batch: measure memory pressure
-    3. pressure < 50%  → batch × 2 (growth)
+    3. pressure < 50%  → batch + 1 (linear growth)
        50~65%          → hold (stable)
-       65~75%          → batch / 2 (shrink)
+       65~75%          → batch - 1 (linear shrink)
        75~85%          → batch = 1 (emergency)
        85~90%          → force_cleanup, re-evaluate
        > 90%           → abort phase
+
+    Linear +1/-1 ensures overshoot is at most 1 file worth of memory.
+    Example: 2→3→4→...→32(safe)→33(pressure detected)→32(shrink back)
 
 Usage:
     controller = AdaptiveBatchController()
@@ -71,8 +74,8 @@ class AdaptiveBatchController:
     Each phase has its own current size, limits, and growth state.
     """
 
-    GROWTH_FACTOR = 2.0
-    SHRINK_FACTOR = 0.5
+    GROWTH_STEP = 1       # +1 linear growth (safe: overshoot is only 1 file)
+    SHRINK_STEP = 1       # -1 linear shrink
 
     def __init__(
         self,
@@ -134,19 +137,19 @@ class AdaptiveBatchController:
                 )
                 return decision
 
-        # Decide new batch size
+        # Decide new batch size (+1/-1 linear to avoid memory spikes)
         if pressure >= PRESSURE_CRITICAL:
             new_size = min_bs
             reason = 'emergency'
             self._consecutive_shrinks[phase] = \
                 self._consecutive_shrinks.get(phase, 0) + 1
         elif pressure >= PRESSURE_HIGH:
-            new_size = max(min_bs, int(current * self.SHRINK_FACTOR))
+            new_size = max(min_bs, current - self.SHRINK_STEP)
             reason = 'shrink'
             self._consecutive_shrinks[phase] = \
                 self._consecutive_shrinks.get(phase, 0) + 1
         elif pressure < PRESSURE_LOW:
-            new_size = min(max_bs, int(current * self.GROWTH_FACTOR))
+            new_size = min(max_bs, current + self.GROWTH_STEP)
             reason = 'growth'
             self._consecutive_shrinks[phase] = 0
         else:
