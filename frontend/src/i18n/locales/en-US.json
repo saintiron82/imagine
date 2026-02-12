@@ -20,6 +20,7 @@
   "action.multi_select": "Multi-Select",
   "action.exit_multi_select": "Exit Multi-Select",
   "action.process_selected_folders": "Process Selected Folders",
+  "action.process_folder": "Process All (incl. subfolders)",
   "action.install_all": "Install All Dependencies (Auto-Detect)",
   "action.reinstall_verify": "Re-install / Verify AI Model",
   "label.folders": "Folders",

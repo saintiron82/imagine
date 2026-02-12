@@ -1131,24 +1131,29 @@ class SQLiteDB:
 
         return stats
 
-    def get_folder_phase_stats(self, storage_root: str) -> List[Dict[str, Any]]:
-        """Get per-folder phase completion stats for a storage root."""
+    def get_folder_phase_stats(self, root_path: str) -> List[Dict[str, Any]]:
+        """Get per-storage_root phase completion stats under root_path prefix.
+
+        Uses file_path LIKE prefix match and vec_*_rowids tables (no vec0 needed).
+        Returns one row per storage_root with MC/VV/MV counts.
+        """
         cursor = self.conn.cursor()
+        prefix = root_path.rstrip('/') + '/'
         cursor.execute("""
             SELECT
-                f.folder_path,
+                f.storage_root,
                 COUNT(*) as total,
                 COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
-                COUNT(CASE WHEN vf.file_id IS NOT NULL THEN 1 END) as vv,
-                COUNT(CASE WHEN vt.file_id IS NOT NULL THEN 1 END) as mv
+                COUNT(CASE WHEN vfr.rowid IS NOT NULL THEN 1 END) as vv,
+                COUNT(CASE WHEN vtr.rowid IS NOT NULL THEN 1 END) as mv
             FROM files f
-            LEFT JOIN vec_files vf ON f.id = vf.file_id
-            LEFT JOIN vec_text vt ON f.id = vt.file_id
-            WHERE f.storage_root = ?
-            GROUP BY f.folder_path
-        """, (storage_root,))
+            LEFT JOIN vec_files_rowids vfr ON f.id = vfr.rowid
+            LEFT JOIN vec_text_rowids vtr ON f.id = vtr.rowid
+            WHERE f.file_path LIKE ? || '%'
+            GROUP BY f.storage_root
+        """, (prefix,))
         return [
-            {"folder_path": row[0] or "", "total": row[1], "mc": row[2], "vv": row[3], "mv": row[4]}
+            {"storage_root": row[0] or "", "total": row[1], "mc": row[2], "vv": row[3], "mv": row[4]}
             for row in cursor.fetchall()
         ]
 

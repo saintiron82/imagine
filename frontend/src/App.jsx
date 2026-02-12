@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import FileGrid from './components/FileGrid';
 import StatusBar from './components/StatusBar';
 import SearchPanel from './components/SearchPanel';
+import FolderInfoBar from './components/FolderInfoBar';
 import { FolderOpen, Play, Search, Archive, Globe } from 'lucide-react';
 import { useLocale } from './i18n';
 
@@ -234,6 +235,14 @@ function App() {
     etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
   };
 
+  // Process entire folder recursively (discover mode)
+  const handleProcessFolder = (folderPath) => {
+    if (isProcessing || isDiscovering) return;
+    setIsDiscovering(true);
+    appendLog({ message: `Processing folder: ${folderPath}`, type: 'info' });
+    window.electron?.pipeline?.runDiscover({ folderPath, noSkip: false });
+  };
+
   const clearLogs = () => setLogs([]);
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
@@ -336,13 +345,20 @@ function App() {
             {currentTab === 'search' ? (
               <SearchPanel />
             ) : (
-              <div className="h-full overflow-y-auto p-4 pb-16">
-                <FileGrid
+              <div className="h-full flex flex-col">
+                <FolderInfoBar
                   currentPath={currentPath}
-                  selectedFiles={selectedFiles}
-                  setSelectedFiles={setSelectedFiles}
-                  selectedPaths={selectedPaths}
+                  onProcessFolder={handleProcessFolder}
+                  isProcessing={isProcessing || isDiscovering}
                 />
+                <div className="flex-1 overflow-y-auto p-4 pb-16">
+                  <FileGrid
+                    currentPath={currentPath}
+                    selectedFiles={selectedFiles}
+                    setSelectedFiles={setSelectedFiles}
+                    selectedPaths={selectedPaths}
+                  />
+                </div>
               </div>
             )}
           </div>

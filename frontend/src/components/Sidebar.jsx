@@ -1,50 +1,33 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare } from 'lucide-react';
 import { useLocale } from '../i18n';
 
-/** Mini phase progress bar for folder stats */
-function FolderPhaseBar({ label, count, total, color }) {
-    const pct = total > 0 ? Math.min(100, Math.round((count / total) * 100)) : 0;
-    const isDone = count >= total && total > 0;
-    return (
-        <div className="flex items-center space-x-0.5">
-            <span className={`text-[8px] font-bold w-5 ${isDone ? 'text-green-400' : 'text-gray-500'}`}>{label}</span>
-            <div className="w-10 bg-gray-700 rounded-full h-1 overflow-hidden">
-                <div
-                    className={`h-full rounded-full ${isDone ? 'bg-green-500' : color}`}
-                    style={{ width: `${pct}%` }}
-                />
-            </div>
-            <span className={`text-[8px] font-mono w-6 text-right ${isDone ? 'text-green-400' : 'text-gray-500'}`}>{count}</span>
-        </div>
+/** Aggregate phase stats for entries whose storage_root starts with prefix */
+function aggregateStats(phaseStats, folderPath) {
+    if (!phaseStats || phaseStats.length === 0) return null;
+    const prefix = folderPath.endsWith('/') ? folderPath : folderPath + '/';
+    const matched = phaseStats.filter(s =>
+        s.storage_root === folderPath || s.storage_root.startsWith(prefix)
     );
+    if (matched.length === 0) return null;
+    return matched.reduce((acc, f) => ({
+        total: acc.total + f.total,
+        mc: acc.mc + f.mc,
+        vv: acc.vv + f.vv,
+        mv: acc.mv + f.mv,
+    }), { total: 0, mc: 0, vv: 0, mv: 0 });
 }
 
-const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, onRemoveRoot }) => {
+const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, onRemoveRoot, phaseStats }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(isRoot); // Roots start open
     const [children, setChildren] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [phaseStats, setPhaseStats] = useState(null);
     const isCtrlSelected = selectedPaths.has(path);
     const isCurrentPath = currentPath === path;
 
-    // Load phase stats for root nodes when opened
-    useEffect(() => {
-        if (isRoot && isOpen) {
-            const loadStats = async () => {
-                try {
-                    const result = await window.electron?.pipeline?.getFolderPhaseStats(path);
-                    if (result?.success) {
-                        setPhaseStats(result.folders || []);
-                    }
-                } catch (e) {
-                    console.error('Failed to load folder phase stats:', e);
-                }
-            };
-            loadStats();
-        }
-    }, [isRoot, isOpen, path]);
+    // Aggregate stats for this node's subtree
+    const myStats = useMemo(() => aggregateStats(phaseStats, path), [phaseStats, path]);
 
     // Auto-load children for root nodes
     useEffect(() => {
@@ -113,6 +96,18 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
 
                 <span className={`text-sm truncate flex-1 ${isRoot ? 'text-white font-medium' : 'text-gray-200'}`}>{name}</span>
 
+                {/* Incomplete dot indicator */}
+                {myStats && myStats.total > 0 && (() => {
+                    const allDone = myStats.mc >= myStats.total && myStats.vv >= myStats.total && myStats.mv >= myStats.total;
+                    if (allDone) return null;
+                    const incomplete = myStats.total - Math.min(myStats.mc, myStats.vv, myStats.mv);
+                    return (
+                        <span className="flex items-center gap-1 flex-shrink-0 mr-1" title={`${incomplete}/${myStats.total} incomplete`}>
+                            <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
+                        </span>
+                    );
+                })()}
+
                 {isRoot && onRemoveRoot && (
                     <button
                         onClick={(e) => { e.stopPropagation(); onRemoveRoot(path); }}
@@ -123,25 +118,6 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                     </button>
                 )}
             </div>
-
-            {/* Phase stats progress bars for root folders */}
-            {isRoot && isOpen && phaseStats && phaseStats.length > 0 && (() => {
-                const totals = phaseStats.reduce((acc, f) => ({
-                    total: acc.total + f.total,
-                    mc: acc.mc + f.mc,
-                    vv: acc.vv + f.vv,
-                    mv: acc.mv + f.mv,
-                }), { total: 0, mc: 0, vv: 0, mv: 0 });
-                return (
-                    <div className="flex items-center gap-1.5 px-3 py-1 bg-gray-800/50 border-b border-gray-700/50"
-                         style={{ paddingLeft: `${level * 16 + 32}px` }}>
-                        <span className="text-[9px] text-gray-500 font-mono mr-0.5">{totals.total}</span>
-                        <FolderPhaseBar label="MC" count={totals.mc} total={totals.total} color="bg-blue-400" />
-                        <FolderPhaseBar label="VV" count={totals.vv} total={totals.total} color="bg-purple-400" />
-                        <FolderPhaseBar label="MV" count={totals.mv} total={totals.total} color="bg-green-400" />
-                    </div>
-                );
-            })()}
 
             {isOpen && (
                 <div>
@@ -155,6 +131,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                             level={level + 1}
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
+                            phaseStats={phaseStats}
                         />
                     ))}
                     {children.length === 0 && !isLoading && (
@@ -172,16 +149,32 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
     const { t } = useLocale();
     const [roots, setRoots] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [rootPhaseStats, setRootPhaseStats] = useState({});
 
     const loadRoots = useCallback(async () => {
         setLoading(true);
         try {
             const result = await window.electron?.pipeline?.getRegisteredFolders();
             if (result?.success) {
-                setRoots((result.folders || []).filter(f => f.exists).map(f => ({
+                const validRoots = (result.folders || []).filter(f => f.exists).map(f => ({
                     path: f.path,
                     name: f.path.split(/[/\\]/).pop() || f.path,
-                })));
+                }));
+                setRoots(validRoots);
+
+                // Load phase stats for all roots in parallel
+                const statsMap = {};
+                await Promise.all(validRoots.map(async (root) => {
+                    try {
+                        const statsResult = await window.electron?.pipeline?.getFolderPhaseStats(root.path);
+                        if (statsResult?.success) {
+                            statsMap[root.path] = statsResult.folders || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to load phase stats for', root.path, e);
+                    }
+                }));
+                setRootPhaseStats(statsMap);
             }
         } catch (e) {
             console.error('Failed to load registered folders:', e);
@@ -264,6 +257,7 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
                             onRemoveRoot={handleRemoveRoot}
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
+                            phaseStats={rootPhaseStats[root.path] || null}
                         />
                     ))}
                 </div>

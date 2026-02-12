@@ -20,6 +20,7 @@
   "action.multi_select": "멀티 선택",
   "action.exit_multi_select": "멀티 선택 종료",
   "action.process_selected_folders": "선택 폴더 처리",
+  "action.process_folder": "전체 처리 (하위 폴더 포함)",
   "action.install_all": "모든 종속성 설치 (자동 감지)",
   "action.reinstall_verify": "재설치 / AI 모델 검증",
   "label.folders": "폴더",
