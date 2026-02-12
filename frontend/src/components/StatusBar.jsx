@@ -22,7 +22,7 @@ function PhasePill({ label, count, total, isActive, color }) {
         <div className={`flex items-center space-x-1 px-1.5 py-0.5 rounded ${
             isActive ? 'bg-gray-800 ring-1 ring-blue-500/50' : ''
         }`}>
-            <span className={`text-[9px] font-bold w-3 ${
+            <span className={`text-[9px] font-bold whitespace-nowrap ${
                 isDone ? 'text-green-400' :
                 isActive ? 'text-blue-300' :
                 count > 0 ? 'text-gray-300' : 'text-gray-600'
@@ -91,10 +91,10 @@ const StatusBar = ({
 
     // Phase data for pills
     const phases = [
-        { label: 'P', count: cumParse, color: 'bg-cyan-400' },
-        { label: 'V', count: cumVision, color: 'bg-blue-400' },
-        { label: 'E', count: cumEmbed, color: 'bg-purple-400' },
-        { label: 'S', count: cumStore, color: 'bg-green-400' },
+        { label: t('status.phase.parse'), count: cumParse, color: 'bg-cyan-400' },
+        { label: t('status.phase.caption'), count: cumVision, color: 'bg-blue-400' },
+        { label: t('status.phase.vector'), count: cumEmbed, color: 'bg-purple-400' },
+        { label: t('status.phase.save'), count: cumStore, color: 'bg-green-400' },
     ];
 
     // Overall progress: stored / (total - skipped)
