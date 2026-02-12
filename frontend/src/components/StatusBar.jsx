@@ -13,7 +13,7 @@ function formatEta(ms) {
     return `${hr}h ${remMin}m`;
 }
 
-const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null, batchPct = 0, fileStep = {}, onStop }) => {
+const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null, phaseIdx = 0, phaseName = '', phaseCurrent = 0, phaseTotal = 0, fileStep = {}, onStop }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
     const [aiTier, setAiTier] = useState(null);
@@ -49,9 +49,7 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
     // Count errors (memoized to avoid re-scanning on every render)
     const errorCount = useMemo(() => logs.filter(l => l.type === 'error').length, [logs]);
     const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
-    // Use batchPct (phase-weighted) if available, otherwise fall back to simple ratio
-    const queuePct = batchPct > 0 ? batchPct : (total > 0 ? Math.round(((processed + skipped) / total) * 100) : 0);
-    const stepPct = fileStep.totalSteps > 0 ? Math.round((fileStep.step / fileStep.totalSteps) * 100) : 0;
+    const phasePct = phaseTotal > 0 ? Math.round((phaseCurrent / phaseTotal) * 100) : 0;
 
     return (
         <div className={`fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-700 transition-all ${isOpen ? 'h-64' : 'h-8'}`}>
@@ -73,40 +71,47 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
                     )}
                 </div>
 
-                {/* Dual progress bars */}
+                {/* Phase-based progress */}
                 {isProcessing && (
                     <div className="flex items-center space-x-3 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
                         <Loader2 className="animate-spin text-blue-400" size={14} />
 
-                        {/* File step progress (inner) */}
-                        <div className="flex items-center space-x-1.5">
-                            <span className="text-gray-400 w-16 text-right truncate">{fileStep.stepName || '...'}</span>
-                            <div className="w-20 bg-gray-700 rounded-full h-1.5 overflow-hidden">
-                                <div
-                                    className="h-full bg-green-400 transition-all duration-300 rounded-full"
-                                    style={{ width: `${stepPct}%` }}
-                                />
-                            </div>
+                        {/* Phase indicator: 4 dots showing which phase is active */}
+                        <div className="flex items-center space-x-1">
+                            {['P', 'V', 'E', 'S'].map((label, i) => (
+                                <span key={i} className={`w-4 h-4 rounded text-[9px] font-bold flex items-center justify-center ${
+                                    i < phaseIdx ? 'bg-green-600 text-white' :
+                                    i === phaseIdx ? 'bg-blue-500 text-white animate-pulse' :
+                                    'bg-gray-700 text-gray-500'
+                                }`}>{label}</span>
+                            ))}
                         </div>
 
-                        {/* Queue progress (outer) */}
+                        {/* Current phase progress bar */}
                         <div className="flex items-center space-x-1.5">
-                            <span className="text-blue-300 font-medium">
-                                {processed}/{total - skipped}{skipped > 0 && <span className="text-gray-500 ml-0.5">({t('status.skipped', { count: skipped })})</span>}
+                            <span className="text-blue-300 font-medium w-20 text-right">
+                                {phaseName} {phaseCurrent}/{phaseTotal}
                             </span>
-                            <div className="w-24 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                            <div className="w-28 bg-gray-700 rounded-full h-2 overflow-hidden">
                                 <div
                                     className="h-full bg-blue-400 transition-all duration-300 rounded-full"
-                                    style={{ width: `${queuePct}%` }}
+                                    style={{ width: `${phasePct}%` }}
                                 />
                             </div>
-                            {etaMs != null && (
-                                <span className="text-gray-500 font-mono text-[11px]">{formatEta(etaMs)}</span>
-                            )}
                         </div>
 
+                        {/* Stored count */}
+                        <span className="text-gray-500 text-[11px]">
+                            {processed > 0 && `${processed} stored`}
+                            {skipped > 0 && ` ${skipped} skipped`}
+                        </span>
+
                         {/* Current file name */}
-                        <span className="text-gray-400 truncate max-w-[150px]">{currentFile?.split(/[/\\]/).pop()}</span>
+                        <span className="text-gray-400 truncate max-w-[120px]">{currentFile?.split(/[/\\]/).pop()}</span>
+
+                        {etaMs != null && (
+                            <span className="text-gray-500 font-mono text-[11px]">{formatEta(etaMs)}</span>
+                        )}
 
                         <button
                             onClick={onStop}

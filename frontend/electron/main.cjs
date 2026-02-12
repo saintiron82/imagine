@@ -515,17 +515,23 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     const totalFiles = filePaths.length;
     pipelineStoppedByUser = false;
 
-    // Batch phase tracking for smooth progress bar
+    // Batch phase tracking — per-phase progress sent to UI
+    const PHASE_NAMES = ['Parse', 'Vision', 'Embed', 'Store'];
     let currentPhase = 0; // 0=parse, 1=vision, 2=embed, 3=store
     let phaseSubCount = 0;
     let phaseSubTotal = 0;
-    // Phase weights (approximate time distribution)
-    const PHASE_W = [0.05, 0.55, 0.15, 0.25];
-    function calcBatchPct() {
-        let pct = 0;
-        for (let i = 0; i < currentPhase; i++) pct += PHASE_W[i];
-        if (phaseSubTotal > 0) pct += PHASE_W[currentPhase] * (phaseSubCount / phaseSubTotal);
-        return Math.min(Math.round(pct * 100), 100);
+
+    function emitPhaseProgress(extraFields = {}) {
+        event.reply('pipeline-progress', {
+            processed: processedCount,
+            total: totalFiles,
+            skipped: skippedCount,
+            currentFile: extraFields.currentFile || '',
+            phaseIdx: currentPhase,
+            phaseName: PHASE_NAMES[currentPhase] || '',
+            phaseCurrent: phaseSubCount,
+            phaseTotal: phaseSubTotal,
+        });
     }
 
     const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], {
@@ -558,26 +564,18 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
 
             // STEP x/y completed → phase finished
             if (stepDoneMatch) {
-                currentPhase = parseInt(stepDoneMatch[1]); // move to next phase
+                currentPhase = parseInt(stepDoneMatch[1]); // advance to next
+                phaseSubCount = phaseSubTotal; // mark 100%
+                emitPhaseProgress();
                 phaseSubCount = 0;
                 phaseSubTotal = 0;
-                event.reply('pipeline-step', {
-                    step: parseInt(stepDoneMatch[1]),
-                    totalSteps: parseInt(stepDoneMatch[2]),
-                    stepName: stepDoneMatch[0]
-                });
             } else if (stepMatch) {
                 // STEP x/y Name → phase started
                 currentPhase = parseInt(stepMatch[1]) - 1;
                 phaseSubCount = 0;
-                // Extract count from "STEP 2/4 AI Vision (26 images)"
                 const countMatch = stepMatch[3].match(/\((\d+)/);
                 phaseSubTotal = countMatch ? parseInt(countMatch[1]) : totalFiles;
-                event.reply('pipeline-step', {
-                    step: parseInt(stepMatch[1]),
-                    totalSteps: parseInt(stepMatch[2]),
-                    stepName: stepMatch[3]
-                });
+                emitPhaseProgress();
             }
 
             // Per-file sub-progress within a phase: [3/26] file.psd → type
@@ -585,34 +583,18 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
                 phaseSubCount = parseInt(subProgressMatch[1]);
                 phaseSubTotal = parseInt(subProgressMatch[2]);
                 const fileName = subProgressMatch[3].split(/\s+→/)[0].trim();
-                event.reply('pipeline-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: fileName,
-                    skipped: skippedCount,
-                    batchPct: calcBatchPct()
-                });
+                emitPhaseProgress({ currentFile: fileName });
             }
 
             if (processingMatch) {
-                event.reply('pipeline-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: path.basename(processingMatch[1]),
-                    batchPct: calcBatchPct()
-                });
+                emitPhaseProgress({ currentFile: path.basename(processingMatch[1]) });
             }
 
             // [OK] = file stored (Phase 4) or single-file parse success
             if (/\[OK\]/.test(clean)) {
                 processedCount++;
                 phaseSubCount = processedCount;
-                event.reply('pipeline-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: '',
-                    batchPct: calcBatchPct()
-                });
+                emitPhaseProgress();
                 event.reply('pipeline-file-done', {
                     processed: processedCount,
                     skipped: skippedCount
@@ -622,13 +604,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             // [SKIP] = smart skip (unchanged file)
             if (/\[SKIP\]/.test(clean) && !/files skipped/.test(clean)) {
                 skippedCount++;
-                event.reply('pipeline-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: '',
-                    skipped: skippedCount,
-                    batchPct: calcBatchPct()
-                });
+                emitPhaseProgress();
             }
 
             // [DONE] = batch complete
