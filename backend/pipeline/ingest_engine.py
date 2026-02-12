@@ -1026,22 +1026,42 @@ def process_batch_phased(
     parse_errors_total = 0
     store_errors_total = 0
 
+    # Cumulative phase counters (emitted as [PHASE] for frontend tracking)
+    cum_parse = 0
+    cum_vision = 0
+    cum_embed = 0
+    cum_store = 0
+
+    def _emit_phase_progress():
+        """Emit cumulative phase progress for frontend."""
+        logger.info(
+            f"[PHASE] P:{cum_parse} V:{cum_vision} E:{cum_embed} S:{cum_store} "
+            f"T:{total} M:{batch_num}/{num_batches}"
+        )
+
     for batch_idx in range(0, total, mini_batch):
         chunk = file_infos[batch_idx:batch_idx + mini_batch]
         batch_num = batch_idx // mini_batch + 1
-        logger.info(f"[MINI {batch_num}/{num_batches}] Files {batch_idx + 1}-{batch_idx + len(chunk)} of {total}")
+        chunk_size = len(chunk)
 
         # Phase 1: Parse
         parsed = phase1_parse_all(chunk, max_workers=parse_workers)
+        valid_count = sum(1 for pf in parsed if pf.error is None)
+        cum_parse += valid_count
+        _emit_phase_progress()
 
         # Per-phase smart skip: check DB for already-completed phase outputs
         _check_phase_skip(parsed)
 
         # Phase 2: Vision (skips files with skip_vision=True)
         phase2_vision_all(parsed, progress_callback=progress_callback)
+        cum_vision += valid_count
+        _emit_phase_progress()
 
         # Phase 3: Embed (skips VV/MV per file as flagged)
         embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch)
+        cum_embed += valid_count
+        _emit_phase_progress()
 
         # Free thumbnail images after embedding — no longer needed
         for pf in parsed:
@@ -1049,15 +1069,12 @@ def process_batch_phased(
 
         # Phase 4: Store
         stored, errors = phase4_store_all(parsed, embeddings, progress_callback=progress_callback)
+        cum_store += stored
+        _emit_phase_progress()
 
         stored_total += stored
         parse_errors_total += sum(1 for pf in parsed if pf.error is not None)
         store_errors_total += errors
-
-        logger.info(
-            f"[MINI {batch_num}/{num_batches}] Done: {stored} stored "
-            f"(cumulative: {stored_total}/{total})"
-        )
 
     # Unload VLM to free VRAM
     try:
