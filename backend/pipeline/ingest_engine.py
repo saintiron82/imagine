@@ -687,6 +687,7 @@ def phase2_vision_adaptive(
     while processed < total_vision:
         batch_size = controller.get_batch_size('vlm')
         chunk = vision_indices[processed:processed + batch_size]
+        t_sub = time.perf_counter()
 
         # JIT: Load thumbnails for this sub-batch only
         for idx in chunk:
@@ -768,9 +769,10 @@ def phase2_vision_adaptive(
 
         processed += len(chunk)
         gc.collect()
+        elapsed_sub = time.perf_counter() - t_sub
 
-        # Adaptive: decide next batch size
-        decision = controller.after_sub_batch('vlm', len(chunk))
+        # Adaptive: decide next batch size (throughput-driven)
+        decision = controller.after_sub_batch('vlm', len(chunk), elapsed_sub)
 
         # Emit phase progress
         if phase_progress_callback:
@@ -836,6 +838,7 @@ def phase3a_vv_adaptive(
     while processed < total_vv:
         batch_size = controller.get_batch_size('vv')
         chunk = vv_indices[processed:processed + batch_size]
+        t_sub = time.perf_counter()
 
         # JIT: Load thumbnails from disk
         images = []
@@ -864,9 +867,10 @@ def phase3a_vv_adaptive(
 
         processed += len(chunk)
         gc.collect()
+        elapsed_sub = time.perf_counter() - t_sub
 
-        # Adaptive decision
-        decision = controller.after_sub_batch('vv', len(chunk))
+        # Adaptive decision (throughput-driven)
+        decision = controller.after_sub_batch('vv', len(chunk), elapsed_sub)
 
         if phase_progress_callback:
             phase_progress_callback(processed, 'vv', batch_size)
@@ -946,6 +950,7 @@ def phase3b_mv_adaptive(
     while processed < total_mv:
         batch_size = controller.get_batch_size('mv')
         chunk = mv_items[processed:processed + batch_size]
+        t_sub = time.perf_counter()
 
         texts = [text for _, text in chunk]
         encoded_pairs = []  # (file_idx, vec) for incremental storage
@@ -990,8 +995,9 @@ def phase3b_mv_adaptive(
 
         processed += len(chunk)
         gc.collect()
+        elapsed_sub = time.perf_counter() - t_sub
 
-        decision = controller.after_sub_batch('mv', len(chunk))
+        decision = controller.after_sub_batch('mv', len(chunk), elapsed_sub)
 
         if phase_progress_callback:
             phase_progress_callback(processed, 'mv', batch_size)
@@ -1344,7 +1350,7 @@ def process_batch_phased(
     monitor.set_baseline()
     monitor.log_status("pipeline_start")
 
-    logger.info(f"[BATCH] Adaptive pipeline v3.4: {total} files (memory-aware batch sizing)")
+    logger.info(f"[BATCH] Adaptive pipeline v3.5: {total} files (throughput-driven batch sizing)")
 
     # Cumulative phase counters (emitted as [PHASE] for frontend tracking)
     cum_parse = 0

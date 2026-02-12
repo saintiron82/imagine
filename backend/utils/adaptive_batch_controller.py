@@ -1,27 +1,33 @@
 """
-Adaptive Batch Controller for memory-aware pipeline processing.
+Adaptive Batch Controller — throughput-optimized pipeline processing.
 
-Triangular-step growth with auto-refinement:
+Triangular-step growth driven by measured throughput (items/sec):
 
   1. GROWING:  +1, +2, +3, +4... (accelerating triangular step)
-  2. REFINING: on pressure, reset step to +1, regrow from last_safe
-              (naturally converges as ceiling tightens each round)
-  3. LOCKED:   optimal found, hold steady (re-enter if conditions change)
+             — keep growing while throughput improves
+             — enter REFINING when throughput drops
+  2. REFINING: reset step to +1 from last_fast, regrow toward first_slower
+             (naturally converges as ceiling tightens each round)
+  3. LOCKED:   optimal found, hold steady (re-enter if throughput degrades 20%+)
+
+Memory pressure acts as a safety ceiling only (CRITICAL/DANGER → emergency).
 
 Example (optimal ~ 34):
-  GROWING:  2(+1)→3(+2)→5(+3)→8(+4)→12(+5)→17(+6)→23(+7)→30(+8)→38(pressure!)
-  REFINING: safe=30, step=1 → 31(+1)→33(+2)→36(+3,pressure!)
-            safe=33, step=1 → 34(+1)→36(+2,pressure!)
-            safe=34, step=1 → 35(+1,pressure!) → gap=1 → LOCKED at 34
+  GROWING:  2(+1)→3(+2)→5(+3)→8(+4)→12(+5)→17(+6)→23(+7)→30(+8)→38(slower!)
+  REFINING: fast=30, step=1 → 31(+1)→33(+2)→36(+3,slower!)
+            fast=33, step=1 → 34(+1)→36(+2,slower!)
+            fast=34, step=1 → 35(+1,slower!) → gap=1 → LOCKED at 34
 
-v3.4: Central controller used by all pipeline phases (VLM, VV, MV).
+v3.5: Throughput-driven with memory safety ceiling.
 
 Usage:
     controller = AdaptiveBatchController()
     while work_remaining:
         bs = controller.get_batch_size('vlm')
+        t0 = time.perf_counter()
         process(items[:bs])
-        decision = controller.after_sub_batch('vlm', bs)
+        elapsed = time.perf_counter() - t0
+        decision = controller.after_sub_batch('vlm', bs, elapsed)
         if decision.abort:
             break
 """
@@ -42,7 +48,7 @@ from .memory_monitor import (
 logger = logging.getLogger(__name__)
 
 
-# Default phase limits (max is a safety ceiling; real limit is found by memory pressure)
+# Default phase limits (max is a safety ceiling; real limit is found by throughput)
 DEFAULT_PHASE_LIMITS = {
     'vlm': {'min': 1, 'max': 128, 'initial': 2},
     'vv': {'min': 1, 'max': 256, 'initial': 4},
@@ -54,15 +60,20 @@ STATE_GROWING = 'growing'
 STATE_REFINING = 'refining'
 STATE_LOCKED = 'locked'
 
+# Throughput comparison thresholds
+THROUGHPUT_DROP_THRESHOLD = 0.95    # 5% drop = slower
+THROUGHPUT_DEGRADE_THRESHOLD = 0.80  # 20% drop from best = re-enter REFINING
+
 
 @dataclass
 class BatchDecision:
     """Result of batch size decision after a sub-batch."""
     batch_size: int
-    reason: str       # growth / stable / shrink / refine / locked / emergency / abort
+    reason: str       # growth / refine / locked / emergency / abort
     pressure: float
     phase: str
     state: str = ''   # growing / refining / locked
+    throughput: float = 0.0  # items/sec for this sub-batch
 
     @property
     def abort(self) -> bool:
@@ -75,18 +86,21 @@ class PhaseState:
     current: int = 2
     state: str = STATE_GROWING
     step_increment: int = 1                  # Triangular step (grows: 1, 2, 3, 4...)
-    last_safe: Optional[int] = None          # Largest batch that was safe
-    first_unsafe: Optional[int] = None       # Smallest batch that triggered pressure
+    last_fast: Optional[int] = None          # Largest batch with good throughput
+    first_slower: Optional[int] = None       # Smallest batch where throughput dropped
     consecutive_shrinks: int = 0
+    # Throughput tracking
+    prev_throughput: Optional[float] = None  # Previous sub-batch items/sec
+    best_throughput: Optional[float] = None  # Best observed items/sec
+    best_batch_size: Optional[int] = None    # Batch size at best throughput
 
 
 class AdaptiveBatchController:
     """
-    Triangular-step adaptive batch controller.
+    Throughput-driven adaptive batch controller.
 
-    GROWING:  accelerating steps (+1, +2, +3...) until pressure.
-    REFINING: reset step to +1 from last_safe, re-grow toward ceiling.
-    LOCKED:   hold at optimal, re-enter if conditions change.
+    Primary criterion: items/sec — find the batch size that maximizes throughput.
+    Safety ceiling: memory pressure — CRITICAL/DANGER triggers emergency shrink/abort.
     """
 
     def __init__(
@@ -121,13 +135,14 @@ class AdaptiveBatchController:
         else:
             self._limits[phase] = {'min': 1, 'max': max_batch, 'initial': 2}
 
-    def after_sub_batch(self, phase: str, processed_count: int) -> BatchDecision:
+    def after_sub_batch(self, phase: str, processed_count: int, elapsed_sec: float = 0.0) -> BatchDecision:
         """
-        Called after each sub-batch. Decides next batch size via state machine.
+        Called after each sub-batch. Decides next batch size based on throughput.
 
         Args:
             phase: 'vlm', 'vv', 'mv'
-            processed_count: files processed in this sub-batch
+            processed_count: items processed in this sub-batch
+            elapsed_sec: wall-clock time for this sub-batch (seconds)
 
         Returns:
             BatchDecision with next batch size and reason
@@ -138,12 +153,15 @@ class AdaptiveBatchController:
         ps = self._get_state(phase)
         pressure = self._monitor.get_pressure()
 
-        # ── Emergency / Danger handling (any state) ──
+        # Compute throughput
+        throughput = processed_count / max(elapsed_sec, 0.001) if elapsed_sec > 0 else 0.0
+
+        # ── Memory safety ceiling (any state) ──
         if pressure >= PRESSURE_DANGER:
             self._monitor.force_cleanup()
             pressure = self._monitor.get_pressure()
             if pressure >= PRESSURE_DANGER:
-                decision = BatchDecision(0, 'abort', pressure, phase, ps.state)
+                decision = BatchDecision(0, 'abort', pressure, phase, ps.state, throughput)
                 self._decisions.append(decision)
                 logger.error(
                     f"[ADAPTIVE:{phase}] ABORT: pressure={pressure:.0%}"
@@ -154,130 +172,138 @@ class AdaptiveBatchController:
             ps.current = min_bs
             ps.step_increment = 1
             ps.consecutive_shrinks += 1
-            decision = BatchDecision(min_bs, 'emergency', pressure, phase, ps.state)
+            decision = BatchDecision(min_bs, 'emergency', pressure, phase, ps.state, throughput)
             self._decisions.append(decision)
             logger.warning(
                 f"[ADAPTIVE:{phase}] EMERGENCY → B={min_bs} "
-                f"(pressure={pressure:.0%})"
+                f"(pressure={pressure:.0%}, {throughput:.1f} items/s)"
             )
             return decision
 
-        # ── Pressure classification ──
-        is_pressured = pressure >= PRESSURE_HIGH    # >= 75%
-        is_safe = pressure < PRESSURE_LOW           # < 50%
-
-        # ── State machine ──
+        # ── Throughput-driven state machine ──
         if ps.state == STATE_GROWING:
-            decision = self._handle_growing(ps, is_pressured, is_safe, min_bs, max_bs, pressure, phase)
+            decision = self._handle_growing(ps, throughput, min_bs, max_bs, pressure, phase)
         elif ps.state == STATE_REFINING:
-            decision = self._handle_refining(ps, is_pressured, is_safe, min_bs, max_bs, pressure, phase)
+            decision = self._handle_refining(ps, throughput, min_bs, max_bs, pressure, phase)
         else:  # LOCKED
-            decision = self._handle_locked(ps, is_pressured, is_safe, min_bs, max_bs, pressure, phase)
+            decision = self._handle_locked(ps, throughput, min_bs, max_bs, pressure, phase)
+
+        # Update throughput history
+        ps.prev_throughput = throughput
+        if ps.best_throughput is None or throughput > ps.best_throughput:
+            ps.best_throughput = throughput
+            ps.best_batch_size = ps.current
 
         self._decisions.append(decision)
         logger.info(
             f"[ADAPTIVE:{phase}] B:{processed_count}→{decision.batch_size} "
             f"({decision.reason}, {decision.state}, step={ps.step_increment}, "
-            f"pressure={pressure:.0%})"
+            f"{throughput:.1f} items/s, pressure={pressure:.0%})"
         )
         return decision
 
+    def _is_slower(self, ps: PhaseState, throughput: float) -> bool:
+        """Check if throughput dropped compared to previous measurement."""
+        if ps.prev_throughput is None or ps.prev_throughput <= 0:
+            return False  # First measurement — can't compare
+        return throughput < ps.prev_throughput * THROUGHPUT_DROP_THRESHOLD
+
     def _handle_growing(
-        self, ps: PhaseState, is_pressured: bool, is_safe: bool,
+        self, ps: PhaseState, throughput: float,
         min_bs: int, max_bs: int, pressure: float, phase: str
     ) -> BatchDecision:
-        """GROWING state: triangular step (+1, +2, +3...) until pressure.
+        """GROWING state: triangular step until throughput drops.
 
-        In GROWING, only HIGH pressure (>=75%) triggers REFINING.
-        Medium pressure (50-75%) still grows — we want to find the limit fast.
+        First sub-batch has no comparison → always grow.
+        Subsequent: grow if throughput holds, refine if it drops.
         """
         current = ps.current
 
-        if is_pressured:
-            # Pressure hit! Record boundary and enter REFINING
-            ps.first_unsafe = current
+        if self._is_slower(ps, throughput):
+            # Throughput dropped! Record boundary and enter REFINING
+            ps.first_slower = current
             ps.step_increment = 1
-            ps.current = ps.last_safe or max(min_bs, current - 1)
+            ps.current = ps.last_fast or max(min_bs, current - 1)
             ps.state = STATE_REFINING
             ps.consecutive_shrinks = 0
 
             # Check if already converged
-            gap = ps.first_unsafe - (ps.last_safe or min_bs)
+            gap = ps.first_slower - (ps.last_fast or min_bs)
             if gap <= 1:
-                ps.current = ps.last_safe or min_bs
+                ps.current = ps.last_fast or min_bs
                 ps.state = STATE_LOCKED
-                return BatchDecision(ps.current, 'locked', pressure, phase, STATE_LOCKED)
+                return BatchDecision(ps.current, 'locked', pressure, phase, STATE_LOCKED, throughput)
 
-            return BatchDecision(ps.current, 'refine', pressure, phase, STATE_REFINING)
+            return BatchDecision(ps.current, 'refine', pressure, phase, STATE_REFINING, throughput)
 
         else:
-            # Safe or medium: record and keep growing with triangular step.
-            # HIGH (75%) is the only brake in GROWING — be aggressive to find limit.
-            ps.last_safe = current
+            # Throughput same or better — record and keep growing
+            ps.last_fast = current
             next_size = min(max_bs, current + ps.step_increment)
             ps.step_increment += 1
             ps.current = next_size
             ps.consecutive_shrinks = 0
-            return BatchDecision(next_size, 'growth', pressure, phase, STATE_GROWING)
+            return BatchDecision(next_size, 'growth', pressure, phase, STATE_GROWING, throughput)
 
     def _handle_refining(
-        self, ps: PhaseState, is_pressured: bool, is_safe: bool,
+        self, ps: PhaseState, throughput: float,
         min_bs: int, max_bs: int, pressure: float, phase: str
     ) -> BatchDecision:
-        """REFINING state: triangular step from last_safe, capped at first_unsafe.
+        """REFINING state: triangular step from last_fast, capped at first_slower.
 
-        Only HIGH pressure (>=75%) is treated as failure.
-        Medium/safe both grow — must converge toward the boundary.
+        Throughput drop → tighten ceiling, go back to last_fast.
+        Throughput holds → grow toward ceiling.
         """
         current = ps.current
 
-        if is_pressured:
-            # Tighten upper bound, reset step, go back to last_safe
-            ps.first_unsafe = min(ps.first_unsafe or current, current)
+        if self._is_slower(ps, throughput):
+            # Tighten upper bound, reset step, go back to last_fast
+            ps.first_slower = min(ps.first_slower or current, current)
             ps.step_increment = 1
-            if ps.last_safe is not None and ps.last_safe < current:
-                ps.current = ps.last_safe
+            if ps.last_fast is not None and ps.last_fast < current:
+                ps.current = ps.last_fast
             else:
                 ps.current = max(min_bs, current - 1)
-                ps.last_safe = None
+                ps.last_fast = None
 
         else:
-            # Safe or medium: raise lower bound and grow toward ceiling
-            ps.last_safe = max(ps.last_safe or current, current)
-            ceiling = (ps.first_unsafe or max_bs) - 1
+            # Throughput ok: raise lower bound and grow toward ceiling
+            ps.last_fast = max(ps.last_fast or current, current)
+            ceiling = (ps.first_slower or max_bs) - 1
             next_size = min(ceiling, current + ps.step_increment)
             ps.step_increment += 1
             ps.current = max(current, next_size)
 
         # Check convergence (gap <= 1 means we found the boundary)
-        gap = (ps.first_unsafe or max_bs) - (ps.last_safe or min_bs)
+        gap = (ps.first_slower or max_bs) - (ps.last_fast or min_bs)
         if gap <= 1:
-            ps.current = ps.last_safe or min_bs
+            ps.current = ps.last_fast or min_bs
             ps.state = STATE_LOCKED
             ps.consecutive_shrinks = 0
-            return BatchDecision(ps.current, 'locked', pressure, phase, STATE_LOCKED)
+            return BatchDecision(ps.current, 'locked', pressure, phase, STATE_LOCKED, throughput)
 
-        return BatchDecision(ps.current, 'refine', pressure, phase, STATE_REFINING)
+        return BatchDecision(ps.current, 'refine', pressure, phase, STATE_REFINING, throughput)
 
     def _handle_locked(
-        self, ps: PhaseState, is_pressured: bool, is_safe: bool,
+        self, ps: PhaseState, throughput: float,
         min_bs: int, max_bs: int, pressure: float, phase: str
     ) -> BatchDecision:
-        """LOCKED state: hold at optimal. Re-enter REFINING if conditions worsen."""
+        """LOCKED state: hold at optimal. Re-enter REFINING if throughput degrades."""
         current = ps.current
 
-        if is_pressured:
-            # Conditions worsened — shrink by 1 and re-refine
-            ps.first_unsafe = current
-            ps.current = max(min_bs, current - 1)
-            ps.last_safe = None
+        # Check if throughput degraded significantly from best
+        if (ps.best_throughput is not None and ps.best_throughput > 0
+                and throughput < ps.best_throughput * THROUGHPUT_DEGRADE_THRESHOLD):
+            # Conditions changed — re-enter REFINING
+            ps.first_slower = None
+            ps.last_fast = None
             ps.step_increment = 1
             ps.state = STATE_REFINING
             ps.consecutive_shrinks += 1
-            return BatchDecision(ps.current, 'shrink', pressure, phase, STATE_REFINING)
+            return BatchDecision(current, 'refine', pressure, phase, STATE_REFINING, throughput)
 
         # Hold steady
-        return BatchDecision(current, 'locked', pressure, phase, STATE_LOCKED)
+        return BatchDecision(current, 'locked', pressure, phase, STATE_LOCKED, throughput)
 
     def reset_phase(self, phase: str):
         """Reset a phase's state (call between phases)."""
@@ -295,6 +321,7 @@ class AdaptiveBatchController:
         lines = []
         for d in self._decisions[-10:]:
             lines.append(
-                f"  {d.phase}: B={d.batch_size} ({d.reason}/{d.state}, {d.pressure:.0%})"
+                f"  {d.phase}: B={d.batch_size} ({d.reason}/{d.state}, "
+                f"{d.throughput:.1f} items/s, {d.pressure:.0%})"
             )
         return "\n".join(lines)
