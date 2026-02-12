@@ -15,6 +15,7 @@ ai_mode:
         model: google/siglip2-so400m-patch14-384
       vlm:
         backend: transformers
+        batch_size: 8
         device: auto
         model: Qwen/Qwen3-VL-4B-Instruct
       vram_max: 16384
@@ -33,6 +34,7 @@ ai_mode:
         model: google/siglip2-base-patch16-224
       vlm:
         backend: transformers
+        batch_size: 16
         device: auto
         model: Qwen/Qwen3-VL-2B-Instruct
       vram_max: 6144

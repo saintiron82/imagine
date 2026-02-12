@@ -686,11 +686,200 @@ class VisionAnalyzer:
 
         return analysis
 
+    # ── Batch inference helpers ─────────────────────────────────
+
+    def _is_qwen_vl(self) -> bool:
+        return "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id
+
+    def _generate_response_batch(
+        self, images: List[Image.Image], prompts
+    ) -> List[str]:
+        """
+        Batch generate: multiple images with prompts → list of responses.
+
+        Args:
+            images: List of PIL Images
+            prompts: Single prompt string (same for all) or list of per-image prompts
+
+        Falls back to sequential if not Qwen VL.
+        """
+        # Normalize prompts to list
+        if isinstance(prompts, str):
+            prompt_list = [prompts] * len(images)
+        else:
+            prompt_list = prompts
+
+        if not self._is_qwen_vl() or len(images) <= 1:
+            return [self._generate_response(img, p) for img, p in zip(images, prompt_list)]
+
+        self._load_model()
+        texts = []
+        for img, prompt in zip(images, prompt_list):
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": img},
+                    {"type": "text", "text": prompt}
+                ]
+            }]
+            texts.append(self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            ))
+
+        inputs = self.processor(
+            text=texts, images=images, return_tensors="pt", padding=True
+        ).to(self.device)
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+
+        trimmed = [
+            out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)
+        ]
+        return self.processor.batch_decode(trimmed, skip_special_tokens=True)
+
+    def classify_batch(self, images: List[Image.Image]) -> List[Dict[str, Any]]:
+        """Stage 1 batch: classify multiple images at once."""
+        from .prompts import STAGE1_PROMPT
+        from .schemas import STAGE1_SCHEMA
+        from .repair import parse_structured_output
+
+        t0 = time.perf_counter()
+        try:
+            raw_list = self._generate_response_batch(images, STAGE1_PROMPT)
+        except Exception as e:
+            logger.warning(f"Stage 1 batch failed ({e}), falling back to sequential")
+            return [self.classify(img) for img in images]
+
+        results = []
+        for raw in raw_list:
+            results.append(parse_structured_output(raw, STAGE1_SCHEMA, image_type="other"))
+
+        elapsed = time.perf_counter() - t0
+        logger.info(f"Stage 1 batch: {len(images)} images in {elapsed:.1f}s")
+        return results
+
+    def analyze_structured_batch(
+        self, images: List[Image.Image], image_type: str,
+        contexts: List[dict] = None
+    ) -> List[Dict[str, Any]]:
+        """Stage 2 batch: same image_type, multiple images."""
+        from .prompts import get_stage2_prompt
+        from .schemas import get_schema
+        from .repair import parse_structured_output
+
+        # Build per-image prompts (same template, different context)
+        # If contexts differ, we must go sequential per unique prompt
+        prompts = []
+        for i, img in enumerate(images):
+            ctx = contexts[i] if contexts else None
+            prompts.append(get_stage2_prompt(image_type, context=ctx))
+
+        # Batch with per-image prompts (different contexts are fine)
+        t0 = time.perf_counter()
+        try:
+            raw_list = self._generate_response_batch(images, prompts)
+        except Exception as e:
+            logger.warning(f"Stage 2 batch failed ({e}), falling back to sequential")
+            return [
+                self.analyze_structured(img, image_type, context=contexts[i] if contexts else None)
+                for i, img in enumerate(images)
+            ]
+        elapsed = time.perf_counter() - t0
+        logger.info(f"Stage 2 batch ({image_type}): {len(images)} images in {elapsed:.1f}s")
+
+        schema = get_schema(image_type)
+        results = []
+        for raw in raw_list:
+            result = parse_structured_output(raw, schema, image_type=image_type)
+            result["image_type"] = image_type
+            results.append(result)
+        return results
+
+    def classify_and_analyze_batch(
+        self, items: list, vlm_batch: int = 8, progress_callback=None
+    ) -> list:
+        """
+        Full 2-Stage batch pipeline: batch classify → group by type → batch analyze.
+
+        Args:
+            items: List of (image, context) tuples
+            vlm_batch: Max images per GPU batch (VRAM limit)
+            progress_callback: fn(idx, total, result)
+        """
+        self._load_model()
+        n = len(items)
+        images = [img for img, _ in items]
+        contexts = [ctx for _, ctx in items]
+        results = [None] * n
+
+        # ── Stage 1: Batch classify (sub-batch for VRAM safety) ──
+        classifications = []
+        for sb_start in range(0, n, vlm_batch):
+            sb_images = images[sb_start:sb_start + vlm_batch]
+            classifications.extend(self.classify_batch(sb_images))
+
+        # ── Group by image_type for Stage 2 ──
+        type_groups = {}  # image_type → [(original_idx, image, context)]
+        for idx, cls in enumerate(classifications):
+            it = cls.get("image_type", "other")
+            type_groups.setdefault(it, []).append((idx, images[idx], contexts[idx]))
+
+        logger.info(
+            f"Stage 1 done: {n} images → "
+            + ", ".join(f"{t}:{len(g)}" for t, g in type_groups.items())
+        )
+
+        # ── Stage 2: Batch per type (sub-batch for VRAM safety) ──
+        progress_idx = 0
+        for image_type, group in type_groups.items():
+            group_images = [g[1] for g in group]
+            group_contexts = [g[2] for g in group]
+            group_indices = [g[0] for g in group]
+
+            group_results = []
+            for sb_start in range(0, len(group), vlm_batch):
+                sb_imgs = group_images[sb_start:sb_start + vlm_batch]
+                sb_ctxs = group_contexts[sb_start:sb_start + vlm_batch]
+                sb_results = self.analyze_structured_batch(
+                    sb_imgs, image_type, contexts=sb_ctxs
+                )
+                group_results.extend(sb_results)
+
+            for i, result in enumerate(group_results):
+                orig_idx = group_indices[i]
+                results[orig_idx] = result
+                if progress_callback:
+                    progress_callback(progress_idx, n, result)
+                progress_idx += 1
+
+        # Fill any None with fallback
+        for i in range(n):
+            if results[i] is None:
+                results[i] = {"caption": "", "tags": [], "image_type": "other"}
+
+        return results
+
     def classify_and_analyze_sequence(
         self, items: list, progress_callback=None
     ) -> list:
-        """Process multiple images sequentially, keeping model loaded."""
+        """Process multiple images — batch if supported, else sequential."""
         self._load_model()
+
+        # Use batch path for Qwen VL models
+        if self._is_qwen_vl() and len(items) > 1:
+            try:
+                from backend.utils.tier_config import get_active_tier
+                _, tier_cfg = get_active_tier()
+                vlm_batch = tier_cfg.get("vlm", {}).get("batch_size", 8)
+                logger.info(f"VLM batch mode: {len(items)} images, batch_size={vlm_batch}")
+                return self.classify_and_analyze_batch(
+                    items, vlm_batch=vlm_batch, progress_callback=progress_callback
+                )
+            except Exception as e:
+                logger.warning(f"Batch VLM failed ({e}), falling back to sequential")
+
+        # Sequential fallback
         results = []
         for idx, (image, context) in enumerate(items):
             try:
