@@ -323,6 +323,11 @@ class TransformersEmbeddingProvider(EmbeddingProvider):
             )
             vec = emb[0].float().cpu().numpy()
 
+            # Free GPU tensors immediately (MPS doesn't auto-reclaim)
+            del batch_dict, outputs, emb
+            if self._device == "mps":
+                torch.mps.empty_cache()
+
             # MRL truncation if needed
             if self._normalize and len(vec) > self._dimensions:
                 vec = vec[:self._dimensions]
@@ -375,6 +380,12 @@ class TransformersEmbeddingProvider(EmbeddingProvider):
                 if norm > 0:
                     vec = vec / norm
                 results.append(vec.astype(np.float32))
+
+            # Free GPU tensors immediately (MPS doesn't auto-reclaim)
+            del batch_dict, outputs, embs
+            if self._device == "mps":
+                torch.mps.empty_cache()
+
             return results
 
         except Exception as e:

@@ -594,9 +594,16 @@ class VisionAnalyzer:
                 out[len(inp):]
                 for inp, out in zip(inputs.input_ids, generated_ids)
             ]
-            return self.processor.batch_decode(
+            decoded = self.processor.batch_decode(
                 trimmed, skip_special_tokens=True
             )[0]
+
+            # Free GPU tensors immediately (MPS doesn't auto-reclaim)
+            del inputs, generated_ids, trimmed
+            if self.device == "mps":
+                torch.mps.empty_cache()
+
+            return decoded
         else:
             # Fallback for non-Qwen models: use _generate_caption with the prompt
             return self._generate_caption(image, context={"prompt_override": prompt})
@@ -736,7 +743,14 @@ class VisionAnalyzer:
         trimmed = [
             out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)
         ]
-        return self.processor.batch_decode(trimmed, skip_special_tokens=True)
+        decoded = self.processor.batch_decode(trimmed, skip_special_tokens=True)
+
+        # Free GPU tensors immediately (MPS doesn't auto-reclaim)
+        del inputs, generated_ids, trimmed
+        if self.device == "mps":
+            torch.mps.empty_cache()
+
+        return decoded
 
     def classify_batch(self, images: List[Image.Image]) -> List[Dict[str, Any]]:
         """Stage 1 batch: classify multiple images at once."""

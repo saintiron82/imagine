@@ -243,6 +243,11 @@ class SigLIP2Encoder:
                 vec = vec / norm
             vectors.append(vec.astype(np.float32))
 
+        # Free GPU tensors immediately (MPS doesn't auto-reclaim)
+        del inputs, image_features, batch_vecs
+        if self._device == "mps":
+            torch.mps.empty_cache()
+
         return vectors
 
     # ── Adaptive Discovery ─────────────────────────────────────────────
