@@ -517,7 +517,6 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
 
     // Cumulative phase tracking — each phase has independent progress
     let cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0;
-    let miniBatchNum = 0, miniBatchTotal = 0;
     // Current active phase within mini-batch (for sub-progress tracking)
     let activePhase = 0; // 0=parse, 1=vision, 2=embed, 3=store
     let phaseSubCount = 0, phaseSubTotal = 0;
@@ -530,8 +529,6 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             currentFile: extraFields.currentFile || '',
             // Cumulative per-phase counts
             cumParse, cumVision, cumEmbed, cumStore,
-            // Current mini-batch info
-            miniBatchNum, miniBatchTotal,
             // Active phase sub-progress (within mini-batch)
             activePhase,
             phaseSubCount, phaseSubTotal,
@@ -564,8 +561,8 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             const stepDoneMatch = clean.match(/^STEP (\d+)\/(\d+) completed/);
             // Phase sub-progress: [1/26] filename → type (may have leading whitespace from logger indent)
             const subProgressMatch = clean.match(/^\s*\[(\d+)\/(\d+)\]\s+(.+?)(?:\s+→|$)/);
-            // Cumulative phase progress: [PHASE] P:40 V:33 E:30 S:30 T:500 M:4/50
-            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+V:(\d+)\s+E:(\d+)\s+S:(\d+)\s+T:(\d+)\s+M:(\d+)\/(\d+)/);
+            // Cumulative phase progress: [PHASE] P:40 V:33 E:30 S:30 T:500
+            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+V:(\d+)\s+E:(\d+)\s+S:(\d+)\s+T:(\d+)/);
 
             // [PHASE] cumulative progress from mini-batch orchestrator
             if (phaseMatch) {
@@ -573,8 +570,6 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
                 cumVision = parseInt(phaseMatch[2]);
                 cumEmbed = parseInt(phaseMatch[3]);
                 cumStore = parseInt(phaseMatch[4]);
-                miniBatchNum = parseInt(phaseMatch[6]);
-                miniBatchTotal = parseInt(phaseMatch[7]);
                 emitPhaseProgress();
             }
 

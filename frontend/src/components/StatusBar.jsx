@@ -49,7 +49,6 @@ const StatusBar = ({
     logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '',
     processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null,
     cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0,
-    miniBatchNum = 0, miniBatchTotal = 0,
     activePhase = 0, phaseSubCount = 0, phaseSubTotal = 0,
     fileStep = {}, onStop
 }) => {
@@ -152,11 +151,6 @@ const StatusBar = ({
 
                         {/* Current file name */}
                         <span className="text-gray-400 truncate max-w-[100px]">{currentFile?.split(/[/\\]/).pop()}</span>
-
-                        {/* Mini-batch indicator */}
-                        {miniBatchTotal > 0 && (
-                            <span className="text-gray-600 text-[10px] font-mono">{miniBatchNum}/{miniBatchTotal}</span>
-                        )}
 
                         {etaMs != null && (
                             <span className="text-gray-500 font-mono text-[11px]">{formatEta(etaMs)}</span>

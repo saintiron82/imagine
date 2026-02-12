@@ -17,8 +17,6 @@ function App() {
     processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0,
     // Cumulative per-phase counts
     cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
-    // Mini-batch tracking
-    miniBatchNum: 0, miniBatchTotal: 0,
     // Active phase sub-progress
     activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0,
   });
@@ -68,8 +66,6 @@ function App() {
             cumVision: data.cumVision ?? prev.cumVision,
             cumEmbed: data.cumEmbed ?? prev.cumEmbed,
             cumStore: data.cumStore ?? prev.cumStore,
-            miniBatchNum: data.miniBatchNum ?? prev.miniBatchNum,
-            miniBatchTotal: data.miniBatchTotal ?? prev.miniBatchTotal,
             activePhase: data.activePhase ?? prev.activePhase,
             phaseSubCount: data.phaseSubCount ?? prev.phaseSubCount,
             phaseSubTotal: data.phaseSubTotal ?? prev.phaseSubTotal,
@@ -97,7 +93,7 @@ function App() {
         // Batch done: reset all processing state
         window.electron.pipeline.onBatchDone((data) => {
           setIsProcessing(false);
-          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, miniBatchNum: 0, miniBatchTotal: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
+          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
           setFileStep({ step: 0, totalSteps: 5, stepName: '' });
           etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
           const msg = data.skipped > 0
@@ -185,7 +181,7 @@ function App() {
 
     setIsProcessing(true);
     etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
-    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, miniBatchNum: 0, miniBatchTotal: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
+    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
     setSelectedFiles(new Set());
 
     appendLog({
@@ -203,7 +199,7 @@ function App() {
     // Kill the actual Python process
     window.electron?.pipeline?.stop();
     setIsProcessing(false);
-    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, miniBatchNum: 0, miniBatchTotal: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
+    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
     etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
   };
@@ -337,8 +333,6 @@ function App() {
             cumVision={processProgress.cumVision}
             cumEmbed={processProgress.cumEmbed}
             cumStore={processProgress.cumStore}
-            miniBatchNum={processProgress.miniBatchNum}
-            miniBatchTotal={processProgress.miniBatchTotal}
             activePhase={processProgress.activePhase}
             phaseSubCount={processProgress.phaseSubCount}
             phaseSubTotal={processProgress.phaseSubTotal}
