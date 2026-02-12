@@ -6,9 +6,10 @@ Handles:
 2. Parser selection (Factory Pattern)
 3. Execution and Result Logging
 
-v3.2: Phase-based batch pipeline for true model-level batch inference.
-      Phase 1: Parse (CPU parallel) → Phase 2: VLM (sequential, model hot)
-      → Phase 3: Embed (true batch forward) → Phase 4: Store (sequential DB)
+v3.3: Phase-based batch pipeline with JIT thumbnail loading.
+      Phase 1: Parse ALL (CPU parallel, no thumbnails) → Store metadata
+      → Phase 2: VLM (sub-batch JIT load) → Store vision fields
+      → Phase 3: Embed (sub-batch JIT load for VV, text-only MV) → Store vectors
 """
 
 import argparse
@@ -85,6 +86,8 @@ class ParsedFile:
     skip_vision: bool = False
     skip_embed_vv: bool = False
     skip_embed_mv: bool = False
+    # DB file ID (set by phase_store_metadata, used by phase_store_vectors)
+    db_file_id: int = None
 
 
 class ParserFactory:
@@ -587,26 +590,8 @@ def _parse_single_file(file_info: tuple) -> ParsedFile:
             meta.folder_depth = 0
             meta.folder_tags = [parent.name]
 
-    # Resolve thumbnail
+    # Resolve thumbnail (path only, no image loading — JIT in Phase 2/3)
     pf.thumb_path = _resolve_thumb_path(meta)
-
-    # Load thumbnail and compute dHash (CPU work)
-    if pf.thumb_path and pf.thumb_path.exists():
-        try:
-            pf.thumb_image_rgb = _load_and_composite_thumbnail(pf.thumb_path)
-        except Exception as e:
-            logger.warning(f"Thumbnail load failed for {fp.name}: {e}")
-
-        # dHash (CPU, independent of vision)
-        if pf.thumb_image_rgb is not None:
-            try:
-                from backend.utils.dhash import dhash64
-                hash_val = dhash64(pf.thumb_image_rgb)
-                if hash_val >= 2**63:
-                    hash_val -= 2**64
-                meta.perceptual_hash = hash_val
-            except Exception as e:
-                logger.warning(f"dHash failed for {fp.name}: {e}")
 
     # Build MC.raw context
     pf.mc_raw = _build_mc_raw(meta)
@@ -623,7 +608,7 @@ def _parse_single_file(file_info: tuple) -> ParsedFile:
 def phase1_parse_all(
     file_infos: List[tuple], max_workers: int = 4
 ) -> List[ParsedFile]:
-    """Phase 1: CPU-parallel parsing, thumbnail loading, dHash."""
+    """Phase 1: CPU-parallel parsing, metadata extraction (no thumbnail loading)."""
     t0 = time.perf_counter()
     logger.info(f"STEP 1/4 Parsing ({len(file_infos)} files, workers={max_workers})")
 
@@ -645,12 +630,29 @@ def phase1_parse_all(
     return results
 
 
+def _compute_dhash(pf: ParsedFile):
+    """Compute perceptual dHash from loaded thumbnail."""
+    if pf.thumb_image_rgb is None:
+        return
+    try:
+        from backend.utils.dhash import dhash64
+        hash_val = dhash64(pf.thumb_image_rgb)
+        if hash_val >= 2**63:
+            hash_val -= 2**64
+        pf.meta.perceptual_hash = hash_val
+    except Exception as e:
+        logger.warning(f"dHash failed for {pf.file_path.name}: {e}")
+
+
 def phase2_vision_all(
     parsed_files: List[ParsedFile], progress_callback=None
 ) -> None:
-    """Phase 2: VLM sequential analysis with model kept hot."""
-    # Filter files that have thumbnails AND are not skip_vision
-    vision_items = []
+    """Phase 2: VLM analysis with sub-batch JIT thumbnail loading."""
+    from backend.utils.tier_config import get_active_tier
+    _, tier_config = get_active_tier()
+    sub_batch_size = tier_config.get("vlm", {}).get("batch_size", 8)
+
+    # Filter files that need vision processing
     vision_indices = []
     skipped = 0
     for idx, pf in enumerate(parsed_files):
@@ -660,52 +662,85 @@ def phase2_vision_all(
             skipped += 1
             logger.info(f"  [SKIP:Vision] {pf.file_path.name} (MC exists, same model)")
             continue
-        if pf.thumb_image_rgb is not None:
-            vision_items.append((pf.thumb_image_rgb, pf.mc_raw))
+        if pf.thumb_path and pf.thumb_path.exists():
             vision_indices.append(idx)
 
     if skipped > 0:
         logger.info(f"  [SKIP:Vision] {skipped} files skipped (MC unchanged)")
 
-    if not vision_items:
+    if not vision_indices:
         logger.info("STEP 2/4 AI Vision — no images to analyze")
         return
 
     t0 = time.perf_counter()
-    logger.info(f"STEP 2/4 AI Vision ({len(vision_items)} images)")
+    total_vision = len(vision_indices)
+    logger.info(f"STEP 2/4 AI Vision ({total_vision} images)")
 
     from backend.vision.vision_factory import get_vision_analyzer
     analyzer = get_vision_analyzer()
 
-    def _progress(i, total, result):
-        pf = parsed_files[vision_indices[i]]
-        logger.info(f"  [{i+1}/{total}] {pf.file_path.name} → {result.get('image_type', '?')}")
-        if progress_callback:
-            progress_callback(i, total, result)
+    global_progress_idx = 0
 
-    if hasattr(analyzer, 'classify_and_analyze_sequence'):
-        vision_results = analyzer.classify_and_analyze_sequence(
-            vision_items, progress_callback=_progress
-        )
-    else:
-        # Legacy fallback
-        vision_results = []
-        for i, (img, ctx) in enumerate(vision_items):
+    # Process in sub-batches: JIT load → dHash → VLM → release
+    for chunk_start in range(0, total_vision, sub_batch_size):
+        chunk = vision_indices[chunk_start:chunk_start + sub_batch_size]
+
+        # JIT: Load thumbnails for this sub-batch only
+        for idx in chunk:
+            pf = parsed_files[idx]
             try:
-                r = analyzer.classify_and_analyze(img, context=ctx)
-            except Exception:
-                r = {"caption": "", "tags": [], "image_type": "other"}
-            vision_results.append(r)
-            _progress(i, len(vision_items), r)
+                pf.thumb_image_rgb = _load_and_composite_thumbnail(pf.thumb_path)
+            except Exception as e:
+                logger.warning(f"Thumbnail load failed for {pf.file_path.name}: {e}")
+            _compute_dhash(pf)
 
-    # Apply results back to ParsedFile.meta
-    for i, result in enumerate(vision_results):
-        pf = parsed_files[vision_indices[i]]
-        _apply_vision_result(pf.meta, result)
-        logger.info(
-            f"   MC Caption: {(pf.meta.mc_caption or '')[:80]}"
-            + ("..." if len(pf.meta.mc_caption or '') > 80 else "")
-        )
+        # Build vision items for this sub-batch
+        vision_items = []
+        valid_chunk = []
+        for idx in chunk:
+            pf = parsed_files[idx]
+            if pf.thumb_image_rgb is not None:
+                vision_items.append((pf.thumb_image_rgb, pf.mc_raw))
+                valid_chunk.append(idx)
+
+        if not vision_items:
+            continue
+
+        # Progress callback wired to global index
+        def _progress(i, total, result, _offset=global_progress_idx):
+            pf = parsed_files[valid_chunk[i]]
+            logger.info(f"  [{_offset + i + 1}/{total_vision}] {pf.file_path.name} → {result.get('image_type', '?')}")
+            if progress_callback:
+                progress_callback(_offset + i, total_vision, result)
+
+        if hasattr(analyzer, 'classify_and_analyze_sequence'):
+            vision_results = analyzer.classify_and_analyze_sequence(
+                vision_items, progress_callback=_progress
+            )
+        else:
+            vision_results = []
+            for i, (img, ctx) in enumerate(vision_items):
+                try:
+                    r = analyzer.classify_and_analyze(img, context=ctx)
+                except Exception:
+                    r = {"caption": "", "tags": [], "image_type": "other"}
+                vision_results.append(r)
+                _progress(i, len(vision_items), r)
+
+        # Apply results + release thumbnails
+        for i, result in enumerate(vision_results):
+            pf = parsed_files[valid_chunk[i]]
+            _apply_vision_result(pf.meta, result)
+            logger.info(
+                f"   MC Caption: {(pf.meta.mc_caption or '')[:80]}"
+                + ("..." if len(pf.meta.mc_caption or '') > 80 else "")
+            )
+
+        # Release thumbnails immediately after VLM inference
+        for idx in chunk:
+            parsed_files[idx].thumb_image_rgb = None
+
+        global_progress_idx += len(valid_chunk)
 
     elapsed = time.perf_counter() - t0
     logger.info(f"STEP 2/4 completed in {elapsed:.1f}s")
@@ -749,8 +784,7 @@ def phase3_embed_all(
         None
     ) for _ in range(total)]
 
-    # === VV: SigLIP2 batch encoding (adaptive, skip flagged) ===
-    vv_images = []
+    # === VV: SigLIP2 batch encoding with JIT thumbnail loading ===
     vv_indices = []
     vv_skipped = 0
     for i in valid_indices:
@@ -758,31 +792,47 @@ def phase3_embed_all(
         if pf.skip_embed_vv:
             vv_skipped += 1
             continue
-        if pf.thumb_image_rgb is not None:
-            vv_images.append(pf.thumb_image_rgb)
+        if pf.thumb_path and pf.thumb_path.exists():
             vv_indices.append(i)
     if vv_skipped > 0:
         logger.info(f"  [SKIP:VV] {vv_skipped} files skipped (same SigLIP2 model)")
 
-    if vv_images:
+    if vv_indices:
         from backend.vector.siglip2_encoder import SigLIP2Encoder
         global _global_encoder
         if '_global_encoder' not in globals() or _global_encoder is None:
             _global_encoder = SigLIP2Encoder()
             logger.info(f"SigLIP2 encoder loaded: {_global_encoder.model_name}")
 
-        # v3.3: Encoder handles adaptive batch sizing internally
-        # (probe → scale-up → fine-tune → OOM recovery)
-        vv_vectors = _global_encoder.encode_image_batch(
-            vv_images, batch_size=vv_batch
-        )
+        # Determine sub-batch size for JIT loading
+        vv_sub_batch = vv_batch or 8
+        vv_encoded = 0
 
-        for j, vec in enumerate(vv_vectors):
-            idx = vv_indices[j]
-            vv, mv, mv_text = results[idx]
-            results[idx] = (vec, mv, mv_text)
+        for chunk_start in range(0, len(vv_indices), vv_sub_batch):
+            chunk = vv_indices[chunk_start:chunk_start + vv_sub_batch]
 
-        logger.info(f"  VV: {len(vv_images)} images encoded")
+            # JIT: Load thumbnails from disk for this sub-batch
+            images = []
+            chunk_valid = []
+            for idx in chunk:
+                pf = parsed_files[idx]
+                try:
+                    img = _load_and_composite_thumbnail(pf.thumb_path)
+                    images.append(img)
+                    chunk_valid.append(idx)
+                except Exception as e:
+                    logger.warning(f"VV thumbnail load failed for {pf.file_path.name}: {e}")
+
+            if images:
+                vv_vectors = _global_encoder.encode_image_batch(images, batch_size=len(images))
+                for j, vec in enumerate(vv_vectors):
+                    idx = chunk_valid[j]
+                    vv, mv, mv_text = results[idx]
+                    results[idx] = (vec, mv, mv_text)
+                vv_encoded += len(images)
+            # images go out of scope → GC eligible
+
+        logger.info(f"  VV: {vv_encoded} images encoded")
 
     # === MV: Text embedding batch encoding ===
     if text_enabled:
@@ -854,65 +904,101 @@ def phase3_embed_all(
     return results
 
 
-def phase4_store_all(
-    parsed_files: List[ParsedFile], embeddings: List[tuple], progress_callback=None
-) -> Tuple[int, int]:
-    """Phase 4: Sequential DB storage."""
-    import numpy as np
-
-    t0 = time.perf_counter()
-    logger.info(f"STEP 4/4 Storing ({len(parsed_files)} files)")
-
+def phase_store_metadata(parsed_files: List[ParsedFile]) -> int:
+    """Phase 1 storage: INSERT basic metadata + save JSON files."""
     from backend.db.sqlite_client import SQLiteDB
     global _global_sqlite_db
     if '_global_sqlite_db' not in globals() or _global_sqlite_db is None:
         _global_sqlite_db = SQLiteDB()
         logger.info("SQLite database initialized")
 
-    stored, errors = 0, 0
+    stored = 0
+    for pf in parsed_files:
+        if pf.error is not None:
+            continue
+        try:
+            pf.parser._save_json(pf.meta, pf.file_path)
+            pf.db_file_id = _global_sqlite_db.upsert_metadata(
+                file_path=str(pf.file_path),
+                metadata=pf.meta.model_dump()
+            )
+            stored += 1
+        except Exception as e:
+            logger.error(f"  [FAIL:meta] {pf.file_path.name}: {e}")
+            pf.error = f"Metadata store failed: {e}"
 
+    logger.info(f"  Phase 1 stored: {stored} metadata records")
+    return stored
+
+
+def phase_store_vision(parsed_files: List[ParsedFile]) -> int:
+    """Phase 2 storage: UPDATE VLM-generated fields only."""
+    global _global_sqlite_db
+
+    stored = 0
+    for pf in parsed_files:
+        if pf.error is not None or pf.skip_vision:
+            continue
+        try:
+            fields = {
+                'mc_caption': pf.meta.mc_caption,
+                'ai_tags': pf.meta.ai_tags,
+                'ocr_text': pf.meta.ocr_text,
+                'dominant_color': pf.meta.dominant_color,
+                'ai_style': pf.meta.ai_style,
+                'image_type': pf.meta.image_type,
+                'art_style': pf.meta.art_style,
+                'color_palette': pf.meta.color_palette,
+                'scene_type': pf.meta.scene_type,
+                'time_of_day': pf.meta.time_of_day,
+                'weather': pf.meta.weather,
+                'character_type': pf.meta.character_type,
+                'item_type': pf.meta.item_type,
+                'ui_type': pf.meta.ui_type,
+                'structured_meta': pf.meta.structured_meta,
+                'perceptual_hash': pf.meta.perceptual_hash,
+            }
+            _global_sqlite_db.update_vision_fields(str(pf.file_path), fields)
+            # Re-save JSON with updated VLM fields
+            pf.parser._save_json(pf.meta, pf.file_path)
+            stored += 1
+        except Exception as e:
+            logger.error(f"  [FAIL:vision] {pf.file_path.name}: {e}")
+
+    logger.info(f"  Phase 2 stored: {stored} vision records")
+    return stored
+
+
+def phase_store_vectors(parsed_files: List[ParsedFile], embeddings: List[tuple]) -> Tuple[int, int]:
+    """Phase 3 storage: INSERT VV + MV vectors."""
+    import numpy as np
+    global _global_sqlite_db
+
+    stored, errors = 0, 0
     for i, pf in enumerate(parsed_files):
         if pf.error is not None:
             continue
 
-        vv_vec, mv_vec, mv_text = embeddings[i]
+        vv_vec, mv_vec, _mv_text = embeddings[i]
+        file_id = pf.db_file_id
+        if file_id is None:
+            logger.warning(f"  [SKIP:vec] {pf.file_path.name}: no db_file_id")
+            continue
 
         try:
-            # Save metadata JSON
-            pf.parser._save_json(pf.meta, pf.file_path)
+            vv = vv_vec if (vv_vec is not None and np.any(vv_vec) and not pf.skip_embed_vv) else None
+            mv = mv_vec if (mv_vec is not None and np.any(mv_vec) and not pf.skip_embed_mv) else None
 
-            # Insert file + VV embedding
-            file_id = _global_sqlite_db.insert_file(
-                file_path=str(pf.file_path),
-                metadata=pf.meta.model_dump(),
-                embedding=vv_vec
-            )
-
-            # Insert MV embedding
-            if mv_vec is not None and np.any(mv_vec):
-                mv_list = mv_vec.astype(np.float32).tolist()
-                cursor = _global_sqlite_db.conn.cursor()
-                cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (file_id,))
-                cursor.execute(
-                    "INSERT INTO vec_text (file_id, embedding) VALUES (?, ?)",
-                    (file_id, _json.dumps(mv_list))
-                )
-                _global_sqlite_db.conn.commit()
-                logger.debug(f"  MV stored for {pf.file_path.name} ({len(mv_vec)}-dim)")
+            if vv is not None or mv is not None:
+                _global_sqlite_db.upsert_vectors(file_id, vv_vec=vv, mv_vec=mv)
 
             stored += 1
             logger.info(f"  [OK] {pf.file_path.name}")
-
-            if progress_callback:
-                progress_callback(i, len(parsed_files), pf)
-
         except Exception as e:
             errors += 1
-            logger.error(f"  [FAIL] {pf.file_path.name}: {e}")
+            logger.error(f"  [FAIL:vec] {pf.file_path.name}: {e}")
 
-    elapsed = time.perf_counter() - t0
-    logger.info(f"STEP 4/4 completed in {elapsed:.1f}s ({stored} stored, {errors} errors)")
-
+    logger.info(f"  Phase 3 stored: {stored} vector records, {errors} errors")
     return stored, errors
 
 
@@ -996,15 +1082,19 @@ def process_batch_phased(
     mv_batch: int = None,
     parse_workers: int = 4,
     progress_callback=None,
-    mini_batch: int = None
 ) -> Tuple[int, int, int]:
     """
-    Phase-based batch pipeline orchestrator with mini-batch streaming.
+    Phase-based batch pipeline: full Phase separation with JIT thumbnail loading.
 
-    Processes files in mini-batches to:
-    - Show incremental progress (stored files visible after each mini-batch)
-    - Limit memory (only mini_batch thumbnails in memory at a time)
-    - Enable crash recovery (already-stored files are safe)
+    Phase 1: Parse ALL files (CPU parallel, no thumbnail loading)
+    → Store metadata to DB
+    Phase 2: VLM analysis (sub-batch JIT thumbnail load → infer → release)
+    → Store vision fields to DB
+    Phase 3: Embedding (sub-batch JIT thumbnail load for VV, text-only for MV)
+    → Store vectors to DB
+
+    Thumbnails are loaded from SSD (~1ms) per sub-batch and immediately released,
+    limiting peak memory to ~14MB (batch_size × 1.7MB) instead of N × 1.7MB.
 
     Args:
         file_infos: List of (file_path, folder, depth, tags) tuples
@@ -1012,7 +1102,6 @@ def process_batch_phased(
         mv_batch: Text embedding sub-batch size (None=default 16)
         parse_workers: Phase 1 CPU thread count
         progress_callback: Optional fn(phase, idx, total, detail)
-        mini_batch: Files per mini-batch (None=auto from config vlm.batch_size)
 
     Returns:
         (stored, skipped_or_failed, errors) counts
@@ -1020,20 +1109,7 @@ def process_batch_phased(
     t_total = time.perf_counter()
     total = len(file_infos)
 
-    # Auto-detect mini_batch from tier's VLM batch_size
-    if mini_batch is None:
-        from backend.utils.tier_config import get_active_tier
-        _, tier_cfg = get_active_tier()
-        vlm_batch = tier_cfg.get("vlm", {}).get("batch_size", 8)
-        # Align mini_batch to VLM batch for GPU efficiency
-        mini_batch = max(vlm_batch, 8)
-
-    num_batches = (total + mini_batch - 1) // mini_batch
-    logger.info(f"[BATCH] Phase-based pipeline: {total} files (mini-batch: {mini_batch}, batches: {num_batches})")
-
-    stored_total = 0
-    parse_errors_total = 0
-    store_errors_total = 0
+    logger.info(f"[BATCH] Phase-based pipeline: {total} files")
 
     # Cumulative phase counters (emitted as [PHASE] for frontend tracking)
     cum_parse = 0
@@ -1045,45 +1121,40 @@ def process_batch_phased(
         """Emit cumulative phase progress for frontend."""
         logger.info(
             f"[PHASE] P:{cum_parse} V:{cum_vision} E:{cum_embed} S:{cum_store} "
-            f"T:{total} M:{batch_num}/{num_batches}"
+            f"T:{total}"
         )
 
-    for batch_idx in range(0, total, mini_batch):
-        chunk = file_infos[batch_idx:batch_idx + mini_batch]
-        batch_num = batch_idx // mini_batch + 1
-        chunk_size = len(chunk)
+    # Phase 1: Parse ALL (CPU parallel, metadata only — no thumbnails)
+    parsed = phase1_parse_all(file_infos, max_workers=parse_workers)
+    valid_count = sum(1 for pf in parsed if pf.error is None)
+    cum_parse = valid_count
+    _emit_phase_progress()
 
-        # Phase 1: Parse
-        parsed = phase1_parse_all(chunk, max_workers=parse_workers)
-        valid_count = sum(1 for pf in parsed if pf.error is None)
-        cum_parse += valid_count
-        _emit_phase_progress()
+    # Store Phase 1: metadata + JSON
+    phase_store_metadata(parsed)
 
-        # Per-phase smart skip: check DB for already-completed phase outputs
-        _check_phase_skip(parsed)
+    # Per-phase smart skip: check DB for already-completed phases
+    _check_phase_skip(parsed)
 
-        # Phase 2: Vision (skips files with skip_vision=True)
-        phase2_vision_all(parsed, progress_callback=progress_callback)
-        cum_vision += valid_count
-        _emit_phase_progress()
+    # Phase 2: VLM (sub-batch JIT thumbnail loading)
+    phase2_vision_all(parsed, progress_callback=progress_callback)
+    cum_vision = valid_count
+    _emit_phase_progress()
 
-        # Phase 3: Embed (skips VV/MV per file as flagged)
-        embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch)
-        cum_embed += valid_count
-        _emit_phase_progress()
+    # Store Phase 2: vision fields only
+    phase_store_vision(parsed)
 
-        # Free thumbnail images after embedding — no longer needed
-        for pf in parsed:
-            pf.thumb_image_rgb = None
+    # Phase 3: Embed (sub-batch JIT thumbnail loading for VV, text-only for MV)
+    embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch)
+    cum_embed = valid_count
+    _emit_phase_progress()
 
-        # Phase 4: Store
-        stored, errors = phase4_store_all(parsed, embeddings, progress_callback=progress_callback)
-        cum_store += stored
-        _emit_phase_progress()
+    # Store Phase 3: VV + MV vectors
+    stored, store_errors = phase_store_vectors(parsed, embeddings)
+    cum_store = stored
+    _emit_phase_progress()
 
-        stored_total += stored
-        parse_errors_total += sum(1 for pf in parsed if pf.error is not None)
-        store_errors_total += errors
+    parse_errors = sum(1 for pf in parsed if pf.error is not None)
 
     # Unload VLM to free VRAM
     try:
@@ -1096,11 +1167,11 @@ def process_batch_phased(
 
     elapsed = time.perf_counter() - t_total
     logger.info(
-        f"[DONE] {stored_total} processed, {parse_errors_total} parse-errors, "
-        f"{store_errors_total} store-errors (total: {total}, {elapsed:.1f}s)"
+        f"[DONE] {stored} processed, {parse_errors} parse-errors, "
+        f"{store_errors} store-errors (total: {total}, {elapsed:.1f}s)"
     )
 
-    return stored_total, parse_errors_total, store_errors_total
+    return stored, parse_errors, store_errors
 
 
 def discover_files(root_dir: Path) -> List[Tuple[Path, str, int, List[str]]]:

@@ -441,6 +441,238 @@ class SQLiteDB:
 
     # Triaxis: _build_fts_caption() removed - AI content now handled by MV
 
+    # ── Phase-specific storage methods (v3.3) ─────────────────────────
+
+    def _refresh_fts_row(self, cursor, file_id: int):
+        """Refresh FTS entry with actual data after INSERT/UPDATE trigger."""
+        try:
+            file_data = cursor.execute(
+                "SELECT id, file_path, file_name, mc_caption, ai_tags, "
+                "metadata, ocr_text, user_note, user_tags, "
+                "image_type, scene_type, art_style, folder_tags "
+                "FROM files WHERE id = ?",
+                (file_id,)
+            ).fetchone()
+
+            if file_data:
+                metadata_str = file_data[5] or '{}'
+                try:
+                    meta = json.loads(metadata_str)
+                except (json.JSONDecodeError, TypeError):
+                    meta = {}
+
+                meta_strong = self._build_fts_meta_strong(file_data, meta)
+                meta_weak = self._build_fts_meta_weak(file_data, meta)
+
+                cursor.execute(
+                    "UPDATE files_fts SET meta_strong = ?, meta_weak = ? WHERE rowid = ?",
+                    (meta_strong, meta_weak, file_id)
+                )
+        except Exception as e:
+            logger.warning(f"⚠️ FTS refresh failed for file_id={file_id}: {e}")
+
+    def upsert_metadata(self, file_path: str, metadata: Dict[str, Any]) -> int:
+        """
+        Phase 1 storage: INSERT basic metadata, preserve existing AI fields on conflict.
+
+        Returns database file ID.
+        """
+        cursor = self.conn.cursor()
+
+        try:
+            metadata_json = {
+                "layer_tree": metadata.get("layer_tree"),
+                "semantic_tags": metadata.get("semantic_tags"),
+                "text_content": metadata.get("text_content"),
+                "layer_count": metadata.get("layer_count"),
+                "used_fonts": metadata.get("used_fonts"),
+            }
+
+            resolution = metadata.get("resolution", (None, None))
+            width = resolution[0] if isinstance(resolution, (list, tuple)) else None
+            height = resolution[1] if isinstance(resolution, (list, tuple)) else None
+
+            folder_path = metadata.get("folder_path")
+            folder_depth = metadata.get("folder_depth", 0)
+            folder_tags = metadata.get("folder_tags", [])
+            folder_tags_json = json.dumps(folder_tags) if folder_tags else None
+
+            storage_root = metadata.get("storage_root")
+            relative_path = metadata.get("relative_path")
+            embedding_model = metadata.get("embedding_model", self._get_default_embedding_model())
+            embedding_version = metadata.get("embedding_version", 1)
+
+            mode_tier = metadata.get("mode_tier")
+            caption_model = metadata.get("caption_model")
+            text_embed_model = metadata.get("text_embed_model")
+            runtime_version = metadata.get("runtime_version")
+            preprocess_params_json = json.dumps(metadata.get("preprocess_params", {})) if metadata.get("preprocess_params") else None
+
+            cursor.execute("""
+                INSERT INTO files (
+                    file_path, file_name, file_size, format, width, height,
+                    metadata, thumbnail_url,
+                    created_at, modified_at, parsed_at,
+                    folder_path, folder_depth, folder_tags,
+                    storage_root, relative_path,
+                    embedding_model, embedding_version,
+                    mode_tier, caption_model, text_embed_model,
+                    runtime_version, preprocess_params
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_path) DO UPDATE SET
+                    file_name = excluded.file_name,
+                    file_size = excluded.file_size,
+                    format = excluded.format,
+                    width = excluded.width,
+                    height = excluded.height,
+                    metadata = excluded.metadata,
+                    thumbnail_url = excluded.thumbnail_url,
+                    modified_at = excluded.modified_at,
+                    parsed_at = datetime('now'),
+                    folder_path = excluded.folder_path,
+                    folder_depth = excluded.folder_depth,
+                    folder_tags = excluded.folder_tags,
+                    storage_root = excluded.storage_root,
+                    relative_path = excluded.relative_path,
+                    embedding_model = excluded.embedding_model,
+                    embedding_version = excluded.embedding_version,
+                    mode_tier = excluded.mode_tier,
+                    caption_model = excluded.caption_model,
+                    text_embed_model = excluded.text_embed_model,
+                    runtime_version = excluded.runtime_version,
+                    preprocess_params = excluded.preprocess_params
+            """, (
+                file_path,
+                metadata.get("file_name"),
+                metadata.get("file_size"),
+                metadata.get("format"),
+                width, height,
+                json.dumps(metadata_json),
+                metadata.get("thumbnail_url"),
+                metadata.get("created_at"),
+                metadata.get("modified_at"),
+                folder_path, folder_depth, folder_tags_json,
+                storage_root, relative_path,
+                embedding_model, embedding_version,
+                mode_tier, caption_model, text_embed_model,
+                runtime_version, preprocess_params_json,
+            ))
+
+            file_id = cursor.lastrowid
+            if not file_id:
+                row = cursor.execute(
+                    "SELECT id FROM files WHERE file_path = ?", (file_path,)
+                ).fetchone()
+                file_id = row[0] if row else 0
+
+            self._refresh_fts_row(cursor, file_id)
+            self.conn.commit()
+
+            logger.debug(f"✅ Phase 1 metadata stored: {file_path} (ID: {file_id})")
+            return file_id
+
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"❌ upsert_metadata failed for {file_path}: {e}")
+            raise
+
+    def update_vision_fields(self, file_path: str, fields: Dict[str, Any]) -> bool:
+        """
+        Phase 2 storage: UPDATE only VLM-generated fields.
+
+        fields dict may contain: mc_caption, ai_tags, ocr_text, dominant_color,
+        ai_style, image_type, art_style, color_palette, scene_type, time_of_day,
+        weather, character_type, item_type, ui_type, structured_meta,
+        perceptual_hash, dup_group_id, caption_model
+        """
+        cursor = self.conn.cursor()
+
+        try:
+            # Build dynamic UPDATE
+            allowed_cols = {
+                'mc_caption', 'ai_tags', 'ocr_text', 'dominant_color', 'ai_style',
+                'image_type', 'art_style', 'color_palette', 'scene_type',
+                'time_of_day', 'weather', 'character_type', 'item_type', 'ui_type',
+                'structured_meta', 'perceptual_hash', 'dup_group_id', 'caption_model',
+            }
+
+            updates = {}
+            for col in allowed_cols:
+                if col in fields:
+                    val = fields[col]
+                    # ai_tags: convert list to JSON string
+                    if col == 'ai_tags' and isinstance(val, list):
+                        val = json.dumps(val)
+                    updates[col] = val
+
+            if not updates:
+                return False
+
+            set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+            values = list(updates.values()) + [file_path]
+
+            cursor.execute(
+                f"UPDATE files SET {set_clause} WHERE file_path = ?",
+                values
+            )
+
+            if cursor.rowcount == 0:
+                logger.warning(f"update_vision_fields: file not found: {file_path}")
+                return False
+
+            # Refresh FTS with new MC data
+            row = cursor.execute(
+                "SELECT id FROM files WHERE file_path = ?", (file_path,)
+            ).fetchone()
+            if row:
+                self._refresh_fts_row(cursor, row[0])
+
+            self.conn.commit()
+            logger.debug(f"✅ Phase 2 vision fields updated: {file_path}")
+            return True
+
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"❌ update_vision_fields failed for {file_path}: {e}")
+            raise
+
+    def upsert_vectors(self, file_id: int, vv_vec=None, mv_vec=None) -> bool:
+        """
+        Phase 3 storage: INSERT/REPLACE VV and MV vectors.
+
+        Args:
+            file_id: Database file ID (from upsert_metadata)
+            vv_vec: numpy array for VV (Visual Vector), or None to skip
+            mv_vec: numpy array for MV (Meaning Vector), or None to skip
+        """
+        cursor = self.conn.cursor()
+
+        try:
+            if vv_vec is not None:
+                embedding_list = vv_vec.astype(np.float32).tolist()
+                cursor.execute("DELETE FROM vec_files WHERE file_id = ?", (file_id,))
+                cursor.execute(
+                    "INSERT INTO vec_files (file_id, embedding) VALUES (?, ?)",
+                    (file_id, json.dumps(embedding_list))
+                )
+
+            if mv_vec is not None:
+                mv_list = mv_vec.astype(np.float32).tolist()
+                cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (file_id,))
+                cursor.execute(
+                    "INSERT INTO vec_text (file_id, embedding) VALUES (?, ?)",
+                    (file_id, json.dumps(mv_list))
+                )
+
+            self.conn.commit()
+            logger.debug(f"✅ Phase 3 vectors stored for file_id={file_id}")
+            return True
+
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"❌ upsert_vectors failed for file_id={file_id}: {e}")
+            raise
+
     def get_file_modified_at(self, file_path: str) -> Optional[str]:
         """
         Get stored modified_at timestamp for a file.
