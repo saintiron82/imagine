@@ -1484,42 +1484,55 @@ def discover_files(root_dir: Path) -> List[Tuple[Path, str, int, List[str]]]:
 
 def should_skip_file(file_path: Path, db) -> bool:
     """
-    Compare DB modified_at with file's current mtime.
-    Returns True if unchanged (should skip).
+    Skip only if file is unchanged AND all phases are complete (MC + VV + MV).
+    Partially-processed files (e.g. VV done but MC/MV missing) are NOT skipped.
     """
-    stored = db.get_file_modified_at(str(file_path.resolve()))
-    if stored is None:
+    info = db.get_file_phase_info(str(file_path.resolve()))
+    if info is None:
+        return False  # Not in DB
+
+    # mtime check
+    stored_mtime = info.get("modified_at")
+    if not stored_mtime:
         return False
     current_mtime = datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
-    # Normalize: DB may store "2024-01-01 12:00:00", isoformat gives "2024-01-01T12:00:00"
-    stored_normalized = stored.replace('T', ' ')
-    current_normalized = current_mtime.replace('T', ' ')
-    return stored_normalized == current_normalized
+    if stored_mtime.replace('T', ' ') != current_mtime.replace('T', ' '):
+        return False  # File changed
+
+    # All phases must be complete to skip
+    if not (info["has_mc"] and info["has_vv"] and info["has_mv"]):
+        return False  # Partially processed — need to continue
+
+    return True
 
 
 def should_skip_file_enhanced(file_path: Path, db, current_tier: str) -> bool:
     """
-    Enhanced skip: mtime comparison + tier change detection.
-    Returns True if file is unchanged AND was processed with the same tier.
+    Enhanced skip: mtime + tier + all-phases-complete check.
+    Returns True only if file is unchanged, same tier, AND all phases done.
     """
-    resolved = str(file_path.resolve())
-    stored = db.get_file_modified_at(resolved)
-    if stored is None:
+    info = db.get_file_phase_info(str(file_path.resolve()))
+    if info is None:
         return False  # Not in DB → must process
 
     # mtime comparison
+    stored_mtime = info.get("modified_at")
+    if not stored_mtime:
+        return False
     current_mtime = datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
-    stored_normalized = stored.replace('T', ' ')
-    current_normalized = current_mtime.replace('T', ' ')
-    if stored_normalized != current_normalized:
+    if stored_mtime.replace('T', ' ') != current_mtime.replace('T', ' '):
         return False  # File changed → must reprocess
 
-    # Tier comparison: if DB tier differs from current, reprocess
-    stored_tier = db.get_file_mode_tier(resolved)
+    # Tier comparison
+    stored_tier = info.get("mode_tier")
     if stored_tier and stored_tier != current_tier:
         return False  # Tier changed → must reprocess
 
-    return True  # Unchanged + same tier → skip
+    # All phases must be complete to skip
+    if not (info["has_mc"] and info["has_vv"] and info["has_mv"]):
+        return False  # Partially processed
+
+    return True
 
 
 def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 5):
