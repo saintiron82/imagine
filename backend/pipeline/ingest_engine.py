@@ -645,7 +645,8 @@ def _compute_dhash(pf: ParsedFile):
 
 
 def phase2_vision_all(
-    parsed_files: List[ParsedFile], progress_callback=None
+    parsed_files: List[ParsedFile], progress_callback=None,
+    phase_progress_callback=None
 ) -> None:
     """Phase 2: VLM analysis with sub-batch JIT thumbnail loading."""
     from backend.utils.tier_config import get_active_tier
@@ -742,12 +743,17 @@ def phase2_vision_all(
 
         global_progress_idx += len(valid_chunk)
 
+        # Emit intermediate phase progress after each sub-batch
+        if phase_progress_callback:
+            phase_progress_callback(global_progress_idx)
+
     elapsed = time.perf_counter() - t0
     logger.info(f"STEP 2/4 completed in {elapsed:.1f}s")
 
 
 def phase3_embed_all(
-    parsed_files: List[ParsedFile], vv_batch: int = None, mv_batch: int = None
+    parsed_files: List[ParsedFile], vv_batch: int = None, mv_batch: int = None,
+    phase_progress_callback=None
 ) -> List[tuple]:
     """
     Phase 3: True batch embedding (VV + MV).
@@ -832,6 +838,10 @@ def phase3_embed_all(
                 vv_encoded += len(images)
             # images go out of scope → GC eligible
 
+            # Emit intermediate phase progress after each VV sub-batch
+            if phase_progress_callback:
+                phase_progress_callback(vv_encoded, 'vv')
+
         logger.info(f"  VV: {vv_encoded} images encoded")
 
         # Unload SigLIP2 after VV encoding to free GPU memory before MV
@@ -881,6 +891,8 @@ def phase3_embed_all(
                     for sb_start in range(0, len(mv_texts), mv_batch):
                         sub = mv_texts[sb_start:sb_start + mv_batch]
                         mv_vectors.extend(_global_text_provider.encode_batch(sub))
+                        if phase_progress_callback:
+                            phase_progress_callback(len(mv_vectors), 'mv')
                 else:
                     mv_vectors = [_global_text_provider.encode(t) for t in mv_texts]
 
@@ -1141,7 +1153,13 @@ def process_batch_phased(
     _check_phase_skip(parsed)
 
     # Phase 2: VLM (sub-batch JIT thumbnail loading)
-    phase2_vision_all(parsed, progress_callback=progress_callback)
+    def _on_vision_progress(count):
+        nonlocal cum_vision
+        cum_vision = count
+        _emit_phase_progress()
+
+    phase2_vision_all(parsed, progress_callback=progress_callback,
+                      phase_progress_callback=_on_vision_progress)
     cum_vision = valid_count
     _emit_phase_progress()
 
@@ -1160,7 +1178,13 @@ def process_batch_phased(
         pass
 
     # Phase 3: Embed (sub-batch JIT thumbnail loading for VV, text-only for MV)
-    embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch)
+    def _on_embed_progress(count, kind):
+        nonlocal cum_embed
+        cum_embed = count
+        _emit_phase_progress()
+
+    embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch,
+                                  phase_progress_callback=_on_embed_progress)
     cum_embed = valid_count
     _emit_phase_progress()
 
