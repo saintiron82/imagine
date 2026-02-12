@@ -6,7 +6,7 @@ Handles:
 2. Parser selection (Factory Pattern)
 3. Execution and Result Logging
 
-v3.4: Adaptive batch pipeline with runtime memory monitoring.
+v3.5: Throughput-driven adaptive batch + NFC path normalization.
       Batch sizes start small (2) and grow/shrink based on memory pressure.
       Phase 1: Parse ALL (CPU parallel, no thumbnails) → Store metadata
       → Phase 2: VLM (adaptive sub-batch JIT load) → Store vision fields
@@ -20,6 +20,7 @@ import sys
 import time
 import io
 import json as _json
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -69,6 +70,11 @@ logging.basicConfig(
 logger = logging.getLogger("IngestEngine")
 
 SUPPORTED_EXTENSIONS = {'.psd', '.png', '.jpg', '.jpeg'}
+
+
+def _nfc(path) -> str:
+    """Normalize file path to NFC form to prevent macOS NFD/NFC duplicates in DB."""
+    return unicodedata.normalize('NFC', str(path).replace('\\', '/'))
 
 
 @dataclass
@@ -334,7 +340,7 @@ def process_file(
         logger.info(f"STEP 2/4 completed in {step2_duration:.2f}s")
 
         # === Path normalization (always runs, regardless of Vision success) ===
-        normalized = str(file_path).replace('\\', '/')
+        normalized = _nfc(file_path)
         for marker in ['/assets/', '/Assets/', '/resources/', '/Resources/']:
             idx = normalized.find(marker)
             if idx != -1:
@@ -396,7 +402,7 @@ def process_file(
             logger.info(f"STEP 4/4 Storing")
             logger.info(f"Storing to SQLite: {file_path.name}")
             file_id = _global_sqlite_db.insert_file(
-                file_path=str(file_path),
+                file_path=_nfc(file_path),
                 metadata=meta.model_dump(),
                 embedding=embedding
             )
@@ -519,7 +525,7 @@ def _set_tier_metadata(meta):
 
 def _normalize_paths(meta, file_path: Path):
     """Normalize storage_root and relative_path."""
-    normalized = str(file_path).replace('\\', '/')
+    normalized = _nfc(file_path)
     for marker in ['/assets/', '/Assets/', '/resources/', '/Resources/']:
         idx = normalized.find(marker)
         if idx != -1:
@@ -761,7 +767,7 @@ def phase2_vision_adaptive(
                         'structured_meta': pf.meta.structured_meta,
                         'perceptual_hash': pf.meta.perceptual_hash,
                     }
-                    _global_sqlite_db.update_vision_fields(str(pf.file_path), fields)
+                    _global_sqlite_db.update_vision_fields(_nfc(pf.file_path), fields)
                 except Exception as e:
                     logger.error(f"  [FAIL:vision-store] {pf.file_path.name}: {e}")
                 # Release VLM input context (mc_caption/ai_tags kept for Phase 3b MV)
@@ -1025,7 +1031,7 @@ def phase_store_metadata(parsed_files: List[ParsedFile]) -> int:
         try:
             pf.parser._save_json(pf.meta, pf.file_path)
             pf.db_file_id = _global_sqlite_db.upsert_metadata(
-                file_path=str(pf.file_path),
+                file_path=_nfc(pf.file_path),
                 metadata=pf.meta.model_dump()
             )
             stored += 1
@@ -1064,7 +1070,7 @@ def phase_store_vision(parsed_files: List[ParsedFile]) -> int:
                 'structured_meta': pf.meta.structured_meta,
                 'perceptual_hash': pf.meta.perceptual_hash,
             }
-            _global_sqlite_db.update_vision_fields(str(pf.file_path), fields)
+            _global_sqlite_db.update_vision_fields(_nfc(pf.file_path), fields)
             # Re-save JSON with updated VLM fields
             pf.parser._save_json(pf.meta, pf.file_path)
             stored += 1
@@ -1138,7 +1144,7 @@ def _check_phase_skip(parsed_files: List[ParsedFile]):
         if pf.error is not None:
             continue
 
-        info = _global_sqlite_db.get_file_phase_info(str(pf.file_path.resolve()))
+        info = _global_sqlite_db.get_file_phase_info(_nfc(pf.file_path.resolve()))
         if info is None:
             continue  # New file, no skip possible
 
@@ -1468,7 +1474,7 @@ def discover_files(root_dir: Path) -> List[Tuple[Path, str, int, List[str]]]:
         List of (file_path, relative_folder, depth, folder_tags) tuples
     """
     discovered = []
-    root_dir = root_dir.resolve()
+    root_dir = Path(unicodedata.normalize('NFC', str(root_dir.resolve())))
 
     _skip_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', '.idea', '.vs'}
 
@@ -1488,10 +1494,12 @@ def discover_files(root_dir: Path) -> List[Tuple[Path, str, int, List[str]]]:
                     continue
                 _dfs(entry, depth + 1)
             elif entry.is_file() and entry.suffix.lower() in SUPPORTED_EXTENSIONS:
-                rel = entry.parent.relative_to(root_dir)
+                # NFC normalize: macOS returns NFD filenames, unify to NFC for DB
+                nfc_entry = Path(unicodedata.normalize('NFC', str(entry)))
+                rel = nfc_entry.parent.relative_to(root_dir)
                 folder_str = str(rel).replace('\\', '/') if str(rel) != '.' else ''
                 folder_tags = [p for p in folder_str.split('/') if p] if folder_str else []
-                discovered.append((entry, folder_str, depth, folder_tags))
+                discovered.append((nfc_entry, folder_str, depth, folder_tags))
 
     _dfs(root_dir, 0)
     return discovered
@@ -1502,7 +1510,7 @@ def should_skip_file(file_path: Path, db) -> bool:
     Skip only if file is unchanged AND all phases are complete (MC + VV + MV).
     Partially-processed files (e.g. VV done but MC/MV missing) are NOT skipped.
     """
-    info = db.get_file_phase_info(str(file_path.resolve()))
+    info = db.get_file_phase_info(_nfc(file_path.resolve()))
     if info is None:
         return False  # Not in DB
 
@@ -1526,7 +1534,7 @@ def should_skip_file_enhanced(file_path: Path, db, current_tier: str) -> bool:
     Enhanced skip: mtime + tier + all-phases-complete check.
     Returns True only if file is unchanged, same tier, AND all phases done.
     """
-    info = db.get_file_phase_info(str(file_path.resolve()))
+    info = db.get_file_phase_info(_nfc(file_path.resolve()))
     if info is None:
         return False  # Not in DB → must process
 

@@ -8,6 +8,7 @@ maintaining API compatibility for minimal code changes.
 import logging
 import sqlite3
 import json
+import unicodedata
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import numpy as np
@@ -477,6 +478,7 @@ class SQLiteDB:
 
         Returns database file ID.
         """
+        file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
 
         try:
@@ -585,6 +587,7 @@ class SQLiteDB:
         weather, character_type, item_type, ui_type, structured_meta,
         perceptual_hash, dup_group_id, caption_model
         """
+        file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
 
         try:
@@ -714,6 +717,7 @@ class SQLiteDB:
             - has_mv: bool (vec_text entry exists)
             - modified_at: stored mtime
         """
+        file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT f.id, f.caption_model, f.embedding_model, f.text_embed_model,
@@ -771,6 +775,7 @@ class SQLiteDB:
         Returns:
             Database ID of inserted/updated record
         """
+        file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
 
         try:
