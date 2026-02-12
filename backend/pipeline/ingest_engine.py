@@ -6,10 +6,12 @@ Handles:
 2. Parser selection (Factory Pattern)
 3. Execution and Result Logging
 
-v3.3: Phase-based batch pipeline with JIT thumbnail loading.
+v3.4: Adaptive batch pipeline with runtime memory monitoring.
+      Batch sizes start small (2) and grow/shrink based on memory pressure.
       Phase 1: Parse ALL (CPU parallel, no thumbnails) → Store metadata
-      → Phase 2: VLM (sub-batch JIT load) → Store vision fields
-      → Phase 3: Embed (sub-batch JIT load for VV, text-only MV) → Store vectors
+      → Phase 2: VLM (adaptive sub-batch JIT load) → Store vision fields
+      → Phase 3a: VV (adaptive sub-batch JIT load) → Unload SigLIP2
+      → Phase 3b: MV (adaptive sub-batch, text-only) → Store vectors
 """
 
 import argparse
@@ -644,14 +646,12 @@ def _compute_dhash(pf: ParsedFile):
         logger.warning(f"dHash failed for {pf.file_path.name}: {e}")
 
 
-def phase2_vision_all(
-    parsed_files: List[ParsedFile], progress_callback=None,
-    phase_progress_callback=None
+def phase2_vision_adaptive(
+    parsed_files: List[ParsedFile], controller, monitor,
+    progress_callback=None, phase_progress_callback=None
 ) -> None:
-    """Phase 2: VLM analysis with sub-batch JIT thumbnail loading."""
-    from backend.utils.tier_config import get_active_tier
-    _, tier_config = get_active_tier()
-    sub_batch_size = tier_config.get("vlm", {}).get("batch_size", 8)
+    """Phase 2: VLM analysis with adaptive batch sizing and JIT thumbnails."""
+    import gc
 
     # Filter files that need vision processing
     vision_indices = []
@@ -675,16 +675,17 @@ def phase2_vision_all(
 
     t0 = time.perf_counter()
     total_vision = len(vision_indices)
-    logger.info(f"STEP 2/4 AI Vision ({total_vision} images)")
+    logger.info(f"STEP 2/4 AI Vision ({total_vision} images, adaptive batch)")
 
     from backend.vision.vision_factory import get_vision_analyzer
     analyzer = get_vision_analyzer()
 
-    global_progress_idx = 0
+    monitor.set_baseline()
+    processed = 0
 
-    # Process in sub-batches: JIT load → dHash → VLM → release
-    for chunk_start in range(0, total_vision, sub_batch_size):
-        chunk = vision_indices[chunk_start:chunk_start + sub_batch_size]
+    while processed < total_vision:
+        batch_size = controller.get_batch_size('vlm')
+        chunk = vision_indices[processed:processed + batch_size]
 
         # JIT: Load thumbnails for this sub-batch only
         for idx in chunk:
@@ -704,96 +705,69 @@ def phase2_vision_all(
                 vision_items.append((pf.thumb_image_rgb, pf.mc_raw))
                 valid_chunk.append(idx)
 
-        if not vision_items:
-            continue
+        if vision_items:
+            # Progress callback
+            def _progress(i, total, result, _offset=processed):
+                pf_inner = parsed_files[valid_chunk[i]]
+                logger.info(f"  [{_offset + i + 1}/{total_vision}] {pf_inner.file_path.name} → {result.get('image_type', '?')}")
+                if progress_callback:
+                    progress_callback(_offset + i, total_vision, result)
 
-        # Progress callback wired to global index
-        def _progress(i, total, result, _offset=global_progress_idx):
-            pf = parsed_files[valid_chunk[i]]
-            logger.info(f"  [{_offset + i + 1}/{total_vision}] {pf.file_path.name} → {result.get('image_type', '?')}")
-            if progress_callback:
-                progress_callback(_offset + i, total_vision, result)
+            if hasattr(analyzer, 'classify_and_analyze_sequence'):
+                vision_results = analyzer.classify_and_analyze_sequence(
+                    vision_items, progress_callback=_progress
+                )
+            else:
+                vision_results = []
+                for i, (img, ctx) in enumerate(vision_items):
+                    try:
+                        r = analyzer.classify_and_analyze(img, context=ctx)
+                    except Exception:
+                        r = {"caption": "", "tags": [], "image_type": "other"}
+                    vision_results.append(r)
+                    _progress(i, len(vision_items), r)
 
-        if hasattr(analyzer, 'classify_and_analyze_sequence'):
-            vision_results = analyzer.classify_and_analyze_sequence(
-                vision_items, progress_callback=_progress
-            )
-        else:
-            vision_results = []
-            for i, (img, ctx) in enumerate(vision_items):
-                try:
-                    r = analyzer.classify_and_analyze(img, context=ctx)
-                except Exception:
-                    r = {"caption": "", "tags": [], "image_type": "other"}
-                vision_results.append(r)
-                _progress(i, len(vision_items), r)
+            # Apply results
+            for i, result in enumerate(vision_results):
+                pf = parsed_files[valid_chunk[i]]
+                _apply_vision_result(pf.meta, result)
 
-        # Apply results + release thumbnails
-        for i, result in enumerate(vision_results):
-            pf = parsed_files[valid_chunk[i]]
-            _apply_vision_result(pf.meta, result)
-            logger.info(
-                f"   MC Caption: {(pf.meta.mc_caption or '')[:80]}"
-                + ("..." if len(pf.meta.mc_caption or '') > 80 else "")
-            )
-
-        # Release thumbnails immediately after VLM inference
+        # Release thumbnails immediately
         for idx in chunk:
             parsed_files[idx].thumb_image_rgb = None
 
-        global_progress_idx += len(valid_chunk)
+        processed += len(chunk)
+        gc.collect()
 
-        # Force GC to reclaim CPU memory from processor intermediates
-        import gc; gc.collect()
+        # Adaptive: decide next batch size
+        decision = controller.after_sub_batch('vlm', len(chunk))
 
-        # Emit intermediate phase progress after each sub-batch
+        # Emit phase progress
         if phase_progress_callback:
-            phase_progress_callback(global_progress_idx)
+            phase_progress_callback(processed, batch_size)
+
+        if decision.abort:
+            logger.error(f"[ADAPTIVE:vlm] Aborting VLM phase at {processed}/{total_vision}")
+            break
 
     elapsed = time.perf_counter() - t0
-    logger.info(f"STEP 2/4 completed in {elapsed:.1f}s")
+    logger.info(f"STEP 2/4 completed in {elapsed:.1f}s ({processed}/{total_vision})")
 
 
-def phase3_embed_all(
-    parsed_files: List[ParsedFile], vv_batch: int = None, mv_batch: int = None,
+def phase3a_vv_adaptive(
+    parsed_files: List[ParsedFile], controller, monitor,
     phase_progress_callback=None
-) -> List[tuple]:
+) -> dict:
     """
-    Phase 3: True batch embedding (VV + MV).
+    Phase 3a: SigLIP2 VV encoding with adaptive batch sizing.
 
-    vv_batch=None uses adaptive batch sizing (auto-discovery inside encoder).
-    vv_batch=int forces a specific batch size.
-
-    Returns list of (vv_vec, mv_vec, mv_text) tuples aligned with parsed_files.
-    Failed entries get zero vectors.
+    Returns dict of {file_index: vv_vector}.
     """
+    import gc
     import numpy as np
 
-    t0 = time.perf_counter()
-
-    # Collect valid files for embedding
     valid_indices = [i for i, pf in enumerate(parsed_files) if pf.error is None]
-    total = len(parsed_files)
 
-    logger.info(f"STEP 3/4 Embedding ({len(valid_indices)} files)")
-
-    # Initialize result list with zero placeholders
-    from backend.utils.tier_config import get_active_tier
-    _, tier_config = get_active_tier()
-    vv_dims = tier_config.get("visual", {}).get("dimensions", 768)
-
-    from backend.utils.config import get_config
-    cfg = get_config()
-    text_enabled = cfg.get("embedding.text.enabled", False)
-
-    # Default zeros
-    results = [(
-        np.zeros(vv_dims, dtype=np.float32),
-        None,
-        None
-    ) for _ in range(total)]
-
-    # === VV: SigLIP2 batch encoding with JIT thumbnail loading ===
     vv_indices = []
     vv_skipped = 0
     for i in valid_indices:
@@ -806,121 +780,170 @@ def phase3_embed_all(
     if vv_skipped > 0:
         logger.info(f"  [SKIP:VV] {vv_skipped} files skipped (same SigLIP2 model)")
 
-    if vv_indices:
-        from backend.vector.siglip2_encoder import SigLIP2Encoder
-        global _global_encoder
-        if '_global_encoder' not in globals() or _global_encoder is None:
-            _global_encoder = SigLIP2Encoder()
-            logger.info(f"SigLIP2 encoder loaded: {_global_encoder.model_name}")
+    vv_results = {}
 
-        # Determine sub-batch size for JIT loading
-        vv_sub_batch = vv_batch or 8
-        vv_encoded = 0
+    if not vv_indices:
+        logger.info("  VV: no images to encode")
+        return vv_results
 
-        for chunk_start in range(0, len(vv_indices), vv_sub_batch):
-            chunk = vv_indices[chunk_start:chunk_start + vv_sub_batch]
+    t0 = time.perf_counter()
+    logger.info(f"STEP 3a/4 VV Embedding ({len(vv_indices)} images, adaptive batch)")
 
-            # JIT: Load thumbnails from disk for this sub-batch
-            images = []
-            chunk_valid = []
-            for idx in chunk:
-                pf = parsed_files[idx]
-                try:
-                    img = _load_and_composite_thumbnail(pf.thumb_path)
-                    images.append(img)
-                    chunk_valid.append(idx)
-                except Exception as e:
-                    logger.warning(f"VV thumbnail load failed for {pf.file_path.name}: {e}")
+    from backend.vector.siglip2_encoder import SigLIP2Encoder
+    global _global_encoder
+    if '_global_encoder' not in globals() or _global_encoder is None:
+        _global_encoder = SigLIP2Encoder()
+        logger.info(f"SigLIP2 encoder loaded: {_global_encoder.model_name}")
 
-            if images:
-                vv_vectors = _global_encoder.encode_image_batch(images)
-                for j, vec in enumerate(vv_vectors):
-                    idx = chunk_valid[j]
-                    vv, mv, mv_text = results[idx]
-                    results[idx] = (vec, mv, mv_text)
-                vv_encoded += len(images)
-            # images go out of scope → GC eligible
+    # Let SigLIP2 discover optimal batch, use as controller max
+    # (This runs on first encode_image_batch call automatically)
 
-            # Emit intermediate phase progress after each VV sub-batch
-            if phase_progress_callback:
-                phase_progress_callback(vv_encoded, 'vv')
+    monitor.set_baseline()
+    processed = 0
+    total_vv = len(vv_indices)
 
-        logger.info(f"  VV: {vv_encoded} images encoded")
+    while processed < total_vv:
+        batch_size = controller.get_batch_size('vv')
+        chunk = vv_indices[processed:processed + batch_size]
 
-        # Unload SigLIP2 after VV encoding to free GPU memory before MV
-        _global_encoder.unload()
-        _global_encoder = None
-
-    # === MV: Text embedding batch encoding ===
-    if text_enabled:
-        from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
-
-        global _global_text_provider
-        if '_global_text_provider' not in globals() or _global_text_provider is None:
-            _global_text_provider = get_text_embedding_provider()
-
-        mv_texts = []
-        mv_indices = []
-        mv_skipped = 0
-        for i in valid_indices:
-            pf = parsed_files[i]
-            if pf.skip_embed_mv:
-                mv_skipped += 1
-                continue
-            meta = pf.meta
-            facts = {
-                "image_type": meta.image_type,
-                "scene_type": meta.scene_type,
-                "art_style": meta.art_style,
-                "fonts": ", ".join(meta.used_fonts[:5]) if meta.used_fonts else None,
-                "path": meta.relative_path or meta.folder_path,
-            }
-            doc_text = build_document_text(meta.mc_caption, meta.ai_tags, facts=facts)
-            if doc_text:
-                mv_texts.append(doc_text)
-                mv_indices.append(i)
-
-        if mv_skipped > 0:
-            logger.info(f"  [SKIP:MV] {mv_skipped} files skipped (same text embed model)")
-
-        if mv_texts:
-            if mv_batch is None:
-                mv_batch = 16  # Text embedding is lightweight, safe default
-
+        # JIT: Load thumbnails from disk
+        images = []
+        chunk_valid = []
+        for idx in chunk:
+            pf = parsed_files[idx]
             try:
-                mv_vectors = []
-                if hasattr(_global_text_provider, 'encode_batch'):
-                    # Sub-batch MV encoding
-                    for sb_start in range(0, len(mv_texts), mv_batch):
-                        sub = mv_texts[sb_start:sb_start + mv_batch]
-                        mv_vectors.extend(_global_text_provider.encode_batch(sub))
-                        if phase_progress_callback:
-                            phase_progress_callback(len(mv_vectors), 'mv')
-                else:
-                    mv_vectors = [_global_text_provider.encode(t) for t in mv_texts]
-
-                for j, vec in enumerate(mv_vectors):
-                    idx = mv_indices[j]
-                    vv, _, _ = results[idx]
-                    results[idx] = (vv, vec, mv_texts[j])
-
-                logger.info(f"  MV batch: {len(mv_vectors)} texts encoded (batch_size={mv_batch})")
+                img = _load_and_composite_thumbnail(pf.thumb_path)
+                images.append(img)
+                chunk_valid.append(idx)
             except Exception as e:
-                logger.warning(f"  MV batch encoding failed: {e}")
-                # Fallback: individual encoding
-                for j, text in enumerate(mv_texts):
-                    try:
-                        vec = _global_text_provider.encode(text)
-                        idx = mv_indices[j]
-                        vv, _, _ = results[idx]
-                        results[idx] = (vv, vec, text)
-                    except Exception:
-                        pass
+                logger.warning(f"VV thumbnail load failed for {pf.file_path.name}: {e}")
+
+        if images:
+            vv_vectors = _global_encoder.encode_image_batch(images)
+            for j, vec in enumerate(vv_vectors):
+                vv_results[chunk_valid[j]] = vec
+            del images  # Release thumbnails
+
+        processed += len(chunk)
+        gc.collect()
+
+        # Adaptive decision
+        decision = controller.after_sub_batch('vv', len(chunk))
+
+        if phase_progress_callback:
+            phase_progress_callback(processed, 'vv', batch_size)
+
+        if decision.abort:
+            logger.error(f"[ADAPTIVE:vv] Aborting VV phase at {processed}/{total_vv}")
+            break
 
     elapsed = time.perf_counter() - t0
-    logger.info(f"STEP 3/4 completed in {elapsed:.1f}s")
+    logger.info(f"STEP 3a/4 VV completed in {elapsed:.1f}s ({len(vv_results)} encoded)")
+    return vv_results
 
-    return results
+
+def phase3b_mv_adaptive(
+    parsed_files: List[ParsedFile], controller, monitor,
+    phase_progress_callback=None
+) -> dict:
+    """
+    Phase 3b: Qwen3-Embedding MV encoding with adaptive batch sizing.
+
+    Returns dict of {file_index: (mv_vector, mv_text)}.
+    """
+    import gc
+
+    from backend.utils.config import get_config
+    cfg = get_config()
+    text_enabled = cfg.get("embedding.text.enabled", False)
+
+    mv_results = {}
+
+    if not text_enabled:
+        logger.info("  MV: text embedding disabled")
+        return mv_results
+
+    valid_indices = [i for i, pf in enumerate(parsed_files) if pf.error is None]
+
+    # Collect texts to encode
+    from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
+
+    global _global_text_provider
+    if '_global_text_provider' not in globals() or _global_text_provider is None:
+        _global_text_provider = get_text_embedding_provider()
+
+    mv_items = []  # (file_index, text)
+    mv_skipped = 0
+    for i in valid_indices:
+        pf = parsed_files[i]
+        if pf.skip_embed_mv:
+            mv_skipped += 1
+            continue
+        meta = pf.meta
+        facts = {
+            "image_type": meta.image_type,
+            "scene_type": meta.scene_type,
+            "art_style": meta.art_style,
+            "fonts": ", ".join(meta.used_fonts[:5]) if meta.used_fonts else None,
+            "path": meta.relative_path or meta.folder_path,
+        }
+        doc_text = build_document_text(meta.mc_caption, meta.ai_tags, facts=facts)
+        if doc_text:
+            mv_items.append((i, doc_text))
+
+    if mv_skipped > 0:
+        logger.info(f"  [SKIP:MV] {mv_skipped} files skipped (same text embed model)")
+
+    if not mv_items:
+        logger.info("  MV: no texts to encode")
+        return mv_results
+
+    t0 = time.perf_counter()
+    total_mv = len(mv_items)
+    logger.info(f"STEP 3b/4 MV Embedding ({total_mv} texts, adaptive batch)")
+
+    monitor.set_baseline()
+    processed = 0
+
+    while processed < total_mv:
+        batch_size = controller.get_batch_size('mv')
+        chunk = mv_items[processed:processed + batch_size]
+
+        texts = [text for _, text in chunk]
+        try:
+            if hasattr(_global_text_provider, 'encode_batch'):
+                vecs = _global_text_provider.encode_batch(texts)
+            else:
+                vecs = [_global_text_provider.encode(t) for t in texts]
+
+            for j, vec in enumerate(vecs):
+                file_idx = chunk[j][0]
+                mv_results[file_idx] = (vec, chunk[j][1])
+        except Exception as e:
+            logger.warning(f"  MV batch encoding failed: {e}")
+            # Fallback: individual encoding
+            for j, (file_idx, text) in enumerate(chunk):
+                try:
+                    vec = _global_text_provider.encode(text)
+                    mv_results[file_idx] = (vec, text)
+                except Exception:
+                    pass
+
+        processed += len(chunk)
+        gc.collect()
+
+        decision = controller.after_sub_batch('mv', len(chunk))
+
+        if phase_progress_callback:
+            phase_progress_callback(processed, 'mv', batch_size)
+
+        if decision.abort:
+            logger.error(f"[ADAPTIVE:mv] Aborting MV phase at {processed}/{total_mv}")
+            break
+
+    elapsed = time.perf_counter() - t0
+    logger.info(f"STEP 3b/4 MV completed in {elapsed:.1f}s ({len(mv_results)} encoded)")
+    return mv_results
 
 
 def phase_store_metadata(parsed_files: List[ParsedFile]) -> int:
@@ -1095,6 +1118,119 @@ def _check_phase_skip(parsed_files: List[ParsedFile]):
         )
 
 
+def _lighten_parsed_files(parsed_files: List[ParsedFile]):
+    """
+    Release heavy fields from ParsedFile after Phase 1 metadata storage.
+
+    Frees parser instances (which hold PSDImage circular references),
+    layer_tree dicts, and raw metadata dicts that are already in DB.
+    """
+    import gc
+    for pf in parsed_files:
+        if pf.error is not None:
+            continue
+        # Parser holds PSDImage with circular refs (~2.75GB for 100 PSD files)
+        pf.parser = None
+        # layer_tree is already saved to DB/JSON
+        if pf.meta and hasattr(pf.meta, 'layer_tree') and pf.meta.layer_tree:
+            pf.meta.layer_tree = {}
+        # Raw metadata dict is already in DB
+        if pf.meta and hasattr(pf.meta, 'metadata') and pf.meta.metadata:
+            pf.meta.metadata = {}
+    # 2-pass GC needed for circular reference collection
+    gc.collect()
+    gc.collect()
+
+
+def _force_memory_reclaim(monitor, label: str):
+    """GC + MPS/CUDA cache clear with verification (up to 3 retries)."""
+    import gc
+    try:
+        import torch
+        has_mps = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        has_cuda = torch.cuda.is_available()
+    except ImportError:
+        has_mps = False
+        has_cuda = False
+
+    before = monitor.snapshot()
+
+    for attempt in range(3):
+        gc.collect()
+        gc.collect()
+        if has_mps:
+            torch.mps.empty_cache()
+            try:
+                torch.mps.synchronize()
+            except Exception:
+                pass
+        elif has_cuda:
+            torch.cuda.empty_cache()
+
+        after = monitor.snapshot()
+        dropped = before.rss_gb - after.rss_gb
+
+        if dropped > 0 or after.pressure_ratio < 0.65:
+            logger.info(f"[MEM:{label}] Reclaimed {dropped:.1f}GB (attempt {attempt + 1})")
+            break
+
+        time.sleep(0.5)  # MPS async deallocation delay
+    else:
+        after = monitor.snapshot()
+        logger.warning(
+            f"[MEM:{label}] Memory not fully reclaimed after 3 attempts "
+            f"(RSS: {before.rss_gb:.1f}→{after.rss_gb:.1f}GB)"
+        )
+
+    monitor.log_status(label)
+
+
+def _unload_vlm_verified(monitor):
+    """Unload VLM and verify memory drop."""
+    try:
+        from backend.vision.vision_factory import get_vision_analyzer, VisionAnalyzerFactory
+        analyzer = get_vision_analyzer()
+        if hasattr(analyzer, 'unload_model'):
+            analyzer.unload_model()
+        VisionAnalyzerFactory.reset()
+    except Exception:
+        pass
+
+    global _global_vision_analyzer
+    if '_global_vision_analyzer' in globals():
+        _global_vision_analyzer = None
+
+    _force_memory_reclaim(monitor, "vlm_unload")
+
+
+def _unload_siglip2_verified(monitor):
+    """Unload SigLIP2 and verify memory drop."""
+    global _global_encoder
+    if '_global_encoder' in globals() and _global_encoder is not None:
+        _global_encoder.unload()
+        _global_encoder = None
+
+    _force_memory_reclaim(monitor, "siglip2_unload")
+
+
+def _unload_mv_verified(monitor):
+    """Unload MV model and verify memory drop."""
+    global _global_text_provider
+    if '_global_text_provider' in globals() and _global_text_provider is not None:
+        if hasattr(_global_text_provider, 'unload'):
+            _global_text_provider.unload()
+        _global_text_provider = None
+
+    # Also reset module-level singleton
+    try:
+        from backend.vector.text_embedding import reset_provider
+        reset_provider()
+    except Exception:
+        pass
+
+    _force_memory_reclaim(monitor, "mv_unload")
+
+
 def process_batch_phased(
     file_infos: List[tuple],
     vv_batch: int = None,
@@ -1103,48 +1239,69 @@ def process_batch_phased(
     progress_callback=None,
 ) -> Tuple[int, int, int]:
     """
-    Phase-based batch pipeline: full Phase separation with JIT thumbnail loading.
+    Adaptive batch pipeline v3.4: memory-aware Phase separation.
 
-    Phase 1: Parse ALL files (CPU parallel, no thumbnail loading)
-    → Store metadata to DB
-    Phase 2: VLM analysis (sub-batch JIT thumbnail load → infer → release)
-    → Store vision fields to DB
-    Phase 3: Embedding (sub-batch JIT thumbnail load for VV, text-only for MV)
-    → Store vectors to DB
+    Batch sizes start small and grow/shrink based on runtime memory pressure.
+    Models are loaded one at a time and fully unloaded between phases.
 
-    Thumbnails are loaded from SSD (~1ms) per sub-batch and immediately released,
-    limiting peak memory to ~14MB (batch_size × 1.7MB) instead of N × 1.7MB.
-
-    Args:
-        file_infos: List of (file_path, folder, depth, tags) tuples
-        vv_batch: SigLIP2 sub-batch size (None=auto-calibrate)
-        mv_batch: Text embedding sub-batch size (None=default 16)
-        parse_workers: Phase 1 CPU thread count
-        progress_callback: Optional fn(phase, idx, total, detail)
+    Phase 1: Parse ALL (CPU parallel) → Store metadata → Lighten ParsedFiles
+    Phase 2: VLM (adaptive batch) → Store vision → Unload VLM
+    Phase 3a: VV (adaptive batch) → Unload SigLIP2
+    Phase 3b: MV (adaptive batch) → Unload Qwen3-Embedding
+    Phase 4: Store vectors
 
     Returns:
-        (stored, skipped_or_failed, errors) counts
+        (stored, parse_errors, store_errors) counts
     """
+    import gc
+    import numpy as np
+    from backend.utils.memory_monitor import MemoryMonitor
+    from backend.utils.adaptive_batch_controller import AdaptiveBatchController
+    from backend.utils.config import get_config
+
     t_total = time.perf_counter()
     total = len(file_infos)
 
-    logger.info(f"[BATCH] Phase-based pipeline v3.3: {total} files (sequential model load + MPS GC)")
+    # Load adaptive config
+    cfg = get_config()
+    adaptive_cfg = cfg.get("batch_processing.adaptive", {})
+    memory_budget = adaptive_cfg.get("memory_budget_gb", 20.0) if isinstance(adaptive_cfg, dict) else 20.0
+
+    # Initialize monitor + controller
+    monitor = MemoryMonitor.get_instance()
+    phase_limits = {}
+    if isinstance(adaptive_cfg, dict):
+        if adaptive_cfg.get("vlm_initial_batch"):
+            phase_limits['vlm'] = {'initial': adaptive_cfg['vlm_initial_batch']}
+        if adaptive_cfg.get("vv_initial_batch"):
+            phase_limits['vv'] = {'initial': adaptive_cfg['vv_initial_batch']}
+        if adaptive_cfg.get("mv_initial_batch"):
+            phase_limits['mv'] = {'initial': adaptive_cfg['mv_initial_batch']}
+
+    controller = AdaptiveBatchController(
+        phase_limits=phase_limits,
+        memory_budget_gb=memory_budget,
+    )
+
+    monitor.set_baseline()
+    monitor.log_status("pipeline_start")
+
+    logger.info(f"[BATCH] Adaptive pipeline v3.4: {total} files (memory-aware batch sizing)")
 
     # Cumulative phase counters (emitted as [PHASE] for frontend tracking)
     cum_parse = 0
     cum_vision = 0
     cum_embed = 0
     cum_store = 0
-    active_batch_info = ""  # e.g. "B:8" for current sub-batch size
+    active_batch_info = ""
 
     def _emit_phase_progress():
-        """Emit cumulative phase progress for frontend."""
         logger.info(
             f"[PHASE] P:{cum_parse} V:{cum_vision} E:{cum_embed} S:{cum_store} "
             f"T:{total} {active_batch_info}"
         )
 
-    # Phase 1: Parse ALL (CPU parallel, metadata only — no thumbnails)
+    # ── Phase 1: Parse ALL (CPU parallel, metadata only) ──
     parsed = phase1_parse_all(file_infos, max_workers=parse_workers)
     valid_count = sum(1 for pf in parsed if pf.error is None)
     cum_parse = valid_count
@@ -1153,55 +1310,89 @@ def process_batch_phased(
     # Store Phase 1: metadata + JSON
     phase_store_metadata(parsed)
 
-    # Per-phase smart skip: check DB for already-completed phases
+    # Lighten ParsedFiles: release parser/layer_tree/metadata
+    _lighten_parsed_files(parsed)
+    monitor.log_status("after_phase1_lighten")
+
+    # Per-phase smart skip
     _check_phase_skip(parsed)
 
-    # Phase 2: VLM (sub-batch JIT thumbnail loading)
-    from backend.utils.tier_config import get_active_tier
-    _, _tier_cfg = get_active_tier()
-    vlm_bs = _tier_cfg.get("vlm", {}).get("batch_size", 8)
-
-    def _on_vision_progress(count):
+    # ── Phase 2: VLM (adaptive batch) ──
+    def _on_vision_progress(count, batch_size=2):
         nonlocal cum_vision, active_batch_info
         cum_vision = count
-        active_batch_info = f"B:{vlm_bs}"
+        active_batch_info = f"B:{batch_size}"
         _emit_phase_progress()
 
-    phase2_vision_all(parsed, progress_callback=progress_callback,
-                      phase_progress_callback=_on_vision_progress)
+    phase2_vision_adaptive(
+        parsed, controller, monitor,
+        progress_callback=progress_callback,
+        phase_progress_callback=_on_vision_progress,
+    )
     cum_vision = valid_count
     active_batch_info = ""
     _emit_phase_progress()
 
-    # Store Phase 2: vision fields only
+    # Store Phase 2: vision fields
     phase_store_vision(parsed)
 
-    # Unload VLM to free VRAM before loading embedding models
-    try:
-        from backend.vision.vision_factory import get_vision_analyzer, VisionAnalyzerFactory
-        analyzer = get_vision_analyzer()
-        if hasattr(analyzer, 'unload_model'):
-            analyzer.unload_model()
-        VisionAnalyzerFactory.reset()  # Clear singleton so it can be re-created if needed
-        logger.info("VLM unloaded after Phase 2 to free memory for Phase 3")
-    except Exception:
-        pass
+    # Unload VLM completely + verify
+    _unload_vlm_verified(monitor)
 
-    # Phase 3: Embed (sub-batch JIT thumbnail loading for VV, text-only for MV)
-    def _on_embed_progress(count, kind):
+    # Release mc_raw after Phase 2
+    for pf in parsed:
+        pf.mc_raw = None
+    gc.collect()
+
+    # ── Phase 3a: VV (adaptive batch) ──
+    def _on_vv_progress(count, kind, batch_size=4):
         nonlocal cum_embed, active_batch_info
         cum_embed = count
-        bs = vv_batch or 8 if kind == 'vv' else mv_batch or 16
-        active_batch_info = f"B:{bs}:{kind.upper()}"
+        active_batch_info = f"B:{batch_size}:{kind.upper()}"
         _emit_phase_progress()
 
-    embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch,
-                                  phase_progress_callback=_on_embed_progress)
+    vv_results = phase3a_vv_adaptive(
+        parsed, controller, monitor,
+        phase_progress_callback=_on_vv_progress,
+    )
+
+    # Unload SigLIP2 completely + verify
+    _unload_siglip2_verified(monitor)
+
+    # ── Phase 3b: MV (adaptive batch) ──
+    def _on_mv_progress(count, kind, batch_size=16):
+        nonlocal cum_embed, active_batch_info
+        cum_embed += count  # MV adds to embed count
+        active_batch_info = f"B:{batch_size}:{kind.upper()}"
+        _emit_phase_progress()
+
+    mv_results = phase3b_mv_adaptive(
+        parsed, controller, monitor,
+        phase_progress_callback=_on_mv_progress,
+    )
     cum_embed = valid_count
     active_batch_info = ""
     _emit_phase_progress()
 
-    # Store Phase 3: VV + MV vectors
+    # Unload MV completely
+    _unload_mv_verified(monitor)
+
+    # ── Phase 4: Store vectors ──
+    # Merge VV + MV results into embeddings list
+    from backend.utils.tier_config import get_active_tier
+    _, tier_config = get_active_tier()
+    vv_dims = tier_config.get("visual", {}).get("dimensions", 768)
+
+    embeddings = []
+    for i, pf in enumerate(parsed):
+        vv_vec = vv_results.get(i, np.zeros(vv_dims, dtype=np.float32))
+        mv_data = mv_results.get(i)
+        if mv_data:
+            mv_vec, mv_text = mv_data
+        else:
+            mv_vec, mv_text = None, None
+        embeddings.append((vv_vec, mv_vec, mv_text))
+
     stored, store_errors = phase_store_vectors(parsed, embeddings)
     cum_store = stored
     _emit_phase_progress()
@@ -1209,6 +1400,7 @@ def process_batch_phased(
     parse_errors = sum(1 for pf in parsed if pf.error is not None)
 
     elapsed = time.perf_counter() - t_total
+    monitor.log_status("pipeline_done")
     logger.info(
         f"[DONE] {stored} processed, {parse_errors} parse-errors, "
         f"{store_errors} store-errors (total: {total}, {elapsed:.1f}s)"
