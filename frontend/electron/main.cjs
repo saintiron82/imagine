@@ -3,6 +3,10 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, execSync } = require('child_process');
 const isDev = process.env.NODE_ENV === 'development';
+
+// Suppress EPIPE errors from console.log when parent pipe is closed (background launch)
+process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+process.stderr?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 const projectRoot = isDev
     ? path.resolve(__dirname, '../../')
     : process.resourcesPath;
