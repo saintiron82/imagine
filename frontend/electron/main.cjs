@@ -515,11 +515,12 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     const totalFiles = filePaths.length;
     pipelineStoppedByUser = false;
 
-    // Batch phase tracking — per-phase progress sent to UI
-    const PHASE_NAMES = ['Parse', 'Vision', 'Embed', 'Store'];
-    let currentPhase = 0; // 0=parse, 1=vision, 2=embed, 3=store
-    let phaseSubCount = 0;
-    let phaseSubTotal = 0;
+    // Cumulative phase tracking — each phase has independent progress
+    let cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0;
+    let miniBatchNum = 0, miniBatchTotal = 0;
+    // Current active phase within mini-batch (for sub-progress tracking)
+    let activePhase = 0; // 0=parse, 1=vision, 2=embed, 3=store
+    let phaseSubCount = 0, phaseSubTotal = 0;
 
     function emitPhaseProgress(extraFields = {}) {
         event.reply('pipeline-progress', {
@@ -527,10 +528,13 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             total: totalFiles,
             skipped: skippedCount,
             currentFile: extraFields.currentFile || '',
-            phaseIdx: currentPhase,
-            phaseName: PHASE_NAMES[currentPhase] || '',
-            phaseCurrent: phaseSubCount,
-            phaseTotal: phaseSubTotal,
+            // Cumulative per-phase counts
+            cumParse, cumVision, cumEmbed, cumStore,
+            // Current mini-batch info
+            miniBatchNum, miniBatchTotal,
+            // Active phase sub-progress (within mini-batch)
+            activePhase,
+            phaseSubCount, phaseSubTotal,
         });
     }
 
@@ -560,17 +564,30 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             const stepDoneMatch = clean.match(/^STEP (\d+)\/(\d+) completed/);
             // Phase sub-progress: [1/26] filename → type (may have leading whitespace from logger indent)
             const subProgressMatch = clean.match(/^\s*\[(\d+)\/(\d+)\]\s+(.+?)(?:\s+→|$)/);
+            // Cumulative phase progress: [PHASE] P:40 V:33 E:30 S:30 T:500 M:4/50
+            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+V:(\d+)\s+E:(\d+)\s+S:(\d+)\s+T:(\d+)\s+M:(\d+)\/(\d+)/);
 
-            // STEP x/y completed → phase finished
+            // [PHASE] cumulative progress from mini-batch orchestrator
+            if (phaseMatch) {
+                cumParse = parseInt(phaseMatch[1]);
+                cumVision = parseInt(phaseMatch[2]);
+                cumEmbed = parseInt(phaseMatch[3]);
+                cumStore = parseInt(phaseMatch[4]);
+                miniBatchNum = parseInt(phaseMatch[6]);
+                miniBatchTotal = parseInt(phaseMatch[7]);
+                emitPhaseProgress();
+            }
+
+            // STEP x/y completed → phase finished within mini-batch
             if (stepDoneMatch) {
-                currentPhase = parseInt(stepDoneMatch[1]); // advance to next
+                activePhase = parseInt(stepDoneMatch[1]); // advance to next
                 phaseSubCount = phaseSubTotal; // mark 100%
                 emitPhaseProgress();
                 phaseSubCount = 0;
                 phaseSubTotal = 0;
             } else if (stepMatch) {
-                // STEP x/y Name → phase started
-                currentPhase = parseInt(stepMatch[1]) - 1;
+                // STEP x/y Name → phase started within mini-batch
+                activePhase = parseInt(stepMatch[1]) - 1;
                 phaseSubCount = 0;
                 const countMatch = stepMatch[3].match(/\((\d+)/);
                 phaseSubTotal = countMatch ? parseInt(countMatch[1]) : totalFiles;
@@ -578,7 +595,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             }
 
             // Per-file sub-progress within a phase: [3/26] file.psd → type
-            if (subProgressMatch) {
+            if (subProgressMatch && !phaseMatch) {
                 phaseSubCount = parseInt(subProgressMatch[1]);
                 phaseSubTotal = parseInt(subProgressMatch[2]);
                 const fileName = subProgressMatch[3].split(/\s+→/)[0].trim();
@@ -616,8 +633,8 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
                 });
             }
 
-            // Log: show STEP, progress, errors, and key events
-            const isLogWorthy = /Processing:|STEP \d|(\[OK\])|(\[FAIL\])|(\[DONE\])|(\[SKIP\])|(\[BATCH\])|(\[MINI\s)|(\[TIER)|(\[\d+\/\d+\])/.test(clean);
+            // Log: show STEP, progress, errors, and key events (exclude noisy [PHASE])
+            const isLogWorthy = /Processing:|STEP \d|(\[OK\])|(\[FAIL\])|(\[DONE\])|(\[SKIP\])|(\[BATCH\])|(\[MINI\s)|(\[TIER)|(\[\d+\/\d+\])/.test(clean) && !/^\[PHASE\]/.test(clean);
             if (isLogWorthy) {
                 event.reply('pipeline-log', { message: clean, type: 'info' });
             }

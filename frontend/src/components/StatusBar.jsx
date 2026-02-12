@@ -13,7 +13,46 @@ function formatEta(ms) {
     return `${hr}h ${remMin}m`;
 }
 
-const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null, phaseIdx = 0, phaseName = '', phaseCurrent = 0, phaseTotal = 0, fileStep = {}, onStop }) => {
+/** Compact phase progress pill: label + count + mini bar */
+function PhasePill({ label, count, total, isActive, color }) {
+    const pct = total > 0 ? Math.min(100, Math.round((count / total) * 100)) : 0;
+    const isDone = count >= total && total > 0;
+
+    return (
+        <div className={`flex items-center space-x-1 px-1.5 py-0.5 rounded ${
+            isActive ? 'bg-gray-800 ring-1 ring-blue-500/50' : ''
+        }`}>
+            <span className={`text-[9px] font-bold w-3 ${
+                isDone ? 'text-green-400' :
+                isActive ? 'text-blue-300' :
+                count > 0 ? 'text-gray-300' : 'text-gray-600'
+            }`}>{label}</span>
+            <div className="w-12 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                        isDone ? 'bg-green-500' :
+                        isActive ? `${color} animate-pulse` : color
+                    }`}
+                    style={{ width: `${pct}%` }}
+                />
+            </div>
+            <span className={`text-[10px] font-mono w-8 text-right ${
+                isDone ? 'text-green-400' :
+                isActive ? 'text-blue-300' :
+                count > 0 ? 'text-gray-400' : 'text-gray-600'
+            }`}>{count}</span>
+        </div>
+    );
+}
+
+const StatusBar = ({
+    logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '',
+    processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null,
+    cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0,
+    miniBatchNum = 0, miniBatchTotal = 0,
+    activePhase = 0, phaseSubCount = 0, phaseSubTotal = 0,
+    fileStep = {}, onStop
+}) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
     const [aiTier, setAiTier] = useState(null);
@@ -49,7 +88,18 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
     // Count errors (memoized to avoid re-scanning on every render)
     const errorCount = useMemo(() => logs.filter(l => l.type === 'error').length, [logs]);
     const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
-    const phasePct = phaseTotal > 0 ? Math.round((phaseCurrent / phaseTotal) * 100) : 0;
+
+    // Phase data for pills
+    const phases = [
+        { label: 'P', count: cumParse, color: 'bg-cyan-400' },
+        { label: 'V', count: cumVision, color: 'bg-blue-400' },
+        { label: 'E', count: cumEmbed, color: 'bg-purple-400' },
+        { label: 'S', count: cumStore, color: 'bg-green-400' },
+    ];
+
+    // Overall progress: stored / (total - skipped)
+    const effectiveTotal = total - skipped;
+    const overallPct = effectiveTotal > 0 ? Math.round((processed / effectiveTotal) * 100) : 0;
 
     return (
         <div className={`fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-700 transition-all ${isOpen ? 'h-64' : 'h-8'}`}>
@@ -71,43 +121,42 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
                     )}
                 </div>
 
-                {/* Phase-based progress */}
+                {/* 4-Phase independent progress */}
                 {isProcessing && (
-                    <div className="flex items-center space-x-3 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
                         <Loader2 className="animate-spin text-blue-400" size={14} />
 
-                        {/* Phase indicator: 4 dots showing which phase is active */}
-                        <div className="flex items-center space-x-1">
-                            {['P', 'V', 'E', 'S'].map((label, i) => (
-                                <span key={i} className={`w-4 h-4 rounded text-[9px] font-bold flex items-center justify-center ${
-                                    i < phaseIdx ? 'bg-green-600 text-white' :
-                                    i === phaseIdx ? 'bg-blue-500 text-white animate-pulse' :
-                                    'bg-gray-700 text-gray-500'
-                                }`}>{label}</span>
+                        {/* 4 phase pills with independent progress */}
+                        <div className="flex items-center space-x-0.5">
+                            {phases.map((p, i) => (
+                                <PhasePill
+                                    key={p.label}
+                                    label={p.label}
+                                    count={p.count}
+                                    total={total}
+                                    isActive={i === activePhase}
+                                    color={p.color}
+                                />
                             ))}
                         </div>
 
-                        {/* Current phase progress bar */}
-                        <div className="flex items-center space-x-1.5">
-                            <span className="text-blue-300 font-medium w-20 text-right">
-                                {phaseName} {phaseCurrent}/{phaseTotal}
+                        {/* Overall stored / total */}
+                        <div className="flex items-center space-x-1.5 border-l border-blue-700 pl-2">
+                            <span className="text-green-300 font-mono font-bold text-[11px]">
+                                {processed}/{effectiveTotal}
                             </span>
-                            <div className="w-28 bg-gray-700 rounded-full h-2 overflow-hidden">
-                                <div
-                                    className="h-full bg-blue-400 transition-all duration-300 rounded-full"
-                                    style={{ width: `${phasePct}%` }}
-                                />
-                            </div>
+                            {skipped > 0 && (
+                                <span className="text-gray-500 text-[10px]">+{skipped}skip</span>
+                            )}
                         </div>
 
-                        {/* Stored count */}
-                        <span className="text-gray-500 text-[11px]">
-                            {processed > 0 && `${processed} stored`}
-                            {skipped > 0 && ` ${skipped} skipped`}
-                        </span>
-
                         {/* Current file name */}
-                        <span className="text-gray-400 truncate max-w-[120px]">{currentFile?.split(/[/\\]/).pop()}</span>
+                        <span className="text-gray-400 truncate max-w-[100px]">{currentFile?.split(/[/\\]/).pop()}</span>
+
+                        {/* Mini-batch indicator */}
+                        {miniBatchTotal > 0 && (
+                            <span className="text-gray-600 text-[10px] font-mono">{miniBatchNum}/{miniBatchTotal}</span>
+                        )}
 
                         {etaMs != null && (
                             <span className="text-gray-500 font-mono text-[11px]">{formatEta(etaMs)}</span>
