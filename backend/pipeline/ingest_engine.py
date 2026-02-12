@@ -996,12 +996,12 @@ def process_batch_phased(
     mv_batch: int = None,
     parse_workers: int = 4,
     progress_callback=None,
-    mini_batch: int = 10
+    mini_batch: int = None
 ) -> Tuple[int, int, int]:
     """
     Phase-based batch pipeline orchestrator with mini-batch streaming.
 
-    Processes files in mini-batches (default 10) to:
+    Processes files in mini-batches to:
     - Show incremental progress (stored files visible after each mini-batch)
     - Limit memory (only mini_batch thumbnails in memory at a time)
     - Enable crash recovery (already-stored files are safe)
@@ -1012,13 +1012,22 @@ def process_batch_phased(
         mv_batch: Text embedding sub-batch size (None=default 16)
         parse_workers: Phase 1 CPU thread count
         progress_callback: Optional fn(phase, idx, total, detail)
-        mini_batch: Files per mini-batch (default 10)
+        mini_batch: Files per mini-batch (None=auto from config vlm.batch_size)
 
     Returns:
         (stored, skipped_or_failed, errors) counts
     """
     t_total = time.perf_counter()
     total = len(file_infos)
+
+    # Auto-detect mini_batch from tier's VLM batch_size
+    if mini_batch is None:
+        from backend.utils.tier_config import get_active_tier
+        _, tier_cfg = get_active_tier()
+        vlm_batch = tier_cfg.get("vlm", {}).get("batch_size", 8)
+        # Align mini_batch to VLM batch for GPU efficiency
+        mini_batch = max(vlm_batch, 8)
+
     num_batches = (total + mini_batch - 1) // mini_batch
     logger.info(f"[BATCH] Phase-based pipeline: {total} files (mini-batch: {mini_batch}, batches: {num_batches})")
 
