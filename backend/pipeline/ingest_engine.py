@@ -81,6 +81,10 @@ class ParsedFile:
     thumb_image_rgb: "Image.Image" = None  # Pre-loaded for Phase 2/3
     mc_raw: dict = None
     error: str = None
+    # Per-phase smart skip flags (set after Phase 1 by DB check)
+    skip_vision: bool = False
+    skip_embed_vv: bool = False
+    skip_embed_mv: bool = False
 
 
 class ParserFactory:
@@ -645,13 +649,23 @@ def phase2_vision_all(
     parsed_files: List[ParsedFile], progress_callback=None
 ) -> None:
     """Phase 2: VLM sequential analysis with model kept hot."""
-    # Filter files that have thumbnails
+    # Filter files that have thumbnails AND are not skip_vision
     vision_items = []
     vision_indices = []
+    skipped = 0
     for idx, pf in enumerate(parsed_files):
-        if pf.error is None and pf.thumb_image_rgb is not None:
+        if pf.error is not None:
+            continue
+        if pf.skip_vision:
+            skipped += 1
+            logger.info(f"  [SKIP:Vision] {pf.file_path.name} (MC exists, same model)")
+            continue
+        if pf.thumb_image_rgb is not None:
             vision_items.append((pf.thumb_image_rgb, pf.mc_raw))
             vision_indices.append(idx)
+
+    if skipped > 0:
+        logger.info(f"  [SKIP:Vision] {skipped} files skipped (MC unchanged)")
 
     if not vision_items:
         logger.info("STEP 2/4 AI Vision — no images to analyze")
@@ -735,14 +749,20 @@ def phase3_embed_all(
         None
     ) for _ in range(total)]
 
-    # === VV: SigLIP2 batch encoding (adaptive) ===
+    # === VV: SigLIP2 batch encoding (adaptive, skip flagged) ===
     vv_images = []
     vv_indices = []
+    vv_skipped = 0
     for i in valid_indices:
         pf = parsed_files[i]
+        if pf.skip_embed_vv:
+            vv_skipped += 1
+            continue
         if pf.thumb_image_rgb is not None:
             vv_images.append(pf.thumb_image_rgb)
             vv_indices.append(i)
+    if vv_skipped > 0:
+        logger.info(f"  [SKIP:VV] {vv_skipped} files skipped (same SigLIP2 model)")
 
     if vv_images:
         from backend.vector.siglip2_encoder import SigLIP2Encoder
@@ -774,8 +794,12 @@ def phase3_embed_all(
 
         mv_texts = []
         mv_indices = []
+        mv_skipped = 0
         for i in valid_indices:
             pf = parsed_files[i]
+            if pf.skip_embed_mv:
+                mv_skipped += 1
+                continue
             meta = pf.meta
             facts = {
                 "image_type": meta.image_type,
@@ -788,6 +812,9 @@ def phase3_embed_all(
             if doc_text:
                 mv_texts.append(doc_text)
                 mv_indices.append(i)
+
+        if mv_skipped > 0:
+            logger.info(f"  [SKIP:MV] {mv_skipped} files skipped (same text embed model)")
 
         if mv_texts:
             if mv_batch is None:
@@ -889,15 +916,95 @@ def phase4_store_all(
     return stored, errors
 
 
+def _check_phase_skip(parsed_files: List[ParsedFile]):
+    """
+    Per-phase smart skip: check DB for already-completed phase outputs.
+
+    Sets skip_vision, skip_embed_vv, skip_embed_mv flags on each ParsedFile.
+    For vision-skipped files, injects stored MC data into meta for Phase 3 MV encoding.
+
+    Skip conditions (ALL must match):
+    - File exists in DB with same mtime (content unchanged)
+    - Phase output exists (mc_caption, vec_files, vec_text)
+    - Model used matches current tier's model
+    """
+    from backend.db.sqlite_client import SQLiteDB
+    from backend.utils.tier_config import get_active_tier
+
+    global _global_sqlite_db
+    if '_global_sqlite_db' not in globals() or _global_sqlite_db is None:
+        _global_sqlite_db = SQLiteDB()
+
+    _, tier_config = get_active_tier()
+    current_vlm = tier_config.get("vlm", {}).get("model", "")
+    current_vv_model = tier_config.get("visual", {}).get("model", "")
+    current_mv_model = tier_config.get("text_embed", {}).get("model", "")
+
+    skip_v, skip_vv, skip_mv = 0, 0, 0
+
+    for pf in parsed_files:
+        if pf.error is not None:
+            continue
+
+        info = _global_sqlite_db.get_file_phase_info(str(pf.file_path.resolve()))
+        if info is None:
+            continue  # New file, no skip possible
+
+        # mtime check: if file content changed, run ALL phases
+        stored_mtime = info.get("modified_at")
+        if stored_mtime:
+            current_mtime = datetime.fromtimestamp(pf.file_path.stat().st_mtime).isoformat()
+            if stored_mtime.replace('T', ' ') != current_mtime.replace('T', ' '):
+                continue  # File changed → run all phases
+
+        # Vision: skip if MC exists with same VLM model
+        if info["has_mc"] and info.get("caption_model") == current_vlm:
+            pf.skip_vision = True
+            # Inject stored MC into meta so Phase 3 MV can use it
+            pf.meta.mc_caption = info["mc_caption"]
+            if info.get("ai_tags"):
+                try:
+                    tags = info["ai_tags"]
+                    pf.meta.ai_tags = _json.loads(tags) if isinstance(tags, str) else tags
+                except Exception:
+                    pass
+            pf.meta.image_type = info.get("image_type")
+            pf.meta.scene_type = info.get("scene_type")
+            pf.meta.art_style = info.get("art_style")
+            skip_v += 1
+
+        # VV: skip if vector exists with same SigLIP2 model
+        if info["has_vv"] and info.get("embedding_model") == current_vv_model:
+            pf.skip_embed_vv = True
+            skip_vv += 1
+
+        # MV: skip if vector exists with same text embed model
+        if info["has_mv"] and info.get("text_embed_model") == current_mv_model:
+            pf.skip_embed_mv = True
+            skip_mv += 1
+
+    if skip_v > 0 or skip_vv > 0 or skip_mv > 0:
+        logger.info(
+            f"[SKIP:Phase] Vision: {skip_v}, VV: {skip_vv}, MV: {skip_mv} "
+            f"files can skip (model+mtime match)"
+        )
+
+
 def process_batch_phased(
     file_infos: List[tuple],
     vv_batch: int = None,
     mv_batch: int = None,
     parse_workers: int = 4,
-    progress_callback=None
+    progress_callback=None,
+    mini_batch: int = 10
 ) -> Tuple[int, int, int]:
     """
-    Phase-based batch pipeline orchestrator.
+    Phase-based batch pipeline orchestrator with mini-batch streaming.
+
+    Processes files in mini-batches (default 10) to:
+    - Show incremental progress (stored files visible after each mini-batch)
+    - Limit memory (only mini_batch thumbnails in memory at a time)
+    - Enable crash recovery (already-stored files are safe)
 
     Args:
         file_infos: List of (file_path, folder, depth, tags) tuples
@@ -905,25 +1012,52 @@ def process_batch_phased(
         mv_batch: Text embedding sub-batch size (None=default 16)
         parse_workers: Phase 1 CPU thread count
         progress_callback: Optional fn(phase, idx, total, detail)
+        mini_batch: Files per mini-batch (default 10)
 
     Returns:
         (stored, skipped_or_failed, errors) counts
     """
     t_total = time.perf_counter()
     total = len(file_infos)
-    logger.info(f"[BATCH] Phase-based pipeline: {total} files")
+    num_batches = (total + mini_batch - 1) // mini_batch
+    logger.info(f"[BATCH] Phase-based pipeline: {total} files (mini-batch: {mini_batch}, batches: {num_batches})")
 
-    # Phase 1: Parse
-    parsed = phase1_parse_all(file_infos, max_workers=parse_workers)
+    stored_total = 0
+    parse_errors_total = 0
+    store_errors_total = 0
 
-    # Phase 2: Vision
-    phase2_vision_all(parsed, progress_callback=progress_callback)
+    for batch_idx in range(0, total, mini_batch):
+        chunk = file_infos[batch_idx:batch_idx + mini_batch]
+        batch_num = batch_idx // mini_batch + 1
+        logger.info(f"[MINI {batch_num}/{num_batches}] Files {batch_idx + 1}-{batch_idx + len(chunk)} of {total}")
 
-    # Phase 3: Embed
-    embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch)
+        # Phase 1: Parse
+        parsed = phase1_parse_all(chunk, max_workers=parse_workers)
 
-    # Phase 4: Store
-    stored, errors = phase4_store_all(parsed, embeddings, progress_callback=progress_callback)
+        # Per-phase smart skip: check DB for already-completed phase outputs
+        _check_phase_skip(parsed)
+
+        # Phase 2: Vision (skips files with skip_vision=True)
+        phase2_vision_all(parsed, progress_callback=progress_callback)
+
+        # Phase 3: Embed (skips VV/MV per file as flagged)
+        embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch)
+
+        # Free thumbnail images after embedding — no longer needed
+        for pf in parsed:
+            pf.thumb_image_rgb = None
+
+        # Phase 4: Store
+        stored, errors = phase4_store_all(parsed, embeddings, progress_callback=progress_callback)
+
+        stored_total += stored
+        parse_errors_total += sum(1 for pf in parsed if pf.error is not None)
+        store_errors_total += errors
+
+        logger.info(
+            f"[MINI {batch_num}/{num_batches}] Done: {stored} stored "
+            f"(cumulative: {stored_total}/{total})"
+        )
 
     # Unload VLM to free VRAM
     try:
@@ -934,14 +1068,13 @@ def process_batch_phased(
     except Exception:
         pass
 
-    parse_errors = sum(1 for pf in parsed if pf.error is not None)
     elapsed = time.perf_counter() - t_total
     logger.info(
-        f"[DONE] {stored} processed, {parse_errors} parse-errors, "
-        f"{errors} store-errors (total: {total}, {elapsed:.1f}s)"
+        f"[DONE] {stored_total} processed, {parse_errors_total} parse-errors, "
+        f"{store_errors_total} store-errors (total: {total}, {elapsed:.1f}s)"
     )
 
-    return stored, parse_errors, errors
+    return stored_total, parse_errors_total, store_errors_total
 
 
 def discover_files(root_dir: Path) -> List[Tuple[Path, str, int, List[str]]]:

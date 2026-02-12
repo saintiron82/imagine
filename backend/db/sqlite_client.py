@@ -471,6 +471,57 @@ class SQLiteDB:
         row = cursor.fetchone()
         return row[0] if row else None
 
+    def get_file_phase_info(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """
+        Get per-phase completion info for smart skip.
+
+        Returns dict with:
+            - caption_model, embedding_model, text_embed_model, mode_tier
+            - has_mc: bool (mc_caption is non-empty)
+            - has_vv: bool (vec_files entry exists)
+            - has_mv: bool (vec_text entry exists)
+            - modified_at: stored mtime
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT f.id, f.caption_model, f.embedding_model, f.text_embed_model,
+                   f.mode_tier, f.modified_at, f.mc_caption, f.ai_tags,
+                   f.image_type, f.scene_type, f.art_style
+            FROM files f
+            WHERE f.file_path = ?
+        """, (file_path,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        file_id = row[0]
+
+        # Check vec_files existence
+        cursor.execute("SELECT COUNT(*) FROM vec_files WHERE file_id = ?", (file_id,))
+        has_vv = cursor.fetchone()[0] > 0
+
+        # Check vec_text existence
+        cursor.execute("SELECT COUNT(*) FROM vec_text WHERE file_id = ?", (file_id,))
+        has_mv = cursor.fetchone()[0] > 0
+
+        mc_caption = row[6] or ""
+        return {
+            "file_id": file_id,
+            "caption_model": row[1],
+            "embedding_model": row[2],
+            "text_embed_model": row[3],
+            "mode_tier": row[4],
+            "modified_at": row[5],
+            "has_mc": len(mc_caption.strip()) > 0,
+            "mc_caption": mc_caption,
+            "ai_tags": row[7],
+            "image_type": row[8],
+            "scene_type": row[9],
+            "art_style": row[10],
+            "has_vv": has_vv,
+            "has_mv": has_mv,
+        }
+
     def insert_file(
         self,
         file_path: str,

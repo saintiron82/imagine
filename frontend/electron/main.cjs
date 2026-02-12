@@ -543,7 +543,6 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     activePipelineProc = proc;
 
     proc.stdout.on('data', (data) => {
-        console.log('[stdout]', data.toString().substring(0, 120));
         const raw = data.toString().trim();
         if (!raw) return;
 
@@ -559,8 +558,8 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             const processingMatch = clean.match(/^Processing: (.+)/);
             const stepMatch = clean.match(/^STEP (\d+)\/(\d+) (.+)/);
             const stepDoneMatch = clean.match(/^STEP (\d+)\/(\d+) completed/);
-            // Phase sub-progress: [1/26] filename → type
-            const subProgressMatch = clean.match(/^\[(\d+)\/(\d+)\]\s+(.+?)(?:\s+→|$)/);
+            // Phase sub-progress: [1/26] filename → type (may have leading whitespace from logger indent)
+            const subProgressMatch = clean.match(/^\s*\[(\d+)\/(\d+)\]\s+(.+?)(?:\s+→|$)/);
 
             // STEP x/y completed → phase finished
             if (stepDoneMatch) {
@@ -618,7 +617,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             }
 
             // Log: show STEP, progress, errors, and key events
-            const isLogWorthy = /Processing:|STEP \d|(\[OK\])|(\[FAIL\])|(\[DONE\])|(\[SKIP\])|(\[BATCH\])|(\[TIER)|(\[\d+\/\d+\])/.test(clean);
+            const isLogWorthy = /Processing:|STEP \d|(\[OK\])|(\[FAIL\])|(\[DONE\])|(\[SKIP\])|(\[BATCH\])|(\[MINI\s)|(\[TIER)|(\[\d+\/\d+\])/.test(clean);
             if (isLogWorthy) {
                 event.reply('pipeline-log', { message: clean, type: 'info' });
             }
@@ -626,7 +625,6 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     });
 
     proc.stderr.on('data', (data) => {
-        console.log('[stderr]', data.toString().substring(0, 120));
         const message = data.toString().trim();
         if (!message) return;
         const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
