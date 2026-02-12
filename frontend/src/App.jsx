@@ -14,7 +14,7 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processProgress, setProcessProgress] = useState({
-    processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0
+    processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, batchPct: 0
   });
   const [fileStep, setFileStep] = useState({ step: 0, totalSteps: 5, stepName: '' });
   const etaRef = useRef({ startTime: null, lastFileTime: null, emaMs: null });
@@ -51,13 +51,14 @@ function App() {
           setFileStep(data);
         });
 
-        // Progress updates (processed count, current file, skipped)
+        // Progress updates (processed count, current file, skipped, batchPct)
         window.electron.pipeline.onProgress((data) => {
           setProcessProgress(prev => {
             const newProcessed = data.processed ?? prev.processed;
             const newSkipped = data.skipped ?? prev.skipped;
             const currentFile = data.currentFile ?? prev.currentFile;
-            return { ...prev, processed: newProcessed, skipped: newSkipped, currentFile };
+            const batchPct = data.batchPct ?? prev.batchPct;
+            return { ...prev, processed: newProcessed, skipped: newSkipped, currentFile, batchPct };
           });
         });
 
@@ -82,7 +83,7 @@ function App() {
         // Batch done: reset all processing state
         window.electron.pipeline.onBatchDone((data) => {
           setIsProcessing(false);
-          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0 });
+          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, batchPct: 0 });
           setFileStep({ step: 0, totalSteps: 5, stepName: '' });
           etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
           const msg = data.skipped > 0
@@ -170,7 +171,7 @@ function App() {
 
     setIsProcessing(true);
     etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
-    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0 });
+    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0, batchPct: 0 });
     setSelectedFiles(new Set());
 
     appendLog({
@@ -188,7 +189,7 @@ function App() {
     // Kill the actual Python process
     window.electron?.pipeline?.stop();
     setIsProcessing(false);
-    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0 });
+    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, batchPct: 0 });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
     etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
   };
@@ -318,6 +319,7 @@ function App() {
             skipped={processProgress.skipped}
             currentFile={processProgress.currentFile}
             etaMs={processProgress.etaMs}
+            batchPct={processProgress.batchPct}
             fileStep={fileStep}
             onStop={handleStopProcess}
           />

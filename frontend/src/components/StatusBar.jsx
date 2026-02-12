@@ -13,7 +13,7 @@ function formatEta(ms) {
     return `${hr}h ${remMin}m`;
 }
 
-const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null, fileStep = {}, onStop }) => {
+const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '', processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null, batchPct = 0, fileStep = {}, onStop }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
     const [aiTier, setAiTier] = useState(null);
@@ -49,7 +49,8 @@ const StatusBar = ({ logs, clearLogs, isProcessing, isDiscovering = false, disco
     // Count errors (memoized to avoid re-scanning on every render)
     const errorCount = useMemo(() => logs.filter(l => l.type === 'error').length, [logs]);
     const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
-    const queuePct = total > 0 ? Math.round(((processed + skipped) / total) * 100) : 0;
+    // Use batchPct (phase-weighted) if available, otherwise fall back to simple ratio
+    const queuePct = batchPct > 0 ? batchPct : (total > 0 ? Math.round(((processed + skipped) / total) * 100) : 0);
     const stepPct = fileStep.totalSteps > 0 ? Math.round((fileStep.step / fileStep.totalSteps) * 100) : 0;
 
     return (

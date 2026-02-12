@@ -515,6 +515,19 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     const totalFiles = filePaths.length;
     pipelineStoppedByUser = false;
 
+    // Batch phase tracking for smooth progress bar
+    let currentPhase = 0; // 0=parse, 1=vision, 2=embed, 3=store
+    let phaseSubCount = 0;
+    let phaseSubTotal = 0;
+    // Phase weights (approximate time distribution)
+    const PHASE_W = [0.05, 0.55, 0.15, 0.25];
+    function calcBatchPct() {
+        let pct = 0;
+        for (let i = 0; i < currentPhase; i++) pct += PHASE_W[i];
+        if (phaseSubTotal > 0) pct += PHASE_W[currentPhase] * (phaseSubCount / phaseSubTotal);
+        return Math.min(Math.round(pct * 100), 100);
+    }
+
     const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], {
         cwd: projectRoot,
         detached: true,  // Own process group for clean tree kill
@@ -524,6 +537,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     activePipelineProc = proc;
 
     proc.stdout.on('data', (data) => {
+        console.log('[stdout]', data.toString().substring(0, 120));
         const raw = data.toString().trim();
         if (!raw) return;
 
@@ -533,16 +547,32 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             const message = line.trim();
             if (!message) continue;
 
-            const processingMatch = message.match(/Processing: (.+)/);
-            const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+            // Strip logger prefix for pattern matching
+            const clean = message.replace(/^\d{4}-\d{2}-\d{2}\s[\d:,.]+ - [\w.]+ - \w+ - /, '');
 
-            if (processingMatch) {
-                event.reply('pipeline-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: path.basename(processingMatch[1])
+            const processingMatch = clean.match(/^Processing: (.+)/);
+            const stepMatch = clean.match(/^STEP (\d+)\/(\d+) (.+)/);
+            const stepDoneMatch = clean.match(/^STEP (\d+)\/(\d+) completed/);
+            // Phase sub-progress: [1/26] filename → type
+            const subProgressMatch = clean.match(/^\[(\d+)\/(\d+)\]\s+(.+?)(?:\s+→|$)/);
+
+            // STEP x/y completed → phase finished
+            if (stepDoneMatch) {
+                currentPhase = parseInt(stepDoneMatch[1]); // move to next phase
+                phaseSubCount = 0;
+                phaseSubTotal = 0;
+                event.reply('pipeline-step', {
+                    step: parseInt(stepDoneMatch[1]),
+                    totalSteps: parseInt(stepDoneMatch[2]),
+                    stepName: stepDoneMatch[0]
                 });
             } else if (stepMatch) {
+                // STEP x/y Name → phase started
+                currentPhase = parseInt(stepMatch[1]) - 1;
+                phaseSubCount = 0;
+                // Extract count from "STEP 2/4 AI Vision (26 images)"
+                const countMatch = stepMatch[3].match(/\((\d+)/);
+                phaseSubTotal = countMatch ? parseInt(countMatch[1]) : totalFiles;
                 event.reply('pipeline-step', {
                     step: parseInt(stepMatch[1]),
                     totalSteps: parseInt(stepMatch[2]),
@@ -550,13 +580,38 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
                 });
             }
 
-            // [OK] = file stored (Phase 4) or single-file parse success
-            if (/\[OK\]/.test(message)) {
-                processedCount++;
+            // Per-file sub-progress within a phase: [3/26] file.psd → type
+            if (subProgressMatch) {
+                phaseSubCount = parseInt(subProgressMatch[1]);
+                phaseSubTotal = parseInt(subProgressMatch[2]);
+                const fileName = subProgressMatch[3].split(/\s+→/)[0].trim();
                 event.reply('pipeline-progress', {
                     processed: processedCount,
                     total: totalFiles,
-                    currentFile: ''
+                    currentFile: fileName,
+                    skipped: skippedCount,
+                    batchPct: calcBatchPct()
+                });
+            }
+
+            if (processingMatch) {
+                event.reply('pipeline-progress', {
+                    processed: processedCount,
+                    total: totalFiles,
+                    currentFile: path.basename(processingMatch[1]),
+                    batchPct: calcBatchPct()
+                });
+            }
+
+            // [OK] = file stored (Phase 4) or single-file parse success
+            if (/\[OK\]/.test(clean)) {
+                processedCount++;
+                phaseSubCount = processedCount;
+                event.reply('pipeline-progress', {
+                    processed: processedCount,
+                    total: totalFiles,
+                    currentFile: '',
+                    batchPct: calcBatchPct()
                 });
                 event.reply('pipeline-file-done', {
                     processed: processedCount,
@@ -565,18 +620,19 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             }
 
             // [SKIP] = smart skip (unchanged file)
-            if (/\[SKIP\]/.test(message) && !/files skipped/.test(message)) {
+            if (/\[SKIP\]/.test(clean) && !/files skipped/.test(clean)) {
                 skippedCount++;
                 event.reply('pipeline-progress', {
                     processed: processedCount,
                     total: totalFiles,
                     currentFile: '',
-                    skipped: skippedCount
+                    skipped: skippedCount,
+                    batchPct: calcBatchPct()
                 });
             }
 
             // [DONE] = batch complete
-            if (/\[DONE\]/.test(message) && !batchDoneSent) {
+            if (/\[DONE\]/.test(clean) && !batchDoneSent) {
                 batchDoneSent = true;
                 event.reply('pipeline-batch-done', {
                     processed: processedCount,
@@ -585,16 +641,16 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
                 });
             }
 
-            const isLogWorthy = /Processing:|(\[OK\])|(\[FAIL\])|(\[DONE\])|(\[DISCOVER\])|(\[SKIP\])|(\[BATCH\])|(\[TIER)/.test(message);
+            // Log: show STEP, progress, errors, and key events
+            const isLogWorthy = /Processing:|STEP \d|(\[OK\])|(\[FAIL\])|(\[DONE\])|(\[SKIP\])|(\[BATCH\])|(\[TIER)|(\[\d+\/\d+\])/.test(clean);
             if (isLogWorthy) {
-                // Strip logger prefix (timestamp - name - level - ) for cleaner UI
-                const cleaned = message.replace(/^\d{4}-\d{2}-\d{2}\s[\d:,.]+ - \w+ - \w+ - /, '');
-                event.reply('pipeline-log', { message: cleaned, type: 'info' });
+                event.reply('pipeline-log', { message: clean, type: 'info' });
             }
         }
     });
 
     proc.stderr.on('data', (data) => {
+        console.log('[stderr]', data.toString().substring(0, 120));
         const message = data.toString().trim();
         if (!message) return;
         const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
