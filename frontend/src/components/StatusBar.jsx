@@ -167,7 +167,7 @@ const StatusBar = ({
                         <span className="text-gray-400 truncate max-w-[100px]">{currentFile?.split(/[/\\]/).pop()}</span>
 
                         {etaMs != null && (
-                            <span className="text-gray-500 font-mono text-[11px]">{formatEta(etaMs)}</span>
+                            <span className="text-blue-300 font-mono text-[11px]">~{formatEta(etaMs)}</span>
                         )}
 
                         <button

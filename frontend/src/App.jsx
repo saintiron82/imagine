@@ -23,6 +23,7 @@ function App() {
   });
   const [fileStep, setFileStep] = useState({ step: 0, totalSteps: 5, stepName: '' });
   const etaRef = useRef({ startTime: null, lastFileTime: null, emaMs: null });
+  const phaseEtaRef = useRef({ phase: -1, startTime: null, startCount: 0 });
   const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoverProgress, setDiscoverProgress] = useState('');
@@ -56,22 +57,49 @@ function App() {
           setFileStep(data);
         });
 
-        // Progress updates (cumulative phase counts + sub-progress)
+        // Progress updates (cumulative phase counts + sub-progress + phase-based ETA)
         window.electron.pipeline.onProgress((data) => {
-          setProcessProgress(prev => ({
-            ...prev,
-            processed: data.processed ?? prev.processed,
-            skipped: data.skipped ?? prev.skipped,
-            currentFile: data.currentFile ?? prev.currentFile,
-            cumParse: data.cumParse ?? prev.cumParse,
-            cumVision: data.cumVision ?? prev.cumVision,
-            cumEmbed: data.cumEmbed ?? prev.cumEmbed,
-            cumStore: data.cumStore ?? prev.cumStore,
-            activePhase: data.activePhase ?? prev.activePhase,
-            phaseSubCount: data.phaseSubCount ?? prev.phaseSubCount,
-            phaseSubTotal: data.phaseSubTotal ?? prev.phaseSubTotal,
-            batchInfo: data.batchInfo ?? prev.batchInfo,
-          }));
+          setProcessProgress(prev => {
+            const next = {
+              ...prev,
+              processed: data.processed ?? prev.processed,
+              skipped: data.skipped ?? prev.skipped,
+              currentFile: data.currentFile ?? prev.currentFile,
+              cumParse: data.cumParse ?? prev.cumParse,
+              cumVision: data.cumVision ?? prev.cumVision,
+              cumEmbed: data.cumEmbed ?? prev.cumEmbed,
+              cumStore: data.cumStore ?? prev.cumStore,
+              activePhase: data.activePhase ?? prev.activePhase,
+              phaseSubCount: data.phaseSubCount ?? prev.phaseSubCount,
+              phaseSubTotal: data.phaseSubTotal ?? prev.phaseSubTotal,
+              batchInfo: data.batchInfo ?? prev.batchInfo,
+            };
+
+            // Phase-based ETA: track progress rate per active phase
+            const pe = phaseEtaRef.current;
+            const ap = next.activePhase;
+            const counts = [next.cumParse, next.cumVision, next.cumEmbed, next.cumStore];
+            const count = counts[ap] || 0;
+            const effectiveTotal = next.total - (next.skipped || 0);
+
+            // Reset timer on phase transition
+            if (pe.phase !== ap) {
+              pe.phase = ap;
+              pe.startTime = Date.now();
+              pe.startCount = count;
+            }
+
+            const done = count - pe.startCount;
+            const remaining = effectiveTotal - count;
+            if (pe.startTime && done > 0 && remaining > 0) {
+              const elapsed = Date.now() - pe.startTime;
+              next.etaMs = (elapsed / done) * remaining;
+            } else {
+              next.etaMs = null;
+            }
+
+            return next;
+          });
         });
 
         // File-done: update ETA using EMA
