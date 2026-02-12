@@ -1131,6 +1131,27 @@ class SQLiteDB:
 
         return stats
 
+    def get_folder_phase_stats(self, storage_root: str) -> List[Dict[str, Any]]:
+        """Get per-folder phase completion stats for a storage root."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT
+                f.folder_path,
+                COUNT(*) as total,
+                COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
+                COUNT(CASE WHEN vf.file_id IS NOT NULL THEN 1 END) as vv,
+                COUNT(CASE WHEN vt.file_id IS NOT NULL THEN 1 END) as mv
+            FROM files f
+            LEFT JOIN vec_files vf ON f.id = vf.file_id
+            LEFT JOIN vec_text vt ON f.id = vt.file_id
+            WHERE f.storage_root = ?
+            GROUP BY f.folder_path
+        """, (storage_root,))
+        return [
+            {"folder_path": row[0] or "", "total": row[1], "mc": row[2], "vv": row[3], "mv": row[4]}
+            for row in cursor.fetchall()
+        ]
+
     def update_user_metadata(
         self,
         file_path: str,

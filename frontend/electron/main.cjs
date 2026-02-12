@@ -395,6 +395,35 @@ ipcMain.handle('get-db-stats', async () => {
     });
 });
 
+// IPC Handler: Folder Phase Stats (MC/VV/MV per folder)
+ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_folder_stats.py')
+        : path.join(process.resourcesPath, 'backend/api_folder_stats.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath, storageRoot], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+        });
+        let output = '';
+        proc.stdout.on('data', (d) => output += d.toString());
+        proc.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(output.trim()));
+                } catch {
+                    resolve({ success: false, folders: [] });
+                }
+            } else {
+                resolve({ success: false, folders: [] });
+            }
+        });
+        proc.on('error', () => resolve({ success: false, folders: [] }));
+    });
+});
+
 // IPC Handler: Environment Check
 ipcMain.handle('check-env', async () => {
     const finalPython = resolvePython();

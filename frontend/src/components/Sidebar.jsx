@@ -2,13 +2,49 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare } from 'lucide-react';
 import { useLocale } from '../i18n';
 
+/** Mini phase progress bar for folder stats */
+function FolderPhaseBar({ label, count, total, color }) {
+    const pct = total > 0 ? Math.min(100, Math.round((count / total) * 100)) : 0;
+    const isDone = count >= total && total > 0;
+    return (
+        <div className="flex items-center space-x-0.5">
+            <span className={`text-[8px] font-bold w-5 ${isDone ? 'text-green-400' : 'text-gray-500'}`}>{label}</span>
+            <div className="w-10 bg-gray-700 rounded-full h-1 overflow-hidden">
+                <div
+                    className={`h-full rounded-full ${isDone ? 'bg-green-500' : color}`}
+                    style={{ width: `${pct}%` }}
+                />
+            </div>
+            <span className={`text-[8px] font-mono w-6 text-right ${isDone ? 'text-green-400' : 'text-gray-500'}`}>{count}</span>
+        </div>
+    );
+}
+
 const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, onRemoveRoot }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(isRoot); // Roots start open
     const [children, setChildren] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [phaseStats, setPhaseStats] = useState(null);
     const isCtrlSelected = selectedPaths.has(path);
     const isCurrentPath = currentPath === path;
+
+    // Load phase stats for root nodes when opened
+    useEffect(() => {
+        if (isRoot && isOpen) {
+            const loadStats = async () => {
+                try {
+                    const result = await window.electron?.pipeline?.getFolderPhaseStats(path);
+                    if (result?.success) {
+                        setPhaseStats(result.folders || []);
+                    }
+                } catch (e) {
+                    console.error('Failed to load folder phase stats:', e);
+                }
+            };
+            loadStats();
+        }
+    }, [isRoot, isOpen, path]);
 
     // Auto-load children for root nodes
     useEffect(() => {
@@ -87,6 +123,25 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                     </button>
                 )}
             </div>
+
+            {/* Phase stats progress bars for root folders */}
+            {isRoot && isOpen && phaseStats && phaseStats.length > 0 && (() => {
+                const totals = phaseStats.reduce((acc, f) => ({
+                    total: acc.total + f.total,
+                    mc: acc.mc + f.mc,
+                    vv: acc.vv + f.vv,
+                    mv: acc.mv + f.mv,
+                }), { total: 0, mc: 0, vv: 0, mv: 0 });
+                return (
+                    <div className="flex items-center gap-1.5 px-3 py-1 bg-gray-800/50 border-b border-gray-700/50"
+                         style={{ paddingLeft: `${level * 16 + 32}px` }}>
+                        <span className="text-[9px] text-gray-500 font-mono mr-0.5">{totals.total}</span>
+                        <FolderPhaseBar label="MC" count={totals.mc} total={totals.total} color="bg-blue-400" />
+                        <FolderPhaseBar label="VV" count={totals.vv} total={totals.total} color="bg-purple-400" />
+                        <FolderPhaseBar label="MV" count={totals.mv} total={totals.total} color="bg-green-400" />
+                    </div>
+                );
+            })()}
 
             {isOpen && (
                 <div>
