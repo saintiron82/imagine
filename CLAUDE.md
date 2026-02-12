@@ -37,6 +37,34 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 - **관련 없는 변경을 하나의 커밋에 섞지 않기**
 - **사용자에게 커밋 내용을 간략히 보고** (커밋 후 한국어로 요약)
 
+## 버전 규칙 (MANDATORY)
+
+**모든 수정 커밋 후 반드시 버전을 올립니다.**
+
+### 형식
+
+```
+M.m.p.YYYYMMDD_NN
+```
+
+| 필드 | 설명 | 예시 |
+|------|------|------|
+| `M` | Major — 대규모 아키텍처 변경 | `3` → `4` |
+| `m` | Minor — 새 기능 추가 | `3.5` → `3.6` |
+| `p` | Patch — 버그 수정, 소규모 개선 | `3.5.0` → `3.5.1` |
+| `YYYYMMDD` | 수정 날짜 | `20260213` |
+| `NN` | 해당 날짜의 수정 순번 (01부터) | `01`, `02`, `03` |
+
+### 표기 위치
+
+- `frontend/src/components/StatusBar.jsx` — UI 하단에 표시
+
+### 절차
+
+1. 작업 단위 커밋 완료
+2. `StatusBar.jsx`의 버전 문자열 업데이트
+3. `chore: version bump to vX.X.X.YYYYMMDD_NN` 커밋
+
 ---
 
 이 파일은 Claude Code (claude.ai/code)가 이 저장소에서 작업할 때 참고하는 가이드입니다.
