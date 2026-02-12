@@ -50,7 +50,7 @@ const StatusBar = ({
     processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null,
     cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0,
     activePhase = 0, phaseSubCount = 0, phaseSubTotal = 0,
-    fileStep = {}, onStop
+    batchInfo = '', fileStep = {}, onStop
 }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
@@ -148,6 +148,13 @@ const StatusBar = ({
                                 <span className="text-gray-500 text-[10px]">+{skipped}skip</span>
                             )}
                         </div>
+
+                        {/* Batch info */}
+                        {batchInfo && (
+                            <span className="text-yellow-400 font-mono text-[10px] border border-yellow-700/50 px-1 rounded">
+                                {batchInfo}
+                            </span>
+                        )}
 
                         {/* Current file name */}
                         <span className="text-gray-400 truncate max-w-[100px]">{currentFile?.split(/[/\\]/).pop()}</span>

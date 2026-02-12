@@ -833,7 +833,7 @@ def phase3_embed_all(
                     logger.warning(f"VV thumbnail load failed for {pf.file_path.name}: {e}")
 
             if images:
-                vv_vectors = _global_encoder.encode_image_batch(images, batch_size=len(images))
+                vv_vectors = _global_encoder.encode_image_batch(images)
                 for j, vec in enumerate(vv_vectors):
                     idx = chunk_valid[j]
                     vv, mv, mv_text = results[idx]
@@ -1135,12 +1135,13 @@ def process_batch_phased(
     cum_vision = 0
     cum_embed = 0
     cum_store = 0
+    active_batch_info = ""  # e.g. "B:8" for current sub-batch size
 
     def _emit_phase_progress():
         """Emit cumulative phase progress for frontend."""
         logger.info(
             f"[PHASE] P:{cum_parse} V:{cum_vision} E:{cum_embed} S:{cum_store} "
-            f"T:{total}"
+            f"T:{total} {active_batch_info}"
         )
 
     # Phase 1: Parse ALL (CPU parallel, metadata only — no thumbnails)
@@ -1156,14 +1157,20 @@ def process_batch_phased(
     _check_phase_skip(parsed)
 
     # Phase 2: VLM (sub-batch JIT thumbnail loading)
+    from backend.utils.tier_config import get_active_tier
+    _, _tier_cfg = get_active_tier()
+    vlm_bs = _tier_cfg.get("vlm", {}).get("batch_size", 8)
+
     def _on_vision_progress(count):
-        nonlocal cum_vision
+        nonlocal cum_vision, active_batch_info
         cum_vision = count
+        active_batch_info = f"B:{vlm_bs}"
         _emit_phase_progress()
 
     phase2_vision_all(parsed, progress_callback=progress_callback,
                       phase_progress_callback=_on_vision_progress)
     cum_vision = valid_count
+    active_batch_info = ""
     _emit_phase_progress()
 
     # Store Phase 2: vision fields only
@@ -1182,13 +1189,16 @@ def process_batch_phased(
 
     # Phase 3: Embed (sub-batch JIT thumbnail loading for VV, text-only for MV)
     def _on_embed_progress(count, kind):
-        nonlocal cum_embed
+        nonlocal cum_embed, active_batch_info
         cum_embed = count
+        bs = vv_batch or 8 if kind == 'vv' else mv_batch or 16
+        active_batch_info = f"B:{bs}:{kind.upper()}"
         _emit_phase_progress()
 
     embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch,
                                   phase_progress_callback=_on_embed_progress)
     cum_embed = valid_count
+    active_batch_info = ""
     _emit_phase_progress()
 
     # Store Phase 3: VV + MV vectors

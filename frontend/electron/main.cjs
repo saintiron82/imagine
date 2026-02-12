@@ -521,7 +521,10 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     let activePhase = 0; // 0=parse, 1=vision, 2=embed, 3=store
     let phaseSubCount = 0, phaseSubTotal = 0;
 
+    let batchInfo = '';
+
     function emitPhaseProgress(extraFields = {}) {
+        if (extraFields.batchInfo !== undefined) batchInfo = extraFields.batchInfo;
         event.reply('pipeline-progress', {
             processed: processedCount,
             total: totalFiles,
@@ -532,6 +535,8 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             // Active phase sub-progress (within mini-batch)
             activePhase,
             phaseSubCount, phaseSubTotal,
+            // Current batch info (e.g. "8" or "8:VV")
+            batchInfo,
         });
     }
 
@@ -561,16 +566,17 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             const stepDoneMatch = clean.match(/^STEP (\d+)\/(\d+) completed/);
             // Phase sub-progress: [1/26] filename → type (may have leading whitespace from logger indent)
             const subProgressMatch = clean.match(/^\s*\[(\d+)\/(\d+)\]\s+(.+?)(?:\s+→|$)/);
-            // Cumulative phase progress: [PHASE] P:40 V:33 E:30 S:30 T:500
-            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+V:(\d+)\s+E:(\d+)\s+S:(\d+)\s+T:(\d+)/);
+            // Cumulative phase progress: [PHASE] P:40 V:33 E:30 S:30 T:500 B:8
+            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+V:(\d+)\s+E:(\d+)\s+S:(\d+)\s+T:(\d+)(?:\s+B:(\S+))?/);
 
-            // [PHASE] cumulative progress from mini-batch orchestrator
+            // [PHASE] cumulative progress
             if (phaseMatch) {
                 cumParse = parseInt(phaseMatch[1]);
                 cumVision = parseInt(phaseMatch[2]);
                 cumEmbed = parseInt(phaseMatch[3]);
                 cumStore = parseInt(phaseMatch[4]);
-                emitPhaseProgress();
+                const batchInfo = phaseMatch[6] || '';
+                emitPhaseProgress({ batchInfo });
             }
 
             // STEP x/y completed → phase finished within mini-batch

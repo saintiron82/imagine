@@ -19,6 +19,7 @@ function App() {
     cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
     // Active phase sub-progress
     activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0,
+    batchInfo: '',
   });
   const [fileStep, setFileStep] = useState({ step: 0, totalSteps: 5, stepName: '' });
   const etaRef = useRef({ startTime: null, lastFileTime: null, emaMs: null });
@@ -69,6 +70,7 @@ function App() {
             activePhase: data.activePhase ?? prev.activePhase,
             phaseSubCount: data.phaseSubCount ?? prev.phaseSubCount,
             phaseSubTotal: data.phaseSubTotal ?? prev.phaseSubTotal,
+            batchInfo: data.batchInfo ?? prev.batchInfo,
           }));
         });
 
@@ -93,7 +95,7 @@ function App() {
         // Batch done: reset all processing state
         window.electron.pipeline.onBatchDone((data) => {
           setIsProcessing(false);
-          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
+          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
           setFileStep({ step: 0, totalSteps: 5, stepName: '' });
           etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
           const msg = data.skipped > 0
@@ -181,7 +183,7 @@ function App() {
 
     setIsProcessing(true);
     etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
-    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
+    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
     setSelectedFiles(new Set());
 
     appendLog({
@@ -199,7 +201,7 @@ function App() {
     // Kill the actual Python process
     window.electron?.pipeline?.stop();
     setIsProcessing(false);
-    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0 });
+    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
     etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
   };
@@ -336,6 +338,7 @@ function App() {
             activePhase={processProgress.activePhase}
             phaseSubCount={processProgress.phaseSubCount}
             phaseSubTotal={processProgress.phaseSubTotal}
+            batchInfo={processProgress.batchInfo}
             fileStep={fileStep}
             onStop={handleStopProcess}
           />
