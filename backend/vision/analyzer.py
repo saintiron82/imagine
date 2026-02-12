@@ -891,3 +891,19 @@ class VisionAnalyzer:
             if progress_callback:
                 progress_callback(idx, len(items), result)
         return results
+
+    def unload_model(self):
+        """Unload VLM model and processor to free GPU memory."""
+        import gc
+        if self.model is not None:
+            del self.model
+            self.model = None
+        if self.processor is not None:
+            del self.processor
+            self.processor = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        logger.info(f"VisionAnalyzer model unloaded ({self.model_id})")

@@ -131,6 +131,26 @@ class SigLIP2Encoder:
             self._tokenizer = None
             raise
 
+    def unload(self):
+        """Unload SigLIP2 model to free GPU memory."""
+        import gc
+        if self._model is not None:
+            del self._model
+            self._model = None
+        if self._processor is not None:
+            del self._processor
+            self._processor = None
+        if self._tokenizer is not None:
+            del self._tokenizer
+            self._tokenizer = None
+        self._adaptive_bs = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        logger.info(f"SigLIP2 model unloaded ({self.model_name})")
+
     @property
     def dimensions(self) -> int:
         return self._dimensions

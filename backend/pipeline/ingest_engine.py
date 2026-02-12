@@ -834,6 +834,10 @@ def phase3_embed_all(
 
         logger.info(f"  VV: {vv_encoded} images encoded")
 
+        # Unload SigLIP2 after VV encoding to free GPU memory before MV
+        _global_encoder.unload()
+        _global_encoder = None
+
     # === MV: Text embedding batch encoding ===
     if text_enabled:
         from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
@@ -1144,6 +1148,17 @@ def process_batch_phased(
     # Store Phase 2: vision fields only
     phase_store_vision(parsed)
 
+    # Unload VLM to free VRAM before loading embedding models
+    try:
+        from backend.vision.vision_factory import get_vision_analyzer, VisionAnalyzerFactory
+        analyzer = get_vision_analyzer()
+        if hasattr(analyzer, 'unload_model'):
+            analyzer.unload_model()
+        VisionAnalyzerFactory.reset()  # Clear singleton so it can be re-created if needed
+        logger.info("VLM unloaded after Phase 2 to free memory for Phase 3")
+    except Exception:
+        pass
+
     # Phase 3: Embed (sub-batch JIT thumbnail loading for VV, text-only for MV)
     embeddings = phase3_embed_all(parsed, vv_batch=vv_batch, mv_batch=mv_batch)
     cum_embed = valid_count
@@ -1155,15 +1170,6 @@ def process_batch_phased(
     _emit_phase_progress()
 
     parse_errors = sum(1 for pf in parsed if pf.error is not None)
-
-    # Unload VLM to free VRAM
-    try:
-        from backend.vision.vision_factory import get_vision_analyzer
-        analyzer = get_vision_analyzer()
-        if hasattr(analyzer, 'unload_model'):
-            analyzer.unload_model()
-    except Exception:
-        pass
 
     elapsed = time.perf_counter() - t_total
     logger.info(

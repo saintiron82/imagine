@@ -262,6 +262,23 @@ class TransformersEmbeddingProvider(EmbeddingProvider):
         ).to(self._device).eval()
         logger.info(f"MV model loaded on {self._device}")
 
+    def unload(self):
+        """Unload MV model to free GPU memory."""
+        import gc
+        import torch
+        if self._model is not None:
+            del self._model
+            self._model = None
+        if self._tokenizer is not None:
+            del self._tokenizer
+            self._tokenizer = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        logger.info(f"MV model unloaded ({self._hf_model_id})")
+
     @staticmethod
     def _last_token_pool(last_hidden_states, attention_mask):
         """Extract the last non-padding token's hidden state."""

@@ -212,7 +212,7 @@ class BaseVisionAnalyzer:
         return results
 
     def unload_model(self):
-        """Explicitly unload model from VRAM."""
+        """Explicitly unload model from VRAM. Subclasses should override."""
         pass
 
 
