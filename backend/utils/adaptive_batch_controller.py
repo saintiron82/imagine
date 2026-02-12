@@ -42,11 +42,11 @@ from .memory_monitor import (
 logger = logging.getLogger(__name__)
 
 
-# Default phase limits
+# Default phase limits (max is a safety ceiling; real limit is found by memory pressure)
 DEFAULT_PHASE_LIMITS = {
-    'vlm': {'min': 1, 'max': 8, 'initial': 2},
-    'vv': {'min': 1, 'max': 64, 'initial': 4},
-    'mv': {'min': 2, 'max': 64, 'initial': 16},
+    'vlm': {'min': 1, 'max': 128, 'initial': 2},
+    'vv': {'min': 1, 'max': 256, 'initial': 4},
+    'mv': {'min': 2, 'max': 256, 'initial': 16},
 }
 
 # State machine states
