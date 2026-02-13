@@ -165,6 +165,7 @@ class SigLIP2Encoder:
     def _clear_gpu_cache(self):
         gc.collect()
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.synchronize()
             torch.mps.empty_cache()
         elif torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -248,6 +249,7 @@ class SigLIP2Encoder:
         # Free GPU tensors immediately (MPS doesn't auto-reclaim)
         del inputs, image_features, batch_vecs
         if self._device == "mps":
+            torch.mps.synchronize()
             torch.mps.empty_cache()
 
         return vectors

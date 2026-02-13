@@ -322,6 +322,11 @@ class VisionAnalyzer:
                     clean_up_tokenization_spaces=False
                 )[0]
 
+                # Free GPU tensors + clear rope_deltas cache
+                del inputs, generated_ids
+                if hasattr(self.model, 'rope_deltas'):
+                    self.model.rope_deltas = None
+
                 return caption
             else:
                 # Florence-2 format (if ever fixed)
@@ -600,8 +605,12 @@ class VisionAnalyzer:
 
             # Free GPU tensors + CPU intermediates (MPS doesn't auto-reclaim)
             del inputs, generated_ids, trimmed
+            # Clear model's cached rope_deltas to prevent memory accumulation
+            if hasattr(self.model, 'rope_deltas'):
+                self.model.rope_deltas = None
             import gc; gc.collect()
             if self.device == "mps":
+                torch.mps.synchronize()
                 torch.mps.empty_cache()
 
             return decoded
@@ -748,8 +757,12 @@ class VisionAnalyzer:
 
         # Free GPU tensors + CPU intermediates (MPS doesn't auto-reclaim)
         del inputs, generated_ids, trimmed
+        # Clear model's cached rope_deltas to prevent memory accumulation
+        if hasattr(self.model, 'rope_deltas'):
+            self.model.rope_deltas = None
         import gc; gc.collect()
         if self.device == "mps":
+            torch.mps.synchronize()
             torch.mps.empty_cache()
 
         return decoded

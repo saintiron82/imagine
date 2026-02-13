@@ -1240,11 +1240,11 @@ def _force_memory_reclaim(monitor, label: str):
         gc.collect()
         gc.collect()
         if has_mps:
-            torch.mps.empty_cache()
             try:
-                torch.mps.synchronize()
+                torch.mps.synchronize()  # Complete async ops BEFORE freeing
             except Exception:
                 pass
+            torch.mps.empty_cache()
         elif has_cuda:
             torch.cuda.empty_cache()
 
