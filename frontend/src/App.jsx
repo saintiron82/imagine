@@ -18,7 +18,7 @@ function App() {
   const [processProgress, setProcessProgress] = useState({
     processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0,
     // Cumulative per-phase counts
-    cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
+    cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
     // Active phase sub-progress
     activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0,
     batchInfo: '',
@@ -31,7 +31,7 @@ function App() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoverProgress, setDiscoverProgress] = useState({
     processed: 0, total: 0, skipped: 0, currentFile: '', folderPath: '',
-    cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
+    cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
     activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '',
     etaMs: null
   });
@@ -76,9 +76,9 @@ function App() {
               skipped: data.skipped ?? prev.skipped,
               currentFile: data.currentFile ?? prev.currentFile,
               cumParse: data.cumParse ?? prev.cumParse,
-              cumVision: data.cumVision ?? prev.cumVision,
-              cumEmbed: data.cumEmbed ?? prev.cumEmbed,
-              cumStore: data.cumStore ?? prev.cumStore,
+              cumMC: data.cumMC ?? prev.cumMC,
+              cumVV: data.cumVV ?? prev.cumVV,
+              cumMV: data.cumMV ?? prev.cumMV,
               activePhase: data.activePhase ?? prev.activePhase,
               phaseSubCount: data.phaseSubCount ?? prev.phaseSubCount,
               phaseSubTotal: data.phaseSubTotal ?? prev.phaseSubTotal,
@@ -88,7 +88,7 @@ function App() {
             // Phase-based ETA: track progress rate per active phase
             const pe = phaseEtaRef.current;
             const ap = next.activePhase;
-            const counts = [next.cumParse, next.cumVision, next.cumEmbed, next.cumStore];
+            const counts = [next.cumParse, next.cumMC, next.cumVV, next.cumMV];
             const count = counts[ap] || 0;
             const effectiveTotal = next.total - (next.skipped || 0);
 
@@ -133,7 +133,7 @@ function App() {
         // Batch done: reset all processing state
         window.electron.pipeline.onBatchDone((data) => {
           setIsProcessing(false);
-          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
+          setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
           setFileStep({ step: 0, totalSteps: 5, stepName: '' });
           etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
           const msg = data.skipped > 0
@@ -153,7 +153,7 @@ function App() {
             // Phase-based ETA (same logic as pipeline mode)
             const de = discoverEtaRef.current;
             const ap = next.activePhase ?? 0;
-            const counts = [next.cumParse || 0, next.cumVision || 0, next.cumEmbed || 0, next.cumStore || 0];
+            const counts = [next.cumParse || 0, next.cumMC || 0, next.cumVV || 0, next.cumMV || 0];
             const count = counts[ap];
             const effectiveTotal = (next.total || 0) - (next.skipped || 0);
 
@@ -186,7 +186,7 @@ function App() {
             setIsDiscovering(false);
             setDiscoverProgress({
               processed: 0, total: 0, skipped: 0, currentFile: '', folderPath: '',
-              cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
+              cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
               activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '',
               etaMs: null
             });
@@ -267,7 +267,7 @@ function App() {
 
     setIsProcessing(true);
     etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
-    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
+    setProcessProgress({ processed: 0, total: fileArray.length, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
     setSelectedFiles(new Set());
 
     appendLog({
@@ -285,7 +285,7 @@ function App() {
     // Kill the actual Python process
     window.electron?.pipeline?.stop();
     setIsProcessing(false);
-    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
+    setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
     setFileStep({ step: 0, totalSteps: 5, stepName: '' });
     etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
   };
@@ -470,9 +470,9 @@ function App() {
             currentFile={processProgress.currentFile}
             etaMs={processProgress.etaMs}
             cumParse={processProgress.cumParse}
-            cumVision={processProgress.cumVision}
-            cumEmbed={processProgress.cumEmbed}
-            cumStore={processProgress.cumStore}
+            cumMC={processProgress.cumMC}
+            cumVV={processProgress.cumVV}
+            cumMV={processProgress.cumMV}
             activePhase={processProgress.activePhase}
             phaseSubCount={processProgress.phaseSubCount}
             phaseSubTotal={processProgress.phaseSubTotal}

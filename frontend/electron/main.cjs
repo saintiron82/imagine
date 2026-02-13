@@ -578,9 +578,9 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     pipelineStoppedByUser = false;
 
     // Cumulative phase tracking — each phase has independent progress
-    let cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0;
+    let cumParse = 0, cumMC = 0, cumVV = 0, cumMV = 0;
     // Current active phase within mini-batch (for sub-progress tracking)
-    let activePhase = 0; // 0=parse, 1=vision, 2=embed, 3=store
+    let activePhase = 0; // 0=parse, 1=MC, 2=VV, 3=MV
     let phaseSubCount = 0, phaseSubTotal = 0;
 
     let batchInfo = '';
@@ -593,7 +593,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             skipped: skippedCount,
             currentFile: extraFields.currentFile || '',
             // Cumulative per-phase counts
-            cumParse, cumVision, cumEmbed, cumStore,
+            cumParse, cumMC, cumVV, cumMV,
             // Active phase sub-progress (within mini-batch)
             activePhase,
             phaseSubCount, phaseSubTotal,
@@ -628,15 +628,15 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             const stepDoneMatch = clean.match(/^STEP (\d+)\/(\d+) completed/);
             // Phase sub-progress: [1/26] filename → type (may have leading whitespace from logger indent)
             const subProgressMatch = clean.match(/^\s*\[(\d+)\/(\d+)\]\s+(.+?)(?:\s+→|$)/);
-            // Cumulative phase progress: [PHASE] P:40 V:33 E:30 S:30 T:500 B:8
-            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+V:(\d+)\s+E:(\d+)\s+S:(\d+)\s+T:(\d+)(?:\s+B:(\S+))?/);
+            // Cumulative phase progress: [PHASE] P:40 MC:33 VV:30 MV:30 T:500 B:8
+            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+MC:(\d+)\s+VV:(\d+)\s+MV:(\d+)\s+T:(\d+)(?:\s+B:(\S+))?/);
 
             // [PHASE] cumulative progress
             if (phaseMatch) {
                 cumParse = parseInt(phaseMatch[1]);
-                cumVision = parseInt(phaseMatch[2]);
-                cumEmbed = parseInt(phaseMatch[3]);
-                cumStore = parseInt(phaseMatch[4]);
+                cumMC = parseInt(phaseMatch[2]);
+                cumVV = parseInt(phaseMatch[3]);
+                cumMV = parseInt(phaseMatch[4]);
                 const batchInfo = phaseMatch[6] || '';
                 emitPhaseProgress({ batchInfo });
             }
@@ -795,7 +795,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     let totalFiles = 0;
 
     // Phase tracking (same as pipeline handler)
-    let cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0;
+    let cumParse = 0, cumMC = 0, cumVV = 0, cumMV = 0;
     let activePhase = 0;
     let phaseSubCount = 0, phaseSubTotal = 0;
     let batchInfo = '';
@@ -807,7 +807,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
             total: totalFiles,
             skipped: skippedCount,
             currentFile: extraFields.currentFile || '',
-            cumParse, cumVision, cumEmbed, cumStore,
+            cumParse, cumMC, cumVV, cumMV,
             activePhase, phaseSubCount, phaseSubTotal,
             batchInfo,
             folderPath
@@ -834,13 +834,13 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
             const discoverMatch = clean.match(/\[DISCOVER\] Found (\d+)/);
             if (discoverMatch) totalFiles = parseInt(discoverMatch[1]);
 
-            // [PHASE] P:40 V:33 E:30 S:30 T:500 B:8
-            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+V:(\d+)\s+E:(\d+)\s+S:(\d+)\s+T:(\d+)(?:\s+B:(\S+))?/);
+            // [PHASE] P:40 MC:33 VV:30 MV:30 T:500 B:8
+            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+MC:(\d+)\s+VV:(\d+)\s+MV:(\d+)\s+T:(\d+)(?:\s+B:(\S+))?/);
             if (phaseMatch) {
                 cumParse = parseInt(phaseMatch[1]);
-                cumVision = parseInt(phaseMatch[2]);
-                cumEmbed = parseInt(phaseMatch[3]);
-                cumStore = parseInt(phaseMatch[4]);
+                cumMC = parseInt(phaseMatch[2]);
+                cumVV = parseInt(phaseMatch[3]);
+                cumMV = parseInt(phaseMatch[4]);
                 emitDiscoverProgress({ batchInfo: phaseMatch[6] || '' });
             }
 

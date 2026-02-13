@@ -48,7 +48,7 @@ function PhasePill({ label, count, total, isActive, color }) {
 const StatusBar = ({
     logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = {},
     processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null,
-    cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0,
+    cumParse = 0, cumMC = 0, cumVV = 0, cumMV = 0,
     activePhase = 0, phaseSubCount = 0, phaseSubTotal = 0,
     batchInfo = '', fileStep = {}, onStop
 }) => {
@@ -91,9 +91,9 @@ const StatusBar = ({
     // Phase data for pills
     const phases = [
         { label: t('status.phase.parse'), count: cumParse, color: 'bg-cyan-400' },
-        { label: t('status.phase.caption'), count: cumVision, color: 'bg-blue-400' },
-        { label: t('status.phase.vector'), count: cumEmbed, color: 'bg-purple-400' },
-        { label: t('status.phase.save'), count: cumStore, color: 'bg-green-400' },
+        { label: 'MC', count: cumMC, color: 'bg-blue-400' },
+        { label: 'VV', count: cumVV, color: 'bg-purple-400' },
+        { label: 'MV', count: cumMV, color: 'bg-green-400' },
     ];
 
     // Overall progress: stored / (total - skipped)
@@ -183,12 +183,12 @@ const StatusBar = ({
                 {/* Discover progress — reuses same 4-phase pills as pipeline */}
                 {isDiscovering && !isProcessing && (() => {
                     const dp = discoverProgress || {};
-                    const hasPhaseData = dp.cumParse > 0 || dp.cumVision > 0 || dp.cumEmbed > 0 || dp.cumStore > 0;
+                    const hasPhaseData = dp.cumParse > 0 || dp.cumMC > 0 || dp.cumVV > 0 || dp.cumMV > 0;
                     const dPhases = [
                         { label: t('status.phase.parse'), count: dp.cumParse || 0, color: 'bg-cyan-400' },
-                        { label: t('status.phase.caption'), count: dp.cumVision || 0, color: 'bg-blue-400' },
-                        { label: t('status.phase.vector'), count: dp.cumEmbed || 0, color: 'bg-purple-400' },
-                        { label: t('status.phase.save'), count: dp.cumStore || 0, color: 'bg-green-400' },
+                        { label: 'MC', count: dp.cumMC || 0, color: 'bg-blue-400' },
+                        { label: 'VV', count: dp.cumVV || 0, color: 'bg-purple-400' },
+                        { label: 'MV', count: dp.cumMV || 0, color: 'bg-green-400' },
                     ];
                     const dTotal = dp.total || 0;
                     const dProcessed = dp.processed || 0;
@@ -256,7 +256,7 @@ const StatusBar = ({
                     </div>
                 )}
 
-                <span className="text-[9px] text-gray-600 font-mono mr-2">v3.5.1.20260213_01</span>
+                <span className="text-[9px] text-gray-600 font-mono mr-2">v3.5.1.20260213_04</span>
                 <div className="flex-shrink-0">
                     {isOpen ? <X size={14} /> : t('label.show_logs')}
                 </div>

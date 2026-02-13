@@ -1370,15 +1370,16 @@ def process_batch_phased(
     logger.info(f"[BATCH] Adaptive pipeline v3.5: {total} files (throughput-driven batch sizing)")
 
     # Cumulative phase counters (emitted as [PHASE] for frontend tracking)
+    # P=Parse, MC=Meta-Context Caption, VV=Visual Vector, MV=Meaning Vector
     cum_parse = 0
-    cum_vision = 0
-    cum_embed = 0
-    cum_store = 0
+    cum_mc = 0
+    cum_vv = 0
+    cum_mv = 0
     active_batch_info = ""
 
     def _emit_phase_progress():
         logger.info(
-            f"[PHASE] P:{cum_parse} V:{cum_vision} E:{cum_embed} S:{cum_store} "
+            f"[PHASE] P:{cum_parse} MC:{cum_mc} VV:{cum_vv} MV:{cum_mv} "
             f"T:{total} {active_batch_info}"
         )
 
@@ -1398,10 +1399,10 @@ def process_batch_phased(
     # Per-phase smart skip
     _check_phase_skip(parsed)
 
-    # ── Phase 2: VLM (adaptive batch) ──
+    # ── Phase 2: VLM (adaptive batch) → MC generation ──
     def _on_vision_progress(count, batch_size=2):
-        nonlocal cum_vision, active_batch_info
-        cum_vision = count
+        nonlocal cum_mc, active_batch_info
+        cum_mc = count
         active_batch_info = f"B:{batch_size}"
         _emit_phase_progress()
 
@@ -1410,7 +1411,7 @@ def process_batch_phased(
         progress_callback=progress_callback,
         phase_progress_callback=_on_vision_progress,
     )
-    cum_vision = valid_count
+    cum_mc = valid_count
     active_batch_info = ""
     _emit_phase_progress()
 
@@ -1421,33 +1422,34 @@ def process_batch_phased(
 
     # ── Phase 3a: VV (adaptive batch) ──
     def _on_vv_progress(count, kind, batch_size=4):
-        nonlocal cum_embed, active_batch_info
-        cum_embed = count
-        active_batch_info = f"B:{batch_size}:{kind.upper()}"
+        nonlocal cum_vv, active_batch_info
+        cum_vv = count
+        active_batch_info = f"B:{batch_size}"
         _emit_phase_progress()
 
     phase3a_vv_adaptive(
         parsed, controller, monitor,
         phase_progress_callback=_on_vv_progress,
     )
-    # VV vectors already saved incrementally per sub-batch
+    cum_vv = valid_count
+    active_batch_info = ""
+    _emit_phase_progress()
 
     # Unload SigLIP2 completely + verify
     _unload_siglip2_verified(monitor)
 
     # ── Phase 3b: MV (adaptive batch) ──
     def _on_mv_progress(count, kind, batch_size=16):
-        nonlocal cum_embed, active_batch_info
-        cum_embed += count  # MV adds to embed count
-        active_batch_info = f"B:{batch_size}:{kind.upper()}"
+        nonlocal cum_mv, active_batch_info
+        cum_mv = count
+        active_batch_info = f"B:{batch_size}"
         _emit_phase_progress()
 
     phase3b_mv_adaptive(
         parsed, controller, monitor,
         phase_progress_callback=_on_mv_progress,
     )
-    # MV vectors already saved incrementally per sub-batch
-    cum_embed = valid_count
+    cum_mv = valid_count
     active_batch_info = ""
     _emit_phase_progress()
 
@@ -1468,7 +1470,6 @@ def process_batch_phased(
                 logger.info(f"  [OK] {pf.file_path.name} (vv={'Y' if pf.stored_vv else 'N'} mv={'Y' if pf.stored_mv else 'N'})")
             else:
                 logger.info(f"  [OK] {pf.file_path.name}")
-    cum_store = valid_count
     _emit_phase_progress()
 
     parse_errors = sum(1 for pf in parsed if pf.error is not None)
