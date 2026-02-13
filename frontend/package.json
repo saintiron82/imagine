@@ -8,6 +8,7 @@
     "dev": "vite",
     "postinstall": "node scripts/patch-electron-name.cjs",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on tcp:9274 && cross-env NODE_ENV=development electron .\"",
+    "restart": "bash scripts/restart.sh",
     "electron:build": "npm run build && electron-builder",
     "build": "vite build",
     "lint": "eslint .",
