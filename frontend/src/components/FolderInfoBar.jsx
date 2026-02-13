@@ -58,7 +58,6 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing }) => {
     if (!currentPath) return null;
 
     const folderName = currentPath.split(/[/\\]/).pop() || currentPath;
-    const allDone = stats && stats.mc >= stats.total && stats.vv >= stats.total && stats.mv >= stats.total;
 
     return (
         <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700 flex-shrink-0">

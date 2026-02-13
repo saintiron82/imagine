@@ -99,16 +99,29 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
 
                 <span className={`text-sm truncate flex-1 ${isRoot ? 'text-white font-medium' : 'text-gray-200'}`}>{name}</span>
 
-                {/* Incomplete dot indicator */}
+                {/* Phase completion indicator */}
                 {myStats && myStats.total > 0 && (() => {
-                    const allDone = myStats.mc >= myStats.total && myStats.vv >= myStats.total && myStats.mv >= myStats.total;
-                    if (allDone) return null;
-                    const incomplete = myStats.total - Math.min(myStats.mc, myStats.vv, myStats.mv);
-                    return (
-                        <span className="flex items-center gap-1 flex-shrink-0 mr-1" title={`${incomplete}/${myStats.total} incomplete`}>
-                            <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
-                        </span>
-                    );
+                    const minPhase = Math.min(myStats.mc, myStats.vv, myStats.mv);
+                    const ratio = minPhase / myStats.total;
+                    // fully done (or within rounding: 98%+)
+                    if (ratio >= 0.98) {
+                        return (
+                            <span className="flex items-center flex-shrink-0 mr-1" title={`${myStats.total}/${myStats.total} complete`}>
+                                <span className="w-2 h-2 rounded-full bg-green-500" />
+                            </span>
+                        );
+                    }
+                    // partially processed
+                    if (minPhase > 0) {
+                        const incomplete = myStats.total - minPhase;
+                        return (
+                            <span className="flex items-center flex-shrink-0 mr-1" title={`${incomplete}/${myStats.total} remaining`}>
+                                <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
+                            </span>
+                        );
+                    }
+                    // never processed — no indicator
+                    return null;
                 })()}
 
                 {isRoot && onRemoveRoot && (
