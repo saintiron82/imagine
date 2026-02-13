@@ -791,6 +791,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     event.reply('discover-log', { message: `Scanning folder: ${folderPath}`, type: 'info' });
 
     let processedCount = 0;
+    let totalFiles = 0;
 
     const proc = spawn(finalPython, args, { cwd: projectRoot, detached: true, env: { ...process.env, PYTHONUNBUFFERED: '1' } });
     activeDiscoverProcs.set(folderPath, proc);
@@ -810,17 +811,26 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
             // Strip Python logger timestamp prefix for pattern matching
             const clean = message.replace(/^\d{4}-\d{2}-\d{2}\s[\d:,.]+ - [\w.]+ - \w+ - /, '');
 
+            // Extract total file count from [DISCOVER] Found N supported files
+            const discoverMatch = clean.match(/\[DISCOVER\] Found (\d+)/);
+            if (discoverMatch) {
+                totalFiles = parseInt(discoverMatch[1]);
+                event.reply('discover-progress', { total: totalFiles, folderPath });
+            }
+
             const processingMatch = clean.match(/^Processing: (.+)/);
             const stepMatch = clean.match(/^STEP (\d+)\/(\d+) (.+)/);
             if (processingMatch) {
                 event.reply('discover-progress', {
                     processed: processedCount,
+                    total: totalFiles,
                     currentFile: path.basename(processingMatch[1]),
                     folderPath
                 });
             } else if (stepMatch) {
                 event.reply('discover-progress', {
                     processed: processedCount,
+                    total: totalFiles,
                     step: parseInt(stepMatch[1]),
                     totalSteps: parseInt(stepMatch[2]),
                     stepName: stepMatch[3],
@@ -830,6 +840,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
                 processedCount++;
                 event.reply('discover-progress', {
                     processed: processedCount,
+                    total: totalFiles,
                     currentFile: '',
                     folderPath
                 });

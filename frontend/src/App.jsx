@@ -28,7 +28,9 @@ function App() {
   const phaseEtaRef = useRef({ phase: -1, startTime: null, startCount: 0 });
   const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
   const [isDiscovering, setIsDiscovering] = useState(false);
-  const [discoverProgress, setDiscoverProgress] = useState('');
+  const [discoverProgress, setDiscoverProgress] = useState({
+    processed: 0, total: 0, currentFile: '', step: 0, totalSteps: 4, folderPath: ''
+  });
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [resumeStats, setResumeStats] = useState(null);
   const [showResumeDialog, setShowResumeDialog] = useState(false);
@@ -139,7 +141,9 @@ function App() {
         // Discover event listeners (for auto-scan)
         window.electron.pipeline.onDiscoverLog((data) => {
           appendLog(data);
-          setDiscoverProgress(data.message);
+        });
+        window.electron.pipeline.onDiscoverProgress((data) => {
+          setDiscoverProgress(prev => ({ ...prev, ...data }));
         });
         window.electron.pipeline.onDiscoverFileDone((data) => {
           // Auto-scan processes folders sequentially via discoverQueueRef
@@ -150,7 +154,7 @@ function App() {
             window.electron.pipeline.runDiscover({ folderPath: nextFolder, noSkip: false });
           } else {
             setIsDiscovering(false);
-            setDiscoverProgress('');
+            setDiscoverProgress({ processed: 0, total: 0, currentFile: '', step: 0, totalSteps: 4, folderPath: '' });
             // Clear session: all folders processed successfully
             window.electron.pipeline.updateConfig('last_session.folders', []);
           }
@@ -197,6 +201,7 @@ function App() {
         window.electron.pipeline.offFileDone();
         window.electron.pipeline.offBatchDone();
         window.electron.pipeline.offDiscoverLog();
+        window.electron.pipeline.offDiscoverProgress();
         window.electron.pipeline.offDiscoverFileDone();
       }
     };
@@ -253,6 +258,8 @@ function App() {
   const handleProcessFolder = (folderPath) => {
     if (isProcessing || isDiscovering) return;
     setIsDiscovering(true);
+    setCurrentTab('archive');
+    setCurrentPath(folderPath);
     appendLog({ message: `Processing folder: ${folderPath}`, type: 'info' });
     // Save session target for resume on next startup
     window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
@@ -269,6 +276,8 @@ function App() {
     if (incompleteFolders.length === 0) return;
 
     setIsDiscovering(true);
+    setCurrentTab('archive');
+    setCurrentPath(incompleteFolders[0]);
     discoverQueueRef.current = { folders: incompleteFolders, index: 0, scanning: true };
     // Save session target for resume on next startup
     window.electron.pipeline.updateConfig('last_session.folders', incompleteFolders);

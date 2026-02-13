@@ -46,7 +46,7 @@ function PhasePill({ label, count, total, isActive, color }) {
 }
 
 const StatusBar = ({
-    logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = '',
+    logs, clearLogs, isProcessing, isDiscovering = false, discoverProgress = {},
     processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null,
     cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0,
     activePhase = 0, phaseSubCount = 0, phaseSubTotal = 0,
@@ -184,8 +184,27 @@ const StatusBar = ({
                 {isDiscovering && !isProcessing && (
                     <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
                         <Loader2 className="animate-spin text-green-400" size={14} />
-                        <span className="text-green-300 text-xs font-medium">{t('status.discovering')}</span>
-                        <span className="text-gray-400 text-xs truncate max-w-[250px]">{discoverProgress}</span>
+                        {discoverProgress?.step > 0 ? (
+                            <>
+                                <span className="text-green-300 font-mono text-[11px] font-bold">
+                                    STEP {discoverProgress.step}/{discoverProgress.totalSteps || 4}
+                                </span>
+                                {discoverProgress.total > 0 && (
+                                    <span className="text-green-300 font-mono font-bold text-[11px] border-l border-green-700 pl-2">
+                                        {discoverProgress.processed}/{discoverProgress.total}
+                                    </span>
+                                )}
+                                <span className="text-gray-400 text-xs truncate max-w-[150px]">
+                                    {discoverProgress.currentFile || discoverProgress.stepName || ''}
+                                </span>
+                            </>
+                        ) : (
+                            <span className="text-green-300 text-xs font-medium">
+                                {discoverProgress?.total > 0
+                                    ? `${t('status.discovering')} (${discoverProgress.total} files)`
+                                    : t('status.discovering')}
+                            </span>
+                        )}
                     </div>
                 )}
 
