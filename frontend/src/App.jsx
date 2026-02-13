@@ -238,36 +238,22 @@ function App() {
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip: false });
   };
 
-  // Resume incomplete work: discover all folders with incomplete files
-  const handleResume = async () => {
+  // Resume incomplete work: discover only folders that have incomplete files
+  const handleResume = () => {
     setShowResumeDialog(false);
     if (!resumeStats?.folders?.length) return;
 
-    // Get registered folders to match storage_roots to top-level roots
-    const regResult = await window.electron?.pipeline?.getRegisteredFolders();
-    const registeredPaths = regResult?.success
-      ? (regResult.folders || []).filter(f => f.exists).map(f => f.path.normalize('NFC'))
-      : [];
-
-    // Find the registered root that contains each incomplete storage_root
-    const rootSet = new Set();
-    for (const folder of resumeStats.folders) {
-      const sr = folder.storage_root.normalize('NFC');
-      const root = registeredPaths.find(rp => sr === rp || sr.startsWith(rp.endsWith('/') ? rp : rp + '/'));
-      if (root) rootSet.add(root);
-      else rootSet.add(sr); // fallback: use storage_root itself
-    }
-
-    const uniqueRoots = [...rootSet];
-    if (uniqueRoots.length === 0) return;
+    // Use individual storage_root paths (only incomplete folders, not parent roots)
+    const incompleteFolders = resumeStats.folders.map(f => f.storage_root.normalize('NFC'));
+    if (incompleteFolders.length === 0) return;
 
     setIsDiscovering(true);
-    discoverQueueRef.current = { folders: uniqueRoots, index: 0, scanning: true };
+    discoverQueueRef.current = { folders: incompleteFolders, index: 0, scanning: true };
     appendLog({
-      message: `Resuming: ${resumeStats.total_incomplete} incomplete files in ${uniqueRoots.length} folder(s)`,
+      message: `Resuming: ${resumeStats.total_incomplete} incomplete files in ${incompleteFolders.length} folder(s)`,
       type: 'info'
     });
-    window.electron.pipeline.runDiscover({ folderPath: uniqueRoots[0], noSkip: false });
+    window.electron.pipeline.runDiscover({ folderPath: incompleteFolders[0], noSkip: false });
   };
 
   const handleDismissResume = () => {
