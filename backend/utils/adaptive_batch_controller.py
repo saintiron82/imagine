@@ -64,6 +64,10 @@ STATE_LOCKED = 'locked'
 THROUGHPUT_DROP_THRESHOLD = 0.95    # 5% drop = slower
 THROUGHPUT_DEGRADE_THRESHOLD = 0.80  # 20% drop from best = re-enter REFINING
 
+# Warmup: small batches (2→3) have high throughput variance per image.
+# Require N growth steps before throughput comparisons kick in.
+MIN_WARMUP_STEPS = 3  # grow unconditionally for first 3 steps (e.g., 2→3→5→8)
+
 
 @dataclass
 class BatchDecision:
@@ -93,6 +97,7 @@ class PhaseState:
     prev_throughput: Optional[float] = None  # Previous sub-batch items/sec
     best_throughput: Optional[float] = None  # Best observed items/sec
     best_batch_size: Optional[int] = None    # Batch size at best throughput
+    growth_count: int = 0                    # Growth decisions made (warmup counter)
 
 
 class AdaptiveBatchController:
@@ -195,10 +200,11 @@ class AdaptiveBatchController:
             ps.best_batch_size = ps.current
 
         self._decisions.append(decision)
+        warmup_tag = f", warmup={ps.growth_count}/{MIN_WARMUP_STEPS}" if ps.state == STATE_GROWING and ps.growth_count < MIN_WARMUP_STEPS else ""
         logger.info(
             f"[ADAPTIVE:{phase}] B:{processed_count}→{decision.batch_size} "
             f"({decision.reason}, {decision.state}, step={ps.step_increment}, "
-            f"{throughput:.1f} items/s, pressure={pressure:.0%})"
+            f"{throughput:.1f} items/s, pressure={pressure:.0%}{warmup_tag})"
         )
         return decision
 
@@ -219,7 +225,11 @@ class AdaptiveBatchController:
         """
         current = ps.current
 
-        if self._is_slower(ps, throughput):
+        # Warmup: small batches have high per-image variance.
+        # Always grow for the first MIN_WARMUP_STEPS to reach stable sizes.
+        warmed_up = ps.growth_count >= MIN_WARMUP_STEPS
+
+        if warmed_up and self._is_slower(ps, throughput):
             # Throughput dropped! Record boundary and enter REFINING
             ps.first_slower = current
             ps.step_increment = 1
@@ -237,12 +247,13 @@ class AdaptiveBatchController:
             return BatchDecision(ps.current, 'refine', pressure, phase, STATE_REFINING, throughput)
 
         else:
-            # Throughput same or better — record and keep growing
+            # Throughput same or better (or still warming up) — record and keep growing
             ps.last_fast = current
             next_size = min(max_bs, current + ps.step_increment)
             ps.step_increment += 1
             ps.current = next_size
             ps.consecutive_shrinks = 0
+            ps.growth_count += 1
             return BatchDecision(next_size, 'growth', pressure, phase, STATE_GROWING, throughput)
 
     def _handle_refining(

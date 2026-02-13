@@ -231,6 +231,9 @@ const StatusBar = ({
                                         );
                                     })()}
                                     <span className="text-gray-400 truncate max-w-[100px]">{dp.currentFile?.split(/[/\\]/).pop()}</span>
+                                    {dp.etaMs != null && (
+                                        <span className="text-green-300 font-mono text-[11px]">~{formatEta(dp.etaMs)}</span>
+                                    )}
                                 </>
                             ) : (
                                 <span className="text-green-300 text-xs font-medium">

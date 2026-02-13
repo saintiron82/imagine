@@ -27,11 +27,13 @@ function App() {
   const etaRef = useRef({ startTime: null, lastFileTime: null, emaMs: null });
   const phaseEtaRef = useRef({ phase: -1, startTime: null, startCount: 0 });
   const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
+  const discoverEtaRef = useRef({ phase: -1, startTime: null, startCount: 0 });
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoverProgress, setDiscoverProgress] = useState({
     processed: 0, total: 0, skipped: 0, currentFile: '', folderPath: '',
     cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
-    activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: ''
+    activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '',
+    etaMs: null
   });
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [resumeStats, setResumeStats] = useState(null);
@@ -145,7 +147,33 @@ function App() {
           appendLog(data);
         });
         window.electron.pipeline.onDiscoverProgress((data) => {
-          setDiscoverProgress(prev => ({ ...prev, ...data }));
+          setDiscoverProgress(prev => {
+            const next = { ...prev, ...data };
+
+            // Phase-based ETA (same logic as pipeline mode)
+            const de = discoverEtaRef.current;
+            const ap = next.activePhase ?? 0;
+            const counts = [next.cumParse || 0, next.cumVision || 0, next.cumEmbed || 0, next.cumStore || 0];
+            const count = counts[ap];
+            const effectiveTotal = (next.total || 0) - (next.skipped || 0);
+
+            if (de.phase !== ap) {
+              de.phase = ap;
+              de.startTime = Date.now();
+              de.startCount = count;
+            }
+
+            const done = count - de.startCount;
+            const remaining = effectiveTotal - count;
+            if (de.startTime && done > 0 && remaining > 0) {
+              const elapsed = Date.now() - de.startTime;
+              next.etaMs = (elapsed / done) * remaining;
+            } else {
+              next.etaMs = null;
+            }
+
+            return next;
+          });
         });
         window.electron.pipeline.onDiscoverFileDone((data) => {
           // Auto-scan processes folders sequentially via discoverQueueRef
@@ -159,8 +187,10 @@ function App() {
             setDiscoverProgress({
               processed: 0, total: 0, skipped: 0, currentFile: '', folderPath: '',
               cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
-              activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: ''
+              activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '',
+              etaMs: null
             });
+            discoverEtaRef.current = { phase: -1, startTime: null, startCount: 0 };
             // Clear session: all folders processed successfully
             window.electron.pipeline.updateConfig('last_session.folders', []);
           }
