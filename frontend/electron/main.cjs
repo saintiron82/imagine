@@ -807,8 +807,11 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
             const message = line.trim();
             if (!message) continue;
 
-            const processingMatch = message.match(/Processing: (.+)/);
-            const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+            // Strip Python logger timestamp prefix for pattern matching
+            const clean = message.replace(/^\d{4}-\d{2}-\d{2}\s[\d:,.]+ - [\w.]+ - \w+ - /, '');
+
+            const processingMatch = clean.match(/^Processing: (.+)/);
+            const stepMatch = clean.match(/^STEP (\d+)\/(\d+) (.+)/);
             if (processingMatch) {
                 event.reply('discover-progress', {
                     processed: processedCount,
@@ -823,7 +826,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
                     stepName: stepMatch[3],
                     folderPath
                 });
-            } else if (message.includes('[OK] Parsed successfully') || message.includes('[SKIP]')) {
+            } else if (clean.includes('[OK]') || clean.includes('[SKIP]')) {
                 processedCount++;
                 event.reply('discover-progress', {
                     processed: processedCount,
@@ -832,9 +835,10 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
                 });
             }
 
-            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
+            // Log key progress events only (not every line)
+            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER|^STEP \d/.test(clean);
             if (isLogWorthy) {
-                event.reply('discover-log', { message, type: 'info' });
+                event.reply('discover-log', { message: clean, type: 'info' });
             }
         }
     });
@@ -842,21 +846,13 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     proc.stderr.on('data', (data) => {
         const raw = data.toString();
         if (!raw.trim()) return;
-        // Process each line individually (stderr comes in multi-line chunks)
+        // stderr: only forward errors (library output like transformers/torch is noisy)
         const lines = raw.split('\n').filter(l => l.trim());
         for (const line of lines) {
             const msg = line.trim();
             if (!msg) continue;
-            const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(msg);
-            if (isError) {
+            if (/\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(msg)) {
                 event.reply('discover-log', { message: msg, type: 'error' });
-                continue;
-            }
-            // Forward progress messages from Python logging (strip timestamp prefix)
-            const isProgress = /\[DISCOVER\]|\[BATCH\]|STEP \d+\/\d+|\[SKIP\]|\[OK\]|Loading|Loaded|Connected|pipeline|Processing|model|MEM:|TIER/.test(msg);
-            if (isProgress) {
-                const cleaned = msg.replace(/^\d{4}-\d{2}-\d{2} [\d:,]+ - \S+ - \S+ - /, '');
-                event.reply('discover-log', { message: cleaned, type: 'info' });
             }
         }
     });
