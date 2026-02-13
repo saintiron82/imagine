@@ -795,55 +795,69 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     const proc = spawn(finalPython, args, { cwd: projectRoot, detached: true, env: { ...process.env, PYTHONUNBUFFERED: '1' } });
     activeDiscoverProcs.set(folderPath, proc);
 
+    // Immediate feedback while Python loads modules (~15-30s)
+    event.reply('discover-log', { message: 'Loading pipeline...', type: 'info' });
+
     proc.stdout.on('data', (data) => {
-        const message = data.toString().trim();
-        if (!message) return;
+        const raw = data.toString();
+        if (!raw.trim()) return;
+        // Process each line individually (stdout may come in multi-line chunks)
+        const lines = raw.split('\n').filter(l => l.trim());
+        for (const line of lines) {
+            const message = line.trim();
+            if (!message) continue;
 
-        const processingMatch = message.match(/Processing: (.+)/);
-        const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
-        if (processingMatch) {
-            event.reply('discover-progress', {
-                processed: processedCount,
-                currentFile: path.basename(processingMatch[1]),
-                folderPath
-            });
-        } else if (stepMatch) {
-            event.reply('discover-progress', {
-                processed: processedCount,
-                step: parseInt(stepMatch[1]),
-                totalSteps: parseInt(stepMatch[2]),
-                stepName: stepMatch[3],
-                folderPath
-            });
-        } else if (message.includes('[OK] Parsed successfully') || message.includes('[SKIP]')) {
-            processedCount++;
-            event.reply('discover-progress', {
-                processed: processedCount,
-                currentFile: '',
-                folderPath
-            });
-        }
+            const processingMatch = message.match(/Processing: (.+)/);
+            const stepMatch = message.match(/STEP (\d+)\/(\d+) (.+)/);
+            if (processingMatch) {
+                event.reply('discover-progress', {
+                    processed: processedCount,
+                    currentFile: path.basename(processingMatch[1]),
+                    folderPath
+                });
+            } else if (stepMatch) {
+                event.reply('discover-progress', {
+                    processed: processedCount,
+                    step: parseInt(stepMatch[1]),
+                    totalSteps: parseInt(stepMatch[2]),
+                    stepName: stepMatch[3],
+                    folderPath
+                });
+            } else if (message.includes('[OK] Parsed successfully') || message.includes('[SKIP]')) {
+                processedCount++;
+                event.reply('discover-progress', {
+                    processed: processedCount,
+                    currentFile: '',
+                    folderPath
+                });
+            }
 
-        const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
-        if (isLogWorthy) {
-            event.reply('discover-log', { message, type: 'info' });
+            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER/.test(message);
+            if (isLogWorthy) {
+                event.reply('discover-log', { message, type: 'info' });
+            }
         }
     });
 
     proc.stderr.on('data', (data) => {
-        const message = data.toString().trim();
-        if (!message) return;
-        const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
-        if (isError) {
-            event.reply('discover-log', { message, type: 'error' });
-            return;
-        }
-        // Forward key progress messages from stderr (Python logging)
-        const isProgress = /\[DISCOVER\]|\[BATCH\]|STEP \d+\/\d+|\[SKIP\]|\[OK\]/.test(message);
-        if (isProgress) {
-            // Extract just the message part after the logging prefix
-            const cleaned = message.replace(/^\d{4}-\d{2}-\d{2} [\d:,]+ - \S+ - \S+ - /, '');
-            event.reply('discover-log', { message: cleaned, type: 'info' });
+        const raw = data.toString();
+        if (!raw.trim()) return;
+        // Process each line individually (stderr comes in multi-line chunks)
+        const lines = raw.split('\n').filter(l => l.trim());
+        for (const line of lines) {
+            const msg = line.trim();
+            if (!msg) continue;
+            const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(msg);
+            if (isError) {
+                event.reply('discover-log', { message: msg, type: 'error' });
+                continue;
+            }
+            // Forward key progress messages from Python logging
+            const isProgress = /\[DISCOVER\]|\[BATCH\]|STEP \d+\/\d+|\[SKIP\]|\[OK\]|Loading model/.test(msg);
+            if (isProgress) {
+                const cleaned = msg.replace(/^\d{4}-\d{2}-\d{2} [\d:,]+ - \S+ - \S+ - /, '');
+                event.reply('discover-log', { message: cleaned, type: 'info' });
+            }
         }
     });
 
