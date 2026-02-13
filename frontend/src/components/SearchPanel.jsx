@@ -989,7 +989,10 @@ function SearchPanel() {
                         {dbStats && dbStats.total_files > 0 && (
                             <div className="mt-3 flex items-center justify-center gap-3 text-xs text-gray-500">
                                 <span className="bg-gray-800 px-3 py-1.5 rounded-full border border-gray-700">
-                                    <span className="text-blue-400 font-bold">{dbStats.total_files}</span> {t('msg.images_archived', { count: '' }).trim()}
+                                    <span className="text-blue-400 font-bold">{dbStats.fully_archived ?? 0}</span>
+                                    {' / '}
+                                    <span className="text-gray-400">{dbStats.total_files}</span>
+                                    {' '}{t('msg.images_archived', { count: '' }).trim()}
                                 </span>
                                 {dbStats.format_distribution && Object.keys(dbStats.format_distribution).length > 0 && (
                                     <span className="bg-gray-800 px-3 py-1.5 rounded-full border border-gray-700">

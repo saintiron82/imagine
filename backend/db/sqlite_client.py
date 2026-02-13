@@ -1131,6 +1131,15 @@ class SQLiteDB:
         result = cursor.fetchone()[0]
         stats['avg_layers_per_file'] = int(result) if result else 0
 
+        # Fully archived (MC + VV + MV all done)
+        cursor.execute("""
+            SELECT COUNT(*) FROM files f
+            WHERE (mc_caption IS NOT NULL AND mc_caption != '')
+              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+              AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
+        """)
+        stats['fully_archived'] = cursor.fetchone()[0]
+
         # Format distribution
         cursor.execute("""
             SELECT format, COUNT(*) as count
