@@ -791,7 +791,28 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     event.reply('discover-log', { message: `Scanning folder: ${folderPath}`, type: 'info' });
 
     let processedCount = 0;
+    let skippedCount = 0;
     let totalFiles = 0;
+
+    // Phase tracking (same as pipeline handler)
+    let cumParse = 0, cumVision = 0, cumEmbed = 0, cumStore = 0;
+    let activePhase = 0;
+    let phaseSubCount = 0, phaseSubTotal = 0;
+    let batchInfo = '';
+
+    function emitDiscoverProgress(extraFields = {}) {
+        if (extraFields.batchInfo !== undefined) batchInfo = extraFields.batchInfo;
+        event.reply('discover-progress', {
+            processed: processedCount,
+            total: totalFiles,
+            skipped: skippedCount,
+            currentFile: extraFields.currentFile || '',
+            cumParse, cumVision, cumEmbed, cumStore,
+            activePhase, phaseSubCount, phaseSubTotal,
+            batchInfo,
+            folderPath
+        });
+    }
 
     const proc = spawn(finalPython, args, { cwd: projectRoot, detached: true, env: { ...process.env, PYTHONUNBUFFERED: '1' } });
     activeDiscoverProcs.set(folderPath, proc);
@@ -802,51 +823,67 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     proc.stdout.on('data', (data) => {
         const raw = data.toString();
         if (!raw.trim()) return;
-        // Process each line individually (stdout may come in multi-line chunks)
         const lines = raw.split('\n').filter(l => l.trim());
         for (const line of lines) {
             const message = line.trim();
             if (!message) continue;
 
-            // Strip Python logger timestamp prefix for pattern matching
             const clean = message.replace(/^\d{4}-\d{2}-\d{2}\s[\d:,.]+ - [\w.]+ - \w+ - /, '');
 
-            // Extract total file count from [DISCOVER] Found N supported files
+            // Extract total file count
             const discoverMatch = clean.match(/\[DISCOVER\] Found (\d+)/);
-            if (discoverMatch) {
-                totalFiles = parseInt(discoverMatch[1]);
-                event.reply('discover-progress', { total: totalFiles, folderPath });
+            if (discoverMatch) totalFiles = parseInt(discoverMatch[1]);
+
+            // [PHASE] P:40 V:33 E:30 S:30 T:500 B:8
+            const phaseMatch = clean.match(/^\[PHASE\]\s+P:(\d+)\s+V:(\d+)\s+E:(\d+)\s+S:(\d+)\s+T:(\d+)(?:\s+B:(\S+))?/);
+            if (phaseMatch) {
+                cumParse = parseInt(phaseMatch[1]);
+                cumVision = parseInt(phaseMatch[2]);
+                cumEmbed = parseInt(phaseMatch[3]);
+                cumStore = parseInt(phaseMatch[4]);
+                emitDiscoverProgress({ batchInfo: phaseMatch[6] || '' });
             }
 
-            const processingMatch = clean.match(/^Processing: (.+)/);
+            const stepDoneMatch = clean.match(/^STEP (\d+)\/(\d+) completed/);
             const stepMatch = clean.match(/^STEP (\d+)\/(\d+) (.+)/);
-            if (processingMatch) {
-                event.reply('discover-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: path.basename(processingMatch[1]),
-                    folderPath
-                });
+            const subProgressMatch = clean.match(/^\s*\[(\d+)\/(\d+)\]\s+(.+?)(?:\s+→|$)/);
+            const processingMatch = clean.match(/^Processing: (.+)/);
+
+            if (stepDoneMatch) {
+                activePhase = parseInt(stepDoneMatch[1]);
+                phaseSubCount = phaseSubTotal;
+                emitDiscoverProgress();
+                phaseSubCount = 0;
+                phaseSubTotal = 0;
             } else if (stepMatch) {
-                event.reply('discover-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    step: parseInt(stepMatch[1]),
-                    totalSteps: parseInt(stepMatch[2]),
-                    stepName: stepMatch[3],
-                    folderPath
-                });
-            } else if (clean.includes('[OK]') || clean.includes('[SKIP]')) {
-                processedCount++;
-                event.reply('discover-progress', {
-                    processed: processedCount,
-                    total: totalFiles,
-                    currentFile: '',
-                    folderPath
-                });
+                activePhase = parseInt(stepMatch[1]) - 1;
+                phaseSubCount = 0;
+                const countMatch = stepMatch[3].match(/\((\d+)/);
+                phaseSubTotal = countMatch ? parseInt(countMatch[1]) : totalFiles;
+                emitDiscoverProgress();
             }
 
-            // Log key progress events only (not every line)
+            if (subProgressMatch && !phaseMatch) {
+                phaseSubCount = parseInt(subProgressMatch[1]);
+                phaseSubTotal = parseInt(subProgressMatch[2]);
+                const fileName = subProgressMatch[3].split(/\s+→/)[0].trim();
+                emitDiscoverProgress({ currentFile: fileName });
+            }
+
+            if (processingMatch) {
+                emitDiscoverProgress({ currentFile: path.basename(processingMatch[1]) });
+            }
+
+            if (/\[OK\]/.test(clean)) {
+                processedCount++;
+                emitDiscoverProgress();
+            }
+            if (/\[SKIP\]/.test(clean) && !/files skipped/.test(clean)) {
+                skippedCount++;
+                emitDiscoverProgress();
+            }
+
+            // Log key events
             const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER|^STEP \d/.test(clean);
             if (isLogWorthy) {
                 event.reply('discover-log', { message: clean, type: 'info' });

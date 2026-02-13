@@ -180,33 +180,68 @@ const StatusBar = ({
                     </div>
                 )}
 
-                {/* Discover progress */}
-                {isDiscovering && !isProcessing && (
-                    <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
-                        <Loader2 className="animate-spin text-green-400" size={14} />
-                        {discoverProgress?.step > 0 ? (
-                            <>
-                                <span className="text-green-300 font-mono text-[11px] font-bold">
-                                    STEP {discoverProgress.step}/{discoverProgress.totalSteps || 4}
+                {/* Discover progress — reuses same 4-phase pills as pipeline */}
+                {isDiscovering && !isProcessing && (() => {
+                    const dp = discoverProgress || {};
+                    const hasPhaseData = dp.cumParse > 0 || dp.cumVision > 0 || dp.cumEmbed > 0 || dp.cumStore > 0;
+                    const dPhases = [
+                        { label: t('status.phase.parse'), count: dp.cumParse || 0, color: 'bg-cyan-400' },
+                        { label: t('status.phase.caption'), count: dp.cumVision || 0, color: 'bg-blue-400' },
+                        { label: t('status.phase.vector'), count: dp.cumEmbed || 0, color: 'bg-purple-400' },
+                        { label: t('status.phase.save'), count: dp.cumStore || 0, color: 'bg-green-400' },
+                    ];
+                    const dTotal = dp.total || 0;
+                    const dProcessed = dp.processed || 0;
+                    const dSkipped = dp.skipped || 0;
+                    const dEffective = dTotal - dSkipped;
+
+                    return (
+                        <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
+                            <Loader2 className="animate-spin text-green-400" size={14} />
+                            {hasPhaseData ? (
+                                <>
+                                    <div className="flex items-center space-x-0.5">
+                                        {dPhases.map((p, i) => (
+                                            <PhasePill
+                                                key={p.label}
+                                                label={p.label}
+                                                count={p.count}
+                                                total={dTotal}
+                                                isActive={i === (dp.activePhase || 0)}
+                                                color={p.color}
+                                            />
+                                        ))}
+                                    </div>
+                                    <div className="flex items-center space-x-1.5 border-l border-green-700 pl-2">
+                                        <span className="text-green-300 font-mono font-bold text-[11px]">
+                                            {dProcessed}/{dEffective > 0 ? dEffective : dTotal}
+                                        </span>
+                                        {dSkipped > 0 && (
+                                            <span className="text-gray-500 text-[10px]">+{dSkipped}skip</span>
+                                        )}
+                                    </div>
+                                    {dp.batchInfo && (() => {
+                                        const parts = dp.batchInfo.split(':');
+                                        return (
+                                            <div className="flex items-center gap-1 bg-yellow-900/40 border border-yellow-600/50 px-1.5 py-0.5 rounded" title={t('status.batch_size')}>
+                                                <Layers size={11} className="text-yellow-400 flex-shrink-0" />
+                                                <span className="text-yellow-300 font-mono font-bold text-[11px]">{parts[0]}</span>
+                                                {parts[1] && <span className="text-yellow-500 font-mono text-[9px]">{parts[1]}</span>}
+                                            </div>
+                                        );
+                                    })()}
+                                    <span className="text-gray-400 truncate max-w-[100px]">{dp.currentFile?.split(/[/\\]/).pop()}</span>
+                                </>
+                            ) : (
+                                <span className="text-green-300 text-xs font-medium">
+                                    {dTotal > 0
+                                        ? `${t('status.discovering')} (${dTotal} files)`
+                                        : t('status.discovering')}
                                 </span>
-                                {discoverProgress.total > 0 && (
-                                    <span className="text-green-300 font-mono font-bold text-[11px] border-l border-green-700 pl-2">
-                                        {discoverProgress.processed}/{discoverProgress.total}
-                                    </span>
-                                )}
-                                <span className="text-gray-400 text-xs truncate max-w-[150px]">
-                                    {discoverProgress.currentFile || discoverProgress.stepName || ''}
-                                </span>
-                            </>
-                        ) : (
-                            <span className="text-green-300 text-xs font-medium">
-                                {discoverProgress?.total > 0
-                                    ? `${t('status.discovering')} (${discoverProgress.total} files)`
-                                    : t('status.discovering')}
-                            </span>
-                        )}
-                    </div>
-                )}
+                            )}
+                        </div>
+                    );
+                })()}
 
                 {/* AI Tier Display */}
                 {aiTier && !isProcessing && !isDiscovering && (

@@ -29,7 +29,9 @@ function App() {
   const discoverQueueRef = useRef({ folders: [], index: 0, scanning: false });
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoverProgress, setDiscoverProgress] = useState({
-    processed: 0, total: 0, currentFile: '', step: 0, totalSteps: 4, folderPath: ''
+    processed: 0, total: 0, skipped: 0, currentFile: '', folderPath: '',
+    cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
+    activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: ''
   });
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [resumeStats, setResumeStats] = useState(null);
@@ -154,7 +156,11 @@ function App() {
             window.electron.pipeline.runDiscover({ folderPath: nextFolder, noSkip: false });
           } else {
             setIsDiscovering(false);
-            setDiscoverProgress({ processed: 0, total: 0, currentFile: '', step: 0, totalSteps: 4, folderPath: '' });
+            setDiscoverProgress({
+              processed: 0, total: 0, skipped: 0, currentFile: '', folderPath: '',
+              cumParse: 0, cumVision: 0, cumEmbed: 0, cumStore: 0,
+              activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: ''
+            });
             // Clear session: all folders processed successfully
             window.electron.pipeline.updateConfig('last_session.folders', []);
           }
