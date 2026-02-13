@@ -232,19 +232,19 @@ ParserFactory.get_parser(file_path)
     ├─ text_content → translated_text (ko/en)
     └─ layer_tree → translated_layer_tree (ko/en)
     ↓
-STEP 2/4: AI Vision (vision_factory.py)
+Phase V: AI Vision (vision_factory.py)
     ├─ VLM 캡션/태그/분류 생성 (Qwen3-VL, tier별 backend)
-    └─ 2-Stage Pipeline: 빠른 분류 → 상세 캡션
+    ├─ 2-Stage Pipeline: 빠른 분류 → 상세 캡션
+    └─ 서브배치마다 즉시 DB 저장 (mc_caption, ai_tags → files)
     ↓
-STEP 3/4: Embedding (siglip2_encoder.py + text_embedding.py)
+Phase E: Embedding (siglip2_encoder.py + text_embedding.py)
     ├─ SigLIP2 → VV 생성 (이미지 시각 벡터, tier별 차원)
-    └─ Qwen3-Embedding → MV 생성 (MC 텍스트 의미 벡터)
+    ├─ Qwen3-Embedding → MV 생성 (MC 텍스트 의미 벡터)
+    └─ 서브배치마다 즉시 DB 저장 (VV → vec_files, MV → vec_text)
     ↓
-STEP 4/4: SQLite Storage (db/sqlite_client.py)
-    ├─ 메타데이터 + MC → files 테이블 (JSON 필드)
-    ├─ VV → vec_files 테이블 (sqlite-vec)
-    ├─ MV → vec_text 테이블 (sqlite-vec)
-    └─ FTS 인덱스 자동 동기화 (files_fts)
+Phase S: Summary (완료 확인)
+    ├─ [OK] emit (프론트엔드 processedCount 추적용)
+    └─ 실제 저장은 P/V/E에서 이미 완료
 ```
 
 ### 파서 선택 (Factory Pattern)
@@ -522,16 +522,55 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 **설정 파일**: `config.yaml` > `ai_mode.override` (현재: `standard`)
 **Tier 로더**: `backend/utils/tier_config.py` > `get_active_tier()`
 
-### 파이프라인 4단계 (ingest_engine.py)
+### 파이프라인 4단계 (process_batch_phased, ingest_engine.py)
 
 ```
-STEP 1/4: Parse       → PSD/PNG/JPG 파싱, 썸네일 생성, 메타데이터 추출
-STEP 2/4: AI Vision   → VLM으로 캡션/태그/분류 생성 (tier별 backend: transformers/ollama/auto)
-STEP 3/4: Embedding   → SigLIP2로 VV 생성, Qwen3-Embedding으로 MV 생성
-STEP 4/4: Storing     → SQLite 저장 (메타데이터 + VV + MV)
+Phase P (Parse)   → PSD/PNG/JPG 파싱, 썸네일 생성, 메타데이터 추출 → 즉시 DB 저장
+Phase V (Vision)  → VLM으로 MC(캡션/태그/분류) 생성 → 서브배치마다 즉시 DB 저장
+Phase E (Embed)   → SigLIP2→VV, Qwen3-Embedding→MV 벡터화 → 서브배치마다 즉시 DB 저장
+Phase S (Summary) → 완료 확인 ([OK] emit, 프론트엔드 카운트용, 실제 저장 아님)
 ```
 
-**핵심**: Tier 메타데이터(mode_tier, embedding_model 등)는 STEP 2 전에 설정되므로 Vision 실패와 무관하게 항상 기록됨.
+**핵심 원칙**:
+- **각 Phase는 서브배치 단위로 즉시 저장**. 1000개 파일이라도 배치(2~16개)씩 처리→저장→다음 배치. 중간 크래시 시 이미 저장된 파일은 Smart Skip으로 건너뜀.
+- Phase S는 별도 저장이 아닌 **요약 단계** (모든 데이터는 P/V/E에서 이미 저장 완료).
+- Tier 메타데이터(mode_tier, embedding_model 등)는 Phase V 전에 설정되므로 Vision 실패와 무관하게 항상 기록됨.
+
+### Adaptive Batch Controller
+
+```yaml
+# config.yaml
+batch_processing:
+  adaptive:
+    enabled: true
+    memory_budget_gb: 20        # 메모리 예산
+    vlm_initial_batch: 2        # Vision 초기 배치 (→ 메모리에 따라 자동 증감)
+    vv_initial_batch: 4         # VV 초기 배치
+    mv_initial_batch: 16        # MV 초기 배치
+```
+
+- **Triangular-step 성장**: 배치 크기가 메모리 여유에 따라 점진적으로 증가
+- **메모리 압박 시 자동 축소**: OOM 방지
+- **Phase별 독립 배치**: VLM(무거움)은 작게, MV(가벼움)는 크게 시작
+- **StatusBar 표시**: 노란색 `B:N` 뱃지에서 현재 배치 크기 실시간 확인
+
+### Smart Skip (Phase별 재개)
+
+```python
+_check_phase_skip(parsed_files)  # 파일별로 이미 완료된 Phase 확인
+```
+
+- **파일별 Phase 완료 추적**: MC 존재→Vision 스킵, VV 존재→VV 스킵, MV 존재→MV 스킵
+- **Resume 시 미완료 Phase부터 이어서 처리**: 이전 세션에서 Parse 완료 → 재시작 시 Vision부터 시작
+- Discover 모드와 Pipeline 모드 모두 동일한 `process_batch_phased` 사용
+
+### Discover 모드 (Resume/Auto-scan)
+
+- `--discover` CLI 또는 Electron IPC `run-discover`로 실행
+- DFS 폴더 탐색 → Smart Skip 필터링 → `process_batch_phased` 호출
+- **프론트엔드 진행 UI**: Pipeline과 동일한 4-Phase Pills (P/V/E/S) + processed/total + 배치 크기 표시
+- **세션 추적**: `config.yaml > last_session.folders`에 작업 대상 기록, 완료 시 초기화
+- **앱 재시작 시 Resume Dialog**: 미완료 작업이 있으면 팝업으로 이어하기 제안
 
 ### Windows 배포 구조
 
