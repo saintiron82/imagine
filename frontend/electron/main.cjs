@@ -836,6 +836,14 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
         const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
         if (isError) {
             event.reply('discover-log', { message, type: 'error' });
+            return;
+        }
+        // Forward key progress messages from stderr (Python logging)
+        const isProgress = /\[DISCOVER\]|\[BATCH\]|STEP \d+\/\d+|\[SKIP\]|\[OK\]/.test(message);
+        if (isProgress) {
+            // Extract just the message part after the logging prefix
+            const cleaned = message.replace(/^\d{4}-\d{2}-\d{2} [\d:,]+ - \S+ - \S+ - /, '');
+            event.reply('discover-log', { message: cleaned, type: 'info' });
         }
     });
 
