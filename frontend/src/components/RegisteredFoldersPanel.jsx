@@ -2,55 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { FolderPlus, Trash2, RefreshCw, Loader2 } from 'lucide-react';
 import { useLocale } from '../i18n';
 
-const RegisteredFoldersPanel = () => {
+/**
+ * Registered Folders panel in Settings.
+ *
+ * Props:
+ *  - onScanFolder(folderPath): triggers App-level discover pipeline
+ *  - isBusy: true if pipeline/discover is running (disables scan buttons)
+ */
+const RegisteredFoldersPanel = ({ onScanFolder, isBusy }) => {
     const { t } = useLocale();
     const [folders, setFolders] = useState([]);
     const [autoScan, setAutoScan] = useState(true);
-    const [isScanning, setIsScanning] = useState(false);
-    const [scanProgress, setScanProgress] = useState('');
     const [loading, setLoading] = useState(true);
-    const [scanQueue, setScanQueue] = useState([]);
-    const [scanIndex, setScanIndex] = useState(0);
 
     useEffect(() => {
         loadFolders();
     }, []);
-
-    // Discover event listeners
-    useEffect(() => {
-        if (!isScanning) return;
-
-        const handleLog = (data) => {
-            setScanProgress(data.message);
-        };
-        const handleDone = (data) => {
-            setScanIndex(prev => prev + 1);
-        };
-
-        window.electron?.pipeline?.onDiscoverLog(handleLog);
-        window.electron?.pipeline?.onDiscoverFileDone(handleDone);
-
-        return () => {
-            window.electron?.pipeline?.offDiscoverLog();
-            window.electron?.pipeline?.offDiscoverFileDone();
-        };
-    }, [isScanning]);
-
-    // Process scan queue
-    useEffect(() => {
-        if (!isScanning || scanQueue.length === 0) return;
-        if (scanIndex >= scanQueue.length) {
-            setIsScanning(false);
-            setScanProgress('');
-            setScanQueue([]);
-            setScanIndex(0);
-            return;
-        }
-        window.electron?.pipeline?.runDiscover({
-            folderPath: scanQueue[scanIndex],
-            noSkip: false
-        });
-    }, [isScanning, scanIndex, scanQueue]);
 
     const loadFolders = async () => {
         setLoading(true);
@@ -102,16 +69,14 @@ const RegisteredFoldersPanel = () => {
 
     const handleScanAll = () => {
         const validFolders = folders.filter(f => f.exists).map(f => f.path);
-        if (validFolders.length === 0) return;
-        setScanQueue(validFolders);
-        setScanIndex(0);
-        setIsScanning(true);
+        if (validFolders.length === 0 || !onScanFolder) return;
+        // Scan first folder; App handles sequential scanning via discoverQueueRef
+        onScanFolder(validFolders);
     };
 
     const handleScanOne = (folderPath) => {
-        setScanQueue([folderPath]);
-        setScanIndex(0);
-        setIsScanning(true);
+        if (!onScanFolder) return;
+        onScanFolder([folderPath]);
     };
 
     if (loading) {
@@ -129,15 +94,15 @@ const RegisteredFoldersPanel = () => {
                 <div className="flex gap-2">
                     <button
                         onClick={handleScanAll}
-                        disabled={isScanning || folders.filter(f => f.exists).length === 0}
+                        disabled={isBusy || folders.filter(f => f.exists).length === 0}
                         className="px-2 py-1 text-xs bg-green-700 hover:bg-green-600 text-white rounded disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
                     >
-                        {isScanning ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                        {isBusy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                         {t('action.scan_all')}
                     </button>
                     <button
                         onClick={handleAddFolder}
-                        disabled={isScanning}
+                        disabled={isBusy}
                         className="px-2 py-1 text-xs bg-blue-700 hover:bg-blue-600 text-white rounded disabled:opacity-40 flex items-center gap-1"
                     >
                         <FolderPlus size={12} />
@@ -180,7 +145,7 @@ const RegisteredFoldersPanel = () => {
                             {!folder.exists && (
                                 <span className="text-xs text-red-400 flex-shrink-0">{t('msg.folder_not_found')}</span>
                             )}
-                            {folder.exists && !isScanning && (
+                            {folder.exists && !isBusy && (
                                 <button
                                     onClick={() => handleScanOne(folder.path)}
                                     className="text-gray-500 hover:text-green-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
@@ -191,7 +156,7 @@ const RegisteredFoldersPanel = () => {
                             )}
                             <button
                                 onClick={() => handleRemoveFolder(folder.path)}
-                                disabled={isScanning}
+                                disabled={isBusy}
                                 className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 disabled:opacity-40"
                                 title={t('action.remove_folder')}
                             >
@@ -201,22 +166,6 @@ const RegisteredFoldersPanel = () => {
                     ))
                 )}
             </div>
-
-            {/* Scan progress */}
-            {isScanning && (
-                <div className="mt-3 p-2 bg-gray-800 rounded border border-blue-800/50">
-                    <div className="flex items-center gap-2 text-xs text-blue-400">
-                        <Loader2 size={12} className="animate-spin" />
-                        <span>{t('status.scanning_folder', { folder: scanQueue[scanIndex] ? scanQueue[scanIndex].split(/[/\\]/).pop() : '' })}</span>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1 truncate">{scanProgress}</div>
-                    {scanQueue.length > 1 && (
-                        <div className="text-xs text-gray-500 mt-1">
-                            {scanIndex + 1} / {scanQueue.length}
-                        </div>
-                    )}
-                </div>
-            )}
         </div>
     );
 };

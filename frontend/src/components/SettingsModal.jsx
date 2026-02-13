@@ -3,7 +3,7 @@ import { Loader2, CheckCircle, AlertTriangle, Terminal, X, Download } from 'luci
 import { useLocale } from '../i18n';
 import RegisteredFoldersPanel from './RegisteredFoldersPanel';
 
-const SettingsModal = ({ onClose }) => {
+const SettingsModal = ({ onClose, onScanFolder, isBusy }) => {
     const { t } = useLocale();
     const [status, setStatus] = useState(null); // { dependencies: {...}, dependencies_ok: bool, model_status: str }
     const [loading, setLoading] = useState(true);
@@ -251,7 +251,7 @@ const SettingsModal = ({ onClose }) => {
                             )}
 
                             {/* Registered Folders */}
-                            <RegisteredFoldersPanel />
+                            <RegisteredFoldersPanel onScanFolder={onScanFolder} isBusy={isBusy} />
 
                             {/* Install Button */}
                             {!installing && !status?.dependencies_ok && (

@@ -794,7 +794,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
     );
 });
 
-function SearchPanel() {
+function SearchPanel({ onScanFolder, isBusy }) {
     const { t } = useLocale();
     // query stores the last *submitted* search text (not live typing)
     const [query, setQuery] = useState('');
@@ -1203,7 +1203,7 @@ function SearchPanel() {
 
             {/* Metadata Modal */}
             {metadata && <MetadataModal metadata={metadata} onClose={() => setMetadata(null)} />}
-            {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+            {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onScanFolder={onScanFolder} isBusy={isBusy} />}
         </div>
     );
 }

@@ -331,6 +331,18 @@ function App() {
     setShowResumeDialog(false);
   };
 
+  // Scan folders from RegisteredFoldersPanel (via Settings → SearchPanel)
+  const handleScanFolders = (folderPaths) => {
+    if (isProcessing || isDiscovering || !folderPaths?.length) return;
+    setIsDiscovering(true);
+    setCurrentTab('archive');
+    setCurrentPath(folderPaths[0]);
+    discoverQueueRef.current = { folders: folderPaths, index: 0, scanning: folderPaths.length > 1 };
+    window.electron?.pipeline?.updateConfig('last_session.folders', folderPaths);
+    appendLog({ message: `Scanning ${folderPaths.length} folder(s)...`, type: 'info' });
+    window.electron?.pipeline?.runDiscover({ folderPath: folderPaths[0], noSkip: false });
+  };
+
   const handleExportDb = async () => {
     setShowDbMenu(false);
     try {
@@ -500,7 +512,7 @@ function App() {
           {/* Content Area */}
           <div className="flex-1 overflow-hidden">
             {currentTab === 'search' ? (
-              <SearchPanel />
+              <SearchPanel onScanFolder={handleScanFolders} isBusy={isProcessing || isDiscovering} />
             ) : (
               <div className="h-full flex flex-col">
                 <FolderInfoBar
