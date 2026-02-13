@@ -5,7 +5,8 @@ import StatusBar from './components/StatusBar';
 import SearchPanel from './components/SearchPanel';
 import FolderInfoBar from './components/FolderInfoBar';
 import ResumeDialog from './components/ResumeDialog';
-import { FolderOpen, Play, Search, Archive, Globe } from 'lucide-react';
+import ImportDbDialog from './components/ImportDbDialog';
+import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download } from 'lucide-react';
 import { useLocale } from './i18n';
 
 function App() {
@@ -38,6 +39,8 @@ function App() {
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [resumeStats, setResumeStats] = useState(null);
   const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showDbMenu, setShowDbMenu] = useState(false);
 
   const MAX_LOGS = 200;
 
@@ -328,6 +331,24 @@ function App() {
     setShowResumeDialog(false);
   };
 
+  const handleExportDb = async () => {
+    setShowDbMenu(false);
+    try {
+      const result = await window.electron?.db?.exportDatabase();
+      if (result?.success) {
+        appendLog({ message: `DB exported: ${result.file_count} files, ${result.size_mb}MB → ${result.output_path}`, type: 'success' });
+      } else if (result?.error) {
+        appendLog({ message: `Export failed: ${result.error}`, type: 'error' });
+      }
+    } catch (e) {
+      appendLog({ message: `Export error: ${e.message}`, type: 'error' });
+    }
+  };
+
+  const handleImportProcessNew = (folderPath) => {
+    handleProcessFolder(folderPath);
+  };
+
   const clearLogs = () => setLogs([]);
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
@@ -340,6 +361,14 @@ function App() {
           stats={resumeStats}
           onResume={handleResume}
           onDismiss={handleDismissResume}
+        />
+      )}
+
+      {/* Import DB Dialog */}
+      {showImportDialog && (
+        <ImportDbDialog
+          onClose={() => setShowImportDialog(false)}
+          onProcessNew={handleImportProcessNew}
         />
       )}
 
@@ -399,6 +428,40 @@ function App() {
               </button>
             </>
           )}
+
+          {/* DB Import/Export Menu */}
+          <div className="w-px h-6 bg-gray-600 mx-1" />
+          <div className="relative">
+            <button
+              onClick={() => setShowDbMenu(prev => !prev)}
+              className="flex items-center space-x-1 px-2 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-white hover:bg-gray-700/50 transition-colors"
+              title="Database"
+            >
+              <Database size={14} />
+              <span>DB</span>
+            </button>
+            {showDbMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowDbMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl py-1 min-w-[180px]">
+                  <button
+                    onClick={handleExportDb}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <Download size={14} />
+                    {t('action.export_db')}
+                  </button>
+                  <button
+                    onClick={() => { setShowDbMenu(false); setShowImportDialog(true); }}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <Upload size={14} />
+                    {t('action.import_db')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Language Switcher */}
           <div className="w-px h-6 bg-gray-600 mx-1" />

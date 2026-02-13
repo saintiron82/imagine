@@ -106,6 +106,16 @@ contextBridge.exposeInMainWorld('electron', {
         offDiscoverFileDone: () => ipcRenderer.removeAllListeners('discover-file-done'),
     },
 
+    // DB Import/Export
+    db: {
+        selectArchive: () => ipcRenderer.invoke('select-archive-file'),
+        exportDatabase: (outputPath) => ipcRenderer.invoke('export-database', { outputPath }),
+        relinkPreview: (packagePath, targetFolder) =>
+            ipcRenderer.invoke('relink-preview', { packagePath, targetFolder }),
+        relinkApply: (packagePath, targetFolder, deleteMissing) =>
+            ipcRenderer.invoke('relink-apply', { packagePath, targetFolder, deleteMissing }),
+    },
+
     // User Metadata API
     metadata: {
         updateUserData: (filePath, updates) =>

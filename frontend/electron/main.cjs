@@ -326,6 +326,111 @@ ipcMain.handle('check-thumbnails-exist', async (_, filePaths) => {
     return results;
 });
 
+// IPC Handler: Open file dialog for zip archive selection
+ipcMain.handle('select-archive-file', async () => {
+    const result = await dialog.showOpenDialog({
+        properties: ['openFile'],
+        title: 'Select Archive (.zip)',
+        filters: [
+            { name: 'ZIP Archive', extensions: ['zip'] },
+            { name: 'Database', extensions: ['db'] },
+        ],
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    return result.filePaths[0];
+});
+
+// IPC Handler: Export database + thumbnails as zip archive
+ipcMain.handle('export-database', async (_, { outputPath }) => {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_export.py')
+        : path.join(process.resourcesPath, 'backend/api_export.py');
+
+    // If no outputPath, open save dialog
+    if (!outputPath) {
+        const result = await dialog.showSaveDialog({
+            title: 'Export Database Archive',
+            defaultPath: 'imageparser_archive.zip',
+            filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+        });
+        if (result.canceled) return { success: false, error: 'canceled' };
+        outputPath = result.filePath;
+    }
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath, '--output', outputPath], { cwd: projectRoot });
+        let output = '';
+        let error = '';
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+        proc.on('close', (code) => {
+            try {
+                const result = JSON.parse(output.trim().split('\n').pop());
+                resolve(result);
+            } catch {
+                resolve({ success: false, error: error || 'Export failed' });
+            }
+        });
+        proc.on('error', (err) => resolve({ success: false, error: err.message }));
+    });
+});
+
+// IPC Handler: Relink preview (dry-run)
+ipcMain.handle('relink-preview', async (_, { packagePath, targetFolder }) => {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_relink.py')
+        : path.join(process.resourcesPath, 'backend/api_relink.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [
+            scriptPath, '--package', packagePath, '--folder', targetFolder, '--dry-run'
+        ], { cwd: projectRoot });
+        let output = '';
+        let error = '';
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+        proc.on('close', (code) => {
+            try {
+                const result = JSON.parse(output.trim().split('\n').pop());
+                resolve(result);
+            } catch {
+                resolve({ success: false, error: error || 'Preview failed' });
+            }
+        });
+        proc.on('error', (err) => resolve({ success: false, error: err.message }));
+    });
+});
+
+// IPC Handler: Relink apply
+ipcMain.handle('relink-apply', async (_, { packagePath, targetFolder, deleteMissing }) => {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_relink.py')
+        : path.join(process.resourcesPath, 'backend/api_relink.py');
+
+    const args = [scriptPath, '--package', packagePath, '--folder', targetFolder];
+    if (deleteMissing) args.push('--delete-missing');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, args, { cwd: projectRoot });
+        let output = '';
+        let error = '';
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+        proc.on('close', (code) => {
+            try {
+                const result = JSON.parse(output.trim().split('\n').pop());
+                resolve(result);
+            } catch {
+                resolve({ success: false, error: error || 'Relink failed' });
+            }
+        });
+        proc.on('error', (err) => resolve({ success: false, error: err.message }));
+    });
+});
+
 // IPC Handler: Fetch image from URL (bypasses CORS via Node.js)
 ipcMain.handle('fetch-image-url', async (_, url) => {
     try {
