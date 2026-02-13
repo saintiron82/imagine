@@ -4,6 +4,7 @@ import FileGrid from './components/FileGrid';
 import StatusBar from './components/StatusBar';
 import SearchPanel from './components/SearchPanel';
 import FolderInfoBar from './components/FolderInfoBar';
+import ResumeDialog from './components/ResumeDialog';
 import { FolderOpen, Play, Search, Archive, Globe } from 'lucide-react';
 import { useLocale } from './i18n';
 
@@ -29,6 +30,8 @@ function App() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoverProgress, setDiscoverProgress] = useState('');
   const [selectedPaths, setSelectedPaths] = useState(new Set());
+  const [resumeStats, setResumeStats] = useState(null);
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
 
   const MAX_LOGS = 200;
 
@@ -153,27 +156,19 @@ function App() {
       }
     }
 
-    // Auto-scan registered folders on startup
-    const autoScanRegisteredFolders = async () => {
+    // Check for incomplete work on startup (replaces auto-scan)
+    const checkIncompleteOnStartup = async () => {
       try {
-        const result = await window.electron?.pipeline?.getRegisteredFolders();
-        if (!result?.success) return;
-        if (result.autoScan === false) return;
-        const validFolders = (result.folders || []).filter(f => f.exists).map(f => f.path);
-        if (validFolders.length === 0) return;
-
-        setIsDiscovering(true);
-        discoverQueueRef.current = { folders: validFolders, index: 0, scanning: true };
-        appendLog({
-          message: `Auto-scanning ${validFolders.length} registered folder(s)...`,
-          type: 'info'
-        });
-        window.electron.pipeline.runDiscover({ folderPath: validFolders[0], noSkip: false });
+        const stats = await window.electron?.pipeline?.getIncompleteStats();
+        if (stats?.success && stats.total_incomplete > 0) {
+          setResumeStats(stats);
+          setShowResumeDialog(true);
+        }
       } catch (e) {
-        console.error('Auto-scan failed:', e);
+        console.error('Incomplete check failed:', e);
       }
     };
-    autoScanRegisteredFolders();
+    checkIncompleteOnStartup();
 
     return () => {
       if (window.electron?.pipeline) {
@@ -243,12 +238,57 @@ function App() {
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip: false });
   };
 
+  // Resume incomplete work: discover all folders with incomplete files
+  const handleResume = async () => {
+    setShowResumeDialog(false);
+    if (!resumeStats?.folders?.length) return;
+
+    // Get registered folders to match storage_roots to top-level roots
+    const regResult = await window.electron?.pipeline?.getRegisteredFolders();
+    const registeredPaths = regResult?.success
+      ? (regResult.folders || []).filter(f => f.exists).map(f => f.path.normalize('NFC'))
+      : [];
+
+    // Find the registered root that contains each incomplete storage_root
+    const rootSet = new Set();
+    for (const folder of resumeStats.folders) {
+      const sr = folder.storage_root.normalize('NFC');
+      const root = registeredPaths.find(rp => sr === rp || sr.startsWith(rp.endsWith('/') ? rp : rp + '/'));
+      if (root) rootSet.add(root);
+      else rootSet.add(sr); // fallback: use storage_root itself
+    }
+
+    const uniqueRoots = [...rootSet];
+    if (uniqueRoots.length === 0) return;
+
+    setIsDiscovering(true);
+    discoverQueueRef.current = { folders: uniqueRoots, index: 0, scanning: true };
+    appendLog({
+      message: `Resuming: ${resumeStats.total_incomplete} incomplete files in ${uniqueRoots.length} folder(s)`,
+      type: 'info'
+    });
+    window.electron.pipeline.runDiscover({ folderPath: uniqueRoots[0], noSkip: false });
+  };
+
+  const handleDismissResume = () => {
+    setShowResumeDialog(false);
+  };
+
   const clearLogs = () => setLogs([]);
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
 
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden flex-col">
+      {/* Resume Dialog */}
+      {showResumeDialog && (
+        <ResumeDialog
+          stats={resumeStats}
+          onResume={handleResume}
+          onDismiss={handleDismissResume}
+        />
+      )}
+
       {/* Header Bar */}
       <div className="h-14 border-b border-gray-700 flex items-center px-4 justify-between bg-gray-800 shadow-sm z-10 shrink-0">
         {/* Left: App Name */}

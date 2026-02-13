@@ -1139,6 +1139,46 @@ class SQLiteDB:
 
         return stats
 
+    def get_incomplete_stats(self) -> Dict[str, Any]:
+        """Get incomplete file stats grouped by storage_root.
+
+        Returns dict with total_files, total_incomplete, and per-folder breakdown.
+        Only folders with incomplete files are included.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT
+                f.storage_root,
+                COUNT(*) as total,
+                COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
+                COUNT(CASE WHEN vfr.rowid IS NOT NULL THEN 1 END) as vv,
+                COUNT(CASE WHEN vtr.rowid IS NOT NULL THEN 1 END) as mv
+            FROM files f
+            LEFT JOIN vec_files_rowids vfr ON f.id = vfr.rowid
+            LEFT JOIN vec_text_rowids vtr ON f.id = vtr.rowid
+            GROUP BY f.storage_root
+        """)
+        folders = []
+        total_files = 0
+        total_incomplete = 0
+        for row in cursor.fetchall():
+            sr, total, mc, vv, mv = row
+            done = min(mc, vv, mv)
+            incomplete = total - done
+            total_files += total
+            total_incomplete += incomplete
+            if incomplete > 0:
+                folders.append({
+                    "storage_root": sr or "",
+                    "total": total, "done": done, "incomplete": incomplete,
+                    "mc": mc, "vv": vv, "mv": mv,
+                })
+        return {
+            "total_files": total_files,
+            "total_incomplete": total_incomplete,
+            "folders": folders,
+        }
+
     def get_folder_phase_stats(self, root_path: str) -> List[Dict[str, Any]]:
         """Get per-storage_root phase completion stats under root_path prefix.
 

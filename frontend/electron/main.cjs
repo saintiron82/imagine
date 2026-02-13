@@ -399,6 +399,35 @@ ipcMain.handle('get-db-stats', async () => {
     });
 });
 
+// IPC Handler: Incomplete Stats (for resume dialog on startup)
+ipcMain.handle('get-incomplete-stats', async () => {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_incomplete_stats.py')
+        : path.join(process.resourcesPath, 'backend/api_incomplete_stats.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+        });
+        let output = '';
+        proc.stdout.on('data', (d) => output += d.toString());
+        proc.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(output.trim()));
+                } catch {
+                    resolve({ success: false, total_incomplete: 0, folders: [] });
+                }
+            } else {
+                resolve({ success: false, total_incomplete: 0, folders: [] });
+            }
+        });
+        proc.on('error', () => resolve({ success: false, total_incomplete: 0, folders: [] }));
+    });
+});
+
 // IPC Handler: Folder Phase Stats (MC/VV/MV per folder)
 ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
     const finalPython = resolvePython();
