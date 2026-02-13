@@ -151,19 +151,38 @@ function App() {
           } else {
             setIsDiscovering(false);
             setDiscoverProgress('');
+            // Clear session: all folders processed successfully
+            window.electron.pipeline.updateConfig('last_session.folders', []);
           }
         });
       }
     }
 
-    // Check for incomplete work on startup (replaces auto-scan)
+    // Check for incomplete work from last session on startup
     const checkIncompleteOnStartup = async () => {
       try {
+        // Read last session folders from config
+        const configResult = await window.electron?.pipeline?.getConfig();
+        const lastFolders = configResult?.config?.last_session?.folders || [];
+        if (lastFolders.length === 0) return; // No interrupted session
+
         const stats = await window.electron?.pipeline?.getIncompleteStats();
-        if (stats?.success && stats.total_incomplete > 0) {
-          setResumeStats(stats);
-          setShowResumeDialog(true);
-        }
+        if (!stats?.success || stats.total_incomplete === 0) return;
+
+        // Filter: only folders under last session targets
+        const filtered = stats.folders.filter(f => {
+          const sr = f.storage_root.normalize('NFC');
+          return lastFolders.some(lf => {
+            const nLf = lf.normalize('NFC');
+            return sr === nLf || sr.startsWith(nLf.endsWith('/') ? nLf : nLf + '/');
+          });
+        });
+        if (filtered.length === 0) return;
+
+        const totalInc = filtered.reduce((s, f) => s + f.incomplete, 0);
+        const totalFiles = filtered.reduce((s, f) => s + f.total, 0);
+        setResumeStats({ total_incomplete: totalInc, total_files: totalFiles, folders: filtered });
+        setShowResumeDialog(true);
       } catch (e) {
         console.error('Incomplete check failed:', e);
       }
@@ -235,6 +254,8 @@ function App() {
     if (isProcessing || isDiscovering) return;
     setIsDiscovering(true);
     appendLog({ message: `Processing folder: ${folderPath}`, type: 'info' });
+    // Save session target for resume on next startup
+    window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip: false });
   };
 
@@ -249,6 +270,8 @@ function App() {
 
     setIsDiscovering(true);
     discoverQueueRef.current = { folders: incompleteFolders, index: 0, scanning: true };
+    // Save session target for resume on next startup
+    window.electron.pipeline.updateConfig('last_session.folders', incompleteFolders);
     appendLog({
       message: `Resuming: ${resumeStats.total_incomplete} incomplete files in ${incompleteFolders.length} folder(s)`,
       type: 'info'
