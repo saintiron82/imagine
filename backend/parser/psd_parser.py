@@ -205,7 +205,8 @@ class PSDParser(BaseParser):
                 
                 # Try to extract text
                 if 'Editor' in engine_data and 'Text' in engine_data['Editor']:
-                    result['text'] = engine_data['Editor']['Text']
+                    text_val = engine_data['Editor']['Text']
+                    result['text'] = (text_val.value if hasattr(text_val, 'value') else str(text_val)).rstrip('\r\n')
                 
                 # Try to extract fonts from ResourceDict
                 if 'ResourceDict' in engine_data:
@@ -217,7 +218,8 @@ class PSDParser(BaseParser):
             
             # Fallback: try text property
             if not result['text'] and hasattr(layer, 'text'):
-                result['text'] = layer.text
+                text_val = layer.text
+                result['text'] = (text_val.value if hasattr(text_val, 'value') else str(text_val)).rstrip('\r\n')
                 
         except Exception as e:
             logger.warning(f"Failed to extract text from layer {layer.name}: {e}")
