@@ -5,9 +5,12 @@ import { useLocale } from '../i18n';
 /** Aggregate phase stats for entries whose storage_root starts with prefix */
 function aggregateStats(phaseStats, folderPath) {
     if (!phaseStats || phaseStats.length === 0) return null;
-    const prefix = folderPath.endsWith('/') ? folderPath : folderPath + '/';
+    // NFC normalize to match DB (macOS returns NFD paths)
+    const nfc = (s) => s.normalize('NFC');
+    const fp = nfc(folderPath);
+    const prefix = fp.endsWith('/') ? fp : fp + '/';
     const matched = phaseStats.filter(s =>
-        s.storage_root === folderPath || s.storage_root.startsWith(prefix)
+        nfc(s.storage_root) === fp || nfc(s.storage_root).startsWith(prefix)
     );
     if (matched.length === 0) return null;
     return matched.reduce((acc, f) => ({
