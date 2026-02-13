@@ -696,8 +696,8 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
                 });
             }
 
-            // Log: show STEP, progress, errors, and key events (exclude noisy [PHASE])
-            const isLogWorthy = /Processing:|STEP \d|(\[OK\])|(\[FAIL\])|(\[DONE\])|(\[SKIP\])|(\[BATCH\])|(\[MINI\s)|(\[TIER)|(\[\d+\/\d+\])/.test(clean) && !/^\[PHASE\]/.test(clean);
+            // Log: show STEP, progress, errors, adaptive decisions (exclude noisy [PHASE])
+            const isLogWorthy = /Processing:|STEP \d|\[OK\]|\[FAIL\]|\[DONE\]|\[SKIP\]|\[BATCH\]|\[MINI\s|\[TIER|\[ADAPTIVE:|\[\d+\/\d+\]/.test(clean) && !/^\[PHASE\]/.test(clean);
             if (isLogWorthy) {
                 event.reply('pipeline-log', { message: clean, type: 'info' });
             }
@@ -883,8 +883,8 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
                 emitDiscoverProgress();
             }
 
-            // Log key events
-            const isLogWorthy = /^Processing:|^\[OK\]|^\[FAIL\]|^\[DONE\]|^\[DISCOVER\]|^\[SKIP\]|^\[BATCH\]|^\[TIER|^STEP \d/.test(clean);
+            // Log key events (including per-file progress and adaptive batch decisions)
+            const isLogWorthy = /Processing:|STEP \d|\[OK\]|\[FAIL\]|\[DONE\]|\[DISCOVER\]|\[SKIP\]|\[BATCH\]|\[TIER|\[ADAPTIVE:|\[\d+\/\d+\]/.test(clean) && !/^\[PHASE\]/.test(clean);
             if (isLogWorthy) {
                 event.reply('discover-log', { message: clean, type: 'info' });
             }
