@@ -96,6 +96,9 @@ class ParsedFile:
     skip_embed_mv: bool = False
     # DB file ID (set by phase_store_metadata, used by phase_store_vectors)
     db_file_id: int = None
+    # Vector storage tracking (set by phase3a/3b incremental storage)
+    stored_vv: bool = False
+    stored_mv: bool = False
 
 
 class ParserFactory:
@@ -873,6 +876,7 @@ def phase3a_vv_adaptive(
                 if pf.db_file_id and vec is not None and _global_sqlite_db:
                     try:
                         _global_sqlite_db.upsert_vectors(pf.db_file_id, vv_vec=vec, mv_vec=None)
+                        pf.stored_vv = True
                     except Exception as e:
                         logger.error(f"  [FAIL:vv-store] {pf.file_path.name}: {e}")
             del images, vv_vectors  # Release thumbnails + vectors
@@ -998,6 +1002,7 @@ def phase3b_mv_adaptive(
                     continue
                 try:
                     _global_sqlite_db.upsert_vectors(pf.db_file_id, vv_vec=None, mv_vec=vec)
+                    pf.stored_mv = True
                     stored_count += 1
                 except Exception as e:
                     logger.error(f"  [FAIL:mv-store] {pf.file_path.name}: {e}")
@@ -1450,10 +1455,19 @@ def process_batch_phased(
     _unload_mv_verified(monitor)
 
     # ── Phase 4: Summary (all data already stored per sub-batch) ──
-    # Emit [OK] per file for frontend processedCount tracking
+    # WAL checkpoint to flush all writes to main DB
+    if _global_sqlite_db:
+        _global_sqlite_db.checkpoint()
+
+    # Emit [OK]/[PARTIAL]/[WARN] per file for frontend processedCount tracking
     for pf in parsed:
         if pf.error is None:
-            logger.info(f"  [OK] {pf.file_path.name}")
+            if pf.stored_vv and pf.stored_mv:
+                logger.info(f"  [OK] {pf.file_path.name}")
+            elif pf.stored_vv or pf.stored_mv:
+                logger.info(f"  [OK] {pf.file_path.name} (vv={'Y' if pf.stored_vv else 'N'} mv={'Y' if pf.stored_mv else 'N'})")
+            else:
+                logger.info(f"  [OK] {pf.file_path.name}")
     cum_store = valid_count
     _emit_phase_progress()
 

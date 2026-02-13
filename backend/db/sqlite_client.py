@@ -565,7 +565,10 @@ class SQLiteDB:
                 row = cursor.execute(
                     "SELECT id FROM files WHERE file_path = ?", (file_path,)
                 ).fetchone()
-                file_id = row[0] if row else 0
+                if row:
+                    file_id = row[0]
+                else:
+                    raise RuntimeError(f"UPSERT succeeded but file not found: {file_path}")
 
             self._refresh_fts_row(cursor, file_id)
             self.conn.commit()
@@ -1151,11 +1154,9 @@ class SQLiteDB:
                 f.storage_root,
                 COUNT(*) as total,
                 COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
-                COUNT(CASE WHEN vfr.rowid IS NOT NULL THEN 1 END) as vv,
-                COUNT(CASE WHEN vtr.rowid IS NOT NULL THEN 1 END) as mv
+                COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) THEN 1 END) as vv,
+                COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 END) as mv
             FROM files f
-            LEFT JOIN vec_files_rowids vfr ON f.id = vfr.rowid
-            LEFT JOIN vec_text_rowids vtr ON f.id = vtr.rowid
             GROUP BY f.storage_root
         """)
         folders = []
@@ -1182,7 +1183,7 @@ class SQLiteDB:
     def get_folder_phase_stats(self, root_path: str) -> List[Dict[str, Any]]:
         """Get per-storage_root phase completion stats under root_path prefix.
 
-        Uses file_path LIKE prefix match and vec_*_rowids tables (no vec0 needed).
+        Uses file_path LIKE prefix match and EXISTS subqueries on vec0 tables.
         Returns one row per storage_root with MC/VV/MV counts.
         """
         root_path = unicodedata.normalize('NFC', root_path)
@@ -1193,11 +1194,9 @@ class SQLiteDB:
                 f.storage_root,
                 COUNT(*) as total,
                 COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
-                COUNT(CASE WHEN vfr.rowid IS NOT NULL THEN 1 END) as vv,
-                COUNT(CASE WHEN vtr.rowid IS NOT NULL THEN 1 END) as mv
+                COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) THEN 1 END) as vv,
+                COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 END) as mv
             FROM files f
-            LEFT JOIN vec_files_rowids vfr ON f.id = vfr.rowid
-            LEFT JOIN vec_text_rowids vtr ON f.id = vtr.rowid
             WHERE f.file_path LIKE ? || '%'
             GROUP BY f.storage_root
         """, (prefix,))
@@ -1387,9 +1386,18 @@ class SQLiteDB:
             logger.error(f"[TIER MIGRATION] Failed: {e}")
             return False
 
+    def checkpoint(self):
+        """Force WAL checkpoint to flush pending writes to main DB."""
+        if self.conn:
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except Exception as e:
+                logger.warning(f"WAL checkpoint failed: {e}")
+
     def close(self):
         """Close database connection."""
         if self.conn:
+            self.checkpoint()
             self.conn.close()
             logger.info("SQLite connection closed")
 
