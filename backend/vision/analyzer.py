@@ -869,6 +869,9 @@ class VisionAnalyzer:
                     progress_callback(progress_idx, n, result)
                 progress_idx += 1
 
+        # Release intermediate image references (PIL Images owned by caller)
+        del images, contexts, classifications, type_groups
+
         # Fill any None with fallback
         for i in range(n):
             if results[i] is None:

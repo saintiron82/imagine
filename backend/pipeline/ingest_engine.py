@@ -488,8 +488,11 @@ def _load_and_composite_thumbnail(thumb_path: Path) -> Optional["Image.Image"]:
         bg_rgb = tuple(int(bg_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
         background = Image.new('RGB', thumb_img.size, bg_rgb)
         background.paste(thumb_img, mask=thumb_img.split()[-1])
+        thumb_img.close()
         return background
-    return thumb_img.convert("RGB")
+    rgb = thumb_img.convert("RGB")
+    thumb_img.close()
+    return rgb
 
 
 def _build_mc_raw(meta) -> dict:
@@ -706,6 +709,7 @@ def phase2_vision_adaptive(
 
         # Build vision items for this sub-batch
         vision_items = []
+        vision_results = []
         valid_chunk = []
         for idx in chunk:
             pf = parsed_files[idx]
@@ -740,7 +744,8 @@ def phase2_vision_adaptive(
                 pf = parsed_files[valid_chunk[i]]
                 _apply_vision_result(pf.meta, result)
 
-        # Release thumbnails immediately
+        # Release thumbnails and vision intermediates immediately
+        del vision_items, vision_results
         for idx in chunk:
             parsed_files[idx].thumb_image_rgb = None
 
@@ -770,8 +775,9 @@ def phase2_vision_adaptive(
                     _global_sqlite_db.update_vision_fields(_nfc(pf.file_path), fields)
                 except Exception as e:
                     logger.error(f"  [FAIL:vision-store] {pf.file_path.name}: {e}")
-                # Release VLM input context (mc_caption/ai_tags kept for Phase 3b MV)
-                pf.mc_raw = None
+        # Release VLM input context for ALL items (mc_caption/ai_tags kept for Phase 3b MV)
+        for idx in chunk:
+            parsed_files[idx].mc_raw = None
 
         processed += len(chunk)
         gc.collect()

@@ -163,9 +163,11 @@ class SigLIP2Encoder:
         return any(p in msg for p in OOM_PATTERNS)
 
     def _clear_gpu_cache(self):
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
         gc.collect()
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # ── Cache (hint-based, not authoritative) ──────────────────────────
 
