@@ -48,15 +48,15 @@ def level1_verify(db, folder: str = None) -> dict:
     DB-only integrity checks. No model loading required.
 
     Checks:
-    1. Orphan vectors: vec_files/vec_text entries without matching files row
+    1. Dangling vectors: vec_files/vec_text entries without matching files row
     2. Pipeline consistency: MC exists but MV missing, etc.
     3. Duplicate VV fingerprints across different content_hashes (corruption signal)
     4. content_hash NULL but vectors exist (should have hash)
     """
     cursor = db.conn.cursor()
     results = {
-        "orphan_vv": [],
-        "orphan_mv": [],
+        "dangling_vv": [],
+        "dangling_mv": [],
         "mc_without_mv": [],
         "vv_without_mc": [],
         "duplicate_vv_cross_hash": [],
@@ -86,20 +86,20 @@ def level1_verify(db, folder: str = None) -> dict:
     cursor.execute("SELECT COUNT(*) FROM vec_text")
     results["total_mv"] = cursor.fetchone()[0]
 
-    # --- Check 1: Orphan vectors (vec without files row) ---
+    # --- Check 1: Dangling vectors (vec without files row) ---
     cursor.execute("""
         SELECT vf.file_id FROM vec_files vf
         LEFT JOIN files f ON vf.file_id = f.id
         WHERE f.id IS NULL
     """)
-    results["orphan_vv"] = [row[0] for row in cursor.fetchall()]
+    results["dangling_vv"] = [row[0] for row in cursor.fetchall()]
 
     cursor.execute("""
         SELECT vt.file_id FROM vec_text vt
         LEFT JOIN files f ON vt.file_id = f.id
         WHERE f.id IS NULL
     """)
-    results["orphan_mv"] = [row[0] for row in cursor.fetchall()]
+    results["dangling_mv"] = [row[0] for row in cursor.fetchall()]
 
     # --- Check 2: Pipeline consistency ---
     # MC exists but no MV (MV should be generated from MC)
@@ -190,20 +190,20 @@ def print_level1(results: dict):
     print(f"  Total VV vectors: {results['total_vv']}")
     print(f"  Total MV vectors: {results['total_mv']}")
 
-    # Orphans
-    if results["orphan_vv"]:
-        print(f"\n  ⚠ Orphan VV (no matching file): {len(results['orphan_vv'])}")
-        for fid in results["orphan_vv"][:5]:
+    # Dangling references
+    if results["dangling_vv"]:
+        print(f"\n  ⚠ Dangling VV (no matching file): {len(results['dangling_vv'])}")
+        for fid in results["dangling_vv"][:5]:
             print(f"    - file_id={fid}")
     else:
-        print("\n  ✓ No orphan VV vectors")
+        print("\n  ✓ No dangling VV vectors")
 
-    if results["orphan_mv"]:
-        print(f"  ⚠ Orphan MV (no matching file): {len(results['orphan_mv'])}")
-        for fid in results["orphan_mv"][:5]:
+    if results["dangling_mv"]:
+        print(f"  ⚠ Dangling MV (no matching file): {len(results['dangling_mv'])}")
+        for fid in results["dangling_mv"][:5]:
             print(f"    - file_id={fid}")
     else:
-        print("  ✓ No orphan MV vectors")
+        print("  ✓ No dangling MV vectors")
 
     # Pipeline consistency
     mc_no_mv = results["mc_without_mv"]
@@ -454,7 +454,7 @@ def main():
 
     # Summary
     l1_issues = (
-        len(l1["orphan_vv"]) + len(l1["orphan_mv"]) +
+        len(l1["dangling_vv"]) + len(l1["dangling_mv"]) +
         len(l1["duplicate_vv_cross_hash"]) + len(l1["null_hash_with_vectors"])
     )
     l2_issues = 0
