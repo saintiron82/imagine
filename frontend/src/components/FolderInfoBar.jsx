@@ -53,7 +53,7 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing }) => {
         };
         load();
         return () => { cancelled = true; };
-    }, [currentPath]);
+    }, [currentPath, isProcessing]);
 
     if (!currentPath) return null;
 

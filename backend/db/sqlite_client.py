@@ -591,15 +591,17 @@ class SQLiteDB:
                 content_hash,
             ))
 
-            file_id = cursor.lastrowid
-            if not file_id:
-                row = cursor.execute(
-                    "SELECT id FROM files WHERE file_path = ?", (file_path,)
-                ).fetchone()
-                if row:
-                    file_id = row[0]
-                else:
-                    raise RuntimeError(f"UPSERT succeeded but file not found: {file_path}")
+            # cursor.lastrowid is unreliable for INSERT ON CONFLICT DO UPDATE:
+            # when the UPDATE path triggers, it may return the rowid from a
+            # PREVIOUS INSERT instead of the current row's actual ID.
+            # Always use explicit SELECT to get the correct file_id.
+            row = cursor.execute(
+                "SELECT id FROM files WHERE file_path = ?", (file_path,)
+            ).fetchone()
+            if row:
+                file_id = row[0]
+            else:
+                raise RuntimeError(f"UPSERT succeeded but file not found: {file_path}")
 
             self._refresh_fts_row(cursor, file_id)
             self.conn.commit()
