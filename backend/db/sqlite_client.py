@@ -686,6 +686,7 @@ class SQLiteDB:
         Returns:
             ISO 8601 modified_at string, or None if not found
         """
+        file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
         cursor.execute("SELECT modified_at FROM files WHERE file_path = ?", (file_path,))
         row = cursor.fetchone()
@@ -701,6 +702,7 @@ class SQLiteDB:
         Returns:
             Tier name string (e.g. 'standard', 'pro', 'ultra'), or None if not found
         """
+        file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
         cursor.execute("SELECT mode_tier FROM files WHERE file_path = ?", (file_path,))
         row = cursor.fetchone()
@@ -1052,6 +1054,7 @@ class SQLiteDB:
         Returns:
             File record as dict, or None if not found
         """
+        file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
 
         cursor.execute("""
@@ -1142,6 +1145,7 @@ class SQLiteDB:
         Uses file_path LIKE prefix match and vec_*_rowids tables (no vec0 needed).
         Returns one row per storage_root with MC/VV/MV counts.
         """
+        root_path = unicodedata.normalize('NFC', root_path)
         cursor = self.conn.cursor()
         prefix = root_path.rstrip('/') + '/'
         cursor.execute("""
@@ -1183,6 +1187,7 @@ class SQLiteDB:
         Returns:
             True if update succeeded, False otherwise
         """
+        file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
 
         try:
