@@ -70,6 +70,7 @@ class SQLiteDB:
             if self._table_exists('files'):
                 self._migrate_folder_columns()
                 self._migrate_v3_columns()
+                self._migrate_content_hash()
                 self._ensure_fts()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
@@ -215,6 +216,32 @@ class SQLiteDB:
                 logger.info(f"✅ v3 migration: added {added} columns + indexes")
         except Exception as e:
             logger.warning(f"v3 migration check failed (non-fatal): {e}")
+
+    def _migrate_content_hash(self):
+        """Add content_hash column and vec cascade delete triggers."""
+        try:
+            self.conn.execute("SELECT content_hash FROM files LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.info("Migrating: adding content_hash column to files table...")
+            self.conn.execute("ALTER TABLE files ADD COLUMN content_hash TEXT")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON files(content_hash)")
+            self.conn.commit()
+            logger.info("✅ content_hash migration complete")
+
+        # Vec cascade delete triggers (always ensure they exist)
+        self.conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS vec_files_cascade_delete
+            AFTER DELETE ON files BEGIN
+                DELETE FROM vec_files WHERE file_id = old.id;
+            END
+        """)
+        self.conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS vec_text_cascade_delete
+            AFTER DELETE ON files BEGIN
+                DELETE FROM vec_text WHERE file_id = old.id;
+            END
+        """)
+        self.conn.commit()
 
     # ── FTS5 columns: 2-column BM25-weighted architecture ──
     #
@@ -509,6 +536,7 @@ class SQLiteDB:
             text_embed_model = metadata.get("text_embed_model")
             runtime_version = metadata.get("runtime_version")
             preprocess_params_json = json.dumps(metadata.get("preprocess_params", {})) if metadata.get("preprocess_params") else None
+            content_hash = metadata.get("content_hash")
 
             cursor.execute("""
                 INSERT INTO files (
@@ -519,8 +547,9 @@ class SQLiteDB:
                     storage_root, relative_path,
                     embedding_model, embedding_version,
                     mode_tier, caption_model, text_embed_model,
-                    runtime_version, preprocess_params
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    runtime_version, preprocess_params,
+                    content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_path) DO UPDATE SET
                     file_name = excluded.file_name,
                     file_size = excluded.file_size,
@@ -542,7 +571,8 @@ class SQLiteDB:
                     caption_model = excluded.caption_model,
                     text_embed_model = excluded.text_embed_model,
                     runtime_version = excluded.runtime_version,
-                    preprocess_params = excluded.preprocess_params
+                    preprocess_params = excluded.preprocess_params,
+                    content_hash = excluded.content_hash
             """, (
                 file_path,
                 metadata.get("file_name"),
@@ -558,6 +588,7 @@ class SQLiteDB:
                 embedding_model, embedding_version,
                 mode_tier, caption_model, text_embed_model,
                 runtime_version, preprocess_params_json,
+                content_hash,
             ))
 
             file_id = cursor.lastrowid
@@ -762,6 +793,66 @@ class SQLiteDB:
             "has_vv": has_vv,
             "has_mv": has_mv,
         }
+
+    def find_by_content_hash(self, content_hash: str) -> List[Dict[str, Any]]:
+        """
+        Find files by content_hash (may return multiple results for copies).
+
+        Returns list of dicts with id, file_path, content_hash, has_mc, has_vv, has_mv.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT f.id, f.file_path, f.content_hash, f.mc_caption
+            FROM files f
+            WHERE f.content_hash = ?
+        """, (content_hash,))
+
+        results = []
+        for row in cursor.fetchall():
+            file_id = row[0]
+            mc = row[3] or ""
+            has_vv = cursor.execute(
+                "SELECT COUNT(*) FROM vec_files WHERE file_id = ?", (file_id,)
+            ).fetchone()[0] > 0
+            has_mv = cursor.execute(
+                "SELECT COUNT(*) FROM vec_text WHERE file_id = ?", (file_id,)
+            ).fetchone()[0] > 0
+            results.append({
+                "id": file_id,
+                "file_path": row[1],
+                "content_hash": row[2],
+                "has_mc": len(mc.strip()) > 0,
+                "has_vv": has_vv,
+                "has_mv": has_mv,
+            })
+        return results
+
+    def relink_file(self, content_hash: str, new_file_path: str) -> bool:
+        """
+        Update file_path for a file matched by content_hash (DB migration/relink).
+
+        Returns True if a row was updated.
+        """
+        new_file_path = unicodedata.normalize('NFC', new_file_path)
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE files SET file_path = ?, parsed_at = datetime('now')
+            WHERE content_hash = ? AND file_path != ?
+            LIMIT 1
+        """, (new_file_path, content_hash, new_file_path))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_file(self, file_id: int) -> bool:
+        """
+        Delete a file row by ID.
+
+        Vec cascade triggers automatically clean up vec_files/vec_text.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+        self.conn.commit()
+        return cursor.rowcount > 0
 
     def insert_file(
         self,

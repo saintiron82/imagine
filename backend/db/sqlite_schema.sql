@@ -75,7 +75,10 @@ CREATE TABLE IF NOT EXISTS files (
     caption_model TEXT,                              -- VLM model (e.g., Qwen/Qwen3-VL-4B-Instruct)
     text_embed_model TEXT,                           -- MV model (e.g., qwen3-embedding:0.6b)
     runtime_version TEXT,                            -- Ollama/runtime version (e.g., ollama-0.15.2)
-    preprocess_params TEXT                           -- JSON: {max_edge, aspect_ratio_mode, padding_color}
+    preprocess_params TEXT,                          -- JSON: {max_edge, aspect_ratio_mode, padding_color}
+
+    -- Content hash for path-independent file identification
+    content_hash TEXT                                -- SHA256(file_size + first_8KB + last_8KB)
 );
 
 -- Layers table: Layer-level metadata (optional)
@@ -131,6 +134,7 @@ CREATE INDEX IF NOT EXISTS idx_scene_type ON files(scene_type);
 CREATE INDEX IF NOT EXISTS idx_relative_path ON files(relative_path);
 CREATE INDEX IF NOT EXISTS idx_perceptual_hash ON files(perceptual_hash);
 CREATE INDEX IF NOT EXISTS idx_dup_group_id ON files(dup_group_id);
+CREATE INDEX IF NOT EXISTS idx_content_hash ON files(content_hash);
 
 -- Full-text search (FTS5) — 2-column BM25-weighted architecture
 --
@@ -167,4 +171,13 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS files_fts_delete AFTER DELETE ON files BEGIN
     DELETE FROM files_fts WHERE rowid = old.id;
+END;
+
+-- Vec cascade delete triggers: auto-cleanup vec_files/vec_text when files row is deleted
+CREATE TRIGGER IF NOT EXISTS vec_files_cascade_delete AFTER DELETE ON files BEGIN
+    DELETE FROM vec_files WHERE file_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vec_text_cascade_delete AFTER DELETE ON files BEGIN
+    DELETE FROM vec_text WHERE file_id = old.id;
 END;

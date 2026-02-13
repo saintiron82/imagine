@@ -183,6 +183,13 @@ def process_file(
     if result.success:
         meta = result.asset_meta
 
+        # Compute content hash for path-independent identification
+        from backend.utils.content_hash import compute_content_hash
+        try:
+            meta.content_hash = compute_content_hash(file_path)
+        except Exception as e:
+            logger.warning(f"content_hash computation failed: {e}")
+
         # Inject folder discovery metadata
         if folder_path is not None:
             # --discover/--watch mode
@@ -603,6 +610,13 @@ def _parse_single_file(file_info: tuple) -> ParsedFile:
             meta.folder_path = parent.name
             meta.folder_depth = 0
             meta.folder_tags = [parent.name]
+
+    # Compute content hash for path-independent identification
+    from backend.utils.content_hash import compute_content_hash
+    try:
+        meta.content_hash = compute_content_hash(fp)
+    except Exception as e:
+        logger.warning(f"content_hash failed for {fp.name}: {e}")
 
     # Resolve thumbnail (path only, no image loading — JIT in Phase 2/3)
     pf.thumb_path = _resolve_thumb_path(meta)

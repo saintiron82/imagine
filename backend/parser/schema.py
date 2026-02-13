@@ -117,6 +117,12 @@ class AssetMeta(BaseModel):
         description="Full Stage 2 JSON output (preserved for flexible querying)"
     )
 
+    # === Content Hash (path-independent file identification) ===
+    content_hash: Optional[str] = Field(
+        None,
+        description="SHA256 content hash for path-independent file identification"
+    )
+
     # === v3 P0: Path Abstraction ===
     storage_root: Optional[str] = Field(
         None,
