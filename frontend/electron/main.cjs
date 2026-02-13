@@ -852,8 +852,8 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
                 event.reply('discover-log', { message: msg, type: 'error' });
                 continue;
             }
-            // Forward key progress messages from Python logging
-            const isProgress = /\[DISCOVER\]|\[BATCH\]|STEP \d+\/\d+|\[SKIP\]|\[OK\]|Loading model/.test(msg);
+            // Forward progress messages from Python logging (strip timestamp prefix)
+            const isProgress = /\[DISCOVER\]|\[BATCH\]|STEP \d+\/\d+|\[SKIP\]|\[OK\]|Loading|Loaded|Connected|pipeline|Processing|model|MEM:|TIER/.test(msg);
             if (isProgress) {
                 const cleaned = msg.replace(/^\d{4}-\d{2}-\d{2} [\d:,]+ - \S+ - \S+ - /, '');
                 event.reply('discover-log', { message: cleaned, type: 'info' });
