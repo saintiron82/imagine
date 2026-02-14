@@ -114,19 +114,19 @@ class VisionAnalyzer:
 
             elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
                 # Qwen3-VL model (Standard/Pro/Ultra tiers)
-                from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLForConditionalGeneration
-                from transformers.models.qwen3_vl.processing_qwen3_vl import Qwen3VLProcessor
+                # Use Auto classes for forward-compatible HF pattern
+                from transformers import AutoProcessor, AutoModelForImageTextToText
 
-                self.processor = Qwen3VLProcessor.from_pretrained(self.model_id)
+                self.processor = AutoProcessor.from_pretrained(self.model_id)
 
                 # MPS does not support device_map="auto"
                 if self.device == "mps":
-                    self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_id,
                         torch_dtype=torch.float16,
                     ).to(self.device)
                 else:
-                    self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_id,
                         torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
                         device_map="auto"
@@ -559,17 +559,17 @@ class VisionAnalyzer:
 
     # ── v3 P0: 2-Stage Pipeline (transformers backend) ─────────
 
-    def _generate_response(self, image: Image.Image, prompt: str) -> str:
+    def _generate_response(self, image: Image.Image, user_prompt: str, system_prompt: str = None) -> str:
         """
         Generate text response from Qwen2/3-VL using chat template.
 
         This is the core inference helper shared by classify() and analyze_structured().
-        Uses the same chat template API as _generate_caption() but with arbitrary prompts
-        and proper input-token trimming to return model output only.
+        Uses HF recommended 1-step apply_chat_template(tokenize=True) pattern.
 
         Args:
             image: PIL Image
-            prompt: Text prompt for the model
+            user_prompt: Text prompt for the model (user role)
+            system_prompt: Optional system role message for JSON enforcement
 
         Returns:
             Model-generated text (input tokens stripped)
@@ -577,19 +577,30 @@ class VisionAnalyzer:
         self._load_model()
 
         if "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
-            messages = [{
+            messages = []
+            if system_prompt:
+                messages.append({
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}]
+                })
+            messages.append({
                 "role": "user",
                 "content": [
                     {"type": "image", "image": image},
-                    {"type": "text", "text": prompt}
+                    {"type": "text", "text": user_prompt}
                 ]
-            }]
-            text = self.processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+            })
+
+            # HF recommended 1-step apply_chat_template
+            inputs = self.processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
             )
-            inputs = self.processor(
-                text=[text], images=[image], return_tensors="pt"
-            ).to(self.device)
+            inputs.pop("token_type_ids", None)
+            inputs = {k: v.to(self.device) if hasattr(v, "to") else v for k, v in inputs.items()}
 
             with torch.no_grad():
                 generated_ids = self.model.generate(**inputs, max_new_tokens=512)
@@ -597,7 +608,7 @@ class VisionAnalyzer:
             # Trim input tokens to get model output only
             trimmed = [
                 out[len(inp):]
-                for inp, out in zip(inputs.input_ids, generated_ids)
+                for inp, out in zip(inputs["input_ids"], generated_ids)
             ]
             decoded = self.processor.batch_decode(
                 trimmed, skip_special_tokens=True
@@ -616,7 +627,7 @@ class VisionAnalyzer:
             return decoded
         else:
             # Fallback for non-Qwen models: use _generate_caption with the prompt
-            return self._generate_caption(image, context={"prompt_override": prompt})
+            return self._generate_caption(image, context={"prompt_override": user_prompt})
 
     def classify(self, image: Image.Image, keep_alive: str = None) -> Dict[str, Any]:
         """
@@ -629,13 +640,13 @@ class VisionAnalyzer:
         Returns:
             {"image_type": "character"|"background"|..., "confidence": "high"|...}
         """
-        from .prompts import STAGE1_PROMPT
+        from .prompts import STAGE1_USER, STAGE1_SYSTEM
         from .schemas import STAGE1_SCHEMA
         from .repair import parse_structured_output
 
         try:
             t0 = time.perf_counter()
-            raw = self._generate_response(image, STAGE1_PROMPT)
+            raw = self._generate_response(image, STAGE1_USER, STAGE1_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(raw, STAGE1_SCHEMA, image_type="other")
             logger.info(f"Stage 1 completed in {elapsed:.1f}s → {result.get('image_type')}")
@@ -659,14 +670,14 @@ class VisionAnalyzer:
         Returns:
             Structured dict with type-specific fields + caption + tags
         """
-        from .prompts import get_stage2_prompt
+        from .prompts import get_stage2_prompt, STAGE2_SYSTEM
         from .schemas import get_schema
         from .repair import parse_structured_output
 
         try:
             t0 = time.perf_counter()
             prompt = get_stage2_prompt(image_type, context=context)
-            raw = self._generate_response(image, prompt)
+            raw = self._generate_response(image, prompt, STAGE2_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(raw, get_schema(image_type), image_type=image_type)
             result["image_type"] = image_type
@@ -709,7 +720,7 @@ class VisionAnalyzer:
         return "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id
 
     def _generate_response_batch(
-        self, images: List[Image.Image], prompts
+        self, images: List[Image.Image], prompts, system_prompt: str = None
     ) -> List[str]:
         """
         Batch generate: multiple images with prompts → list of responses.
@@ -717,6 +728,7 @@ class VisionAnalyzer:
         Args:
             images: List of PIL Images
             prompts: Single prompt string (same for all) or list of per-image prompts
+            system_prompt: Optional system role message (same for all images)
 
         Falls back to sequential if not Qwen VL.
         """
@@ -727,18 +739,28 @@ class VisionAnalyzer:
             prompt_list = prompts
 
         if not self._is_qwen_vl() or len(images) <= 1:
-            return [self._generate_response(img, p) for img, p in zip(images, prompt_list)]
+            return [self._generate_response(img, p, system_prompt) for img, p in zip(images, prompt_list)]
 
         self._load_model()
+
+        # Batch apply_chat_template: per-item since tokenize=True returns tensors
+        # that can't be batched directly across variable-length sequences.
+        # Use 2-step for batch: apply_chat_template(tokenize=False) + processor()
         texts = []
         for img, prompt in zip(images, prompt_list):
-            messages = [{
+            messages = []
+            if system_prompt:
+                messages.append({
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}]
+                })
+            messages.append({
                 "role": "user",
                 "content": [
                     {"type": "image", "image": img},
                     {"type": "text", "text": prompt}
                 ]
-            }]
+            })
             texts.append(self.processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             ))
@@ -769,13 +791,13 @@ class VisionAnalyzer:
 
     def classify_batch(self, images: List[Image.Image]) -> List[Dict[str, Any]]:
         """Stage 1 batch: classify multiple images at once."""
-        from .prompts import STAGE1_PROMPT
+        from .prompts import STAGE1_USER, STAGE1_SYSTEM
         from .schemas import STAGE1_SCHEMA
         from .repair import parse_structured_output
 
         t0 = time.perf_counter()
         try:
-            raw_list = self._generate_response_batch(images, STAGE1_PROMPT)
+            raw_list = self._generate_response_batch(images, STAGE1_USER, STAGE1_SYSTEM)
         except Exception as e:
             logger.warning(f"Stage 1 batch failed ({e}), falling back to sequential")
             return [self.classify(img) for img in images]
@@ -793,7 +815,7 @@ class VisionAnalyzer:
         contexts: List[dict] = None
     ) -> List[Dict[str, Any]]:
         """Stage 2 batch: same image_type, multiple images."""
-        from .prompts import get_stage2_prompt
+        from .prompts import get_stage2_prompt, STAGE2_SYSTEM
         from .schemas import get_schema
         from .repair import parse_structured_output
 
@@ -807,7 +829,7 @@ class VisionAnalyzer:
         # Batch with per-image prompts (different contexts are fine)
         t0 = time.perf_counter()
         try:
-            raw_list = self._generate_response_batch(images, prompts)
+            raw_list = self._generate_response_batch(images, prompts, STAGE2_SYSTEM)
         except Exception as e:
             logger.warning(f"Stage 2 batch failed ({e}), falling back to sequential")
             return [

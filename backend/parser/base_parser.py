@@ -82,6 +82,16 @@ class BaseParser(ABC):
         
         return True, ""
     
+    @staticmethod
+    def get_thumbnail_max_edge() -> int:
+        """Get tier-aware thumbnail max edge from config."""
+        try:
+            from backend.utils.tier_config import get_active_tier
+            _, tier_config = get_active_tier()
+            return tier_config.get("preprocess", {}).get("max_edge", 768)
+        except Exception:
+            return 768  # safe default for pro
+
     def get_thumbnail_path(self, file_path: Path) -> Path:
         """
         Generate the path for the thumbnail file.

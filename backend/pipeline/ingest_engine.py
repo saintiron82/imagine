@@ -570,6 +570,19 @@ def _apply_vision_result(meta, vision_result: dict):
     meta.structured_meta = _json.dumps(vision_result, ensure_ascii=False)
 
 
+def _check_thumbnail_size(thumb_path: Path, min_edge: int) -> bool:
+    """Return True if thumbnail meets minimum size requirement."""
+    if not thumb_path or not thumb_path.exists():
+        return False
+    try:
+        from PIL import Image
+        with Image.open(thumb_path) as img:
+            w, h = img.size
+            return max(w, h) >= min_edge
+    except Exception:
+        return False
+
+
 def _parse_single_file(file_info: tuple) -> ParsedFile:
     """Parse a single file (CPU-bound). Used by Phase 1 ThreadPool."""
     fp, folder, depth, tags = file_info
@@ -621,6 +634,22 @@ def _parse_single_file(file_info: tuple) -> ParsedFile:
     # Resolve thumbnail (path only, no image loading — JIT in Phase 2/3)
     pf.thumb_path = _resolve_thumb_path(meta)
 
+    # Check if existing thumbnail meets tier size requirement; regenerate if undersized
+    if pf.thumb_path and pf.thumb_path.exists():
+        required_edge = BaseParser.get_thumbnail_max_edge()
+        if not _check_thumbnail_size(pf.thumb_path, required_edge):
+            logger.info(f"  [REGEN] {fp.name}: thumbnail undersized, regenerating at {required_edge}px")
+            try:
+                new_thumb = parser._create_thumbnail(
+                    *(_open_for_thumbnail(fp, parser))
+                )
+                if new_thumb:
+                    pf.thumb_path = new_thumb
+                    meta.thumbnail_url = str(new_thumb)
+                    meta.visual_source_path = str(new_thumb)
+            except Exception as e:
+                logger.warning(f"  [REGEN] thumbnail regeneration failed for {fp.name}: {e}")
+
     # Build MC.raw context
     pf.mc_raw = _build_mc_raw(meta)
 
@@ -631,6 +660,18 @@ def _parse_single_file(file_info: tuple) -> ParsedFile:
     _normalize_paths(meta, fp)
 
     return pf
+
+
+def _open_for_thumbnail(fp: Path, parser):
+    """Open file source for thumbnail regeneration, returning args for parser._create_thumbnail()."""
+    from PIL import Image
+    if hasattr(parser, '__class__') and parser.__class__.__name__ == 'PSDParser':
+        from psd_tools import PSDImage
+        psd = PSDImage.open(fp)
+        return psd, fp
+    else:
+        img = Image.open(fp)
+        return img, fp
 
 
 def phase1_parse_all(

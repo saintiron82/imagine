@@ -1,19 +1,30 @@
 """
 v3 P0: Prompt templates for 2-Stage Vision Pipeline.
 
-STAGE1_PROMPT: Quick classification (1-2s).
-STAGE2_PROMPTS: Per-type detailed analysis prompts.
+STAGE1_SYSTEM / STAGE1_USER: Quick classification (1-2s).
+STAGE2_SYSTEM / STAGE2_PROMPTS: Per-type detailed analysis prompts.
+
+v3.6: system role separated from user prompt for better JSON compliance.
 """
 
 import json
 from .schemas import get_schema
 
-STAGE1_PROMPT = """Classify this image into exactly ONE type. Respond with JSON only, no explanation.
+# ── Stage 1: Classification ─────────────────────────────────────────────
+STAGE1_SYSTEM = "You are a strict JSON generator. Output valid JSON only. No explanation, no markdown fences."
+
+STAGE1_USER = """Classify this image into exactly ONE type.
 
 {
   "image_type": "ONE OF: character, background, ui_element, item, icon, texture, effect, logo, photo, illustration, other",
   "confidence": "ONE OF: high, medium, low"
 }"""
+
+# Keep legacy alias for backward compatibility with Ollama adapter
+STAGE1_PROMPT = STAGE1_USER
+
+# ── Stage 2: Structured Analysis ─────────────────────────────────────────
+STAGE2_SYSTEM = "You are a strict JSON generator. Output valid JSON only matching the provided schema. No explanation, no markdown fences."
 
 STAGE2_PROMPTS = {
     "character": """Analyze this character image with provided file context.
@@ -24,7 +35,6 @@ INSTRUCTIONS:
 - Consider used fonts for design style
 - Incorporate text content for character name/attributes
 
-Output JSON only.
 {schema}""",
 
     "background": """Analyze this background/environment image with provided file context.
@@ -35,7 +45,6 @@ INSTRUCTIONS:
 - Consider composition structure from layer organization
 - Incorporate text content for location/mood hints
 
-Output JSON only.
 {schema}""",
 
     "ui_element": """Analyze this UI element with provided file context.
@@ -46,7 +55,6 @@ INSTRUCTIONS:
 - Consider used fonts for UI style category
 - Incorporate folder path for UI section context
 
-Output JSON only.
 {schema}""",
 
     "item": """Analyze this item/object image with provided file context.
@@ -57,7 +65,6 @@ INSTRUCTIONS:
 - Consider text content for item name/properties
 - Incorporate design patterns from layer structure
 
-Output JSON only.
 {schema}""",
 
     "icon": """Analyze this icon image with provided file context.
@@ -68,7 +75,6 @@ INSTRUCTIONS:
 - Consider design style from layer composition
 - Incorporate text content for icon meaning
 
-Output JSON only.
 {schema}""",
 
     "texture": """Analyze this texture/pattern image with provided file context.
@@ -79,7 +85,6 @@ INSTRUCTIONS:
 - Consider pattern type from layer organization
 - Incorporate filename hints for material type
 
-Output JSON only.
 {schema}""",
 
     "effect": """Analyze this visual effect image with provided file context.
@@ -90,7 +95,6 @@ INSTRUCTIONS:
 - Consider effect type from layer structure
 - Incorporate filename hints for effect purpose
 
-Output JSON only.
 {schema}""",
 
     "logo": """Analyze this logo/title image with provided file context.
@@ -101,7 +105,6 @@ INSTRUCTIONS:
 - Consider used fonts for style classification
 - Incorporate folder path for logo category
 
-Output JSON only.
 {schema}""",
 
     "photo": """Analyze this photograph with provided file context.
@@ -112,7 +115,6 @@ INSTRUCTIONS:
 - Consider EXIF data if available (in context)
 - Incorporate text content for captions/notes
 
-Output JSON only.
 {schema}""",
 
     "illustration": """Analyze this illustration with provided file context.
@@ -123,7 +125,6 @@ INSTRUCTIONS:
 - Consider art style from layer organization
 - Incorporate text content for title/description
 
-Output JSON only.
 {schema}""",
 
     "other": """Analyze this image with provided file context.
@@ -134,7 +135,6 @@ INSTRUCTIONS:
 - Consider filename for content clues
 - Incorporate text content if present
 
-Output JSON only.
 {schema}""",
 }
 

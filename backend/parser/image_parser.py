@@ -28,7 +28,7 @@ class ImageParser(BaseParser):
     
     supported_extensions = ['png', 'jpg', 'jpeg']
     
-    THUMBNAIL_SIZE = (512, 512)  # For vision AI and UI display
+    # THUMBNAIL_SIZE now resolved dynamically from tier config via get_thumbnail_max_edge()
     
     def parse(self, file_path: Path) -> ParseResult:
         """
@@ -145,8 +145,9 @@ class ImageParser(BaseParser):
             elif img.mode != 'RGB':
                 img = img.convert('RGB')
             
-            # Resize maintaining aspect ratio, then center crop
-            img.thumbnail(self.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+            # Resize maintaining aspect ratio (tier-aware max edge)
+            max_edge = self.get_thumbnail_max_edge()
+            img.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
             
             # Save thumbnail
             img.save(thumbnail_path, 'PNG')
