@@ -63,6 +63,14 @@ class VisionAnalyzer:
         self.processor = None
         cfg = get_config()
         self.require_local_models = bool(cfg.get("vision.require_local_models", True))
+        default_max_new_tokens = 96 if self.device == "cpu" else 192
+        default_max_gen_time_s = 12.0 if self.device == "cpu" else 30.0
+        self.vlm_max_new_tokens = int(
+            cfg.get("vision.vlm_max_new_tokens", default_max_new_tokens) or default_max_new_tokens
+        )
+        self.vlm_max_gen_time_s = float(
+            cfg.get("vision.vlm_max_gen_time_s", default_max_gen_time_s) or default_max_gen_time_s
+        )
         if self.require_local_models:
             # Force strict offline mode to avoid long network retries when local models are missing.
             os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -70,8 +78,20 @@ class VisionAnalyzer:
 
         logger.info(
             f"VisionAnalyzer initialized (tier: {tier_name}, device: {self.device}, "
-            f"model: {self.model_id}, dtype: {dtype})"
+            f"model: {self.model_id}, dtype: {dtype}, "
+            f"max_new_tokens: {self.vlm_max_new_tokens}, max_time_s: {self.vlm_max_gen_time_s})"
         )
+
+    def _generate_with_limits(self, **inputs):
+        """Generate with conservative defaults to prevent long stalls on CPU."""
+        kwargs = {"max_new_tokens": self.vlm_max_new_tokens}
+        if self.vlm_max_gen_time_s > 0:
+            kwargs["max_time"] = self.vlm_max_gen_time_s
+        try:
+            return self.model.generate(**inputs, **kwargs)
+        except TypeError:
+            kwargs.pop("max_time", None)
+            return self.model.generate(**inputs, **kwargs)
 
     def _load_model(self):
         """Lazy load the vision model."""
@@ -630,7 +650,7 @@ class VisionAnalyzer:
             inputs = {k: v.to(self.device) if hasattr(v, "to") else v for k, v in inputs.items()}
 
             with torch.no_grad():
-                generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+                generated_ids = self._generate_with_limits(**inputs)
 
             # Trim input tokens to get model output only
             trimmed = [
@@ -797,7 +817,7 @@ class VisionAnalyzer:
         ).to(self.device)
 
         with torch.no_grad():
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+            generated_ids = self._generate_with_limits(**inputs)
 
         trimmed = [
             out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)
@@ -947,8 +967,8 @@ class VisionAnalyzer:
         """Process multiple images — batch if supported, else sequential."""
         self._load_model()
 
-        # Use batch path for Qwen VL models
-        if self._is_qwen_vl() and len(items) > 1:
+        # Use batch path for Qwen VL models, except CPU where long stalls are common.
+        if self._is_qwen_vl() and len(items) > 1 and self.device != "cpu":
             try:
                 from backend.utils.tier_config import get_active_tier
                 _, tier_cfg = get_active_tier()
@@ -959,6 +979,8 @@ class VisionAnalyzer:
                 )
             except Exception as e:
                 logger.warning(f"Batch VLM failed ({e}), falling back to sequential")
+        elif self._is_qwen_vl() and len(items) > 1 and self.device == "cpu":
+            logger.info("VLM batch disabled on CPU device; using sequential mode for stable progress")
 
         # Sequential fallback
         results = []

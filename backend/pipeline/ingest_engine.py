@@ -1000,6 +1000,11 @@ def phase2_vision_adaptive(
     write_jobs = []
     cfg = get_config()
     vlm_timeout_s = float(cfg.get("vision.vlm_timeout_s", 45.0) or 45.0)
+    vlm_preload_timeout_s = float(
+        cfg.get("vision.vlm_preload_timeout_s", max(180.0, vlm_timeout_s * 3.0))
+        or max(180.0, vlm_timeout_s * 3.0)
+    )
+    vlm_fail_fast = bool(cfg.get("vision.vlm_fail_fast", True))
 
     # Filter files that need vision processing
     vision_indices = []
@@ -1027,12 +1032,47 @@ def phase2_vision_adaptive(
 
     from backend.vision.vision_factory import get_vision_analyzer
     analyzer = get_vision_analyzer()
+    force_vlm_single = getattr(analyzer, "device", None) == "cpu"
+    if force_vlm_single:
+        logger.warning(
+            "VLM is running on CPU; forcing sub-batch size to 1 for responsive progress."
+        )
+    vlm_available = True
+    if hasattr(analyzer, "_load_model"):
+        try:
+            _call_with_timeout(lambda: analyzer._load_model(), vlm_preload_timeout_s)
+        except TimeoutError:
+            msg = (
+                f"[TIMEOUT:VLM] Model load exceeded {vlm_preload_timeout_s:.1f}s; "
+                "disabling VLM for remaining files in this run."
+            )
+            if vlm_fail_fast:
+                logger.error(f"{msg} (fail-fast enabled)")
+                raise RuntimeError(
+                    f"VLM preload timeout ({vlm_preload_timeout_s:.1f}s). "
+                    "Current run is aborted. Check device acceleration and model load path."
+                )
+            vlm_available = False
+            logger.warning(msg)
+        except Exception as e:
+            msg = (
+                f"[FAIL:VLM] Model preload failed ({e}); "
+                "disabling VLM for remaining files in this run."
+            )
+            if vlm_fail_fast:
+                logger.error(f"{msg} (fail-fast enabled)")
+                raise RuntimeError(
+                    f"VLM preload failed: {e}. "
+                    "Current run is aborted. Resolve model/device issue and retry."
+                )
+            vlm_available = False
+            logger.warning(msg)
 
     monitor.set_baseline()
     processed = 0
 
     while processed < total_vision:
-        batch_size = controller.get_batch_size('vlm')
+        batch_size = 1 if force_vlm_single else controller.get_batch_size('vlm')
         chunk = vision_indices[processed:processed + batch_size]
         t_sub = time.perf_counter()
 
@@ -1063,43 +1103,71 @@ def phase2_vision_adaptive(
                 if progress_callback:
                     progress_callback(_offset + i, total_vision, result)
 
-            try:
-                if hasattr(analyzer, 'classify_and_analyze_sequence'):
-                    vision_results = _call_with_timeout(
-                        lambda: analyzer.classify_and_analyze_sequence(
-                            vision_items, progress_callback=_progress
-                        ),
-                        vlm_timeout_s,
+            if not vlm_available:
+                vision_results = []
+                for i, _ in enumerate(vision_items):
+                    pf_fb = parsed_files[valid_chunk[i]]
+                    r = _build_synthetic_vision_result(pf_fb)
+                    vision_results.append(r)
+                    _progress(i, len(vision_items), r)
+            else:
+                try:
+                    if hasattr(analyzer, 'classify_and_analyze_sequence'):
+                        vision_results = _call_with_timeout(
+                            lambda: analyzer.classify_and_analyze_sequence(
+                                vision_items, progress_callback=_progress
+                            ),
+                            vlm_timeout_s,
+                        )
+                    else:
+                        vision_results = _call_with_timeout(
+                            lambda: [
+                                analyzer.classify_and_analyze(img, context=ctx)
+                                for (img, ctx) in vision_items
+                            ],
+                            vlm_timeout_s,
+                        )
+                        for i, r in enumerate(vision_results):
+                            _progress(i, len(vision_items), r)
+                except TimeoutError:
+                    msg = (
+                        f"  [TIMEOUT:VLM] {len(vision_items)} images exceeded "
+                        f"{vlm_timeout_s:.1f}s; switching to synthetic fallback "
+                        "for remaining files in this run"
                     )
-                else:
-                    vision_results = _call_with_timeout(
-                        lambda: [
-                            analyzer.classify_and_analyze(img, context=ctx)
-                            for (img, ctx) in vision_items
-                        ],
-                        vlm_timeout_s,
-                    )
-                    for i, r in enumerate(vision_results):
+                    if vlm_fail_fast:
+                        logger.error(f"{msg} (fail-fast enabled)")
+                        raise RuntimeError(
+                            f"VLM inference timeout ({vlm_timeout_s:.1f}s) at "
+                            f"{processed + 1}/{total_vision}. Run aborted."
+                        )
+                    vlm_available = False
+                    logger.warning(msg)
+                    vision_results = []
+                    for i, _ in enumerate(vision_items):
+                        pf_fb = parsed_files[valid_chunk[i]]
+                        r = _build_synthetic_vision_result(pf_fb)
+                        vision_results.append(r)
                         _progress(i, len(vision_items), r)
-            except TimeoutError:
-                logger.warning(
-                    f"  [TIMEOUT:VLM] {len(vision_items)} images exceeded "
-                    f"{vlm_timeout_s:.1f}s; using synthetic fallback"
-                )
-                vision_results = []
-                for i, _ in enumerate(vision_items):
-                    pf_fb = parsed_files[valid_chunk[i]]
-                    r = _build_synthetic_vision_result(pf_fb)
-                    vision_results.append(r)
-                    _progress(i, len(vision_items), r)
-            except Exception as e:
-                logger.warning(f"  [FAIL:VLM] batch failed ({e}); using synthetic fallback")
-                vision_results = []
-                for i, _ in enumerate(vision_items):
-                    pf_fb = parsed_files[valid_chunk[i]]
-                    r = _build_synthetic_vision_result(pf_fb)
-                    vision_results.append(r)
-                    _progress(i, len(vision_items), r)
+                except Exception as e:
+                    msg = (
+                        f"  [FAIL:VLM] batch failed ({e}); switching to synthetic fallback "
+                        "for remaining files in this run"
+                    )
+                    if vlm_fail_fast:
+                        logger.error(f"{msg} (fail-fast enabled)")
+                        raise RuntimeError(
+                            f"VLM inference failed at {processed + 1}/{total_vision}: {e}. "
+                            "Run aborted."
+                        )
+                    vlm_available = False
+                    logger.warning(msg)
+                    vision_results = []
+                    for i, _ in enumerate(vision_items):
+                        pf_fb = parsed_files[valid_chunk[i]]
+                        r = _build_synthetic_vision_result(pf_fb)
+                        vision_results.append(r)
+                        _progress(i, len(vision_items), r)
 
             # Apply results
             for i, result in enumerate(vision_results):
@@ -1147,13 +1215,15 @@ def phase2_vision_adaptive(
         elapsed_sub = time.perf_counter() - t_sub
 
         # Adaptive: decide next batch size (throughput-driven)
-        decision = controller.after_sub_batch('vlm', len(chunk), elapsed_sub)
+        decision = None
+        if not force_vlm_single:
+            decision = controller.after_sub_batch('vlm', len(chunk), elapsed_sub)
 
         # Emit phase progress
         if phase_progress_callback:
             phase_progress_callback(processed, batch_size)
 
-        if decision.abort:
+        if decision and decision.abort:
             logger.error(f"[ADAPTIVE:vlm] Aborting VLM phase at {processed}/{total_vision}")
             break
 
