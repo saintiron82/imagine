@@ -165,21 +165,42 @@ class VisionAnalyzer:
                 # Use Auto classes for forward-compatible HF pattern
                 from transformers import AutoProcessor, AutoModelForImageTextToText
 
+                t_proc = time.perf_counter()
+                logger.info("[VLM load] AutoProcessor.from_pretrained start")
                 self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
+                logger.info(
+                    f"[VLM load] AutoProcessor ready in {time.perf_counter() - t_proc:.1f}s"
+                )
 
                 # MPS does not support device_map="auto"
                 if self.device == "mps":
+                    t_model = time.perf_counter()
+                    logger.info("[VLM load] AutoModelForImageTextToText.from_pretrained start (mps path)")
                     self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_id,
                         torch_dtype=torch.float16,
                         **hf_kwargs,
-                    ).to(self.device)
+                    )
+                    logger.info(
+                        f"[VLM load] Weights loaded in {time.perf_counter() - t_model:.1f}s "
+                        "(mps path, before to(device))"
+                    )
+                    t_to = time.perf_counter()
+                    logger.info("[VLM load] model.to(mps) start")
+                    self.model = self.model.to(self.device)
+                    logger.info(f"[VLM load] model.to(mps) done in {time.perf_counter() - t_to:.1f}s")
                 else:
+                    t_model = time.perf_counter()
+                    logger.info("[VLM load] AutoModelForImageTextToText.from_pretrained start (device_map path)")
                     self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_id,
                         torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
                         device_map="auto",
                         **hf_kwargs,
+                    )
+                    logger.info(
+                        f"[VLM load] Weights loaded in {time.perf_counter() - t_model:.1f}s "
+                        "(device_map path)"
                     )
 
             else:

@@ -808,6 +808,95 @@ def _call_with_timeout(func, timeout_s: float):
         signal.signal(signal.SIGALRM, prev)
 
 
+def _load_vlm_model_with_policy(analyzer, preload_timeout_s: float):
+    """
+    Load VLM model with platform-aware timeout policy.
+
+    On macOS MPS, hard signal timeouts can interrupt heavy tensor materialization
+    and produce false timeout failures despite healthy progress. In that path,
+    preload timeout is treated as a warning threshold only.
+    """
+    device = getattr(analyzer, "device", None)
+    is_macos_mps = (sys.platform == "darwin" and device == "mps")
+
+    if not is_macos_mps:
+        _call_with_timeout(lambda: analyzer._load_model(), preload_timeout_s)
+        return
+
+    if preload_timeout_s and preload_timeout_s > 0:
+        logger.info(
+            "[VLM preload] macOS+MPS detected; hard preload timeout is disabled "
+            f"(warning threshold={preload_timeout_s:.1f}s)."
+        )
+    t0 = time.perf_counter()
+    analyzer._load_model()
+    elapsed = time.perf_counter() - t0
+    if preload_timeout_s and preload_timeout_s > 0 and elapsed > preload_timeout_s:
+        logger.warning(
+            f"[WARN:VLM] Model preload took {elapsed:.1f}s "
+            f"(threshold {preload_timeout_s:.1f}s) on macOS+MPS."
+        )
+
+
+def _prewarm_vlm_imports() -> None:
+    """
+    Pre-import Qwen3-VL transformer classes on the main thread.
+
+    This avoids late heavy import chains being triggered after threaded parse work,
+    which can appear as a freeze before VLM weight loading starts.
+    """
+    try:
+        from backend.utils.config import get_config
+        from backend.utils.tier_config import get_active_tier
+
+        cfg = get_config()
+        if not bool(cfg.get("vision.prewarm_imports", True)):
+            return
+
+        _, tier_cfg = get_active_tier()
+        model_id = str(tier_cfg.get("vlm", {}).get("model", "") or "")
+        if "Qwen3-VL" not in model_id and "Qwen3VL" not in model_id:
+            return
+
+        t0 = time.perf_counter()
+        logger.info("[VLM prewarm] Importing Qwen3-VL transformer classes on main thread...")
+        from transformers import AutoProcessor, AutoModelForImageTextToText  # noqa: F401
+        logger.info(f"[VLM prewarm] Import complete in {time.perf_counter() - t0:.1f}s")
+    except Exception as e:
+        logger.warning(f"[VLM prewarm] skipped: {e}")
+
+
+def _run_vlm_inference_with_policy(analyzer, infer_fn, timeout_s: float):
+    """
+    Run VLM inference with platform-aware timeout policy.
+
+    On macOS+MPS, hard SIGALRM timeouts can fail to interrupt long-running
+    kernel sections predictably. In that path, timeout is treated as a warning
+    threshold while generation-side limits still bound output length.
+    """
+    device = getattr(analyzer, "device", None)
+    is_macos_mps = (sys.platform == "darwin" and device == "mps")
+
+    if not is_macos_mps:
+        return _call_with_timeout(infer_fn, timeout_s)
+
+    if timeout_s and timeout_s > 0:
+        logger.info(
+            "[VLM inference] macOS+MPS detected; hard inference timeout is disabled "
+            f"(warning threshold={timeout_s:.1f}s)."
+        )
+
+    t0 = time.perf_counter()
+    out = infer_fn()
+    elapsed = time.perf_counter() - t0
+    if timeout_s and timeout_s > 0 and elapsed > timeout_s:
+        logger.warning(
+            f"[WARN:VLM] Inference took {elapsed:.1f}s "
+            f"(threshold {timeout_s:.1f}s) on macOS+MPS."
+        )
+    return out
+
+
 def _derive_structure_from_vv(vv_vec, target_dim: int = 768):
     """
     Deterministic fallback: derive a structure vector from VV when DINOv2 is unavailable.
@@ -1032,15 +1121,17 @@ def phase2_vision_adaptive(
 
     from backend.vision.vision_factory import get_vision_analyzer
     analyzer = get_vision_analyzer()
-    force_vlm_single = getattr(analyzer, "device", None) == "cpu"
+    analyzer_device = getattr(analyzer, "device", None)
+    force_vlm_single = analyzer_device == "cpu"
     if force_vlm_single:
-        logger.warning(
-            "VLM is running on CPU; forcing sub-batch size to 1 for responsive progress."
-        )
+        if analyzer_device == "cpu":
+            logger.warning(
+                "VLM is running on CPU; forcing sub-batch size to 1 for responsive progress."
+            )
     vlm_available = True
     if hasattr(analyzer, "_load_model"):
         try:
-            _call_with_timeout(lambda: analyzer._load_model(), vlm_preload_timeout_s)
+            _load_vlm_model_with_policy(analyzer, vlm_preload_timeout_s)
         except TimeoutError:
             msg = (
                 f"[TIMEOUT:VLM] Model load exceeded {vlm_preload_timeout_s:.1f}s; "
@@ -1112,15 +1203,28 @@ def phase2_vision_adaptive(
                     _progress(i, len(vision_items), r)
             else:
                 try:
+                    if len(vision_items) == 1:
+                        logger.info(
+                            f"  [RUN:VLM] {processed + 1}/{total_vision} "
+                            f"{parsed_files[valid_chunk[0]].file_path.name}"
+                        )
+                    else:
+                        logger.info(
+                            f"  [RUN:VLM] chunk {processed + 1}-"
+                            f"{processed + len(vision_items)}/{total_vision} "
+                            f"(batch={len(vision_items)})"
+                        )
                     if hasattr(analyzer, 'classify_and_analyze_sequence'):
-                        vision_results = _call_with_timeout(
+                        vision_results = _run_vlm_inference_with_policy(
+                            analyzer,
                             lambda: analyzer.classify_and_analyze_sequence(
                                 vision_items, progress_callback=_progress
                             ),
                             vlm_timeout_s,
                         )
                     else:
-                        vision_results = _call_with_timeout(
+                        vision_results = _run_vlm_inference_with_policy(
+                            analyzer,
                             lambda: [
                                 analyzer.classify_and_analyze(img, context=ctx)
                                 for (img, ctx) in vision_items
@@ -1888,6 +1992,7 @@ def process_batch_phased(
     monitor.log_status("pipeline_start")
 
     logger.info(f"[BATCH] Adaptive pipeline v3.5: {total} files (throughput-driven batch sizing)")
+    _prewarm_vlm_imports()
 
     # Cumulative phase counters (emitted as [PHASE] for frontend tracking)
     # P=Parse, MC=Meta-Context Caption, VV=Visual Vector, MV=Meaning Vector
