@@ -11,10 +11,12 @@ This module analyzes images to extract:
 
 import logging
 import time
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from PIL import Image
 import torch
+from backend.utils.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,12 @@ class VisionAnalyzer:
         self.tier_name = tier_name
         self.model = None
         self.processor = None
+        cfg = get_config()
+        self.require_local_models = bool(cfg.get("vision.require_local_models", True))
+        if self.require_local_models:
+            # Force strict offline mode to avoid long network retries when local models are missing.
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
         logger.info(
             f"VisionAnalyzer initialized (tier: {tier_name}, device: {self.device}, "
@@ -71,45 +79,49 @@ class VisionAnalyzer:
             return
 
         logger.info(f"Loading {self.model_id} model...")
+        hf_kwargs = {"local_files_only": self.require_local_models}
 
         try:
             if "blip2" in self.model_id.lower():
                 # BLIP-2 model
                 from transformers import Blip2Processor, Blip2ForConditionalGeneration
 
-                self.processor = Blip2Processor.from_pretrained(self.model_id)
+                self.processor = Blip2Processor.from_pretrained(self.model_id, **hf_kwargs)
 
                 # Use float16 on CUDA for speed, float32 on CPU
                 dtype = torch.float16 if self.device == "cuda" else torch.float32
 
                 self.model = Blip2ForConditionalGeneration.from_pretrained(
                     self.model_id,
-                    torch_dtype=dtype
+                    torch_dtype=dtype,
+                    **hf_kwargs,
                 ).to(self.device)
 
             elif "blip" in self.model_id.lower():
                 # BLIP (original) model (default, simple and reliable)
                 from transformers import BlipProcessor, BlipForConditionalGeneration
 
-                self.processor = BlipProcessor.from_pretrained(self.model_id)
+                self.processor = BlipProcessor.from_pretrained(self.model_id, **hf_kwargs)
 
                 # Use float16 on CUDA for speed, float32 on CPU
                 dtype = torch.float16 if self.device == "cuda" else torch.float32
 
                 self.model = BlipForConditionalGeneration.from_pretrained(
                     self.model_id,
-                    torch_dtype=dtype
+                    torch_dtype=dtype,
+                    **hf_kwargs,
                 ).to(self.device)
 
             elif "Qwen2-VL" in self.model_id:
                 # Qwen2-VL model
                 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
-                self.processor = AutoProcessor.from_pretrained(self.model_id)
+                self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
                 self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                     self.model_id,
                     torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                    device_map="auto"
+                    device_map="auto",
+                    **hf_kwargs,
                 )
 
             elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
@@ -117,19 +129,21 @@ class VisionAnalyzer:
                 # Use Auto classes for forward-compatible HF pattern
                 from transformers import AutoProcessor, AutoModelForImageTextToText
 
-                self.processor = AutoProcessor.from_pretrained(self.model_id)
+                self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
 
                 # MPS does not support device_map="auto"
                 if self.device == "mps":
                     self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_id,
                         torch_dtype=torch.float16,
+                        **hf_kwargs,
                     ).to(self.device)
                 else:
                     self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_id,
                         torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                        device_map="auto"
+                        device_map="auto",
+                        **hf_kwargs,
                     )
 
             else:
@@ -138,17 +152,30 @@ class VisionAnalyzer:
 
                 self.processor = AutoProcessor.from_pretrained(
                     self.model_id,
-                    trust_remote_code=True
+                    trust_remote_code=True,
+                    **hf_kwargs,
                 )
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_id,
                     trust_remote_code=True,
-                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                    **hf_kwargs,
                 ).to(self.device)
 
             logger.info(f"{self.model_id} loaded successfully on {self.device}")
 
         except Exception as e:
+            # Do not mask ingest-engine timeout interrupts as "model missing".
+            # _call_with_timeout raises a private _TimedOut inside the target call.
+            if isinstance(e, TimeoutError) or e.__class__.__name__ == "_TimedOut":
+                raise
+            if self.require_local_models:
+                msg = (
+                    f"Vision model not installed locally: {self.model_id}. "
+                    "Run: .venv/bin/python scripts/install_hf_models.py --vlm"
+                )
+                logger.error(msg)
+                raise RuntimeError(msg) from e
             logger.error(f"Failed to load {self.model_id}: {e}")
             raise
 

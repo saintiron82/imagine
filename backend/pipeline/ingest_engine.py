@@ -71,10 +71,69 @@ logger = logging.getLogger("IngestEngine")
 
 SUPPORTED_EXTENSIONS = {'.psd', '.png', '.jpg', '.jpeg'}
 
+# Global DB handles (read connection + async write queue)
+_global_sqlite_db = None
+_global_db_writer = None
+
 
 def _nfc(path) -> str:
     """Normalize file path to NFC form to prevent macOS NFD/NFC duplicates in DB."""
     return unicodedata.normalize('NFC', str(path).replace('\\', '/'))
+
+
+def _ensure_sqlite_db():
+    """Get or create process-wide SQLiteDB (read/metadata checks)."""
+    from backend.db.sqlite_client import SQLiteDB
+    global _global_sqlite_db
+    if _global_sqlite_db is None:
+        _global_sqlite_db = SQLiteDB()
+        logger.info("SQLite database initialized")
+    return _global_sqlite_db
+
+
+def _get_db_writer():
+    """Get or create process-wide async DB write queue."""
+    from backend.db.write_queue import DBWriteQueue
+    from backend.utils.config import get_config
+
+    global _global_db_writer
+    if _global_db_writer is not None:
+        return _global_db_writer
+
+    db = _ensure_sqlite_db()
+    cfg = get_config()
+    writer_cfg = cfg.get("batch_processing.db_writer", {})
+
+    batch_size = writer_cfg.get("batch_size", 500) if isinstance(writer_cfg, dict) else 500
+    flush_interval_s = writer_cfg.get("flush_interval_s", 0.15) if isinstance(writer_cfg, dict) else 0.15
+    max_queue = writer_cfg.get("max_queue_size", 1024) if isinstance(writer_cfg, dict) else 1024
+
+    _global_db_writer = DBWriteQueue(
+        db_path=db.db_path,
+        batch_size=batch_size,
+        flush_interval_s=flush_interval_s,
+        max_queue_size=max_queue,
+    )
+    return _global_db_writer
+
+
+def _shutdown_db_writer():
+    """Flush/close DB writer and read connection."""
+    global _global_db_writer, _global_sqlite_db
+    if _global_db_writer is not None:
+        try:
+            _global_db_writer.close()
+        except Exception as e:
+            logger.warning(f"DB writer shutdown failed: {e}")
+        finally:
+            _global_db_writer = None
+    if _global_sqlite_db is not None:
+        try:
+            _global_sqlite_db.close()
+        except Exception as e:
+            logger.warning(f"SQLite DB shutdown failed: {e}")
+        finally:
+            _global_sqlite_db = None
 
 
 @dataclass
@@ -383,19 +442,35 @@ def process_file(
                 _global_encoder = SigLIP2Encoder()
                 logger.info(f"Embedding encoder loaded: {_global_encoder.model_name}")
 
-            # Generate embedding from thumbnail
+            # Generate embeddings from thumbnail
             embedding = None
+            structure_embedding = None
+
             if thumb_path and thumb_path.exists():
                 from PIL import Image
                 import numpy as np
 
                 try:
                     image = Image.open(thumb_path).convert("RGB")
+                    
+                    # SigLIP (VV)
                     embedding = _global_encoder.encode_image(image)
-                    logger.debug(f"Generated embedding: {embedding.shape}")
+                    logger.debug(f"Generated VV embedding: {embedding.shape}")
+
+                    # DINOv2 (Structure)
+                    global _global_dinov2_encoder
+                    if '_global_dinov2_encoder' not in globals() or _global_dinov2_encoder is None:
+                        from backend.vector.dinov2_encoder import DinoV2Encoder
+                        _global_dinov2_encoder = DinoV2Encoder()
+                        logger.info(f"Structure encoder loaded: {_global_dinov2_encoder.model_name}")
+                    
+                    structure_embedding = _global_dinov2_encoder.encode_image(image)
+                    logger.debug(f"Generated Structure embedding: {structure_embedding.shape}")
+
                 except Exception as e:
-                    logger.warning(f"Failed to generate embedding: {e}")
-                    embedding = np.zeros(_global_encoder.dimensions, dtype=np.float32)
+                    logger.warning(f"Failed to generate embeddings: {e}")
+                    if embedding is None:
+                        embedding = np.zeros(_global_encoder.dimensions, dtype=np.float32)
             else:
                 logger.warning("No thumbnail available - using zero embedding")
                 import numpy as np
@@ -414,7 +489,8 @@ def process_file(
             file_id = _global_sqlite_db.insert_file(
                 file_path=_nfc(file_path),
                 metadata=meta.model_dump(),
-                embedding=embedding
+                embedding=embedding,
+                structure_embedding=structure_embedding
             )
 
             # MV: Generate meaning vector from MC (caption + tags)
@@ -505,6 +581,88 @@ def _load_and_composite_thumbnail(thumb_path: Path) -> Optional["Image.Image"]:
     return rgb
 
 
+def _load_visual_source_image(pf: ParsedFile) -> Optional["Image.Image"]:
+    """
+    Load an RGB image for vision/vector phases.
+
+    Priority:
+    1) Thumbnail file
+    2) Original asset decode fallback (PSD/image)
+    """
+    if pf.thumb_path and pf.thumb_path.exists():
+        return _load_and_composite_thumbnail(pf.thumb_path)
+
+    try:
+        from PIL import Image
+        from backend.utils.config import get_config
+
+        cfg = get_config()
+        bg_color = cfg.get('thumbnail.index_composite_bg', '#FFFFFF')
+        bg_rgb = tuple(int(bg_color.lstrip('#')[i:i + 2], 16) for i in (0, 2, 4))
+
+        ext = pf.file_path.suffix.lower()
+        if ext == '.psd':
+            from psd_tools import PSDImage
+            psd = PSDImage.open(pf.file_path)
+            try:
+                composite = psd.composite()
+            except Exception as e:
+                if "aggdraw" in str(e).lower():
+                    logger.warning(
+                        f"  [FALLBACK] PSD composite requires aggdraw, using embedded preview: {pf.file_path.name}"
+                    )
+                    if hasattr(psd, "topil"):
+                        composite = psd.topil()
+                    else:
+                        logger.warning(
+                            f"  [FALLBACK] PSDImage.topil() unavailable: {pf.file_path.name}"
+                        )
+                        composite = None
+                else:
+                    raise
+            if composite is None:
+                try:
+                    import numpy as np
+                    arr = psd.numpy()
+                    if arr is not None and getattr(arr, "size", 0) > 0:
+                        if arr.dtype != np.uint8:
+                            arr = np.clip(arr, 0, 255).astype(np.uint8)
+                        if arr.ndim == 3 and arr.shape[2] in (3, 4):
+                            composite = Image.fromarray(arr[:, :, :3], mode='RGB')
+                            logger.warning(
+                                f"  [FALLBACK] Using PSD numpy rasterization: {pf.file_path.name}"
+                            )
+                except Exception as e:
+                    logger.warning(f"  [FALLBACK] PSD numpy rasterization failed: {pf.file_path.name}: {e}")
+            if composite is None:
+                return None
+            if composite.mode == 'RGBA':
+                background = Image.new('RGB', composite.size, bg_rgb)
+                background.paste(composite, mask=composite.split()[-1])
+                img = background
+            else:
+                img = composite.convert('RGB')
+        else:
+            with Image.open(pf.file_path) as raw:
+                if raw.mode == 'RGBA':
+                    background = Image.new('RGB', raw.size, bg_rgb)
+                    background.paste(raw, mask=raw.split()[-1])
+                    img = background
+                else:
+                    img = raw.convert('RGB')
+
+        # Keep memory pressure bounded to tier thumbnail max-edge.
+        max_edge = BaseParser.get_thumbnail_max_edge()
+        if max(img.size) > max_edge:
+            img.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+
+        logger.info(f"  [FALLBACK] Using original decode for {pf.file_path.name}")
+        return img
+    except Exception as e:
+        logger.warning(f"  [FALLBACK] Original decode failed for {pf.file_path.name}: {e}")
+        return None
+
+
 def _build_mc_raw(meta) -> dict:
     """Build MC.raw context dict for VLM Stage 2."""
     return {
@@ -568,6 +726,110 @@ def _apply_vision_result(meta, vision_result: dict):
     meta.item_type = vision_result.get('item_type')
     meta.ui_type = vision_result.get('ui_type')
     meta.structured_meta = _json.dumps(vision_result, ensure_ascii=False)
+
+
+def _build_synthetic_vision_result(pf: ParsedFile) -> dict:
+    """
+    Build deterministic fallback vision result when model inference is unavailable.
+    Keeps pipeline forward-progress without blocking.
+    """
+    stem = pf.file_path.stem.replace("_", " ").replace("-", " ").strip()
+    folder_hint = (pf.meta.folder_path or "").replace("/", " ").strip()
+    base_caption = f"{stem} {folder_hint}".strip() or pf.file_path.name
+
+    tags = []
+    if pf.meta and pf.meta.semantic_tags:
+        tags.extend([t for t in str(pf.meta.semantic_tags).split() if len(t) > 1][:8])
+    if folder_hint:
+        tags.extend([t for t in folder_hint.split() if len(t) > 1][:4])
+    if not tags:
+        tags = ["asset", "fallback"]
+
+    # Deduplicate, preserve order
+    seen = set()
+    uniq_tags = []
+    for t in tags:
+        k = t.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq_tags.append(t)
+
+    return {
+        "caption": base_caption,
+        "tags": uniq_tags[:12],
+        "ocr": "",
+        "color": "",
+        "style": "",
+        "image_type": "other",
+        "art_style": None,
+        "color_palette": None,
+        "scene_type": None,
+        "time_of_day": None,
+        "weather": None,
+        "character_type": None,
+        "item_type": None,
+        "ui_type": None,
+    }
+
+
+def _call_with_timeout(func, timeout_s: float):
+    """
+    Execute callable with a hard timeout on Unix main thread.
+
+    Falls back to plain execution on unsupported environments.
+    """
+    if not timeout_s or timeout_s <= 0:
+        return func()
+
+    try:
+        import signal
+        import threading
+        if sys.platform.startswith("win") or threading.current_thread() is not threading.main_thread():
+            return func()
+    except Exception:
+        return func()
+
+    class _TimedOut(Exception):
+        pass
+
+    def _handler(_signum, _frame):
+        raise _TimedOut()
+
+    prev = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, float(timeout_s))
+    try:
+        return func()
+    except _TimedOut as e:
+        raise TimeoutError(f"Vision inference timed out after {timeout_s:.1f}s") from e
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, prev)
+
+
+def _derive_structure_from_vv(vv_vec, target_dim: int = 768):
+    """
+    Deterministic fallback: derive a structure vector from VV when DINOv2 is unavailable.
+    """
+    import numpy as np
+
+    if vv_vec is None:
+        return None
+    arr = np.asarray(vv_vec, dtype=np.float32).reshape(-1)
+    if arr.size == 0:
+        return None
+
+    if arr.size >= target_dim:
+        out = arr[:target_dim].copy()
+    else:
+        out = np.zeros(target_dim, dtype=np.float32)
+        out[:arr.size] = arr
+
+    norm = np.linalg.norm(out)
+    if norm > 0:
+        out = out / norm
+    return out.astype(np.float32)
 
 
 def _check_thumbnail_size(thumb_path: Path, min_edge: int) -> bool:
@@ -634,21 +896,35 @@ def _parse_single_file(file_info: tuple) -> ParsedFile:
     # Resolve thumbnail (path only, no image loading — JIT in Phase 2/3)
     pf.thumb_path = _resolve_thumb_path(meta)
 
-    # Check if existing thumbnail meets tier size requirement; regenerate if undersized
-    if pf.thumb_path and pf.thumb_path.exists():
-        required_edge = BaseParser.get_thumbnail_max_edge()
-        if not _check_thumbnail_size(pf.thumb_path, required_edge):
-            logger.info(f"  [REGEN] {fp.name}: thumbnail undersized, regenerating at {required_edge}px")
-            try:
-                new_thumb = parser._create_thumbnail(
-                    *(_open_for_thumbnail(fp, parser))
-                )
-                if new_thumb:
-                    pf.thumb_path = new_thumb
-                    meta.thumbnail_url = str(new_thumb)
-                    meta.visual_source_path = str(new_thumb)
-            except Exception as e:
-                logger.warning(f"  [REGEN] thumbnail regeneration failed for {fp.name}: {e}")
+    # Ensure thumbnail exists and meets tier size requirement.
+    # Missing/invalid thumbnails create an infinite "partially processed" loop
+    # because VV/Structure phases cannot run without an image source.
+    required_edge = BaseParser.get_thumbnail_max_edge()
+    needs_regen = False
+    regen_reason = ""
+    if not pf.thumb_path or not pf.thumb_path.exists():
+        needs_regen = True
+        regen_reason = "missing"
+    elif not _check_thumbnail_size(pf.thumb_path, required_edge):
+        needs_regen = True
+        regen_reason = "undersized"
+
+    if needs_regen:
+        logger.info(
+            f"  [REGEN] {fp.name}: thumbnail {regen_reason}, regenerating at {required_edge}px"
+        )
+        try:
+            new_thumb = parser._create_thumbnail(
+                *(_open_for_thumbnail(fp, parser))
+            )
+            if new_thumb:
+                pf.thumb_path = new_thumb
+                meta.thumbnail_url = str(new_thumb)
+                meta.visual_source_path = str(new_thumb)
+            else:
+                logger.warning(f"  [REGEN] thumbnail regeneration returned empty path: {fp.name}")
+        except Exception as e:
+            logger.warning(f"  [REGEN] thumbnail regeneration failed for {fp.name}: {e}")
 
     # Build MC.raw context
     pf.mc_raw = _build_mc_raw(meta)
@@ -719,7 +995,11 @@ def phase2_vision_adaptive(
 ) -> None:
     """Phase 2: VLM analysis with adaptive batch sizing, JIT thumbnails, and incremental DB storage."""
     import gc
-    global _global_sqlite_db
+    from backend.utils.config import get_config
+    writer = _get_db_writer()
+    write_jobs = []
+    cfg = get_config()
+    vlm_timeout_s = float(cfg.get("vision.vlm_timeout_s", 45.0) or 45.0)
 
     # Filter files that need vision processing
     vision_indices = []
@@ -731,8 +1011,8 @@ def phase2_vision_adaptive(
             skipped += 1
             logger.info(f"  [SKIP:Vision] {pf.file_path.name} (MC exists, same model)")
             continue
-        if pf.thumb_path and pf.thumb_path.exists():
-            vision_indices.append(idx)
+        # Allow fallback decode from original file when thumbnail is missing.
+        vision_indices.append(idx)
 
     if skipped > 0:
         logger.info(f"  [SKIP:Vision] {skipped} files skipped (MC unchanged)")
@@ -756,13 +1036,13 @@ def phase2_vision_adaptive(
         chunk = vision_indices[processed:processed + batch_size]
         t_sub = time.perf_counter()
 
-        # JIT: Load thumbnails for this sub-batch only
+        # JIT: Load vision source for this sub-batch only
         for idx in chunk:
             pf = parsed_files[idx]
             try:
-                pf.thumb_image_rgb = _load_and_composite_thumbnail(pf.thumb_path)
+                pf.thumb_image_rgb = _load_visual_source_image(pf)
             except Exception as e:
-                logger.warning(f"Thumbnail load failed for {pf.file_path.name}: {e}")
+                logger.warning(f"Visual source load failed for {pf.file_path.name}: {e}")
             _compute_dhash(pf)
 
         # Build vision items for this sub-batch
@@ -783,17 +1063,41 @@ def phase2_vision_adaptive(
                 if progress_callback:
                     progress_callback(_offset + i, total_vision, result)
 
-            if hasattr(analyzer, 'classify_and_analyze_sequence'):
-                vision_results = analyzer.classify_and_analyze_sequence(
-                    vision_items, progress_callback=_progress
+            try:
+                if hasattr(analyzer, 'classify_and_analyze_sequence'):
+                    vision_results = _call_with_timeout(
+                        lambda: analyzer.classify_and_analyze_sequence(
+                            vision_items, progress_callback=_progress
+                        ),
+                        vlm_timeout_s,
+                    )
+                else:
+                    vision_results = _call_with_timeout(
+                        lambda: [
+                            analyzer.classify_and_analyze(img, context=ctx)
+                            for (img, ctx) in vision_items
+                        ],
+                        vlm_timeout_s,
+                    )
+                    for i, r in enumerate(vision_results):
+                        _progress(i, len(vision_items), r)
+            except TimeoutError:
+                logger.warning(
+                    f"  [TIMEOUT:VLM] {len(vision_items)} images exceeded "
+                    f"{vlm_timeout_s:.1f}s; using synthetic fallback"
                 )
-            else:
                 vision_results = []
-                for i, (img, ctx) in enumerate(vision_items):
-                    try:
-                        r = analyzer.classify_and_analyze(img, context=ctx)
-                    except Exception:
-                        r = {"caption": "", "tags": [], "image_type": "other"}
+                for i, _ in enumerate(vision_items):
+                    pf_fb = parsed_files[valid_chunk[i]]
+                    r = _build_synthetic_vision_result(pf_fb)
+                    vision_results.append(r)
+                    _progress(i, len(vision_items), r)
+            except Exception as e:
+                logger.warning(f"  [FAIL:VLM] batch failed ({e}); using synthetic fallback")
+                vision_results = []
+                for i, _ in enumerate(vision_items):
+                    pf_fb = parsed_files[valid_chunk[i]]
+                    r = _build_synthetic_vision_result(pf_fb)
                     vision_results.append(r)
                     _progress(i, len(vision_items), r)
 
@@ -807,8 +1111,8 @@ def phase2_vision_adaptive(
         for idx in chunk:
             parsed_files[idx].thumb_image_rgb = None
 
-        # Incremental DB storage: save vision results immediately per sub-batch
-        if valid_chunk and _global_sqlite_db:
+        # Incremental DB storage: enqueue vision writes per sub-batch
+        if valid_chunk and writer:
             for idx in valid_chunk:
                 pf = parsed_files[idx]
                 try:
@@ -830,7 +1134,8 @@ def phase2_vision_adaptive(
                         'structured_meta': pf.meta.structured_meta,
                         'perceptual_hash': pf.meta.perceptual_hash,
                     }
-                    _global_sqlite_db.update_vision_fields(_nfc(pf.file_path), fields)
+                    fut = writer.submit_vision(_nfc(pf.file_path), fields)
+                    write_jobs.append((pf, fut))
                 except Exception as e:
                     logger.error(f"  [FAIL:vision-store] {pf.file_path.name}: {e}")
         # Release VLM input context for ALL items (mc_caption/ai_tags kept for Phase 3b MV)
@@ -853,6 +1158,18 @@ def phase2_vision_adaptive(
             break
 
     elapsed = time.perf_counter() - t0
+    if write_jobs:
+        stored_ok = 0
+        stored_fail = 0
+        for pf, fut in write_jobs:
+            try:
+                fut.result()
+                stored_ok += 1
+            except Exception as e:
+                stored_fail += 1
+                logger.error(f"  [FAIL:vision-store] {pf.file_path.name}: {e}")
+        if stored_fail > 0:
+            logger.warning(f"  [VISION-STORE] {stored_ok}/{len(write_jobs)} saved")
     logger.info(f"STEP 2/4 completed in {elapsed:.1f}s ({processed}/{total_vision})")
 
 
@@ -867,7 +1184,8 @@ def phase3a_vv_adaptive(
     """
     import gc
     import numpy as np
-    global _global_sqlite_db
+    writer = _get_db_writer()
+    write_jobs = []
 
     valid_indices = [i for i, pf in enumerate(parsed_files) if pf.error is None]
 
@@ -878,8 +1196,8 @@ def phase3a_vv_adaptive(
         if pf.skip_embed_vv:
             vv_skipped += 1
             continue
-        if pf.thumb_path and pf.thumb_path.exists():
-            vv_indices.append(i)
+        # Allow fallback decode from original file when thumbnail is missing.
+        vv_indices.append(i)
     if vv_skipped > 0:
         logger.info(f"  [SKIP:VV] {vv_skipped} files skipped (same SigLIP2 model)")
 
@@ -910,31 +1228,55 @@ def phase3a_vv_adaptive(
         chunk = vv_indices[processed:processed + batch_size]
         t_sub = time.perf_counter()
 
-        # JIT: Load thumbnails from disk
+        # JIT: Load visual source from thumbnail or original fallback
         images = []
         chunk_valid = []
         for idx in chunk:
             pf = parsed_files[idx]
             try:
-                img = _load_and_composite_thumbnail(pf.thumb_path)
-                images.append(img)
-                chunk_valid.append(idx)
+                img = _load_visual_source_image(pf)
+                if img is not None:
+                    images.append(img)
+                    chunk_valid.append(idx)
             except Exception as e:
-                logger.warning(f"VV thumbnail load failed for {pf.file_path.name}: {e}")
+                logger.warning(f"VV visual source load failed for {pf.file_path.name}: {e}")
 
         if images:
             vv_vectors = _global_encoder.encode_image_batch(images)
-            # Incremental DB storage: save VV vectors immediately per sub-batch
+
+            # Lazy load DINOv2 for Structure vectors
+            global _global_dinov2_encoder
+            if '_global_dinov2_encoder' not in globals() or _global_dinov2_encoder is None:
+                from backend.vector.dinov2_encoder import DinoV2Encoder
+                _global_dinov2_encoder = DinoV2Encoder()
+                logger.info(f"Structure encoder loaded: {_global_dinov2_encoder.model_name}")
+
+            # Compute DINOv2 vectors
+            dinov2_vectors = []
+            for img in images:
+                try:
+                    dinov2_vectors.append(_global_dinov2_encoder.encode_image(img))
+                except Exception:
+                    dinov2_vectors.append(None)
+
+            # Incremental DB storage: enqueue VV + Structure vector writes
             for j, vec in enumerate(vv_vectors):
                 idx = chunk_valid[j]
                 pf = parsed_files[idx]
-                if pf.db_file_id and vec is not None and _global_sqlite_db:
+                dino_vec = dinov2_vectors[j] if j < len(dinov2_vectors) else None
+
+                if pf.db_file_id and vec is not None and writer:
                     try:
-                        _global_sqlite_db.upsert_vectors(pf.db_file_id, vv_vec=vec, mv_vec=None)
-                        pf.stored_vv = True
+                        fut = writer.submit_vectors(
+                            pf.db_file_id,
+                            vv_vec=vec,
+                            mv_vec=None,
+                            structure_vec=dino_vec,
+                        )
+                        write_jobs.append((pf, fut))
                     except Exception as e:
                         logger.error(f"  [FAIL:vv-store] {pf.file_path.name}: {e}")
-            del images, vv_vectors  # Release thumbnails + vectors
+            del images, vv_vectors, dinov2_vectors  # Release thumbnails + vectors
 
         processed += len(chunk)
         gc.collect()
@@ -951,6 +1293,19 @@ def phase3a_vv_adaptive(
             break
 
     elapsed = time.perf_counter() - t0
+    if write_jobs:
+        stored_ok = 0
+        stored_fail = 0
+        for pf, fut in write_jobs:
+            try:
+                fut.result()
+                pf.stored_vv = True
+                stored_ok += 1
+            except Exception as e:
+                stored_fail += 1
+                logger.error(f"  [FAIL:vv-store] {pf.file_path.name}: {e}")
+        if stored_fail > 0:
+            logger.warning(f"  [VV-STORE] {stored_ok}/{len(write_jobs)} saved")
     logger.info(f"STEP 3a/4 VV completed in {elapsed:.1f}s ({processed}/{total_vv} encoded + stored)")
 
 
@@ -964,7 +1319,8 @@ def phase3b_mv_adaptive(
     Returns empty dict (vectors saved to DB immediately per sub-batch).
     """
     import gc
-    global _global_sqlite_db
+    writer = _get_db_writer()
+    write_jobs = []
 
     from backend.utils.config import get_config
     cfg = get_config()
@@ -1044,9 +1400,8 @@ def phase3b_mv_adaptive(
                 except Exception:
                     pass
 
-        # Incremental DB storage: save MV vectors immediately per sub-batch
-        if encoded_pairs and _global_sqlite_db:
-            stored_count = 0
+        # Incremental DB storage: enqueue MV vector writes
+        if encoded_pairs and writer:
             for file_idx, vec in encoded_pairs:
                 pf = parsed_files[file_idx]
                 if not pf.db_file_id:
@@ -1056,13 +1411,10 @@ def phase3b_mv_adaptive(
                     logger.warning(f"  [SKIP:mv-store] {pf.file_path.name}: vec is None")
                     continue
                 try:
-                    _global_sqlite_db.upsert_vectors(pf.db_file_id, vv_vec=None, mv_vec=vec)
-                    pf.stored_mv = True
-                    stored_count += 1
+                    fut = writer.submit_vectors(pf.db_file_id, vv_vec=None, mv_vec=vec)
+                    write_jobs.append((pf, fut))
                 except Exception as e:
                     logger.error(f"  [FAIL:mv-store] {pf.file_path.name}: {e}")
-            if stored_count < len(encoded_pairs):
-                logger.warning(f"  [MV-STORE] {stored_count}/{len(encoded_pairs)} saved")
             del encoded_pairs
 
         processed += len(chunk)
@@ -1079,27 +1431,46 @@ def phase3b_mv_adaptive(
             break
 
     elapsed = time.perf_counter() - t0
+    if write_jobs:
+        stored_ok = 0
+        stored_fail = 0
+        for pf, fut in write_jobs:
+            try:
+                fut.result()
+                pf.stored_mv = True
+                stored_ok += 1
+            except Exception as e:
+                stored_fail += 1
+                logger.error(f"  [FAIL:mv-store] {pf.file_path.name}: {e}")
+        if stored_fail > 0:
+            logger.warning(f"  [MV-STORE] {stored_ok}/{len(write_jobs)} saved")
     logger.info(f"STEP 3b/4 MV completed in {elapsed:.1f}s ({processed}/{total_mv} encoded + stored)")
 
 
 def phase_store_metadata(parsed_files: List[ParsedFile]) -> int:
     """Phase 1 storage: INSERT basic metadata + save JSON files."""
-    from backend.db.sqlite_client import SQLiteDB
-    global _global_sqlite_db
-    if '_global_sqlite_db' not in globals() or _global_sqlite_db is None:
-        _global_sqlite_db = SQLiteDB()
-        logger.info("SQLite database initialized")
+    _ensure_sqlite_db()
+    writer = _get_db_writer()
 
     stored = 0
+    pending = []
     for pf in parsed_files:
         if pf.error is not None:
             continue
         try:
             pf.parser._save_json(pf.meta, pf.file_path)
-            pf.db_file_id = _global_sqlite_db.upsert_metadata(
+            fut = writer.submit_metadata(
                 file_path=_nfc(pf.file_path),
                 metadata=pf.meta.model_dump()
             )
+            pending.append((pf, fut))
+        except Exception as e:
+            logger.error(f"  [FAIL:meta] {pf.file_path.name}: {e}")
+            pf.error = f"Metadata store failed: {e}"
+
+    for pf, fut in pending:
+        try:
+            pf.db_file_id = fut.result()
             stored += 1
         except Exception as e:
             logger.error(f"  [FAIL:meta] {pf.file_path.name}: {e}")
@@ -1193,6 +1564,7 @@ def _check_phase_skip(parsed_files: List[ParsedFile]):
     - Model used matches current tier's model
     """
     from backend.db.sqlite_client import SQLiteDB
+    from backend.utils.config import get_config as _get_cfg
     from backend.utils.tier_config import get_active_tier
 
     global _global_sqlite_db
@@ -1203,6 +1575,8 @@ def _check_phase_skip(parsed_files: List[ParsedFile]):
     current_vlm = tier_config.get("vlm", {}).get("model", "")
     current_vv_model = tier_config.get("visual", {}).get("model", "")
     current_mv_model = tier_config.get("text_embed", {}).get("model", "")
+    cfg = _get_cfg()
+    verify_hash = bool(cfg.get("batch_processing.skip_verify_hash", False))
 
     skip_v, skip_vv, skip_mv = 0, 0, 0
 
@@ -1215,11 +1589,21 @@ def _check_phase_skip(parsed_files: List[ParsedFile]):
             continue  # New file, no skip possible
 
         # mtime check: if file content changed, run ALL phases
+        stat = pf.file_path.stat()
         stored_mtime = info.get("modified_at")
         if stored_mtime:
-            current_mtime = datetime.fromtimestamp(pf.file_path.stat().st_mtime).isoformat()
+            current_mtime = datetime.fromtimestamp(stat.st_mtime).isoformat()
             if stored_mtime.replace('T', ' ') != current_mtime.replace('T', ' '):
                 continue  # File changed → run all phases
+
+        stored_size = info.get("file_size")
+        if stored_size is not None and int(stored_size) != int(stat.st_size):
+            continue  # File size changed
+
+        stored_hash = info.get("content_hash")
+        current_hash = getattr(pf.meta, "content_hash", None)
+        if verify_hash and stored_hash and current_hash and stored_hash != current_hash:
+            continue  # Content hash changed
 
         # Vision: skip if MC exists with same VLM model
         if info["has_mc"] and info.get("caption_model") == current_vlm:
@@ -1237,10 +1621,20 @@ def _check_phase_skip(parsed_files: List[ParsedFile]):
             pf.meta.art_style = info.get("art_style")
             skip_v += 1
 
-        # VV: skip if vector exists with same SigLIP2 model
-        if info["has_vv"] and info.get("embedding_model") == current_vv_model:
+        # VV: skip if vector exists with same SigLIP2 model AND structure exists
+        # If structure is missing (has_structure=False), we must not skip Phase 3a.
+        # Phase 3a handles both VV and Structure generation.
+        has_structure = info.get("has_structure", False)
+        if info["has_vv"] and info.get("embedding_model") == current_vv_model and has_structure:
             pf.skip_embed_vv = True
             skip_vv += 1
+        elif info["has_vv"] and info.get("embedding_model") == current_vv_model and not has_structure:
+             # Partial skip? No, ingest engine Phases are coarse. 
+             # If we enter Phase 3a, it will regenerate VV unless we add fine-grained logic there.
+             # But generating VV (SigLIP) is fast. It's safer to just let it run or modify Phase 3a.
+             # For now, we DON'T skip, so Phase 3a runs. 
+             # Phase 3a verifies if VV is needed? No, it just overwrites. That's fine.
+             pass
 
         # MV: skip if vector exists with same text embed model
         if info["has_mv"] and info.get("text_embed_model") == current_mv_model:
@@ -1373,6 +1767,7 @@ def process_batch_phased(
     mv_batch: int = None,
     parse_workers: int = 4,
     progress_callback=None,
+    allow_phase_skip: bool = True,
 ) -> Tuple[int, int, int]:
     """
     Adaptive batch pipeline v3.4: memory-aware Phase separation.
@@ -1451,8 +1846,11 @@ def process_batch_phased(
     _lighten_parsed_files(parsed)
     monitor.log_status("after_phase1_lighten")
 
-    # Per-phase smart skip
-    _check_phase_skip(parsed)
+    # Per-phase smart skip (can be disabled by --no-skip)
+    if allow_phase_skip:
+        _check_phase_skip(parsed)
+    else:
+        logger.info("[SKIP:Phase] disabled (--no-skip): forcing MC/VV/MV reprocessing")
 
     # ── Phase 2: VLM (adaptive batch) → MC generation ──
     def _on_vision_progress(count, batch_size=2):
@@ -1512,6 +1910,13 @@ def process_batch_phased(
     _unload_mv_verified(monitor)
 
     # ── Phase 4: Summary (all data already stored per sub-batch) ──
+    # Ensure queued DB writes are fully drained
+    if _global_db_writer:
+        try:
+            _global_db_writer.flush(timeout=60.0)
+        except Exception as e:
+            logger.error(f"[DBQ] flush failed: {e}")
+
     # WAL checkpoint to flush all writes to main DB
     if _global_sqlite_db:
         _global_sqlite_db.checkpoint()
@@ -1583,7 +1988,7 @@ def discover_files(root_dir: Path) -> List[Tuple[Path, str, int, List[str]]]:
 
 def should_skip_file(file_path: Path, db) -> bool:
     """
-    Skip only if file is unchanged AND all phases are complete (MC + VV + MV).
+    Skip only if file is unchanged AND all phases are complete (MC + VV + MV + Structure).
     Partially-processed files (e.g. VV done but MC/MV missing) are NOT skipped.
     """
     info = db.get_file_phase_info(_nfc(file_path.resolve()))
@@ -1598,8 +2003,32 @@ def should_skip_file(file_path: Path, db) -> bool:
     if stored_mtime.replace('T', ' ') != current_mtime.replace('T', ' '):
         return False  # File changed
 
+    stat = file_path.stat()
+    stored_size = info.get("file_size")
+    if stored_size is not None and int(stored_size) != int(stat.st_size):
+        return False
+
+    # NOTE:
+    # Re-hashing every file during discovery can become the dominant I/O bottleneck.
+    # Default to mtime+size skip checks; hash verification is optional.
+    from backend.utils.config import get_config as _get_cfg
+    verify_hash = bool(_get_cfg().get("batch_processing.skip_verify_hash", False))
+    stored_hash = info.get("content_hash")
+    if verify_hash and stored_hash:
+        try:
+            from backend.utils.content_hash import compute_content_hash
+            if stored_hash != compute_content_hash(file_path):
+                return False
+        except Exception:
+            return False
+
+    # Missing relative_path means legacy metadata quality gap; do not skip.
+    if not info.get("has_relative_path", False):
+        return False
+
     # All phases must be complete to skip
-    if not (info["has_mc"] and info["has_vv"] and info["has_mv"]):
+    has_structure = info.get("has_structure", False)
+    if not (info["has_mc"] and info["has_vv"] and info["has_mv"] and has_structure):
         return False  # Partially processed — need to continue
 
     return True
@@ -1622,19 +2051,137 @@ def should_skip_file_enhanced(file_path: Path, db, current_tier: str) -> bool:
     if stored_mtime.replace('T', ' ') != current_mtime.replace('T', ' '):
         return False  # File changed → must reprocess
 
+    stat = file_path.stat()
+    stored_size = info.get("file_size")
+    if stored_size is not None and int(stored_size) != int(stat.st_size):
+        return False
+
+    from backend.utils.config import get_config as _get_cfg
+    verify_hash = bool(_get_cfg().get("batch_processing.skip_verify_hash", False))
+    stored_hash = info.get("content_hash")
+    if verify_hash and stored_hash:
+        try:
+            from backend.utils.content_hash import compute_content_hash
+            if stored_hash != compute_content_hash(file_path):
+                return False
+        except Exception:
+            return False
+
     # Tier comparison
     stored_tier = info.get("mode_tier")
     if stored_tier and stored_tier != current_tier:
         return False  # Tier changed → must reprocess
 
+    # Missing relative_path means legacy metadata quality gap; do not skip.
+    if not info.get("has_relative_path", False):
+        return False
+
     # All phases must be complete to skip
-    if not (info["has_mc"] and info["has_vv"] and info["has_mv"]):
+    # v3.6.0: VV phase now includes Structure (DINOv2)
+    has_structure = info.get("has_structure", False)
+    if not (info["has_mc"] and info["has_vv"] and info["has_mv"] and has_structure):
         return False  # Partially processed
 
     return True
 
 
-def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 5):
+def _ensure_fts_rebuild_if_needed(db):
+    """Best-effort FTS version reconciliation before skip filtering."""
+    try:
+        bs = db.get_build_status()
+        reasons = bs.get("reasons", []) if isinstance(bs, dict) else []
+        if any("FTS index version is outdated" in r for r in reasons):
+            logger.info("[REBUILD] Detected outdated FTS index; rebuilding before skip filtering...")
+            db._rebuild_fts()
+    except Exception as e:
+        logger.warning(f"[REBUILD] Build-status check failed (non-fatal): {e}")
+
+
+def _log_rebuild_status(db=None):
+    """Log whether rebuild is still required after a run."""
+    try:
+        status_db = db
+        created_status_db = False
+        if status_db is None:
+            from backend.db.sqlite_client import SQLiteDB
+            status_db = SQLiteDB()
+            created_status_db = True
+
+        status = status_db.get_build_status()
+        if status.get("needs_rebuild"):
+            reasons = status.get("reasons", [])
+            logger.warning(
+                f"[REBUILD][DB] Still required (database-wide): "
+                f"{'; '.join(reasons) if reasons else 'unknown reason'}"
+            )
+        else:
+            logger.info("[REBUILD][DB] No rebuild required")
+
+        if created_status_db:
+            status_db.close()
+    except Exception:
+        pass
+
+
+def _run_common_batch(
+    file_infos: List[Tuple[Path, Optional[str], int, List[str]]],
+    total: int,
+    skip_processed: bool,
+    current_tier: Optional[str] = None,
+    skip_db=None,
+    log_each_skip: bool = False,
+):
+    """
+    Unified executor for both --discover and --files code paths.
+    Ensures identical skip criteria and completion logging behavior.
+    """
+    to_process = []
+    skipped = 0
+
+    for fp, folder, depth, tags in file_infos:
+        if skip_processed and skip_db is not None:
+            if current_tier:
+                should_skip = should_skip_file_enhanced(fp, skip_db, current_tier)
+            else:
+                should_skip = should_skip_file(fp, skip_db)
+            if should_skip:
+                skipped += 1
+                if log_each_skip:
+                    tier_txt = f", tier={current_tier}" if current_tier else ""
+                    logger.info(f"[SKIP] {fp.name} (unchanged{tier_txt})")
+                continue
+        to_process.append((fp, folder, depth, tags))
+
+    if skipped > 0:
+        logger.info(f"[SKIP] {skipped}/{total} files skipped (unchanged)")
+
+    if len(to_process) == 0:
+        logger.info(f"[DONE] 0 processed, 0 errors (total: {total}, {skipped} skipped)")
+        _log_rebuild_status(skip_db)
+        return
+
+    # Always use phase-based batch path (even for 1 file) so per-phase skip
+    # decisions (MC/VV/MV selective reuse) behave consistently.
+    stored, parse_errors, store_errors = process_batch_phased(
+        to_process,
+        allow_phase_skip=skip_processed,
+    )
+    if len(to_process) == 1:
+        logger.info(f"[DONE] {stored} processed (total: {total}, {skipped} skipped)")
+    else:
+        logger.info(
+            f"[DONE] Batch complete: {stored} processed, "
+            f"{parse_errors + store_errors} errors (total: {total}, {skipped} skipped)"
+        )
+    _log_rebuild_status(skip_db)
+
+
+def run_discovery(
+    root_dir: str,
+    skip_processed: bool = True,
+    batch_size: int = 5,
+    current_tier: Optional[str] = None,
+):
     """
     DFS discover all supported files and process them.
 
@@ -1659,46 +2206,30 @@ def run_discovery(root_dir: str, skip_processed: bool = True, batch_size: int = 
     if total == 0:
         return
 
-    # Filter files (smart skip)
+    # Unified skip/filter path
     db = None
     if skip_processed:
         try:
             from backend.db.sqlite_client import SQLiteDB
             db = SQLiteDB()
+            _ensure_fts_rebuild_if_needed(db)
         except Exception as e:
             logger.warning(f"Cannot open DB for smart skip: {e}")
-
-    to_process = []
-    skipped = 0
-    for fp, folder, depth, tags in discovered:
-        if skip_processed and db and should_skip_file(fp, db):
-            skipped += 1
-            logger.debug(f"[SKIP] {fp.name} (unchanged)")
-        else:
-            to_process.append((fp, folder, depth, tags))
-
-    if skipped > 0:
-        logger.info(f"[SKIP] {skipped} files unchanged, {len(to_process)} to process")
-
-    if not to_process:
-        logger.info("[DONE] No files to process")
-        return
-
-    # v3.2: Phase-based batch pipeline
-    if len(to_process) > 1:
-        stored, parse_errors, store_errors = process_batch_phased(to_process)
-        logger.info(f"[DONE] {stored} stored, {skipped} skipped, "
-                     f"{parse_errors + store_errors} errors (total: {total})")
-    else:
-        # Single file: use original process_file for simplicity
-        fp, folder, depth, tags = to_process[0]
-        logger.info(f"Processing: {fp.name}")
-        try:
-            process_file(fp, folder_path=folder, folder_depth=depth, folder_tags=tags)
-            logger.info(f"[DONE] 1 processed, {skipped} skipped (total: {total})")
-        except Exception as e:
-            logger.error(f"[ERROR] {fp.name}: {e}")
-            logger.info(f"[DONE] 0 processed, {skipped} skipped, 1 error (total: {total})")
+    try:
+        _run_common_batch(
+            discovered,
+            total=total,
+            skip_processed=skip_processed,
+            current_tier=current_tier,
+            skip_db=db,
+            log_each_skip=False,
+        )
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 def start_watcher(path: str):
@@ -1802,56 +2333,46 @@ def main():
     logger.info(f"  Action: {compat['action']}")
     db.close()
 
-    if args.discover:
-        # v3.2: Always use Phase-based pipeline (ignore legacy batch_size)
-        run_discovery(args.discover, skip_processed=not args.no_skip)
-    elif args.files:
-        # v3.4: Phase-based batch pipeline with smart skip
-        import json
-        try:
-            file_list = json.loads(args.files)
-            total = len(file_list)
+    try:
+        if args.discover:
+            # v3.2: Always use Phase-based pipeline (ignore legacy batch_size)
+            run_discovery(args.discover, skip_processed=not args.no_skip, current_tier=tier_name)
+        elif args.files:
+            # v3.4+: Unified processing path (same core logic as --discover)
+            import json
+            try:
+                file_list = json.loads(args.files)
+                total = len(file_list)
 
-            if total == 0:
-                logger.info("[DONE] No files to process")
-            else:
-                # Smart skip: filter unchanged files (mtime + tier check)
-                skip_db = SQLiteDB()
-                to_process = []
-                skipped = 0
-                for fp_str in file_list:
-                    fp = Path(fp_str)
-                    if not args.no_skip and should_skip_file_enhanced(fp, skip_db, tier_name):
-                        skipped += 1
-                        logger.info(f"[SKIP] {fp.name} (unchanged, tier={tier_name})")
-                    else:
-                        to_process.append((fp, None, 0, []))
-                skip_db.close()
-
-                if skipped > 0:
-                    logger.info(f"[SKIP] {skipped}/{total} files skipped (unchanged)")
-
-                if len(to_process) == 0:
-                    logger.info(f"[DONE] 0 processed, 0 errors (total: {total}, {skipped} skipped)")
-                elif len(to_process) == 1:
-                    logger.info(f"Processing: {to_process[0][0]}")
-                    process_file(to_process[0][0])
-                    logger.info(f"[DONE] 1 processed (total: {total}, {skipped} skipped)")
+                if total == 0:
+                    logger.info("[DONE] No files to process")
                 else:
-                    file_infos = to_process
-                    stored, parse_errors, store_errors = process_batch_phased(file_infos)
-                    logger.info(
-                        f"[DONE] Batch complete: {stored} processed, "
-                        f"{parse_errors + store_errors} errors (total: {total}, {skipped} skipped)"
-                    )
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON: {e}")
-    elif args.file:
-        process_file(Path(args.file))
-    elif args.watch:
-        start_watcher(args.watch)
-    else:
-        parser.print_help()
+                    file_infos = [(Path(fp_str), None, 0, []) for fp_str in file_list]
+                    skip_db = SQLiteDB() if not args.no_skip else None
+                    try:
+                        if skip_db is not None:
+                            _ensure_fts_rebuild_if_needed(skip_db)
+                        _run_common_batch(
+                            file_infos,
+                            total=total,
+                            skip_processed=not args.no_skip,
+                            current_tier=tier_name,
+                            skip_db=skip_db,
+                            log_each_skip=True,
+                        )
+                    finally:
+                        if skip_db is not None:
+                            skip_db.close()
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON: {e}")
+        elif args.file:
+            process_file(Path(args.file))
+        elif args.watch:
+            start_watcher(args.watch)
+        else:
+            parser.print_help()
+    finally:
+        _shutdown_db_writer()
 
 if __name__ == "__main__":
     main()
