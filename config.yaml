@@ -71,6 +71,8 @@ ai_mode:
             fallback: ollama
       vram_min: 20480
 embedding:
+  structure:
+    require_local_model: true
   text:
     dimensions: 1024
     enabled: true
@@ -84,9 +86,14 @@ runtime:
   pin_version: false
 batch_processing:
   enabled: true
+  skip_verify_hash: false
+  db_writer:
+    batch_size: 500
+    flush_interval_s: 0.15
+    max_queue_size: 1024
   adaptive:
     enabled: true
-    memory_budget_gb: 20.0
+    memory_budget_gb: 20
     vlm_initial_batch: 2
     vv_initial_batch: 4
     mv_initial_batch: 16
@@ -103,6 +110,7 @@ search:
     hard_no_full_scan: true
     no_cut_if_under: 200
   fts:
+    auto_rebuild_on_version_mismatch: true
     bm25_weights:
       meta_strong: 3
       meta_weak: 1.5
@@ -131,6 +139,9 @@ search:
         m: 0.15
         s: 0.35
         v: 0.5
+  rerank:
+    enabled: true
+    pool_size: 120
   threshold:
     text_vec: 0.15
     visual: 0.05
@@ -142,8 +153,10 @@ thumbnail:
   keep_alpha: true
   max_size: 1024
 vision:
+  fail_if_cpu_on_macos: true
   keep_alive: 5m
   max_retries: 2
   model: qwen3-vl:8b
   ollama_host: http://localhost:11434
+  require_local_models: true
   temperature: 0.1

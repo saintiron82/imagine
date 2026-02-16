@@ -12,6 +12,7 @@ This module analyzes images to extract:
 import logging
 import time
 import os
+import platform
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from PIL import Image
@@ -63,6 +64,7 @@ class VisionAnalyzer:
         self.processor = None
         cfg = get_config()
         self.require_local_models = bool(cfg.get("vision.require_local_models", True))
+        self.fail_if_cpu_on_macos = bool(cfg.get("vision.fail_if_cpu_on_macos", True))
         default_max_new_tokens = 96 if self.device == "cpu" else 192
         default_max_gen_time_s = 12.0 if self.device == "cpu" else 30.0
         self.vlm_max_new_tokens = int(
@@ -81,6 +83,20 @@ class VisionAnalyzer:
             f"model: {self.model_id}, dtype: {dtype}, "
             f"max_new_tokens: {self.vlm_max_new_tokens}, max_time_s: {self.vlm_max_gen_time_s})"
         )
+        if platform.system() == "Darwin" and self.device == "cpu":
+            mps_built = hasattr(torch.backends, "mps") and torch.backends.mps.is_built()
+            mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+            msg = (
+                "macOS detected but VLM device resolved to CPU "
+                f"(mps_built={mps_built}, mps_available={mps_available}). "
+                "This will cause severe stalls."
+            )
+            if self.fail_if_cpu_on_macos:
+                raise RuntimeError(
+                    f"{msg} Set up a working MPS runtime or disable "
+                    "`vision.fail_if_cpu_on_macos` only for emergency fallback."
+                )
+            logger.warning(msg)
 
     def _generate_with_limits(self, **inputs):
         """Generate with conservative defaults to prevent long stalls on CPU."""
