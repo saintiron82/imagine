@@ -109,6 +109,33 @@ class VisionAnalyzer:
             kwargs.pop("max_time", None)
             return self.model.generate(**inputs, **kwargs)
 
+    def _configure_padding_for_decoder_generation(self):
+        """
+        Configure tokenizer padding for decoder-only generation models.
+
+        Qwen-VL family expects left padding in batched generation.
+        """
+        tok = None
+        if self.processor is None:
+            return
+        if hasattr(self.processor, "tokenizer") and self.processor.tokenizer is not None:
+            tok = self.processor.tokenizer
+        elif hasattr(self.processor, "padding_side"):
+            tok = self.processor
+
+        if tok is None:
+            return
+
+        try:
+            if getattr(tok, "padding_side", None) != "left":
+                tok.padding_side = "left"
+                logger.info("[VLM load] tokenizer padding_side set to left")
+            if getattr(tok, "pad_token", None) is None and getattr(tok, "eos_token", None):
+                tok.pad_token = tok.eos_token
+                logger.info("[VLM load] tokenizer pad_token set to eos_token")
+        except Exception as e:
+            logger.warning(f"[VLM load] tokenizer padding config skipped: {e}")
+
     def _load_model(self):
         """Lazy load the vision model."""
         if self.model is not None:
@@ -153,6 +180,7 @@ class VisionAnalyzer:
                 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
                 self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
+                self._configure_padding_for_decoder_generation()
                 self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                     self.model_id,
                     torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
@@ -168,6 +196,7 @@ class VisionAnalyzer:
                 t_proc = time.perf_counter()
                 logger.info("[VLM load] AutoProcessor.from_pretrained start")
                 self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
+                self._configure_padding_for_decoder_generation()
                 logger.info(
                     f"[VLM load] AutoProcessor ready in {time.perf_counter() - t_proc:.1f}s"
                 )
