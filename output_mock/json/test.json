@@ -1,5 +1,5 @@
 {
-  "file_path": "C:\\Users\\saint\\ImageParser\\mock_assets\\test.psd",
+  "file_path": "/Users/saintiron/Projects/Imagine/mock_assets/test.psd",
   "file_name": "test.psd",
   "file_size": 0,
   "format": "PSD",
@@ -8,10 +8,31 @@
     800
   ],
   "visual_source_path": null,
-  "semantic_tags": "Background Character Group Body Dialogue",
+  "semantic_tags": "",
   "text_content": [
     "Hello World"
   ],
+  "mc_caption": null,
+  "ai_tags": [],
+  "ocr_text": null,
+  "dominant_color": null,
+  "ai_style": null,
+  "image_type": null,
+  "art_style": null,
+  "color_palette": null,
+  "scene_type": null,
+  "time_of_day": null,
+  "weather": null,
+  "character_type": null,
+  "item_type": null,
+  "ui_type": null,
+  "structured_meta": null,
+  "storage_root": null,
+  "relative_path": null,
+  "perceptual_hash": null,
+  "dup_group_id": null,
+  "embedding_model": null,
+  "embedding_version": 1,
   "layer_tree": {
     "name": "Root",
     "size": [
@@ -97,7 +118,15 @@
     "channels": 3
   },
   "created_at": null,
-  "modified_at": "2026-02-05T17:01:55.017995",
-  "parsed_at": "2026-02-05T17:01:55.019520",
-  "thumbnail_url": null
+  "modified_at": "2026-02-13T11:26:11.358393",
+  "parsed_at": "2026-02-13T11:26:11.359252",
+  "thumbnail_url": null,
+  "folder_path": null,
+  "folder_depth": 0,
+  "folder_tags": [],
+  "mode_tier": "pro",
+  "caption_model": "",
+  "text_embed_model": "",
+  "runtime_version": "",
+  "preprocess_params": {}
 }
