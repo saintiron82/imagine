@@ -74,7 +74,27 @@ def process_single(file_path: str, size: int = DEFAULT_SIZE, return_paths: bool 
         if ext == '.psd':
             from psd_tools import PSDImage
             psd = PSDImage.open(file_path)
-            img = psd.composite()
+            try:
+                img = psd.composite()
+            except Exception as e:
+                if "aggdraw" in str(e).lower():
+                    if hasattr(psd, "topil"):
+                        img = psd.topil()
+                    else:
+                        img = None
+                else:
+                    raise
+            if img is None:
+                try:
+                    import numpy as np
+                    arr = psd.numpy()
+                    if arr is not None and getattr(arr, "size", 0) > 0:
+                        if arr.dtype != np.uint8:
+                            arr = np.clip(arr, 0, 255).astype(np.uint8)
+                        if arr.ndim == 3 and arr.shape[2] in (3, 4):
+                            img = Image.fromarray(arr[:, :, :3], mode='RGB')
+                except Exception:
+                    img = None
         else:
             img = Image.open(file_path)
         
@@ -215,7 +235,27 @@ def generate_thumbnail_with_tier(file_path: str) -> Image.Image:
     if ext == '.psd':
         from psd_tools import PSDImage
         psd = PSDImage.open(file_path)
-        img = psd.composite()
+        try:
+            img = psd.composite()
+        except Exception as e:
+            if "aggdraw" in str(e).lower():
+                if hasattr(psd, "topil"):
+                    img = psd.topil()
+                else:
+                    img = None
+            else:
+                raise
+        if img is None:
+            try:
+                import numpy as np
+                arr = psd.numpy()
+                if arr is not None and getattr(arr, "size", 0) > 0:
+                    if arr.dtype != np.uint8:
+                        arr = np.clip(arr, 0, 255).astype(np.uint8)
+                    if arr.ndim == 3 and arr.shape[2] in (3, 4):
+                        img = Image.fromarray(arr[:, :, :3], mode='RGB')
+            except Exception:
+                img = None
     else:
         img = Image.open(file_path)
 

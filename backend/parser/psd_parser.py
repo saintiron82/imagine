@@ -230,9 +230,33 @@ class PSDParser(BaseParser):
         """Create a thumbnail from the PSD composite image."""
         try:
             thumbnail_path = self.get_thumbnail_path(file_path)
-            
-            # Get composite image
-            composite = psd.composite()
+
+            # Get composite image.
+            # Some PSD vector-shape documents require optional aggdraw; fallback to embedded preview.
+            try:
+                composite = psd.composite()
+            except Exception as e:
+                if "aggdraw" in str(e).lower():
+                    logger.warning(f"PSD composite requires aggdraw, trying embedded preview: {file_path.name}")
+                    if hasattr(psd, "topil"):
+                        composite = psd.topil()
+                    else:
+                        logger.warning("PSDImage.topil() unavailable in this psd-tools version")
+                        composite = None
+                else:
+                    raise
+            if composite is None:
+                try:
+                    import numpy as np
+                    arr = psd.numpy()
+                    if arr is not None and getattr(arr, "size", 0) > 0:
+                        if arr.dtype != np.uint8:
+                            arr = np.clip(arr, 0, 255).astype(np.uint8)
+                        if arr.ndim == 3 and arr.shape[2] in (3, 4):
+                            composite = Image.fromarray(arr[:, :, :3], mode='RGB')
+                            logger.warning(f"PSD fallback: using numpy rasterization for {file_path.name}")
+                except Exception as e:
+                    logger.warning(f"PSD numpy rasterization failed for {file_path.name}: {e}")
             
             if composite is None:
                 logger.warning(f"No composite image available for {file_path}")
