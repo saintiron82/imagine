@@ -6,7 +6,7 @@ import SearchPanel from './components/SearchPanel';
 import FolderInfoBar from './components/FolderInfoBar';
 import ResumeDialog from './components/ResumeDialog';
 import ImportDbDialog from './components/ImportDbDialog';
-import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download } from 'lucide-react'; // Added Terminal
 import { useLocale } from './i18n';
 
 function App() {
@@ -15,6 +15,7 @@ function App() {
   const [currentPath, setCurrentPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [logs, setLogs] = useState([]);
+  const [pendingSearch, setPendingSearch] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processProgress, setProcessProgress] = useState({
     processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0,
@@ -41,6 +42,7 @@ function App() {
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showDbMenu, setShowDbMenu] = useState(false);
+  const [folderStatsVersion, setFolderStatsVersion] = useState(0);
 
   const MAX_LOGS = 200;
 
@@ -143,6 +145,7 @@ function App() {
             ? `All done! ${data.processed} processed, ${data.skipped} skipped (total: ${data.total})`
             : `All ${data.processed} files processed!`;
           appendLog({ message: msg, type: 'success' });
+          setFolderStatsVersion(v => v + 1);
         });
 
         // Discover event listeners (for auto-scan)
@@ -179,6 +182,7 @@ function App() {
           });
         });
         window.electron.pipeline.onDiscoverFileDone((data) => {
+          setFolderStatsVersion(v => v + 1);
           // Auto-scan processes folders sequentially via discoverQueueRef
           const ref = discoverQueueRef.current;
           if (ref.scanning && ref.index < ref.folders.length - 1) {
@@ -263,10 +267,27 @@ function App() {
   };
 
   // Send all selected files to backend in one batch call
-  const handleProcess = () => {
+  const handleProcess = async () => {
     if (selectedFiles.size === 0 || isProcessing) return;
 
     const fileArray = Array.from(selectedFiles);
+
+    // Guardrail: selected-file processing may not cover whole folder/subfolders.
+    // If counts differ, warn that folder-level rebuild badge can remain.
+    try {
+      if (currentPath && window.electron?.pipeline?.getFolderPhaseStats) {
+        const statsResult = await window.electron.pipeline.getFolderPhaseStats(currentPath);
+        if (statsResult?.success && Array.isArray(statsResult.folders)) {
+          const folderTotal = statsResult.folders.reduce((acc, f) => acc + (f.total || 0), 0);
+          if (folderTotal > fileArray.length) {
+            appendLog({
+              message: `Selected ${fileArray.length}/${folderTotal} files only. Folder rebuild status may remain. Use "Process All (incl. subfolders)".`,
+              type: 'warning'
+            });
+          }
+        }
+      }
+    } catch { }
 
     setIsProcessing(true);
     etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
@@ -294,15 +315,21 @@ function App() {
   };
 
   // Process entire folder recursively (discover mode)
-  const handleProcessFolder = (folderPath) => {
+  const handleProcessFolder = (folderPath, options = {}) => {
     if (isProcessing || isDiscovering) return;
+    const noSkip = !!options.noSkip;
     setIsDiscovering(true);
     setCurrentTab('archive');
     setCurrentPath(folderPath);
-    appendLog({ message: `Processing folder: ${folderPath}`, type: 'info' });
+    appendLog({
+      message: noSkip
+        ? `Processing folder (no-skip): ${folderPath}`
+        : `Processing folder: ${folderPath}`,
+      type: 'info'
+    });
     // Save session target for resume on next startup
     window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
-    window.electron?.pipeline?.runDiscover({ folderPath, noSkip: false });
+    window.electron?.pipeline?.runDiscover({ folderPath, noSkip });
   };
 
   // Resume incomplete work: discover only folders that have incomplete files
@@ -348,7 +375,7 @@ function App() {
     try {
       const result = await window.electron?.db?.exportDatabase();
       if (result?.success) {
-        appendLog({ message: `DB exported: ${result.file_count} files, ${result.size_mb}MB → ${result.output_path}`, type: 'success' });
+        appendLog({ message: `DB exported: ${result.file_count} files, ${result.size_mb} MB → ${result.output_path}`, type: 'success' });
       } else if (result?.error) {
         appendLog({ message: `Export failed: ${result.error}`, type: 'error' });
       }
@@ -359,6 +386,11 @@ function App() {
 
   const handleImportProcessNew = (folderPath) => {
     handleProcessFolder(folderPath);
+  };
+
+  const handleFindSimilar = (searchParams) => {
+    setPendingSearch(searchParams);
+    setCurrentTab('search');
   };
 
   const clearLogs = () => setLogs([]);
@@ -376,7 +408,6 @@ function App() {
         />
       )}
 
-      {/* Import DB Dialog */}
       {showImportDialog && (
         <ImportDbDialog
           onClose={() => setShowImportDialog(false)}
@@ -396,22 +427,20 @@ function App() {
         <div className="flex items-center space-x-2">
           <button
             onClick={() => setCurrentTab('search')}
-            className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${
-              currentTab === 'search'
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-            }`}
+            className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'search'
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+              }`}
           >
             <Search size={16} />
             <span>{t('tab.search')}</span>
           </button>
           <button
             onClick={() => setCurrentTab('archive')}
-            className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${
-              currentTab === 'archive'
-                ? 'bg-gray-700 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-            }`}
+            className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
+              ? 'bg-gray-700 text-white'
+              : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+              }`}
           >
             <Archive size={16} />
             <span>{t('tab.archive')}</span>
@@ -428,10 +457,9 @@ function App() {
                 disabled={selectedFiles.size === 0 || isProcessing}
                 className={`
                   flex items-center space-x-1 px-4 py-1.5 rounded text-sm font-medium transition-colors
-                  ${
-                    selectedFiles.size > 0 && !isProcessing
-                      ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/50'
-                      : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  ${selectedFiles.size > 0 && !isProcessing
+                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/50'
+                    : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                   }
                 `}
               >
@@ -502,6 +530,7 @@ function App() {
                 onFolderSelect={handleFolderSelect}
                 selectedPaths={selectedPaths}
                 onFolderToggle={handleFolderToggle}
+                reloadSignal={folderStatsVersion}
               />
             </div>
           </div>
@@ -512,13 +541,20 @@ function App() {
           {/* Content Area */}
           <div className="flex-1 overflow-hidden">
             {currentTab === 'search' ? (
-              <SearchPanel onScanFolder={handleScanFolders} isBusy={isProcessing || isDiscovering} />
+              <SearchPanel
+                onScanFolder={handleScanFolders}
+                isBusy={isProcessing || isDiscovering}
+                initialSearch={pendingSearch}
+                onSearchConsumed={() => setPendingSearch(null)}
+                reloadSignal={folderStatsVersion}
+              />
             ) : (
               <div className="h-full flex flex-col">
                 <FolderInfoBar
                   currentPath={currentPath}
                   onProcessFolder={handleProcessFolder}
                   isProcessing={isProcessing || isDiscovering}
+                  reloadSignal={folderStatsVersion}
                 />
                 <div className="flex-1 overflow-y-auto p-4 pb-16">
                   <FileGrid
@@ -526,6 +562,7 @@ function App() {
                     selectedFiles={selectedFiles}
                     setSelectedFiles={setSelectedFiles}
                     selectedPaths={selectedPaths}
+                    onFindSimilar={handleFindSimilar}
                   />
                 </div>
               </div>

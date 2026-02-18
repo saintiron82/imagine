@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, MoreHorizontal } from 'lucide-react';
+import { Play, MoreHorizontal, RotateCcw } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 /** Mini progress bar */
@@ -22,7 +22,7 @@ function PhaseBar({ label, count, total, color }) {
     );
 }
 
-const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing }) => {
+const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSignal = 0 }) => {
     const { t } = useLocale();
     const [stats, setStats] = useState(null);
     const [menuOpen, setMenuOpen] = useState(false);
@@ -41,7 +41,20 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing }) => {
                         mc: acc.mc + f.mc,
                         vv: acc.vv + f.vv,
                         mv: acc.mv + f.mv,
-                    }), { total: 0, mc: 0, vv: 0, mv: 0 });
+                        missing_relative_path_count: acc.missing_relative_path_count + (f.missing_relative_path_count || 0),
+                        missing_structure_count: acc.missing_structure_count + (f.missing_structure_count || 0),
+                        rebuild_needed: acc.rebuild_needed || !!f.rebuild_needed,
+                        fts_version_mismatch: acc.fts_version_mismatch || !!f.fts_version_mismatch,
+                    }), {
+                        total: 0,
+                        mc: 0,
+                        vv: 0,
+                        mv: 0,
+                        missing_relative_path_count: 0,
+                        missing_structure_count: 0,
+                        rebuild_needed: false,
+                        fts_version_mismatch: false,
+                    });
                     setStats(totals);
                 } else {
                     setStats(null);
@@ -53,7 +66,7 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing }) => {
         };
         load();
         return () => { cancelled = true; };
-    }, [currentPath, isProcessing]);
+    }, [currentPath, isProcessing, reloadSignal]);
 
     if (!currentPath) return null;
 
@@ -69,6 +82,11 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing }) => {
                         <PhaseBar label="MC" count={stats.mc} total={stats.total} color="bg-blue-400" />
                         <PhaseBar label="VV" count={stats.vv} total={stats.total} color="bg-purple-400" />
                         <PhaseBar label="MV" count={stats.mv} total={stats.total} color="bg-green-400" />
+                        {stats.rebuild_needed && (
+                            <span className="text-[10px] font-bold text-red-300 bg-red-900/40 border border-red-700 rounded px-2 py-0.5">
+                                {t('status.rebuild_needed_badge')}
+                            </span>
+                        )}
                     </div>
                 ) : (
                     <span className="text-xs text-gray-500">{t('status.not_processed')}</span>
@@ -101,6 +119,21 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing }) => {
                             >
                                 <Play size={12} fill="currentColor" />
                                 {t('action.process_folder')}
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    onProcessFolder?.(currentPath, { noSkip: true });
+                                }}
+                                disabled={isProcessing}
+                                className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 ${
+                                    isProcessing
+                                        ? 'text-gray-500 cursor-not-allowed'
+                                        : 'text-orange-300 hover:bg-gray-600'
+                                }`}
+                            >
+                                <RotateCcw size={12} />
+                                {t('action.process_folder_noskip')}
                             </button>
                         </div>
                     </>

@@ -21,6 +21,7 @@
   "action.exit_multi_select": "멀티 선택 종료",
   "action.process_selected_folders": "선택 폴더 처리",
   "action.process_folder": "전체 처리 (하위 폴더 포함)",
+  "action.process_folder_noskip": "전체 재처리 (스킵 없음)",
   "action.install_all": "모든 종속성 설치 (자동 감지)",
   "action.reinstall_verify": "재설치 / AI 모델 검증",
   "label.folders": "폴더",
@@ -146,6 +147,10 @@
   "status.phase.save": "저장",
   "status.batch_size": "현재 배치 크기",
   "status.fetching_url": "URL에서 이미지 로딩 중...",
+  "status.rebuild_needed_badge": "재빌드 필요",
+  "status.rebuild_required_title": "데이터 재빌드 필요",
+  "status.rebuild_required_desc": "현재 DB 데이터 레벨이 낮습니다 (DB {db} / 현재 {current}). 검색 품질을 위해 재구축이 필요합니다.",
+  "status.rebuild_required_action": "권장: DB 인덱스 리빌드 또는 누락 단계만 보완 처리",
   "msg.invalid_image": "유효한 이미지 파일을 선택하세요",
   "msg.no_image_selected": "검색할 이미지를 선택하세요",
   "resume.title": "이전 작업 미완료",
@@ -159,6 +164,7 @@
   "search.filters_title": "검색 필터",
   "search.settings_title": "설정",
   "badge.vv": "시각",
+  "badge.sv": "구조",
   "badge.mv": "의미",
   "badge.mc": "메타",
   "axis": {
@@ -193,5 +199,7 @@
   "import.result_new_prompt": "{count}개 새 파일을 지금 처리하시겠습니까?",
   "import.processing": "처리 중...",
   "action.export_db": "DB 내보내기",
-  "action.import_db": "DB 가져오기"
+  "action.import_db": "DB 가져오기",
+  "action.find_similar_structure": "비슷한 구조 찾기 (Structure)",
+  "action.find_similar_visual": "비슷한 이미지 찾기 (Visual)"
 }

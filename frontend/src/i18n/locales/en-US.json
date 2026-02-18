@@ -21,6 +21,7 @@
   "action.exit_multi_select": "Exit Multi-Select",
   "action.process_selected_folders": "Process Selected Folders",
   "action.process_folder": "Process All (incl. subfolders)",
+  "action.process_folder_noskip": "Reprocess All (No Skip)",
   "action.install_all": "Install All Dependencies (Auto-Detect)",
   "action.reinstall_verify": "Re-install / Verify AI Model",
   "label.folders": "Folders",
@@ -146,6 +147,10 @@
   "status.phase.save": "Save",
   "status.batch_size": "Current batch size",
   "status.fetching_url": "Loading image from URL...",
+  "status.rebuild_needed_badge": "Rebuild Required",
+  "status.rebuild_required_title": "Data Rebuild Required",
+  "status.rebuild_required_desc": "Current DB data-build level is lower (DB {db} / Current {current}). Rebuild is required for reliable search quality.",
+  "status.rebuild_required_action": "Recommended: run full reprocess (skip off) or run DB rebuild task.",
   "msg.invalid_image": "Please select a valid image file",
   "msg.no_image_selected": "Select an image to search",
   "resume.title": "Incomplete Work Detected",
@@ -159,6 +164,7 @@
   "search.filters_title": "Search Filters",
   "search.settings_title": "Settings",
   "badge.vv": "VV",
+  "badge.sv": "SV",
   "badge.mv": "MV",
   "badge.mc": "MC",
   "axis": {
@@ -193,5 +199,7 @@
   "import.result_new_prompt": "Process {count} new files now?",
   "import.processing": "Processing...",
   "action.export_db": "Export DB",
-  "action.import_db": "Import DB"
+  "action.import_db": "Import DB",
+  "action.find_similar_structure": "Find Similar (Structure)",
+  "action.find_similar_visual": "Find Similar (Visual)"
 }

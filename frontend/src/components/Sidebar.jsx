@@ -18,7 +18,20 @@ function aggregateStats(phaseStats, folderPath) {
         mc: acc.mc + f.mc,
         vv: acc.vv + f.vv,
         mv: acc.mv + f.mv,
-    }), { total: 0, mc: 0, vv: 0, mv: 0 });
+        missing_relative_path_count: acc.missing_relative_path_count + (f.missing_relative_path_count || 0),
+        missing_structure_count: acc.missing_structure_count + (f.missing_structure_count || 0),
+        rebuild_needed: acc.rebuild_needed || !!f.rebuild_needed,
+        fts_version_mismatch: acc.fts_version_mismatch || !!f.fts_version_mismatch,
+    }), {
+        total: 0,
+        mc: 0,
+        vv: 0,
+        mv: 0,
+        missing_relative_path_count: 0,
+        missing_structure_count: 0,
+        rebuild_needed: false,
+        fts_version_mismatch: false,
+    });
 }
 
 const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, onRemoveRoot, phaseStats }) => {
@@ -101,6 +114,19 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
 
                 {/* Phase completion indicator */}
                 {myStats && myStats.total > 0 && (() => {
+                    if (myStats.rebuild_needed) {
+                        const parts = [];
+                        if (myStats.fts_version_mismatch) parts.push('FTS');
+                        if (myStats.missing_structure_count > 0) parts.push(`SV ${myStats.missing_structure_count}`);
+                        if (myStats.missing_relative_path_count > 0) parts.push(`PATH ${myStats.missing_relative_path_count}`);
+                        const detail = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+                        return (
+                            <span className="flex items-center flex-shrink-0 mr-1" title={`${t('status.rebuild_needed_badge')}${detail}`}>
+                                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                            </span>
+                        );
+                    }
+
                     const minPhase = Math.min(myStats.mc, myStats.vv, myStats.mv);
                     const ratio = minPhase / myStats.total;
                     // fully done (or within rounding: 98%+)
@@ -161,7 +187,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
     );
 };
 
-const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFolderToggle }) => {
+const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFolderToggle, reloadSignal = 0 }) => {
     const { t } = useLocale();
     const [roots, setRoots] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -201,7 +227,7 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
 
     useEffect(() => {
         loadRoots();
-    }, [loadRoots]);
+    }, [loadRoots, reloadSignal]);
 
     const handleAddFolder = async () => {
         try {

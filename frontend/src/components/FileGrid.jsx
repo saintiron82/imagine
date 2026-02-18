@@ -252,7 +252,7 @@ const MetadataModal = ({ metadata, onClose }) => {
                                 <label className="text-gray-400 text-[10px] uppercase tracking-wider mb-1 block">{t('label.notes')}</label>
                                 <textarea
                                     value={editedData.user_note}
-                                    onChange={(e) => setEditedData({...editedData, user_note: e.target.value})}
+                                    onChange={(e) => setEditedData({ ...editedData, user_note: e.target.value })}
                                     className="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white resize-none focus:border-blue-500 focus:outline-none transition-colors"
                                     rows={3}
                                     placeholder={t('placeholder.notes')}
@@ -280,7 +280,7 @@ const MetadataModal = ({ metadata, onClose }) => {
                                         placeholder={t('placeholder.tag_input')}
                                     />
                                     <button onClick={handleAddTag}
-                                            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs transition-colors">
+                                        className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs transition-colors">
                                         {t('action.add')}
                                     </button>
                                 </div>
@@ -291,7 +291,7 @@ const MetadataModal = ({ metadata, onClose }) => {
                                 <label className="text-gray-400 text-[10px] uppercase tracking-wider mb-1 block">{t('label.category')}</label>
                                 <select
                                     value={editedData.user_category}
-                                    onChange={(e) => setEditedData({...editedData, user_category: e.target.value})}
+                                    onChange={(e) => setEditedData({ ...editedData, user_category: e.target.value })}
                                     className="w-full bg-black/30 border border-gray-600 rounded px-2 py-1 text-sm text-white focus:border-blue-500 focus:outline-none transition-colors">
                                     {CATEGORY_OPTIONS.map(opt => (
                                         <option key={opt.value} value={opt.value}>{t(opt.key)}</option>
@@ -306,7 +306,7 @@ const MetadataModal = ({ metadata, onClose }) => {
                                     {[1, 2, 3, 4, 5].map(star => (
                                         <button
                                             key={star}
-                                            onClick={() => setEditedData({...editedData, user_rating: star === editedData.user_rating ? 0 : star})}
+                                            onClick={() => setEditedData({ ...editedData, user_rating: star === editedData.user_rating ? 0 : star })}
                                             className={`text-2xl hover:text-yellow-300 cursor-pointer transition-colors ${star <= editedData.user_rating ? 'text-yellow-400' : 'text-gray-600'}`}>
                                             &#9733;
                                         </button>
@@ -468,7 +468,7 @@ const MetadataModal = ({ metadata, onClose }) => {
 };
 
 // FileCard Component
-const FileCard = ({ file, isSelected, onMouseDown, thumbnail, loading, onShowMeta, hasMetadata }) => {
+const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loading, onShowMeta, hasMetadata }) => {
     const { t } = useLocale();
     const canPreviewNatively = IMAGE_PREVIEW_EXTS.includes(file.extension);
 
@@ -477,6 +477,13 @@ const FileCard = ({ file, isSelected, onMouseDown, thumbnail, loading, onShowMet
         const encoded = normalized.split('/').map(s => encodeURIComponent(s)).join('/');
         // Windows: file:///C:/... | Mac/Linux: file:///home/... (path already starts with /)
         return /^[A-Za-z]:/.test(normalized) ? `file:///${encoded}` : `file://${encoded}`;
+    };
+
+    const handleContextMenu = (e) => {
+        if (onContextMenu) {
+            e.preventDefault();
+            onContextMenu(e, file);
+        }
     };
 
     const handleMetaClick = (e) => {
@@ -490,6 +497,7 @@ const FileCard = ({ file, isSelected, onMouseDown, thumbnail, loading, onShowMet
             className={`relative group border rounded-lg p-2 cursor-pointer transition-all select-none ${isSelected ? 'bg-blue-900 border-blue-500 ring-2 ring-blue-500/50' : 'bg-gray-800 border-gray-700 hover:bg-gray-700'
                 }`}
             onMouseDown={onMouseDown}
+            onContextMenu={handleContextMenu}
         >
             {/* Metadata Status Indicator */}
             <div className="absolute top-2 left-2 z-10 pointer-events-none">
@@ -542,7 +550,7 @@ const FileCard = ({ file, isSelected, onMouseDown, thumbnail, loading, onShowMet
 };
 
 // Main FileGrid Component
-const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths = new Set() }) => {
+const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths = new Set(), onFindSimilar }) => {
     const { t } = useLocale();
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -553,6 +561,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
     const [dragEnd, setDragEnd] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
     const [metadata, setMetadata] = useState(null);
+    const [contextMenu, setContextMenu] = useState(null); // { x, y, file }
     const scrollRef = useRef(null);
     const lastClickedIndex = useRef(null);
     const pendingClick = useRef(null);
@@ -905,6 +914,40 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                     onMouseUp={handleMouseUp}
                     onMouseLeave={handleMouseUp}
                 >
+                    {/* Context Menu */}
+                    {contextMenu && (
+                        <div className="fixed inset-0 z-50" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}>
+                            <div
+                                className="absolute bg-gray-800 border border-gray-600 rounded-lg shadow-2xl py-1 min-w-[200px] animate-fadeIn"
+                                style={{ top: Math.min(contextMenu.y, window.innerHeight - 150), left: Math.min(contextMenu.x, window.innerWidth - 200) }}
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <div className="px-3 py-2 border-b border-gray-700 bg-gray-900/50">
+                                    <div className="text-xs font-bold text-white truncate max-w-[180px]">{contextMenu.file.name}</div>
+                                </div>
+                                <button
+                                    onClick={() => { window.electron?.fs?.showInFolder(contextMenu.file.path); setContextMenu(null); }}
+                                    className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                                >
+                                    <FolderOpen size={14} /> {t('action.show_in_folder')}
+                                </button>
+                                <div className="h-px bg-gray-700 my-1" />
+                                <button
+                                    onClick={() => { onFindSimilar?.({ queryFileId: contextMenu.file.id, mode: 'vector' }); setContextMenu(null); }}
+                                    className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                                >
+                                    <Search size={14} /> {t('action.find_similar_visual')}
+                                </button>
+                                <button
+                                    onClick={() => { onFindSimilar?.({ queryFileId: contextMenu.file.id, mode: 'structure' }); setContextMenu(null); }}
+                                    className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                                >
+                                    <div className="rotate-90"><Search size={14} /></div> {t('action.find_similar_structure')}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
                         {rowVirtualizer.getVirtualItems().map(virtualRow => {
                             const rowStartIdx = virtualRow.index * columnCount;
@@ -930,6 +973,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                                                         file={file}
                                                         isSelected={selectedFiles.has(file.path)}
                                                         onMouseDown={(e) => handleCardMouseDown(e, file, globalIdx)}
+                                                        onContextMenu={(e) => handleCardContextMenu(e, file)}
                                                         thumbnail={thumbnails[file.path]}
                                                         loading={loadingThumbnails && file.extension === '.psd' && !thumbnails[file.path]}
                                                         onShowMeta={handleShowMeta}

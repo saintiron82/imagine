@@ -212,7 +212,7 @@ const MetadataModal = ({ metadata, onClose }) => {
                                 <label className="text-gray-400 text-[10px] uppercase tracking-wider mb-1 block">{t('label.notes')}</label>
                                 <textarea
                                     value={editedData.user_note}
-                                    onChange={(e) => setEditedData({...editedData, user_note: e.target.value})}
+                                    onChange={(e) => setEditedData({ ...editedData, user_note: e.target.value })}
                                     className="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white resize-none focus:border-blue-500 focus:outline-none transition-colors"
                                     rows={3}
                                     placeholder={t('placeholder.notes')}
@@ -239,7 +239,7 @@ const MetadataModal = ({ metadata, onClose }) => {
                                         placeholder={t('placeholder.tag_input')}
                                     />
                                     <button onClick={handleAddTag}
-                                            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs transition-colors">
+                                        className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs transition-colors">
                                         {t('action.add')}
                                     </button>
                                 </div>
@@ -249,7 +249,7 @@ const MetadataModal = ({ metadata, onClose }) => {
                                 <label className="text-gray-400 text-[10px] uppercase tracking-wider mb-1 block">{t('label.category')}</label>
                                 <select
                                     value={editedData.user_category}
-                                    onChange={(e) => setEditedData({...editedData, user_category: e.target.value})}
+                                    onChange={(e) => setEditedData({ ...editedData, user_category: e.target.value })}
                                     className="w-full bg-black/30 border border-gray-600 rounded px-2 py-1 text-sm text-white focus:border-blue-500 focus:outline-none transition-colors">
                                     {META_CATEGORY_OPTIONS.map(opt => (
                                         <option key={opt.value} value={opt.value}>{t(opt.key)}</option>
@@ -263,7 +263,7 @@ const MetadataModal = ({ metadata, onClose }) => {
                                     {[1, 2, 3, 4, 5].map(star => (
                                         <button
                                             key={star}
-                                            onClick={() => setEditedData({...editedData, user_rating: star === editedData.user_rating ? 0 : star})}
+                                            onClick={() => setEditedData({ ...editedData, user_rating: star === editedData.user_rating ? 0 : star })}
                                             className={`text-2xl hover:text-yellow-300 cursor-pointer transition-colors ${star <= editedData.user_rating ? 'text-yellow-400' : 'text-gray-600'}`}>
                                             &#9733;
                                         </button>
@@ -421,13 +421,16 @@ const MetadataModal = ({ metadata, onClose }) => {
 };
 
 // Search Result Card Component (memoized to avoid re-renders on scroll/parent update)
-const SearchResultCard = React.memo(({ result, onShowMeta }) => {
+const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu }) => {
     const { t } = useLocale();
-    const fileName = result.path.split(/[/\\]/).pop();
+    const dbPath = result.db_path || result.path;
+    const localPath = result.resolved_path || result.path;
+    const fileName = (localPath || dbPath).split(/[/\\]/).pop();
     const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
     const canPreviewNatively = IMAGE_PREVIEW_EXTS.includes(ext);
 
     const toFileUrl = (p) => {
+        if (!p || typeof p !== 'string') return '';
         // Resolve relative paths (e.g. "output/thumbnails/...") to absolute using projectRoot
         let resolved = p;
         if (!/^[A-Za-z]:/.test(p) && !/^\//.test(p)) {
@@ -444,13 +447,14 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
     const thumbnailSrc = result.thumbnail_path
         ? toFileUrl(result.thumbnail_path)
         : canPreviewNatively
-            ? toFileUrl(result.path)
+            ? toFileUrl(localPath)
             : null;
 
     return (
         <div
             className="group bg-gray-800 border border-gray-700 rounded-lg overflow-hidden hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-900/10 cursor-pointer h-full flex flex-col transition-[border-color,box-shadow] duration-150"
-            onClick={() => onShowMeta(result.path)}
+            onClick={() => onShowMeta(dbPath)}
+            onContextMenu={onContextMenu}
         >
             {/* Thumbnail */}
             <div className="aspect-square bg-gray-900 overflow-hidden relative shrink-0">
@@ -474,6 +478,11 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
                     {result.vector_score != null && (
                         <span className="bg-blue-900/80 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
                             {t('badge.vv')} {(result.vector_score * 100).toFixed(0)}
+                        </span>
+                    )}
+                    {result.structure_score != null && (
+                        <span className="bg-orange-900/80 text-orange-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            {t('badge.sv')} {(result.structure_score * 100).toFixed(0)}
                         </span>
                     )}
                     {result.text_vec_score != null && (
@@ -507,14 +516,14 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
                     <div className="text-sm font-medium text-white truncate flex-1">{fileName}</div>
                     <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(result.path); }}
+                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(localPath); }}
                             className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
                             title={t('action.show_in_folder')}
                         >
                             <FolderOpen size={14} />
                         </button>
                         <button
-                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(result.path); }}
+                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(localPath); }}
                             className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
                             title={t('action.open_file')}
                         >
@@ -523,7 +532,7 @@ const SearchResultCard = React.memo(({ result, onShowMeta }) => {
                     </div>
                 </div>
                 {result.folder_path && (
-                    <div className="text-[10px] text-gray-500 truncate mt-0.5" title={result.path}>
+                    <div className="text-[10px] text-gray-500 truncate mt-0.5" title={localPath || dbPath}>
                         {result.folder_path}
                     </div>
                 )}
@@ -641,11 +650,10 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
             {/* Filter Toggle */}
             <button
                 onClick={onToggleFilters}
-                className={`p-3 rounded-lg transition-colors ${
-                    showFilters || hasActiveFilters
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600'
-                }`}
+                className={`p-3 rounded-lg transition-colors ${showFilters || hasActiveFilters
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600'
+                    }`}
                 title={t('search.filters_title')}
             >
                 <SlidersHorizontal size={18} />
@@ -665,7 +673,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -721,13 +729,51 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
             )}
 
             {hasResults && (
-            <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
-                {rowVirtualizer.getVirtualItems().map(virtualRow => {
-                    // Last virtual row = load more button
-                    if (virtualRow.index >= rowCount) {
+                <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                    {rowVirtualizer.getVirtualItems().map(virtualRow => {
+                        // Last virtual row = load more button
+                        if (virtualRow.index >= rowCount) {
+                            return (
+                                <div
+                                    key="load-more"
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: `${virtualRow.size}px`,
+                                        transform: `translateY(${virtualRow.start}px)`,
+                                    }}
+                                >
+                                    <div className="flex justify-center py-3">
+                                        {noMoreResults ? (
+                                            <span className="text-xs text-gray-600">{t('status.no_more_results')}</span>
+                                        ) : (
+                                            <button
+                                                onClick={onLoadMore}
+                                                disabled={isLoadingMore}
+                                                className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-800 text-gray-300 hover:text-white disabled:text-gray-600 rounded-lg border border-gray-600 hover:border-gray-500 disabled:border-gray-700 transition-all flex items-center gap-2 text-sm"
+                                            >
+                                                {isLoadingMore ? (
+                                                    <>
+                                                        <Loader2 size={16} className="animate-spin" />
+                                                        {t('status.loading_more')}
+                                                    </>
+                                                ) : (
+                                                    t('action.load_more')
+                                                )}
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        const rowStartIdx = virtualRow.index * columnCount;
+                        const rowResults = results.slice(rowStartIdx, rowStartIdx + columnCount);
                         return (
                             <div
-                                key="load-more"
+                                key={virtualRow.key}
                                 style={{
                                     position: 'absolute',
                                     top: 0,
@@ -737,67 +783,34 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                                     transform: `translateY(${virtualRow.start}px)`,
                                 }}
                             >
-                                <div className="flex justify-center py-3">
-                                    {noMoreResults ? (
-                                        <span className="text-xs text-gray-600">{t('status.no_more_results')}</span>
-                                    ) : (
-                                        <button
-                                            onClick={onLoadMore}
-                                            disabled={isLoadingMore}
-                                            className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-800 text-gray-300 hover:text-white disabled:text-gray-600 rounded-lg border border-gray-600 hover:border-gray-500 disabled:border-gray-700 transition-all flex items-center gap-2 text-sm"
-                                        >
-                                            {isLoadingMore ? (
-                                                <>
-                                                    <Loader2 size={16} className="animate-spin" />
-                                                    {t('status.loading_more')}
-                                                </>
-                                            ) : (
-                                                t('action.load_more')
-                                            )}
-                                        </button>
-                                    )}
+                                <div className="flex" style={{ gap: `${SEARCH_GAP}px` }}>
+                                    {rowResults.map((result, colIdx) => (
+                                        <div key={result.db_path || result.path || colIdx} style={{ width: `${cardWidth}px`, height: `${rowHeight - SEARCH_GAP}px`, flexShrink: 0 }}>
+                                            <SearchResultCard
+                                                result={result}
+                                                onShowMeta={onShowMeta}
+                                                onContextMenu={(e) => onContextMenu(e, result)}
+                                            />
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
                         );
-                    }
-
-                    const rowStartIdx = virtualRow.index * columnCount;
-                    const rowResults = results.slice(rowStartIdx, rowStartIdx + columnCount);
-                    return (
-                        <div
-                            key={virtualRow.key}
-                            style={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: '100%',
-                                height: `${virtualRow.size}px`,
-                                transform: `translateY(${virtualRow.start}px)`,
-                            }}
-                        >
-                            <div className="flex" style={{ gap: `${SEARCH_GAP}px` }}>
-                                {rowResults.map((result, colIdx) => (
-                                    <div key={result.path || colIdx} style={{ width: `${cardWidth}px`, height: `${rowHeight - SEARCH_GAP}px`, flexShrink: 0 }}>
-                                        <SearchResultCard
-                                            result={result}
-                                            onShowMeta={onShowMeta}
-                                        />
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
+                    })}
+                </div>
             )}
         </div>
     );
 });
 
-function SearchPanel({ onScanFolder, isBusy }) {
+// Search Result Card, SearchInput, SearchResults...
+
+function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, reloadSignal = 0 }) {
     const { t } = useLocale();
     // query stores the last *submitted* search text (not live typing)
     const [query, setQuery] = useState('');
+    const [queryFileId, setQueryFileId] = useState(null);
+    const [searchMode, setSearchMode] = useState(null); // 'structure', 'vector', or null (inferred)
     const [queryImages, setQueryImages] = useState([]); // base64 string array
     const [imageSearchMode, setImageSearchMode] = useState('and'); // 'and' | 'or'
     const [results, setResults] = useState([]);
@@ -806,6 +819,7 @@ function SearchPanel({ onScanFolder, isBusy }) {
     const [showFilters, setShowFilters] = useState(false);
     const [activeFilters, setActiveFilters] = useState({});
     const [threshold, setThreshold] = useState(0);
+    const [contextMenu, setContextMenu] = useState(null); // { x, y, result }
     const [metadata, setMetadata] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
     const [dbStats, setDbStats] = useState(null);
@@ -815,18 +829,107 @@ function SearchPanel({ onScanFolder, isBusy }) {
     const [resetSignal, setResetSignal] = useState(0);
     const inputRef = useRef(null);
 
-    // Load DB stats on mount
+    // Load DB stats on mount and when pipeline/discover refresh signal changes.
     useEffect(() => {
         if (window.electron?.pipeline?.getDbStats) {
             window.electron.pipeline.getDbStats()
                 .then(stats => { if (stats.success) setDbStats(stats); })
-                .catch(() => {});
+                .catch(() => { });
         }
+    }, [reloadSignal]);
+
+    // Handle initial search trigger (e.g. from FileGrid context menu)
+    useEffect(() => {
+        if (initialSearch) {
+            const { queryFileId, mode } = initialSearch;
+            setQuery('');
+            setQueryImages([]);
+            setQueryFileId(queryFileId);
+            setSearchMode(mode);
+            setResults([]);
+            setNoMoreResults(false);
+            setIsSearching(true);
+            setError(null);
+            // Reset filters for a fresh "find similar"
+            setActiveFilters({});
+            setThreshold(0);
+
+            const performSearch = async () => {
+                try {
+                    const searchOptions = {
+                        limit: 20,
+                        threshold: 0,
+                        filters: null,
+                        queryFileId,
+                        mode
+                    };
+                    const response = await window.electron.pipeline.searchVector(searchOptions);
+                    if (response.success) {
+                        setResults(response.results);
+                        setCurrentLimit(20);
+                        setNoMoreResults(response.results.length < 20);
+                    } else {
+                        setError(response.error || 'Search failed');
+                        setResults([]);
+                    }
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setIsSearching(false);
+                    if (onSearchConsumed) onSearchConsumed();
+                }
+            };
+            performSearch();
+        }
+    }, [initialSearch]);
+
+    const handleCardContextMenu = useCallback((e, result) => {
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY, result });
     }, []);
+
+    const triggerStructureSearch = (fileId, mode) => {
+        setQuery('');
+        setQueryImages([]);
+        setQueryFileId(fileId);
+        setSearchMode(mode);
+        setResults([]);
+        setNoMoreResults(false);
+        setIsSearching(true);
+        setError(null);
+        setActiveFilters({});
+        setThreshold(0);
+
+        const performSearch = async () => {
+            try {
+                const searchOptions = {
+                    limit: 20,
+                    threshold: 0,
+                    filters: null,
+                    queryFileId: fileId,
+                    mode
+                };
+                const response = await window.electron.pipeline.searchVector(searchOptions);
+                if (response.success) {
+                    setResults(response.results);
+                    setCurrentLimit(20);
+                    setNoMoreResults(response.results.length < 20);
+                } else {
+                    setError(response.error || 'Search failed');
+                    setResults([]);
+                }
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setIsSearching(false);
+            }
+        };
+        performSearch();
+    };
 
     // Ref to capture latest state for stable callbacks
     const searchStateRef = useRef();
-    searchStateRef.current = { query, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
+    searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
 
     const handleSearch = useCallback(async (searchQuery) => {
         const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
@@ -835,6 +938,8 @@ function SearchPanel({ onScanFolder, isBusy }) {
         if (!hasText && !hasImages) return;
 
         setQuery(searchQuery);
+        setQueryFileId(null); // Clear file-based search
+        setSearchMode(null); // Clear explicit mode
         setIsSearching(true);
         setError(null);
 
@@ -891,10 +996,12 @@ function SearchPanel({ onScanFolder, isBusy }) {
     }, []);
 
     const handleLoadMore = useCallback(async () => {
-        const { query, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore } = searchStateRef.current;
+        const { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore } = searchStateRef.current;
         const hasText = query.trim().length > 0;
         const hasImages = queryImages.length > 0;
-        if (!hasText && !hasImages) return;
+        const hasFile = queryFileId !== null;
+
+        if (!hasText && !hasImages && !hasFile) return;
         if (isLoadingMore) return;
 
         setIsLoadingMore(true);
@@ -914,20 +1021,25 @@ function SearchPanel({ onScanFolder, isBusy }) {
                 filters: Object.keys(filters).length > 0 ? filters : null,
             };
 
-            if (hasText) searchOptions.query = query;
-            if (hasImages) {
-                if (queryImages.length === 1) {
-                    searchOptions.queryImage = queryImages[0];
-                } else {
-                    searchOptions.queryImages = queryImages;
-                    searchOptions.imageSearchMode = imageSearchMode;
-                }
-            }
-
-            if (hasImages && !hasText) {
-                searchOptions.mode = 'vector';
+            if (hasFile) {
+                searchOptions.queryFileId = queryFileId;
+                searchOptions.mode = searchMode || 'structure';
             } else {
-                searchOptions.mode = 'triaxis';
+                if (hasText) searchOptions.query = query;
+                if (hasImages) {
+                    if (queryImages.length === 1) {
+                        searchOptions.queryImage = queryImages[0];
+                    } else {
+                        searchOptions.queryImages = queryImages;
+                        searchOptions.imageSearchMode = imageSearchMode;
+                    }
+                }
+
+                if (hasImages && !hasText) {
+                    searchOptions.mode = 'vector';
+                } else {
+                    searchOptions.mode = 'triaxis';
+                }
             }
 
             const response = await window.electron.pipeline.searchVector(searchOptions);
@@ -976,6 +1088,8 @@ function SearchPanel({ onScanFolder, isBusy }) {
     const hasActiveFilters = Object.values(activeFilters).some(v => v);
     const hasResults = results.length > 0;
     const isEmptyState = !hasResults && !isSearching && !error;
+    const buildStatus = dbStats?.build_status || null;
+    const rebuildRequired = !!buildStatus?.needs_rebuild;
 
     return (
         <div className="flex flex-col h-full bg-gray-900">
@@ -1034,21 +1148,19 @@ function SearchPanel({ onScanFolder, isBusy }) {
                             <div className="flex bg-gray-800 rounded-lg p-0.5 border border-gray-700">
                                 <button
                                     onClick={() => setImageSearchMode('and')}
-                                    className={`px-3 py-1 rounded text-xs font-bold transition-all ${
-                                        imageSearchMode === 'and'
-                                            ? 'bg-blue-600 text-white shadow-md'
-                                            : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                                    }`}
+                                    className={`px-3 py-1 rounded text-xs font-bold transition-all ${imageSearchMode === 'and'
+                                        ? 'bg-blue-600 text-white shadow-md'
+                                        : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                                        }`}
                                 >
                                     {t('label.search_mode_and')}
                                 </button>
                                 <button
                                     onClick={() => setImageSearchMode('or')}
-                                    className={`px-3 py-1 rounded text-xs font-bold transition-all ${
-                                        imageSearchMode === 'or'
-                                            ? 'bg-orange-600 text-white shadow-md'
-                                            : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                                    }`}
+                                    className={`px-3 py-1 rounded text-xs font-bold transition-all ${imageSearchMode === 'or'
+                                        ? 'bg-orange-600 text-white shadow-md'
+                                        : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                                        }`}
                                 >
                                     {t('label.search_mode_or')}
                                 </button>
@@ -1067,7 +1179,7 @@ function SearchPanel({ onScanFolder, isBusy }) {
                                 <span className="text-[10px] text-gray-500 uppercase">{t('filter.format')}</span>
                                 <select
                                     value={activeFilters.format || ''}
-                                    onChange={(e) => setActiveFilters({...activeFilters, format: e.target.value || undefined})}
+                                    onChange={(e) => setActiveFilters({ ...activeFilters, format: e.target.value || undefined })}
                                     className="bg-gray-700 text-white text-xs px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                                 >
                                     <option value="">{t('filter.all')}</option>
@@ -1082,7 +1194,7 @@ function SearchPanel({ onScanFolder, isBusy }) {
                                 <span className="text-[10px] text-gray-500 uppercase">{t('filter.category')}</span>
                                 <select
                                     value={activeFilters.user_category || ''}
-                                    onChange={(e) => setActiveFilters({...activeFilters, user_category: e.target.value || undefined})}
+                                    onChange={(e) => setActiveFilters({ ...activeFilters, user_category: e.target.value || undefined })}
                                     className="bg-gray-700 text-white text-xs px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                                 >
                                     {CATEGORY_OPTIONS.map(opt => (
@@ -1096,7 +1208,7 @@ function SearchPanel({ onScanFolder, isBusy }) {
                                 <span className="text-[10px] text-gray-500 uppercase">TYPE</span>
                                 <select
                                     value={activeFilters.image_type || ''}
-                                    onChange={(e) => setActiveFilters({...activeFilters, image_type: e.target.value || undefined})}
+                                    onChange={(e) => setActiveFilters({ ...activeFilters, image_type: e.target.value || undefined })}
                                     className="bg-gray-700 text-white text-xs px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                                 >
                                     <option value="">{t('filter.all')}</option>
@@ -1118,7 +1230,7 @@ function SearchPanel({ onScanFolder, isBusy }) {
                                 <span className="text-[10px] text-gray-500 uppercase">STYLE</span>
                                 <select
                                     value={activeFilters.art_style || ''}
-                                    onChange={(e) => setActiveFilters({...activeFilters, art_style: e.target.value || undefined})}
+                                    onChange={(e) => setActiveFilters({ ...activeFilters, art_style: e.target.value || undefined })}
                                     className="bg-gray-700 text-white text-xs px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                                 >
                                     <option value="">{t('filter.all')}</option>
@@ -1144,9 +1256,8 @@ function SearchPanel({ onScanFolder, isBusy }) {
                                                 ...activeFilters,
                                                 min_rating: activeFilters.min_rating === star ? undefined : star
                                             })}
-                                            className={`text-sm transition-colors ${
-                                                star <= (activeFilters.min_rating || 0) ? 'text-yellow-400' : 'text-gray-600 hover:text-gray-400'
-                                            }`}
+                                            className={`text-sm transition-colors ${star <= (activeFilters.min_rating || 0) ? 'text-yellow-400' : 'text-gray-600 hover:text-gray-400'
+                                                }`}
                                         >
                                             &#9733;
                                         </button>
@@ -1181,6 +1292,30 @@ function SearchPanel({ onScanFolder, isBusy }) {
                         </div>
                     )}
 
+                    {rebuildRequired && (
+                        <div className="mt-3 px-3 py-2.5 bg-amber-900/25 border border-amber-700 rounded-lg">
+                            <div className="text-amber-300 text-sm font-bold">
+                                {t('status.rebuild_required_title')}
+                            </div>
+                            <div className="text-amber-200/90 text-xs mt-1">
+                                {t('status.rebuild_required_desc', {
+                                    db: buildStatus.db_data_build_level ?? 0,
+                                    current: buildStatus.current_data_build_level ?? 0
+                                })}
+                            </div>
+                            {Array.isArray(buildStatus.reasons) && buildStatus.reasons.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                    {buildStatus.reasons.slice(0, 3).map((r, i) => (
+                                        <div key={i} className="text-amber-100 text-[11px]">- {r}</div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="text-amber-300 text-[11px] mt-2">
+                                {t('status.rebuild_required_action')}
+                            </div>
+                        </div>
+                    )}
+
                     {error && (
                         <div className="mt-3 px-3 py-2 bg-red-900/30 border border-red-700 rounded-lg text-red-400 text-sm">
                             {error}
@@ -1195,6 +1330,7 @@ function SearchPanel({ onScanFolder, isBusy }) {
                 isSearching={isSearching}
                 hasResults={hasResults}
                 onShowMeta={handleShowMeta}
+                onContextMenu={handleCardContextMenu}
                 onClear={clearSearch}
                 noMoreResults={noMoreResults}
                 isLoadingMore={isLoadingMore}
@@ -1203,6 +1339,46 @@ function SearchPanel({ onScanFolder, isBusy }) {
 
             {/* Metadata Modal */}
             {metadata && <MetadataModal metadata={metadata} onClose={() => setMetadata(null)} />}
+
+            {/* Context Menu */}
+            {contextMenu && (
+                <div className="fixed inset-0 z-50" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}>
+                    <div
+                        className="absolute bg-gray-800 border border-gray-600 rounded-lg shadow-2xl py-1 min-w-[200px] animate-fadeIn"
+                        style={{ top: Math.min(contextMenu.y, window.innerHeight - 150), left: Math.min(contextMenu.x, window.innerWidth - 200) }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-3 py-2 border-b border-gray-700 bg-gray-900/50">
+                            <div className="text-xs font-bold text-white truncate max-w-[180px]">
+                                {(contextMenu.result.resolved_path || contextMenu.result.path).split(/[/\\]/).pop()}
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => {
+                                window.electron?.fs?.showInFolder(contextMenu.result.resolved_path || contextMenu.result.path);
+                                setContextMenu(null);
+                            }}
+                            className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                        >
+                            <FolderOpen size={14} /> {t('action.show_in_folder')}
+                        </button>
+                        <div className="h-px bg-gray-700 my-1" />
+                        <button
+                            onClick={() => { triggerStructureSearch(contextMenu.result.id, 'vector'); setContextMenu(null); }}
+                            className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                        >
+                            <Search size={14} /> {t('action.find_similar_visual')}
+                        </button>
+                        <button
+                            onClick={() => { triggerStructureSearch(contextMenu.result.id, 'structure'); setContextMenu(null); }}
+                            className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                        >
+                            <div className="rotate-90"><Search size={14} /></div> {t('action.find_similar_structure')}
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onScanFolder={onScanFolder} isBusy={isBusy} />}
         </div>
     );

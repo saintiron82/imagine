@@ -469,6 +469,7 @@ ipcMain.handle('search-vector', async (_, searchOptions) => {
             mode: searchOptions.mode || 'triaxis',
             threshold: searchOptions.threshold ?? 0.0,
             filters: searchOptions.filters || null,
+            query_file_id: searchOptions.queryFileId || null,
         };
     }
 
@@ -802,7 +803,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
             }
 
             // Log: show STEP, progress, errors, adaptive decisions (exclude noisy [PHASE])
-            const isLogWorthy = /Processing:|STEP \d|\[OK\]|\[FAIL\]|\[DONE\]|\[SKIP\]|\[BATCH\]|\[MINI\s|\[TIER|\[ADAPTIVE:|\[\d+\/\d+\]/.test(clean) && !/^\[PHASE\]/.test(clean);
+            const isLogWorthy = /Processing:|STEP \d|\[OK\]|\[FAIL\]|\[DONE\]|\[SKIP\]|\[REBUILD\]|\[BATCH\]|\[REGEN\]|\[FALLBACK\]|\[MINI\s|\[TIER|\[ADAPTIVE:|\[\d+\/\d+\]/.test(clean) && !/^\[PHASE\]/.test(clean);
             if (isLogWorthy) {
                 event.reply('pipeline-log', { message: clean, type: 'info' });
             }
@@ -867,7 +868,7 @@ ipcMain.on('stop-pipeline', () => {
             process.kill(-pid, 'SIGKILL');
         } catch {
             // Fallback: kill just the main process
-            try { activePipelineProc.kill('SIGKILL'); } catch {}
+            try { activePipelineProc.kill('SIGKILL'); } catch { }
         }
         // Don't send events here — proc.on('close') handles cleanup
     }
@@ -989,7 +990,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
             }
 
             // Log key events (including per-file progress and adaptive batch decisions)
-            const isLogWorthy = /Processing:|STEP \d|\[OK\]|\[FAIL\]|\[DONE\]|\[DISCOVER\]|\[SKIP\]|\[BATCH\]|\[TIER|\[ADAPTIVE:|\[\d+\/\d+\]/.test(clean) && !/^\[PHASE\]/.test(clean);
+            const isLogWorthy = /Processing:|STEP \d|\[OK\]|\[FAIL\]|\[DONE\]|\[DISCOVER\]|\[SKIP\]|\[REBUILD\]|\[BATCH\]|\[REGEN\]|\[FALLBACK\]|\[TIER|\[ADAPTIVE:|\[\d+\/\d+\]/.test(clean) && !/^\[PHASE\]/.test(clean);
             if (isLogWorthy) {
                 event.reply('discover-log', { message: clean, type: 'info' });
             }
@@ -1231,7 +1232,7 @@ function killActivePipeline() {
         try {
             process.kill(-activePipelineProc.pid, 'SIGKILL');
         } catch {
-            try { activePipelineProc.kill('SIGKILL'); } catch {}
+            try { activePipelineProc.kill('SIGKILL'); } catch { }
         }
         activePipelineProc = null;
     }
@@ -1239,10 +1240,19 @@ function killActivePipeline() {
         try {
             process.kill(-proc.pid, 'SIGKILL');
         } catch {
-            try { proc.kill('SIGKILL'); } catch {}
+            try { proc.kill('SIGKILL'); } catch { }
         }
     }
     activeDiscoverProcs.clear();
+
+    if (activeBackfillProc) {
+        try {
+            process.kill(-activeBackfillProc.pid, 'SIGKILL');
+        } catch {
+            try { activeBackfillProc.kill('SIGKILL'); } catch { }
+        }
+        activeBackfillProc = null;
+    }
 }
 
 app.on('before-quit', () => {
