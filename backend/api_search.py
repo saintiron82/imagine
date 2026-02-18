@@ -22,6 +22,7 @@ import os
 import time
 import traceback
 from pathlib import Path
+from typing import List
 
 # Force UTF-8 stdout/stdin for multilingual support (JP, KR, CN, etc.)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
@@ -52,6 +53,70 @@ logger = logging.getLogger(__name__)
 _searcher: SqliteVectorSearch = None
 
 
+def _candidate_roots() -> List[Path]:
+    """
+    Build candidate local roots used for path resolution on DB handoff.
+
+    Priority:
+    1) IMAGINE_PATH_ROOTS env (os.pathsep-separated)
+    2) config.yaml -> registered_folders.folders
+    """
+    roots: List[Path] = []
+    seen = set()
+
+    env_roots = os.getenv("IMAGINE_PATH_ROOTS", "")
+    if env_roots:
+        for raw in env_roots.split(os.pathsep):
+            p = raw.strip()
+            if not p:
+                continue
+            path_obj = Path(p).expanduser()
+            key = str(path_obj)
+            if key not in seen:
+                seen.add(key)
+                roots.append(path_obj)
+
+    try:
+        from backend.utils.config import get_config
+        cfg = get_config()
+        cfg_roots = cfg.get("registered_folders.folders", [])
+        if isinstance(cfg_roots, list):
+            for raw in cfg_roots:
+                if not raw:
+                    continue
+                path_obj = Path(str(raw)).expanduser()
+                key = str(path_obj)
+                if key not in seen:
+                    seen.add(key)
+                    roots.append(path_obj)
+    except Exception:
+        pass
+
+    return roots
+
+
+def _resolve_local_path(result: dict) -> str:
+    """
+    Resolve DB path to a local existing path using relative_path + candidate roots.
+    """
+    db_path = str(result.get("file_path") or "")
+    if db_path and Path(db_path).exists():
+        return db_path
+
+    relative_path = str(result.get("relative_path") or "").strip()
+    if relative_path:
+        rel = relative_path.replace("\\", "/").lstrip("/")
+        rel_parts = [p for p in rel.split("/") if p]
+        if rel_parts:
+            rel_path = Path(*rel_parts)
+            for root in _candidate_roots():
+                cand = root / rel_path
+                if cand.exists():
+                    return str(cand)
+
+    return db_path
+
+
 def _get_searcher() -> SqliteVectorSearch:
     """Get or create the singleton searcher (lazy init)."""
     global _searcher
@@ -63,15 +128,23 @@ def _get_searcher() -> SqliteVectorSearch:
 def format_result(result: dict) -> dict:
     """Format a single search result for the frontend."""
     metadata = result.get("metadata", {})
+    db_path = result.get("file_path", "")
+    resolved_path = _resolve_local_path(result)
+    path_exists = bool(resolved_path and Path(resolved_path).exists())
 
     formatted = {
-        "path": result["file_path"],
+        "path": resolved_path or db_path,  # Backward-compatible field used by UI
+        "db_path": db_path,                # Original DB path (stable key for metadata)
+        "resolved_path": resolved_path,    # Local resolved path (may equal db_path)
+        "path_exists": path_exists,
+        "path_mapped": bool(db_path and resolved_path and db_path != resolved_path),
         "folder_path": result.get("folder_path", ""),
         "relative_path": result.get("relative_path", ""),
         "storage_root": result.get("storage_root", ""),
         "vector_score": result.get("vector_score", result.get("similarity")),     # VV: SigLIP visual
         "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),  # MV: Qwen3 text vector
         "text_score": result.get("text_score"),          # FTS: FTS5 keyword
+        "structure_score": result.get("structure_score", result.get("structural_similarity")),  # X: DINOv2 structure
         "combined_score": result.get("rrf_score", result.get("similarity", 0)),
         "metadata": metadata,
         "thumbnail_path": result.get("thumbnail_url", ""),
@@ -86,16 +159,22 @@ def format_result(result: dict) -> dict:
         "user_tags": result.get("user_tags", []),
         "user_category": result.get("user_category", ""),
         "user_rating": result.get("user_rating", 0),
-        # v3 P0: structured vision fields
         "image_type": result.get("image_type"),
         "art_style": result.get("art_style"),
+        "color_palette": result.get("color_palette"),
         "scene_type": result.get("scene_type"),
+        "time_of_day": result.get("time_of_day"),
+        "weather": result.get("weather"),
+        "character_type": result.get("character_type"),
+        "item_type": result.get("item_type"),
+        "ui_type": result.get("ui_type"),
+        "structural_similarity": result.get("structural_similarity"),
     }
 
     return formatted
 
 
-def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None, query_images: list = None, image_search_mode: str = "and"):
+def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None, query_images: list = None, image_search_mode: str = "and", query_file_id: int = None):
     """Search SQLite and return JSON results."""
     try:
         searcher = _get_searcher()
@@ -105,6 +184,7 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
             query_image=query_image,
             query_images=query_images,
             image_search_mode=image_search_mode,
+            query_file_id=query_file_id,
         )
 
         if diagnostic and isinstance(result_data, tuple):
@@ -154,6 +234,7 @@ def _handle_request(data: dict) -> dict:
         query_image=data.get("query_image"),
         query_images=data.get("query_images"),
         image_search_mode=data.get("image_search_mode", "and"),
+        query_file_id=data.get("query_file_id"),
     )
 
 

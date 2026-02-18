@@ -1,6 +1,7 @@
-"""Auto-Weighted RRF strategy for Triaxis search (V + S + M).
+"""Auto-Weighted RRF strategy for multi-axis search (V + X + S + M).
 
 V (Visual): Image pixel similarity via SigLIP vectors
+X (Structure): Layout/shape similarity via DINOv2 vectors
 S (Semantic): AI-interpreted content via Qwen3 text vectors
 M (Metadata): Pure metadata facts via FTS5
 
@@ -21,11 +22,13 @@ def _load_presets() -> Dict[str, Dict[str, float]]:
     cfg = get_config()
     presets_raw = cfg.get('search.rrf.presets', {})
 
-    # Triaxis: Convert config keys (v, s, m) to internal keys (visual, text_vec, fts)
+    # Convert config keys (v, x, s, m) to internal keys
+    # (visual, structure, text_vec, fts)
     presets = {}
     for name, weights in presets_raw.items():
         presets[name] = {
             'visual': weights.get('v', 0.34),
+            'structure': weights.get('x', 0.0),
             'text_vec': weights.get('s', 0.33),
             'fts': weights.get('m', 0.33),
         }
@@ -33,10 +36,10 @@ def _load_presets() -> Dict[str, Dict[str, float]]:
     # Fallback presets if config is empty
     if not presets:
         presets = {
-            "visual":   {"visual": 0.50, "text_vec": 0.30, "fts": 0.20},
-            "keyword":  {"visual": 0.20, "text_vec": 0.30, "fts": 0.50},
-            "semantic": {"visual": 0.20, "text_vec": 0.50, "fts": 0.30},
-            "balanced": {"visual": 0.34, "text_vec": 0.33, "fts": 0.33},
+            "visual":   {"visual": 0.50, "structure": 0.00, "text_vec": 0.30, "fts": 0.20},
+            "keyword":  {"visual": 0.20, "structure": 0.00, "text_vec": 0.30, "fts": 0.50},
+            "semantic": {"visual": 0.20, "structure": 0.00, "text_vec": 0.50, "fts": 0.30},
+            "balanced": {"visual": 0.34, "structure": 0.00, "text_vec": 0.33, "fts": 0.33},
         }
 
     return presets
@@ -50,7 +53,8 @@ def get_weights(query_type: str, active_axes: List[str]) -> Dict[str, float]:
 
     Args:
         query_type: One of "visual", "keyword", "semantic", "balanced".
-        active_axes: List of active axis names (e.g. ["visual", "text_vec", "fts"]).
+        active_axes: List of active axis names
+                     (e.g. ["visual", "structure", "text_vec", "fts"]).
 
     Returns:
         Dict mapping axis name -> weight. Weights sum to 1.0.
@@ -64,9 +68,18 @@ def get_weights(query_type: str, active_axes: List[str]) -> Dict[str, float]:
         manual = cfg.get("search.rrf.manual_weights", {})
         base = {
             "visual": manual.get("visual", 0.34),
+            "structure": manual.get("structure", manual.get("x", 0.0)),
             "text_vec": manual.get("text_vec", manual.get("text", 0.33)),
             "fts": manual.get("fts", 0.33),
         }
+
+    # If structure axis is active but has no configured weight,
+    # borrow a small portion from visual axis.
+    if "structure" in active_axes and base.get("structure", 0.0) <= 0.0:
+        visual_w = base.get("visual", 0.0)
+        transfer = min(0.15, visual_w * 0.35) if visual_w > 0 else 0.15
+        base["visual"] = max(0.0, visual_w - transfer)
+        base["structure"] = transfer
 
     weights = _redistribute(base, active_axes)
     logger.debug(f"RRF weights: type={query_type}, auto={auto}, active={active_axes}, w={weights}")

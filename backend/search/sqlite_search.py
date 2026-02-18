@@ -44,6 +44,7 @@ class SqliteVectorSearch:
         self.db = db if db else SQLiteDB()
         self._encoder = None  # Lazy loading (VV)
         self._text_provider = None  # Lazy loading (MV)
+        self._structure_encoder = None  # Lazy loading (Structure)
         self._text_enabled = None  # Cache for MV availability check
 
         logger.info("SqliteVectorSearch initialized")
@@ -64,6 +65,15 @@ class SqliteVectorSearch:
             from backend.vector.text_embedding import get_text_embedding_provider
             self._text_provider = get_text_embedding_provider()
         return self._text_provider
+
+    @property
+    def structure_encoder(self):
+        """Lazy load DINOv2 structure encoder."""
+        if self._structure_encoder is None:
+            from backend.vector.dinov2_encoder import DinoV2Encoder
+            self._structure_encoder = DinoV2Encoder()
+            logger.info(f"Structure encoder loaded: {self._structure_encoder.model_name}")
+        return self._structure_encoder
 
     @property
     def text_search_enabled(self) -> bool:
@@ -87,6 +97,18 @@ class SqliteVectorSearch:
             Embedding vector
         """
         return self.encoder.encode_text(text)
+
+    def encode_structure(self, image) -> np.ndarray:
+        """
+        Encode image to Structure embedding vector (DINOv2).
+
+        Args:
+            image: PIL Image or scalar
+
+        Returns:
+            768-dim embedding vector
+        """
+        return self.structure_encoder.encode_image(image)
 
     def vector_search_by_embedding(
         self,
@@ -132,6 +154,15 @@ class SqliteVectorSearch:
                     f.folder_tags,
                     f.storage_root,
                     f.relative_path,
+                    f.image_type,
+                    f.art_style,
+                    f.color_palette,
+                    f.scene_type,
+                    f.time_of_day,
+                    f.weather,
+                    f.character_type,
+                    f.item_type,
+                    f.ui_type,
                     (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
                 FROM files f
                 JOIN vec_files v ON f.id = v.file_id
@@ -269,6 +300,15 @@ class SqliteVectorSearch:
                     f.folder_tags,
                     f.storage_root,
                     f.relative_path,
+                    f.image_type,
+                    f.art_style,
+                    f.color_palette,
+                    f.scene_type,
+                    f.time_of_day,
+                    f.weather,
+                    f.character_type,
+                    f.item_type,
+                    f.ui_type,
                     (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
                 FROM files f
                 JOIN vec_files v ON f.id = v.file_id
@@ -483,6 +523,15 @@ class SqliteVectorSearch:
                     f.folder_tags,
                     f.storage_root,
                     f.relative_path,
+                    f.image_type,
+                    f.art_style,
+                    f.color_palette,
+                    f.scene_type,
+                    f.time_of_day,
+                    f.weather,
+                    f.character_type,
+                    f.item_type,
+                    f.ui_type,
                     (1.0 - vec_distance_cosine(vt.embedding, ?)) AS text_similarity
                 FROM files f
                 JOIN vec_text vt ON f.id = vt.file_id
@@ -544,6 +593,15 @@ class SqliteVectorSearch:
                     f.folder_tags,
                     f.storage_root,
                     f.relative_path,
+                    f.image_type,
+                    f.art_style,
+                    f.color_palette,
+                    f.scene_type,
+                    f.time_of_day,
+                    f.weather,
+                    f.character_type,
+                    f.item_type,
+                    f.ui_type,
                     (1.0 - vec_distance_cosine(vt.embedding, ?)) AS text_similarity
                 FROM files f
                 JOIN vec_text vt ON f.id = vt.file_id
@@ -563,6 +621,166 @@ class SqliteVectorSearch:
 
         except Exception as e:
             logger.error(f"MV text vector search by embedding failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def search_structure(
+        self,
+        query_embedding: np.ndarray,
+        top_k: int = 20,
+        threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """
+        Structure search (DINOv2) using a pre-computed embedding.
+
+        Args:
+            query_embedding: Structure Vector (768-dim)
+            top_k: Number of results
+            threshold: Minimum similarity
+
+        Returns:
+            List of file records with structural_similarity
+        """
+        embedding_json = json.dumps(query_embedding.astype(np.float32).tolist())
+
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    f.id,
+                    f.file_path,
+                    f.file_name,
+                    f.format,
+                    f.width,
+                    f.height,
+                    f.mc_caption,
+                    f.ai_tags,
+                    f.ocr_text,
+                    f.metadata,
+                    f.thumbnail_url,
+                    f.user_note,
+                    f.user_tags,
+                    f.user_category,
+                    f.user_rating,
+                    f.folder_path,
+                    f.folder_depth,
+                    f.folder_tags,
+                    f.storage_root,
+                    f.relative_path,
+                    f.image_type,
+                    f.art_style,
+                    f.color_palette,
+                    f.scene_type,
+                    f.time_of_day,
+                    f.weather,
+                    f.character_type,
+                    f.item_type,
+                    f.ui_type,
+                    (1.0 - vec_distance_cosine(vs.embedding, ?)) AS structural_similarity
+                FROM files f
+                JOIN vec_structure vs ON f.id = vs.file_id
+                WHERE (1.0 - vec_distance_cosine(vs.embedding, ?)) >= ?
+                ORDER BY vec_distance_cosine(vs.embedding, ?) ASC
+                LIMIT ?
+            """, (embedding_json, embedding_json, threshold, embedding_json, top_k))
+
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                self._parse_json_fields(result)
+                results.append(result)
+
+            logger.info(f"Structure search returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"Structure search failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def find_similar_structure(
+        self,
+        file_id: int,
+        top_k: int = 20,
+        threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """
+        Find files with similar structure/texture to the given file_id.
+
+        Args:
+            file_id: Database ID of the reference file
+            top_k: Number of results
+            threshold: Minimum similarity
+
+        Returns:
+            List of matching file records
+        """
+        cursor = self.db.conn.cursor()
+        try:
+            # Fetch existing structure embedding
+            row = cursor.execute(
+                "SELECT embedding FROM vec_structure WHERE file_id = ?",
+                (file_id,)
+            ).fetchone()
+
+            if not row:
+                logger.warning(f"No structure embedding found for file_id={file_id}")
+                return []
+
+            embedding_json = row[0]
+            # Convert JSON string back to list/array if needed, but search_structure needs ndarray
+            # SQLite stores it as JSON string '[-0.1, 0.5, ...]'
+            vec_list = json.loads(embedding_json)
+            query_vec = np.array(vec_list, dtype=np.float32)
+
+            return self.search_structure(query_vec, top_k, threshold)
+
+        except Exception as e:
+            logger.error(f"find_similar_structure failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def find_similar_visual(
+        self,
+        file_id: int,
+        top_k: int = 20,
+        threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """
+        Find files with similar visual appearance to the given file_id using VV (SigLIP2).
+
+        Args:
+            file_id: Database ID of the reference file
+            top_k: Number of results
+            threshold: Minimum similarity
+
+        Returns:
+            List of matching file records with vector_score
+        """
+        cursor = self.db.conn.cursor()
+        try:
+            row = cursor.execute(
+                "SELECT embedding FROM vec_files WHERE file_id = ?",
+                (file_id,)
+            ).fetchone()
+
+            if not row:
+                logger.warning(f"No VV embedding found for file_id={file_id}")
+                return []
+
+            vec_list = json.loads(row[0])
+            query_vec = np.array(vec_list, dtype=np.float32)
+
+            results = self.vector_search_by_embedding(query_vec, top_k + 1, threshold)
+            # Exclude self from results
+            results = [r for r in results if r.get("id") != file_id]
+            return results[:top_k]
+
+        except Exception as e:
+            logger.error(f"find_similar_visual failed: {e}")
             return []
         finally:
             cursor.close()
@@ -644,6 +862,15 @@ class SqliteVectorSearch:
                     f.folder_tags,
                     f.storage_root,
                     f.relative_path,
+                    f.image_type,
+                    f.art_style,
+                    f.color_palette,
+                    f.scene_type,
+                    f.time_of_day,
+                    f.weather,
+                    f.character_type,
+                    f.item_type,
+                    f.ui_type,
                     bm25(files_fts, ?, ?) AS fts_rank
                 FROM files_fts fts
                 JOIN files f ON f.id = fts.rowid
@@ -929,6 +1156,37 @@ class SqliteVectorSearch:
         diag["negative_filter_active"] = bool(negative_query)
         diag["negative_v_axis"] = neg_v_embedding is not None
 
+        # Step 5d: quality rerank on filtered candidate pool
+        rerank_enabled = bool(_search_cfg.get("search.rerank.enabled", True))
+        rerank_pool = int(_search_cfg.get("search.rerank.pool_size", max(top_k * 3, 80)))
+        rerank_pool = max(top_k, rerank_pool)
+        rerank_used = False
+        if rerank_enabled and len(merged) > 1:
+            rerank_n = min(len(merged), rerank_pool)
+            # Ensure rerank has dense axis scores in its candidate pool
+            self._enrich_axis_scores(
+                merged[:rerank_n],
+                v_query_embedding,
+                t_query_embedding,
+                fts_keywords,
+            )
+            merged = self._quality_rerank(
+                merged,
+                top_k=top_k,
+                query=query,
+                llm_filters=llm_filters,
+                user_filters=user_filters,
+                axis_weights=rrf_weights,
+                pool_size=rerank_n,
+            )
+            rerank_used = True
+
+        diag["rerank"] = {
+            "enabled": rerank_enabled,
+            "used": rerank_used,
+            "pool_size": min(len(merged), rerank_pool),
+        }
+
         # Trim to top_k
         merged = merged[:top_k]
 
@@ -952,6 +1210,8 @@ class SqliteVectorSearch:
                 "vector_score": round(r["vector_score"], 4) if r.get("vector_score") is not None else None,
                 "text_vec_score": round(r["text_vec_score"], 4) if r.get("text_vec_score") is not None else None,
                 "text_score": round(r["text_score"], 4) if r.get("text_score") is not None else None,
+                "structure_score": round(r["structure_score"], 4) if r.get("structure_score") is not None else None,
+                "quality_score": round(r["quality_score"], 4) if r.get("quality_score") is not None else None,
             }
             for r in merged[:5]
         ]
@@ -1057,12 +1317,13 @@ class SqliteVectorSearch:
         """
         Multi-axis RRF merge for 2+ result lists.
 
-        Generalizes _rrf_merge to handle V + T + F axes.
-        Preserves per-axis scores: vector_score, text_vec_score, text_score.
+        Generalizes _rrf_merge to handle V + T + F (+X) axes.
+        Preserves per-axis scores: vector_score, text_vec_score, text_score,
+        structure_score.
 
         Args:
             result_lists: List of (axis_name, results) tuples.
-                          axis_name: "visual", "text_vec", or "fts"
+                          axis_name: "visual", "text_vec", "fts", or "structure"
             k: RRF constant (default 60)
             weights: Per-axis weight dict (e.g. {"visual": 0.5, "text_vec": 0.3, "fts": 0.2}).
                      If None, uniform weighting (1.0 per axis).
@@ -1090,6 +1351,8 @@ class SqliteVectorSearch:
                     axis_scores[fp]["text_vec"] = result.get("text_similarity", 0)
                 elif axis_name == "fts":
                     axis_scores[fp]["fts_rank"] = result.get("fts_rank", 0)
+                elif axis_name == "structure":
+                    axis_scores[fp]["structure"] = result.get("structural_similarity", 0)
 
                 if fp not in result_map:
                     result_map[fp] = result
@@ -1115,6 +1378,7 @@ class SqliteVectorSearch:
             result["vector_score"] = axis_scores.get(fp, {}).get("visual")
             result["text_vec_score"] = axis_scores.get(fp, {}).get("text_vec")
             result["text_score"] = normalized_fts.get(fp)
+            result["structure_score"] = axis_scores.get(fp, {}).get("structure")
             merged.append(result)
 
         return merged
@@ -1125,6 +1389,7 @@ class SqliteVectorSearch:
         v_embedding: Optional[np.ndarray],
         t_embedding: Optional[np.ndarray],
         fts_keywords: Optional[List[str]] = None,
+        s_embedding: Optional[np.ndarray] = None,
     ) -> None:
         """
         Enrich merged results with missing per-axis scores via direct DB lookup.
@@ -1141,6 +1406,8 @@ class SqliteVectorSearch:
         s_missing = [r["id"] for r in merged if r.get("text_vec_score") is None and r.get("id")]
         # Collect file IDs missing FTS scores
         m_missing = [r["id"] for r in merged if r.get("text_score") is None and r.get("id")]
+        # Collect file IDs missing Structure scores
+        st_missing = [r["id"] for r in merged if r.get("structure_score") is None and r.get("id")]
 
         # Batch-compute VV similarity for missing files
         if v_missing and v_embedding is not None:
@@ -1163,6 +1430,216 @@ class SqliteVectorSearch:
                 if r.get("text_score") is None and r.get("id") in m_scores:
                     r["text_score"] = m_scores[r["id"]]
 
+        # Batch-compute Structure similarity for missing files
+        if st_missing and s_embedding is not None:
+            st_scores = self._batch_similarity("vec_structure", s_embedding, st_missing)
+            for r in merged:
+                if r.get("structure_score") is None and r.get("id") in st_scores:
+                    r["structure_score"] = st_scores[r["id"]]
+                if r.get("structural_similarity") is None and r.get("id") in st_scores:
+                    r["structural_similarity"] = st_scores[r["id"]]
+
+    @staticmethod
+    def _query_tokens(query: str) -> List[str]:
+        """Extract lightweight query tokens for soft intent matching."""
+        if not query:
+            return []
+        tokens = []
+        for raw in query.lower().split():
+            t = raw.strip(" \t\r\n,.;:!?\"'()[]{}")
+            if len(t) >= 2:
+                tokens.append(t)
+        # Preserve order, remove duplicates
+        seen = set()
+        uniq = []
+        for t in tokens:
+            if t not in seen:
+                seen.add(t)
+                uniq.append(t)
+        return uniq
+
+    @staticmethod
+    def _safe_norm(val: Optional[float], low: float, high: float) -> Optional[float]:
+        """Min-max normalize a score to [0, 1]."""
+        if val is None:
+            return None
+        span = high - low
+        if span <= 1e-12:
+            return 1.0
+        x = (float(val) - low) / span
+        if x < 0.0:
+            return 0.0
+        if x > 1.0:
+            return 1.0
+        return x
+
+    def _quality_rerank(
+        self,
+        results: List[Dict[str, Any]],
+        top_k: int,
+        query: str,
+        llm_filters: Optional[Dict[str, Any]] = None,
+        user_filters: Optional[Dict[str, Any]] = None,
+        axis_weights: Optional[Dict[str, float]] = None,
+        pool_size: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Quality-focused rerank over top candidate pool.
+
+        Goal:
+        - Keep RRF recall benefits
+        - Promote results with stronger cross-axis agreement
+        - Prefer entries with richer stored metadata (caption/tags/structured fields)
+        """
+        if not results:
+            return results
+
+        llm_filters = llm_filters or {}
+        user_filters = user_filters or {}
+
+        pool_n = min(len(results), int(pool_size or max(top_k * 3, 80)))
+        if pool_n <= 1:
+            return results
+
+        pool = results[:pool_n]
+        tail = results[pool_n:]
+
+        # Axis ranges for normalization
+        def _axis_range(key: str):
+            vals = [float(r[key]) for r in pool if r.get(key) is not None]
+            if not vals:
+                return 0.0, 1.0
+            return min(vals), max(vals)
+
+        v_low, v_high = _axis_range("vector_score")
+        x_low, x_high = _axis_range("structure_score")
+        s_low, s_high = _axis_range("text_vec_score")
+        m_low, m_high = _axis_range("text_score")
+
+        # Axis blend defaults (same names as _rrf_merge_multi axes)
+        axis_w = {
+            "visual": 0.30,
+            "structure": 0.15,
+            "text_vec": 0.35,
+            "fts": 0.20,
+        }
+        if axis_weights:
+            axis_w.update({k: float(v) for k, v in axis_weights.items() if k in axis_w})
+
+        q_tokens = self._query_tokens(query)
+        q_path = (query or "").replace("\\", "/").strip().lower()
+        path_hint = ("/" in q_path) or bool(q_path.endswith((".psd", ".png", ".jpg", ".jpeg")))
+        soft_filter_keys = {
+            "format", "image_type", "scene_type", "art_style",
+            "time_of_day", "weather", "folder_path"
+        }
+        all_filters = {}
+        all_filters.update(llm_filters)
+        all_filters.update(user_filters)
+
+        rescored = []
+        n = len(pool)
+        for idx, r in enumerate(pool):
+            # Base rank prior from merged order
+            rrf_prior = 1.0 if n <= 1 else 1.0 - (idx / (n - 1))
+
+            # Per-axis normalized scores
+            v_norm = self._safe_norm(r.get("vector_score"), v_low, v_high)
+            x_norm = self._safe_norm(r.get("structure_score"), x_low, x_high)
+            s_norm = self._safe_norm(r.get("text_vec_score"), s_low, s_high)
+            m_norm = self._safe_norm(r.get("text_score"), m_low, m_high)
+
+            axis_num = 0.0
+            axis_den = 0.0
+            if v_norm is not None:
+                axis_num += axis_w["visual"] * v_norm
+                axis_den += axis_w["visual"]
+            if x_norm is not None:
+                axis_num += axis_w["structure"] * x_norm
+                axis_den += axis_w["structure"]
+            if s_norm is not None:
+                axis_num += axis_w["text_vec"] * s_norm
+                axis_den += axis_w["text_vec"]
+            if m_norm is not None:
+                axis_num += axis_w["fts"] * m_norm
+                axis_den += axis_w["fts"]
+            axis_blend = (axis_num / axis_den) if axis_den > 0 else rrf_prior
+
+            # Metadata completeness (stored-information utilization)
+            has_caption = 1.0 if (r.get("mc_caption") or "").strip() else 0.0
+            tags = r.get("ai_tags")
+            if isinstance(tags, str):
+                try:
+                    tags = json.loads(tags)
+                except Exception:
+                    tags = []
+            has_tags = 1.0 if isinstance(tags, list) and len(tags) > 0 else 0.0
+            has_struct = 1.0 if (r.get("image_type") or r.get("scene_type") or r.get("art_style")) else 0.0
+            has_user = 1.0 if (r.get("user_note") or r.get("user_tags") or r.get("user_category")) else 0.0
+            meta_completeness = (has_caption * 0.35) + (has_tags * 0.25) + (has_struct * 0.30) + (has_user * 0.10)
+
+            # Soft intent match (query token overlap + filter consistency)
+            hay_parts = [
+                str(r.get("file_name") or ""),
+                str(r.get("folder_path") or ""),
+                str(r.get("relative_path") or ""),
+                str(r.get("file_path") or ""),
+                str(r.get("mc_caption") or ""),
+                str(r.get("image_type") or ""),
+                str(r.get("scene_type") or ""),
+                str(r.get("art_style") or ""),
+            ]
+            if isinstance(tags, list):
+                hay_parts.extend(str(t) for t in tags)
+            hay = " ".join(hay_parts).lower()
+            token_hits = sum(1 for t in q_tokens if t in hay)
+            token_score = (token_hits / max(1, len(q_tokens))) if q_tokens else 0.0
+
+            filter_hits = 0
+            filter_total = 0
+            for fk, fv in all_filters.items():
+                if fk not in soft_filter_keys or fv in (None, ""):
+                    continue
+                filter_total += 1
+                rv = str(r.get(fk) or "").lower()
+                if rv and rv == str(fv).lower():
+                    filter_hits += 1
+            filter_score = (filter_hits / filter_total) if filter_total else 0.0
+
+            # Path intent boost: if query itself is path-like, reward direct path hit.
+            path_score = 0.0
+            if path_hint and q_path:
+                cands = [
+                    str(r.get("relative_path") or "").replace("\\", "/").lower(),
+                    str(r.get("file_path") or "").replace("\\", "/").lower(),
+                    str(r.get("folder_path") or "").replace("\\", "/").lower(),
+                ]
+                for cp in cands:
+                    if not cp:
+                        continue
+                    if cp == q_path or cp.endswith(q_path):
+                        path_score = 1.0
+                        break
+                    if q_path in cp:
+                        path_score = 0.8
+                        break
+
+            intent_boost = (token_score * 0.55) + (filter_score * 0.25) + (path_score * 0.20)
+
+            # Final quality score
+            quality_score = (
+                (0.62 * axis_blend) +
+                (0.23 * rrf_prior) +
+                (0.10 * meta_completeness) +
+                (0.05 * intent_boost)
+            )
+
+            r["quality_score"] = quality_score
+            rescored.append((r, quality_score, idx))
+
+        rescored.sort(key=lambda x: (x[1], x[0].get("rrf_score", 0.0), -x[2]), reverse=True)
+        return [x[0] for x in rescored] + tail
+
     def _batch_similarity(
         self,
         table: str,
@@ -1176,7 +1653,7 @@ class SqliteVectorSearch:
         arbitrary WHERE clauses directly).
 
         Args:
-            table: "vec_files" or "vec_text"
+            table: "vec_files", "vec_text", or "vec_structure"
             query_embedding: Pre-encoded query embedding vector
             file_ids: List of file IDs to compute similarity for
 
@@ -1184,6 +1661,9 @@ class SqliteVectorSearch:
             Dict mapping file_id -> similarity score
         """
         if not file_ids:
+            return {}
+        if table not in {"vec_files", "vec_text", "vec_structure"}:
+            logger.warning(f"Batch similarity lookup rejected unknown table: {table}")
             return {}
 
         embedding_json = json.dumps(query_embedding.astype(np.float32).tolist())
@@ -1510,18 +1990,25 @@ class SqliteVectorSearch:
         self,
         query: str,
         image_embeddings: list,
+        structure_embeddings: Optional[list[np.ndarray]] = None,
         image_mode: str = "and",
         filters: Optional[Dict[str, Any]] = None,
         top_k: int = 20,
         threshold: float = 0.0,
     ) -> List[Dict[str, Any]]:
         """
-        Combined text + image triaxis search.
-        VV uses image embeddings, MV and FTS use text query.
+        Combined text + image search.
+
+        Axes:
+        - VV: SigLIP image embeddings
+        - X: DINOv2 structure embeddings (optional)
+        - MV: Qwen text embeddings
+        - FTS: metadata lexical search
 
         Args:
             query: Text query for MV and FTS
             image_embeddings: Pre-computed SigLIP2 image embeddings
+            structure_embeddings: Optional pre-computed DINOv2 embeddings
             image_mode: "and" (average) or "or" (union)
             filters: Optional metadata filters
             top_k: Number of results
@@ -1534,6 +2021,7 @@ class SqliteVectorSearch:
         candidate_mul = _search_cfg.get("search.rrf.candidate_multiplier", 5)
         candidate_k = top_k * candidate_mul
         v_threshold = _search_cfg.get("search.threshold.visual", 0.05)
+        x_threshold = _search_cfg.get("search.threshold.structure", v_threshold)
         tv_threshold = _search_cfg.get("search.threshold.text_vec", threshold)
 
         # VV: image embeddings
@@ -1553,6 +2041,27 @@ class SqliteVectorSearch:
             vector_results = sorted(
                 all_v.values(), key=lambda x: x.get("similarity", 0), reverse=True
             )[:candidate_k]
+
+        # X: structure embeddings (DINOv2)
+        structure_results = []
+        if structure_embeddings:
+            if image_mode == "and":
+                mean_struct = np.mean(structure_embeddings, axis=0).astype(np.float32)
+                norm = np.linalg.norm(mean_struct)
+                if norm > 0:
+                    mean_struct = mean_struct / norm
+                structure_results = self.search_structure(mean_struct, candidate_k, x_threshold)
+            else:
+                all_x = {}
+                for emb in structure_embeddings:
+                    for r in self.search_structure(emb, candidate_k, x_threshold):
+                        fid = r.get("id")
+                        sim = r.get("structural_similarity", 0)
+                        if fid not in all_x or sim > all_x[fid].get("structural_similarity", 0):
+                            all_x[fid] = r
+                structure_results = sorted(
+                    all_x.values(), key=lambda x: x.get("structural_similarity", 0), reverse=True
+                )[:candidate_k]
 
         # MV: text query (Qwen3-Embedding)
         decomposer = QueryDecomposer()
@@ -1580,15 +2089,18 @@ class SqliteVectorSearch:
         except Exception as e:
             logger.warning(f"FTS search unavailable in triaxis_image: {e}")
 
-        # RRF merge (3 axes)
+        # RRF merge (3~4 axes)
         all_result_lists = []
         if vector_results:
             all_result_lists.append(("visual", vector_results))
+        if structure_results:
+            all_result_lists.append(("structure", structure_results))
         if text_vec_results:
             all_result_lists.append(("text_vec", text_vec_results))
         if fts_results:
             all_result_lists.append(("fts", fts_results))
 
+        rrf_weights = None
         if len(all_result_lists) >= 2:
             rrf_k = _search_cfg.get("search.rrf.k", 60)
             active_axes = [name for name, _ in all_result_lists]
@@ -1620,9 +2132,7 @@ class SqliteVectorSearch:
         if user_filters:
             merged = self._apply_user_filters(merged, user_filters, strict=True)
 
-        merged = merged[:top_k]
-
-        # Enrich missing axis scores (VV uses image embedding for enrichment)
+        # Enrich missing axis scores (VV/X use image embeddings)
         if image_mode == "and" and len(image_embeddings) > 0:
             v_emb_for_enrich = np.mean(image_embeddings, axis=0).astype(np.float32)
             norm = np.linalg.norm(v_emb_for_enrich)
@@ -1632,11 +2142,53 @@ class SqliteVectorSearch:
             v_emb_for_enrich = image_embeddings[0]
         else:
             v_emb_for_enrich = None
-        self._enrich_axis_scores(merged, v_emb_for_enrich, t_query_embedding, fts_keywords)
+
+        if structure_embeddings and image_mode == "and":
+            x_emb_for_enrich = np.mean(structure_embeddings, axis=0).astype(np.float32)
+            norm = np.linalg.norm(x_emb_for_enrich)
+            if norm > 0:
+                x_emb_for_enrich = x_emb_for_enrich / norm
+        elif structure_embeddings:
+            x_emb_for_enrich = structure_embeddings[0]
+        else:
+            x_emb_for_enrich = None
+
+        # Quality rerank on filtered candidate pool
+        rerank_enabled = bool(_search_cfg.get("search.rerank.enabled", True))
+        rerank_pool = int(_search_cfg.get("search.rerank.pool_size", max(top_k * 3, 80)))
+        rerank_pool = max(top_k, rerank_pool)
+        if rerank_enabled and len(merged) > 1:
+            rerank_n = min(len(merged), rerank_pool)
+            self._enrich_axis_scores(
+                merged[:rerank_n],
+                v_emb_for_enrich,
+                t_query_embedding,
+                fts_keywords,
+                s_embedding=x_emb_for_enrich,
+            )
+            merged = self._quality_rerank(
+                merged,
+                top_k=top_k,
+                query=query,
+                llm_filters=llm_filters,
+                user_filters=user_filters,
+                axis_weights=rrf_weights,
+                pool_size=rerank_n,
+            )
+
+        merged = merged[:top_k]
+
+        self._enrich_axis_scores(
+            merged,
+            v_emb_for_enrich,
+            t_query_embedding,
+            fts_keywords,
+            s_embedding=x_emb_for_enrich,
+        )
 
         logger.info(
             f"Triaxis image search '{query}' + {len(image_embeddings)} images: "
-            f"V={len(vector_results)}, S={len(text_vec_results)}, "
+            f"V={len(vector_results)}, X={len(structure_results)}, S={len(text_vec_results)}, "
             f"M={len(fts_results)}, merged={len(merged)}"
         )
 
@@ -1657,6 +2209,7 @@ class SqliteVectorSearch:
                 },
                 "axis_counts": {
                     "V": len(vector_results),
+                    "X": len(structure_results),
                     "S": len(text_vec_results),
                     "M": len(fts_results),
                 },
@@ -1666,8 +2219,10 @@ class SqliteVectorSearch:
                     {
                         "file": r.get("file_name", r.get("file_path", "")),
                         "vector_score": round(r["vector_score"], 4) if r.get("vector_score") is not None else None,
+                        "structure_score": round(r["structure_score"], 4) if r.get("structure_score") is not None else None,
                         "text_vec_score": round(r["text_vec_score"], 4) if r.get("text_vec_score") is not None else None,
                         "text_score": round(r["text_score"], 4) if r.get("text_score") is not None else None,
+                        "quality_score": round(r["quality_score"], 4) if r.get("quality_score") is not None else None,
                     }
                     for r in merged[:5]
                 ],
@@ -1740,13 +2295,14 @@ class SqliteVectorSearch:
         query_image: Optional[str] = None,
         query_images: Optional[List[str]] = None,
         image_search_mode: str = "and",
+        query_file_id: Optional[int] = None,
     ):
         """
         Unified search interface (compatibility with VectorSearcher).
 
         Args:
             query: Search query (text)
-            mode: "vector", "hybrid", "metadata", "fts", or "triaxis"
+            mode: "vector", "hybrid", "metadata", "fts", "triaxis", or "structure"
             filters: Optional metadata filters
             top_k: Number of results
             threshold: Similarity threshold (vector modes only)
@@ -1754,11 +2310,22 @@ class SqliteVectorSearch:
             query_image: Base64-encoded image for single image-to-image search
             query_images: List of base64-encoded images for multi-image search
             image_search_mode: "and" or "or" (for multi-image search)
+            query_file_id: File ID for "find similar" queries (avoids re-encoding)
 
         Returns:
             Search results. If return_diagnostic=True with triaxis mode,
             returns (results, diagnostic_dict).
         """
+        # Structure Search (DINOv2)
+        if mode == "structure":
+            if query_file_id:
+                return self.find_similar_structure(query_file_id, top_k, threshold)
+            elif query_image:
+                embedding = self.structure_encoder.encode_image_from_base64(query_image)
+                return self.search_structure(embedding, top_k, threshold)
+            else:
+                raise ValueError("Structure search requires 'query_file_id' or 'query_image'")
+
         # Combined text + image search (triaxis with VV=image, MV+FTS=text)
         has_images = (query_images and len(query_images) > 0) or query_image
         has_text = bool(query and query.strip())
@@ -1766,14 +2333,17 @@ class SqliteVectorSearch:
         if has_text and has_images:
             # Encode images
             embeddings = []
+            structure_embeddings = []
             if query_images and len(query_images) > 0:
                 for img_b64 in query_images:
                     embeddings.append(self.encoder.encode_image_from_base64(img_b64))
+                    structure_embeddings.append(self.structure_encoder.encode_image_from_base64(img_b64))
             elif query_image:
                 embeddings.append(self.encoder.encode_image_from_base64(query_image))
+                structure_embeddings.append(self.structure_encoder.encode_image_from_base64(query_image))
 
             return self.triaxis_image_search(
-                query, embeddings, image_search_mode, filters, top_k, threshold
+                query, embeddings, structure_embeddings, image_search_mode, filters, top_k, threshold
             )
 
         # Multi-image search (images only, no text)
@@ -1784,6 +2354,8 @@ class SqliteVectorSearch:
             return results
 
         # Single image-to-image search (backward compatible, image only)
+        # Note: If mode="structure" was intended, it's handled above.
+        # This block is for legacy/default visual search (SigLIP).
         if query_image:
             image_embedding = self.encoder.encode_image_from_base64(query_image)
             results = self.vector_search_by_embedding(image_embedding, top_k, threshold)
@@ -1795,6 +2367,10 @@ class SqliteVectorSearch:
                 r["text_score"] = None
             logger.info(f"Image search returned {len(results)} results")
             return results
+
+        # Visual similarity by file ID (e.g. "Find Similar (Visual)" context menu)
+        if mode == "vector" and query_file_id:
+            return self.find_similar_visual(query_file_id, top_k, threshold)
 
         if mode == "vector":
             return self.vector_search(query, top_k, threshold)
@@ -1809,4 +2385,4 @@ class SqliteVectorSearch:
         elif mode == "triaxis":
             return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic)
         else:
-            raise ValueError(f"Invalid mode: {mode}. Use 'vector', 'hybrid', 'metadata', 'fts', or 'triaxis'")
+            raise ValueError(f"Invalid mode: {mode}. Use 'vector', 'hybrid', 'metadata', 'fts', 'triaxis', or 'structure'")

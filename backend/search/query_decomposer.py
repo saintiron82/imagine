@@ -110,6 +110,7 @@ class QueryDecomposer:
         Ensures negation is always detected and cleaned regardless of path.
         """
         result = self._validate_negation(result, original_query)
+        result = self._augment_path_query(result, original_query)
         logger.info(f"Query decomposed: '{original_query}' → vector='{result['vector_query']}', "
                     f"negative='{result.get('negative_query', '')}', "
                     f"fts={result['fts_keywords']}, "
@@ -339,6 +340,85 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
             if cleaned_fts:
                 result["fts_keywords"] = cleaned_fts
 
+        return result
+
+    def _augment_path_query(self, result: Dict[str, Any], original_query: str) -> Dict[str, Any]:
+        """
+        Force path information to be used as searchable data.
+
+        Path-like query signals:
+        - contains '/' or '\\'
+        - contains file extension (.psd/.png/.jpg/.jpeg)
+        """
+        q = (original_query or "").strip()
+        if not q:
+            return result
+
+        has_sep = ('/' in q) or ('\\' in q)
+        ext_match = re.search(r'\.(psd|png|jpg|jpeg)\b', q, flags=re.IGNORECASE)
+        if not has_sep and not ext_match:
+            return result
+
+        norm = q.replace('\\', '/').strip().strip('"\'`')
+        segments = [s for s in norm.split('/') if s]
+
+        def _is_meaningful_path_token(tok: str) -> bool:
+            t = str(tok).strip().lower()
+            if len(t) < 2:
+                return False
+            if t.isdigit():
+                return False
+            if re.fullmatch(r'v\d+', t):
+                return False
+            if t in {"psd", "png", "jpg", "jpeg"}:
+                return False
+            if t in {"assets", "asset", "images", "image", "img", "files", "file", "data", "resource", "resources", "output", "outputs", "tmp", "temp", "test"}:
+                return False
+            return True
+
+        # Build path keywords (segments + split tokens)
+        path_keywords: List[str] = []
+        for seg in segments:
+            # Keep simple folder-like segments as whole words only.
+            if re.fullmatch(r'[0-9a-zA-Z가-힣]{2,}', seg) and _is_meaningful_path_token(seg):
+                path_keywords.append(seg)
+            for part in re.split(r'[^0-9a-zA-Z가-힣]+', seg):
+                part = part.strip()
+                if _is_meaningful_path_token(part):
+                    path_keywords.append(part)
+
+        # Merge into fts_keywords (order-preserving dedupe)
+        existing = result.get("fts_keywords", [])
+        if not isinstance(existing, list):
+            existing = [str(existing)]
+        merged = []
+        seen = set()
+        for kw in existing + path_keywords:
+            k = str(kw).strip()
+            if k and k not in seen:
+                seen.add(k)
+                merged.append(k)
+        result["fts_keywords"] = merged if merged else [q]
+
+        # Add folder/file format filters when obvious
+        filters = result.get("filters", {})
+        if not isinstance(filters, dict):
+            filters = {}
+
+        if segments:
+            folder_hint = '/'.join(segments[:-1]) if ext_match and len(segments) > 1 else norm
+            folder_hint = folder_hint.strip('/')
+            if folder_hint and not filters.get("folder_path"):
+                filters["folder_path"] = folder_hint
+
+        if ext_match and not filters.get("format"):
+            ext = ext_match.group(1).upper()
+            filters["format"] = "JPG" if ext == "JPEG" else ext
+
+        result["filters"] = filters
+
+        # Path query is usually keyword-like
+        result["query_type"] = "keyword"
         return result
 
     def _extract_ko_negation(self, query: str) -> List[str]:
