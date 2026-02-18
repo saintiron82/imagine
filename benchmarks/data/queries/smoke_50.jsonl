@@ -1,0 +1,50 @@
+{"query_id": "q001", "query_text": "wooden frame", "query_type": "exact", "locale": "en"}
+{"query_id": "q002", "query_text": "purple curtain", "query_type": "exact", "locale": "en"}
+{"query_id": "q003", "query_text": "gold metallic texture", "query_type": "exact", "locale": "en"}
+{"query_id": "q004", "query_text": "office chair", "query_type": "exact", "locale": "en"}
+{"query_id": "q005", "query_text": "Japanese interior", "query_type": "exact", "locale": "en"}
+{"query_id": "q006", "query_text": "classroom background", "query_type": "exact", "locale": "en"}
+{"query_id": "q007", "query_text": "anime illustration", "query_type": "exact", "locale": "en"}
+{"query_id": "q008", "query_text": "bookshelf", "query_type": "exact", "locale": "en"}
+{"query_id": "q009", "query_text": "chandelier", "query_type": "exact", "locale": "en"}
+{"query_id": "q010", "query_text": "stone wall texture", "query_type": "exact", "locale": "en"}
+{"query_id": "q011", "query_text": "flower vase", "query_type": "exact", "locale": "en"}
+{"query_id": "q012", "query_text": "window with light", "query_type": "exact", "locale": "en"}
+{"query_id": "q013", "query_text": "dark dungeon", "query_type": "exact", "locale": "en"}
+{"query_id": "q014", "query_text": "red carpet", "query_type": "exact", "locale": "en"}
+{"query_id": "q015", "query_text": "kitchen interior", "query_type": "exact", "locale": "en"}
+{"query_id": "q016", "query_text": "cozy warm room", "query_type": "semantic", "locale": "en"}
+{"query_id": "q017", "query_text": "mysterious atmosphere", "query_type": "semantic", "locale": "en"}
+{"query_id": "q018", "query_text": "bright cheerful scene", "query_type": "semantic", "locale": "en"}
+{"query_id": "q019", "query_text": "elegant luxury interior", "query_type": "semantic", "locale": "en"}
+{"query_id": "q020", "query_text": "abandoned old building", "query_type": "semantic", "locale": "en"}
+{"query_id": "q021", "query_text": "peaceful nature background", "query_type": "semantic", "locale": "en"}
+{"query_id": "q022", "query_text": "futuristic sci-fi room", "query_type": "semantic", "locale": "en"}
+{"query_id": "q023", "query_text": "medieval castle interior", "query_type": "semantic", "locale": "en"}
+{"query_id": "q024", "query_text": "minimalist clean design", "query_type": "semantic", "locale": "en"}
+{"query_id": "q025", "query_text": "gloomy rainy mood", "query_type": "semantic", "locale": "en"}
+{"query_id": "q026", "query_text": "spooky horror scene", "query_type": "semantic", "locale": "en"}
+{"query_id": "q027", "query_text": "traditional Korean style", "query_type": "semantic", "locale": "en"}
+{"query_id": "q028", "query_text": "warm sunset lighting", "query_type": "semantic", "locale": "en"}
+{"query_id": "q029", "query_text": "cold winter atmosphere", "query_type": "semantic", "locale": "en"}
+{"query_id": "q030", "query_text": "vibrant colorful art", "query_type": "semantic", "locale": "en"}
+{"query_id": "q031", "query_text": "ancient ornate golden frame with floral motifs", "query_type": "longtail", "locale": "en"}
+{"query_id": "q032", "query_text": "dark gothic church interior with stained glass", "query_type": "longtail", "locale": "en"}
+{"query_id": "q033", "query_text": "small cozy cafe with wooden furniture", "query_type": "longtail", "locale": "en"}
+{"query_id": "q034", "query_text": "Japanese classroom with cherry blossom outside", "query_type": "longtail", "locale": "en"}
+{"query_id": "q035", "query_text": "modern city apartment with large windows", "query_type": "longtail", "locale": "en"}
+{"query_id": "q036", "query_text": "old library with dusty bookshelves", "query_type": "longtail", "locale": "en"}
+{"query_id": "q037", "query_text": "underground stone dungeon with torches", "query_type": "longtail", "locale": "en"}
+{"query_id": "q038", "query_text": "royal palace hallway with red carpet", "query_type": "longtail", "locale": "en"}
+{"query_id": "q039", "query_text": "anime style school rooftop at sunset", "query_type": "longtail", "locale": "en"}
+{"query_id": "q040", "query_text": "industrial warehouse with metal shelves", "query_type": "longtail", "locale": "en"}
+{"query_id": "q041", "query_text": "인테리어 소품", "query_type": "exact", "locale": "ko-KR"}
+{"query_id": "q042", "query_text": "나무 가구", "query_type": "exact", "locale": "ko-KR"}
+{"query_id": "q043", "query_text": "실내 배경", "query_type": "semantic", "locale": "ko-KR"}
+{"query_id": "q044", "query_text": "따뜻한 분위기의 방", "query_type": "semantic", "locale": "ko-KR"}
+{"query_id": "q045", "query_text": "판타지 던전", "query_type": "semantic", "locale": "ko-KR"}
+{"query_id": "q046", "query_text": "something round and decorative", "query_type": "ambiguous", "locale": "en"}
+{"query_id": "q047", "query_text": "old thing", "query_type": "ambiguous", "locale": "en"}
+{"query_id": "q048", "query_text": "blue", "query_type": "ambiguous", "locale": "en"}
+{"query_id": "q049", "query_text": "small details", "query_type": "ambiguous", "locale": "en"}
+{"query_id": "q050", "query_text": "background props", "query_type": "ambiguous", "locale": "en"}

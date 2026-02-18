@@ -1,0 +1,35 @@
+#!/bin/bash
+# Pre-push hook: run smoke benchmark when search-related files change
+# Install: scripts/install-hooks.sh
+
+SEARCH_PATTERNS="backend/search/|backend/vector/|backend/db/sqlite|config\.yaml|benchmarks/lib/"
+CHANGED=$(git diff --name-only HEAD~1..HEAD 2>/dev/null | grep -E "^($SEARCH_PATTERNS)" || true)
+
+if [ -z "$CHANGED" ]; then
+    exit 0
+fi
+
+echo "[bench] Search-related changes detected:"
+echo "$CHANGED"
+echo "[bench] Running smoke benchmark..."
+
+# Use project's Python venv
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PYTHON="$PROJECT_ROOT/.venv/bin/python"
+
+if [ ! -f "$PYTHON" ]; then
+    PYTHON="python3"
+fi
+
+# Timeout 10 minutes
+timeout 600 "$PYTHON" "$PROJECT_ROOT/benchmarks/run.py" --engine triaxis --queries smoke --tag "pre_push_$(date +%Y%m%d_%H%M%S)"
+RESULT=$?
+
+if [ $RESULT -ne 0 ]; then
+    echo "[bench] FAILED - Push blocked. Debug: python benchmarks/run.py --engine triaxis --queries smoke"
+    exit 1
+fi
+
+echo "[bench] PASSED"
+exit 0
