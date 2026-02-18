@@ -181,7 +181,7 @@ class AdaptiveBatchController:
             self._decisions.append(decision)
             logger.warning(
                 f"[ADAPTIVE:{phase}] EMERGENCY → B={min_bs} "
-                f"(pressure={pressure:.0%}, {throughput:.1f} items/s)"
+                f"(pressure={pressure:.0%}, {throughput * 60:.1f} items/min)"
             )
             return decision
 
@@ -204,7 +204,7 @@ class AdaptiveBatchController:
         logger.info(
             f"[ADAPTIVE:{phase}] B:{processed_count}→{decision.batch_size} "
             f"({decision.reason}, {decision.state}, step={ps.step_increment}, "
-            f"{throughput:.1f} items/s, pressure={pressure:.0%}{warmup_tag})"
+            f"{throughput * 60:.1f} items/min, pressure={pressure:.0%}{warmup_tag})"
         )
         return decision
 
@@ -299,7 +299,7 @@ class AdaptiveBatchController:
         self, ps: PhaseState, throughput: float,
         min_bs: int, max_bs: int, pressure: float, phase: str
     ) -> BatchDecision:
-        """LOCKED state: hold at optimal. Re-enter REFINING if throughput degrades."""
+        """LOCKED state: hold at optimal. Re-enter REFINING if throughput degrades or PROBE interval hit."""
         current = ps.current
 
         # Check if throughput degraded significantly from best
@@ -312,6 +312,25 @@ class AdaptiveBatchController:
             ps.state = STATE_REFINING
             ps.consecutive_shrinks += 1
             return BatchDecision(current, 'refine', pressure, phase, STATE_REFINING, throughput)
+
+        # PROBE mechanism: periodically try to grow again
+        # If we've been locked for PROBE_INTERVAL steps, try growing by 1
+        ps.locked_steps = getattr(ps, 'locked_steps', 0) + 1
+        PROBE_INTERVAL = 8  # reduced from 10 to be more responsive
+        
+        if ps.locked_steps >= PROBE_INTERVAL:
+            ps.locked_steps = 0
+            ps.state = STATE_GROWING
+            ps.step_increment = 1
+            ps.last_fast = current
+            # Remove ceiling to allow growth
+            ps.first_slower = None
+            logger.info(f"[ADAPTIVE:{phase}] Probing for higher throughput (was locked at {current})...")
+            
+            # Immediately try next size
+            next_size = min(max_bs, current + 1)
+            ps.current = next_size
+            return BatchDecision(next_size, 'probe', pressure, phase, STATE_GROWING, throughput)
 
         # Hold steady
         return BatchDecision(current, 'locked', pressure, phase, STATE_LOCKED, throughput)
@@ -333,6 +352,6 @@ class AdaptiveBatchController:
         for d in self._decisions[-10:]:
             lines.append(
                 f"  {d.phase}: B={d.batch_size} ({d.reason}/{d.state}, "
-                f"{d.throughput:.1f} items/s, {d.pressure:.0%})"
+                f"{d.throughput * 60:.1f} items/min, {d.pressure:.0%})"
             )
         return "\n".join(lines)
