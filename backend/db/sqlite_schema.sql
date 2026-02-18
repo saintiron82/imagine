@@ -122,6 +122,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_text USING vec0(
     embedding FLOAT[{TEXT_DIM}]
 );
 
+-- Virtual table for Structure Vector (DINOv2) (sqlite-vec)
+-- Dimension: 768 (dinov2-base)
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_structure USING vec0(
+    file_id INTEGER PRIMARY KEY,
+    embedding FLOAT[768]
+);
+
 -- Standard indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_files_format ON files(format);
 CREATE INDEX IF NOT EXISTS idx_files_parsed_at ON files(parsed_at DESC);
@@ -180,4 +187,8 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS vec_text_cascade_delete AFTER DELETE ON files BEGIN
     DELETE FROM vec_text WHERE file_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vec_structure_cascade_delete AFTER DELETE ON files BEGIN
+    DELETE FROM vec_structure WHERE file_id = old.id;
 END;

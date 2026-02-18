@@ -8,6 +8,7 @@ maintaining API compatibility for minimal code changes.
 import logging
 import sqlite3
 import json
+import re
 import unicodedata
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -18,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 class SQLiteDB:
     """SQLite database client with sqlite-vec support."""
+    CURRENT_DATA_BUILD_LEVEL = 2
+    CURRENT_FTS_INDEX_VERSION = 2
+
+    _META_KEY_DATA_BUILD_LEVEL = "data_build_level"
+    _META_KEY_FTS_INDEX_VERSION = "fts_index_version"
+    _META_KEY_LAST_REBUILD_AT = "last_rebuild_at"
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -32,6 +39,7 @@ class SQLiteDB:
 
         self.db_path = db_path
         self.conn = None
+        self._vec_extension_loaded = False
         self._connect()
 
     def _connect(self):
@@ -45,6 +53,7 @@ class SQLiteDB:
                 self.conn.enable_load_extension(True)
                 self.conn.load_extension("vec0")  # Try loading directly first
                 self.conn.enable_load_extension(False)
+                self._vec_extension_loaded = True
                 logger.info("✅ sqlite-vec loaded via load_extension")
             except:
                 # Fallback: try sqlite_vec Python package
@@ -53,8 +62,10 @@ class SQLiteDB:
                     self.conn.enable_load_extension(True)
                     sqlite_vec.load(self.conn)
                     self.conn.enable_load_extension(False)
+                    self._vec_extension_loaded = True
                     logger.info("✅ sqlite-vec loaded via Python package")
                 except Exception as e:
+                    self._vec_extension_loaded = False
                     logger.warning(f"⚠️ sqlite-vec not loaded: {e}")
                     logger.warning("Vector search will not work. Install: pip install sqlite-vec")
 
@@ -71,10 +82,13 @@ class SQLiteDB:
                 self._migrate_folder_columns()
                 self._migrate_v3_columns()
                 self._migrate_content_hash()
+                self._migrate_structure_table()
+                self._ensure_system_meta()
                 self._ensure_fts()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
+                self._ensure_system_meta()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -97,6 +111,40 @@ class SQLiteDB:
             (table_name,)
         )
         return cursor.fetchone()[0] > 0
+
+    def _ensure_system_meta(self):
+        """Create system metadata table used for build/version tracking."""
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS system_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        self.conn.commit()
+
+    def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Fetch a value from system_meta."""
+        try:
+            row = self.conn.execute(
+                "SELECT value FROM system_meta WHERE key = ?",
+                (key,)
+            ).fetchone()
+            return row[0] if row else default
+        except Exception:
+            return default
+
+    def _set_system_meta(self, key: str, value: Any, commit: bool = True):
+        """Upsert a key/value into system_meta."""
+        self.conn.execute("""
+            INSERT INTO system_meta (key, value, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = datetime('now')
+        """, (key, str(value)))
+        if commit:
+            self.conn.commit()
 
     def init_schema(self):
         """
@@ -228,20 +276,46 @@ class SQLiteDB:
             self.conn.commit()
             logger.info("✅ content_hash migration complete")
 
-        # Vec cascade delete triggers (always ensure they exist)
-        self.conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS vec_files_cascade_delete
-            AFTER DELETE ON files BEGIN
-                DELETE FROM vec_files WHERE file_id = old.id;
-            END
-        """)
-        self.conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS vec_text_cascade_delete
-            AFTER DELETE ON files BEGIN
-                DELETE FROM vec_text WHERE file_id = old.id;
-            END
-        """)
-        self.conn.commit()
+        # Vec cascade delete triggers (best-effort; non-fatal when vec module is unavailable)
+        try:
+            self.conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS vec_files_cascade_delete
+                AFTER DELETE ON files BEGIN
+                    DELETE FROM vec_files WHERE file_id = old.id;
+                END
+            """)
+            self.conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS vec_text_cascade_delete
+                AFTER DELETE ON files BEGIN
+                    DELETE FROM vec_text WHERE file_id = old.id;
+                END
+            """)
+            self.conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS vec_structure_cascade_delete
+                AFTER DELETE ON files BEGIN
+                    DELETE FROM vec_structure WHERE file_id = old.id;
+                END
+            """)
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Skipping vec cascade trigger ensure: {e}")
+
+    def _migrate_structure_table(self):
+        """Ensure vec_structure table exists (for DINOv2)."""
+        if not self._vec_extension_loaded:
+            logger.warning("Skipping vec_structure migration: sqlite-vec extension not loaded")
+            return
+        try:
+            self.conn.execute("SELECT count(*) FROM vec_structure")
+        except sqlite3.OperationalError:
+            logger.info("Migrating: creating vec_structure table...")
+            # 768 is dinov2-base dimension
+            try:
+                self.conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS vec_structure USING vec0(file_id INTEGER PRIMARY KEY, embedding FLOAT[768])")
+                self.conn.commit()
+            except sqlite3.OperationalError as e:
+                logger.warning(f"Skipping vec_structure creation: {e}")
+
 
     # ── FTS5 columns: 2-column BM25-weighted architecture ──
     #
@@ -258,6 +332,7 @@ class SQLiteDB:
     def _ensure_fts(self):
         """Ensure FTS5 table exists with correct schema and is populated."""
         needs_rebuild = False
+        version_mismatch = False
 
         try:
             # Check if table exists and has the right columns
@@ -273,8 +348,32 @@ class SQLiteDB:
                 if fts_count == 0 and files_count > 0:
                     logger.info(f"FTS5 empty but {files_count} files exist — backfilling")
                     needs_rebuild = True
+
+                # Build-level check: index policy version drift
+                db_fts_ver_raw = self._get_system_meta(self._META_KEY_FTS_INDEX_VERSION, "0")
+                try:
+                    db_fts_ver = int(db_fts_ver_raw or 0)
+                except Exception:
+                    db_fts_ver = 0
+                if files_count > 0 and db_fts_ver < self.CURRENT_FTS_INDEX_VERSION:
+                    version_mismatch = True
+                    logger.warning(
+                        f"FTS index version outdated (db={db_fts_ver}, expected={self.CURRENT_FTS_INDEX_VERSION})"
+                    )
         except sqlite3.OperationalError:
             needs_rebuild = True
+
+        if version_mismatch and not needs_rebuild:
+            # Optional auto rebuild for version mismatch (defaults to True)
+            auto_rebuild = True
+            try:
+                from backend.utils.config import get_config
+                auto_rebuild = bool(get_config().get("search.fts.auto_rebuild_on_version_mismatch", True))
+            except Exception:
+                logger.warning("Config unavailable; using default auto rebuild for FTS mismatch")
+            if auto_rebuild:
+                logger.info("Auto rebuild enabled for FTS version mismatch")
+                needs_rebuild = True
 
         if not needs_rebuild:
             return
@@ -319,6 +418,7 @@ class SQLiteDB:
         cursor = self.conn.execute(
             "SELECT id, file_path, file_name, mc_caption, ai_tags, "
             "metadata, ocr_text, user_note, user_tags, "
+            "folder_path, relative_path, "
             "image_type, scene_type, art_style, folder_tags FROM files"
         )
 
@@ -342,6 +442,9 @@ class SQLiteDB:
             rows_inserted += 1
 
         self.conn.commit()
+        self._set_system_meta(self._META_KEY_FTS_INDEX_VERSION, self.CURRENT_FTS_INDEX_VERSION)
+        self._set_system_meta(self._META_KEY_DATA_BUILD_LEVEL, self.CURRENT_DATA_BUILD_LEVEL)
+        self._set_system_meta(self._META_KEY_LAST_REBUILD_AT, "fts")
         logger.info(f"✅ FTS5 rebuilt and backfilled ({rows_inserted} rows)")
 
     @staticmethod
@@ -395,6 +498,80 @@ class SQLiteDB:
             return ' '.join(str(t) for t in val if t)
         return ''
 
+    @staticmethod
+    def _row_value(row, key: str, idx: int = -1):
+        """Read sqlite row by key first (sqlite3.Row), fallback to tuple index."""
+        try:
+            if hasattr(row, "keys") and key in row.keys():
+                return row[key]
+        except Exception:
+            pass
+        if idx >= 0:
+            try:
+                return row[idx]
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
+    def _build_fts_path_terms(path_text: str) -> str:
+        """
+        Build searchable path terms from a path-like string.
+
+        Includes:
+        - Raw normalized path
+        - Path segments
+        - Segment-split tokens (snake/kebab/mixed)
+        """
+        if not path_text:
+            return ""
+
+        normalized = str(path_text).replace('\\', '/').strip().lower()
+        if not normalized:
+            return ""
+
+        tokens = []
+        segments = [seg for seg in normalized.split('/') if seg]
+        for seg in segments:
+            # Keep simple folder-like segments as whole words only.
+            if re.fullmatch(r"[0-9a-zA-Z가-힣]{2,}", seg) and SQLiteDB._is_meaningful_path_token(seg):
+                tokens.append(seg)
+            for part in re.split(r"[^0-9a-zA-Z가-힣]+", seg):
+                part = part.strip().lower()
+                if SQLiteDB._is_meaningful_path_token(part):
+                    tokens.append(part)
+
+        seen = set()
+        uniq = []
+        for tok in tokens:
+            if tok and tok not in seen:
+                seen.add(tok)
+                uniq.append(tok)
+        return ' '.join(uniq)
+
+    @staticmethod
+    def _is_meaningful_path_token(token: str) -> bool:
+        """
+        Path token quality gate.
+
+        Rejects low-information tokens such as pure numbers ("1", "2024")
+        and version-only fragments ("v2", "v10").
+        """
+        if not token:
+            return False
+        t = str(token).strip().lower()
+        if len(t) < 2:
+            return False
+        if t.isdigit():
+            return False
+        if re.fullmatch(r'v\d+', t):
+            return False
+        if t in {"psd", "png", "jpg", "jpeg"}:
+            return False
+        if t in {"assets", "asset", "images", "image", "img", "files", "file", "data", "resource", "resources", "output", "outputs", "tmp", "temp", "test"}:
+            return False
+        return True
+
     @classmethod
     def _build_fts_meta_strong(cls, row, meta: dict) -> str:
         """Build meta_strong: file_name, layer_names, used_fonts, user_tags, ocr_text.
@@ -404,7 +581,8 @@ class SQLiteDB:
         parts = []
 
         # file_name
-        parts.append(str(row[2]) if row[2] else '')  # row[2] = file_name
+        file_name = cls._row_value(row, "file_name", 2)
+        parts.append(str(file_name) if file_name else '')
 
         # layer_names (from metadata layer_tree)
         layer_names = cls._build_fts_layer_names(meta)
@@ -417,7 +595,7 @@ class SQLiteDB:
             parts.append(' '.join(fonts))
 
         # user_tags
-        user_tags_raw = row[8] or ''  # row[8] = user_tags
+        user_tags_raw = cls._row_value(row, "user_tags", 8) or ''
         if user_tags_raw:
             try:
                 tags = json.loads(user_tags_raw)
@@ -427,20 +605,26 @@ class SQLiteDB:
                 pass
 
         # ocr_text
-        parts.append(str(row[6]) if row[6] else '')  # row[6] = ocr_text
+        ocr_text = cls._row_value(row, "ocr_text", 6)
+        parts.append(str(ocr_text) if ocr_text else '')
 
         return ' '.join(str(p) for p in parts if p)
 
     @staticmethod
     def _build_fts_meta_weak(row, meta: dict) -> str:
-        """Build meta_weak: file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style.
+        """Build meta_weak: path terms, text_content, user_note, folder_tags, image_type, scene_type, art_style.
 
         v3.1: BM25 weight 1.5 (contextual information)
         """
         parts = []
 
-        # file_path
-        parts.append(str(row[1]) if row[1] else '')  # row[1] = file_path
+        # path terms
+        file_path = SQLiteDB._row_value(row, "file_path", 1)
+        folder_path = SQLiteDB._row_value(row, "folder_path", 9)
+        relative_path = SQLiteDB._row_value(row, "relative_path", 10)
+        parts.append(SQLiteDB._build_fts_path_terms(file_path))
+        parts.append(SQLiteDB._build_fts_path_terms(folder_path))
+        parts.append(SQLiteDB._build_fts_path_terms(relative_path))
 
         # text_content (from metadata)
         text_content = meta.get('text_content', [])
@@ -448,10 +632,11 @@ class SQLiteDB:
             parts.append(' '.join(str(t) for t in text_content))
 
         # user_note
-        parts.append(str(row[7]) if row[7] else '')  # row[7] = user_note
+        user_note = SQLiteDB._row_value(row, "user_note", 7)
+        parts.append(str(user_note) if user_note else '')
 
         # folder_tags
-        folder_tags_raw = row[12] or ''  # row[12] = folder_tags
+        folder_tags_raw = SQLiteDB._row_value(row, "folder_tags", 14) or ''
         if folder_tags_raw:
             try:
                 ft = json.loads(folder_tags_raw)
@@ -461,9 +646,12 @@ class SQLiteDB:
                 pass
 
         # image_type, scene_type, art_style
-        parts.append(str(row[9]) if row[9] else '')   # row[9] = image_type
-        parts.append(str(row[10]) if row[10] else '')  # row[10] = scene_type
-        parts.append(str(row[11]) if row[11] else '')  # row[11] = art_style
+        image_type = SQLiteDB._row_value(row, "image_type", 11)
+        scene_type = SQLiteDB._row_value(row, "scene_type", 12)
+        art_style = SQLiteDB._row_value(row, "art_style", 13)
+        parts.append(str(image_type) if image_type else '')
+        parts.append(str(scene_type) if scene_type else '')
+        parts.append(str(art_style) if art_style else '')
 
         return ' '.join(str(p) for p in parts if p)
 
@@ -477,6 +665,7 @@ class SQLiteDB:
             file_data = cursor.execute(
                 "SELECT id, file_path, file_name, mc_caption, ai_tags, "
                 "metadata, ocr_text, user_note, user_tags, "
+                "folder_path, relative_path, "
                 "image_type, scene_type, art_style, folder_tags "
                 "FROM files WHERE id = ?",
                 (file_id,)
@@ -499,7 +688,7 @@ class SQLiteDB:
         except Exception as e:
             logger.warning(f"⚠️ FTS refresh failed for file_id={file_id}: {e}")
 
-    def upsert_metadata(self, file_path: str, metadata: Dict[str, Any]) -> int:
+    def upsert_metadata(self, file_path: str, metadata: Dict[str, Any], commit: bool = True) -> int:
         """
         Phase 1 storage: INSERT basic metadata, preserve existing AI fields on conflict.
 
@@ -604,17 +793,19 @@ class SQLiteDB:
                 raise RuntimeError(f"UPSERT succeeded but file not found: {file_path}")
 
             self._refresh_fts_row(cursor, file_id)
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
 
             logger.debug(f"✅ Phase 1 metadata stored: {file_path} (ID: {file_id})")
             return file_id
 
         except Exception as e:
-            self.conn.rollback()
+            if commit:
+                self.conn.rollback()
             logger.error(f"❌ upsert_metadata failed for {file_path}: {e}")
             raise
 
-    def update_vision_fields(self, file_path: str, fields: Dict[str, Any]) -> bool:
+    def update_vision_fields(self, file_path: str, fields: Dict[str, Any], commit: bool = True) -> bool:
         """
         Phase 2 storage: UPDATE only VLM-generated fields.
 
@@ -666,23 +857,26 @@ class SQLiteDB:
             if row:
                 self._refresh_fts_row(cursor, row[0])
 
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
             logger.debug(f"✅ Phase 2 vision fields updated: {file_path}")
             return True
 
         except Exception as e:
-            self.conn.rollback()
+            if commit:
+                self.conn.rollback()
             logger.error(f"❌ update_vision_fields failed for {file_path}: {e}")
             raise
 
-    def upsert_vectors(self, file_id: int, vv_vec=None, mv_vec=None) -> bool:
+    def upsert_vectors(self, file_id: int, vv_vec=None, mv_vec=None, structure_vec=None, commit: bool = True) -> bool:
         """
-        Phase 3 storage: INSERT/REPLACE VV and MV vectors.
+        Phase 3 storage: INSERT/REPLACE VV, MV, and Structure vectors.
 
         Args:
             file_id: Database file ID (from upsert_metadata)
             vv_vec: numpy array for VV (Visual Vector), or None to skip
             mv_vec: numpy array for MV (Meaning Vector), or None to skip
+            structure_vec: numpy array for Structure Vector (DINOv2), or None to skip
         """
         cursor = self.conn.cursor()
 
@@ -703,12 +897,22 @@ class SQLiteDB:
                     (file_id, json.dumps(mv_list))
                 )
 
-            self.conn.commit()
+            if structure_vec is not None:
+                struct_list = structure_vec.astype(np.float32).tolist()
+                cursor.execute("DELETE FROM vec_structure WHERE file_id = ?", (file_id,))
+                cursor.execute(
+                    "INSERT INTO vec_structure (file_id, embedding) VALUES (?, ?)",
+                    (file_id, json.dumps(struct_list))
+                )
+
+            if commit:
+                self.conn.commit()
             logger.debug(f"✅ Phase 3 vectors stored for file_id={file_id}")
             return True
 
         except Exception as e:
-            self.conn.rollback()
+            if commit:
+                self.conn.rollback()
             logger.error(f"❌ upsert_vectors failed for file_id={file_id}: {e}")
             raise
 
@@ -754,13 +958,16 @@ class SQLiteDB:
             - has_vv: bool (vec_files entry exists)
             - has_mv: bool (vec_text entry exists)
             - modified_at: stored mtime
+            - file_size, content_hash
         """
         file_path = unicodedata.normalize('NFC', file_path)
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT f.id, f.caption_model, f.embedding_model, f.text_embed_model,
-                   f.mode_tier, f.modified_at, f.mc_caption, f.ai_tags,
-                   f.image_type, f.scene_type, f.art_style
+                   f.mode_tier, f.modified_at, f.file_size, f.content_hash,
+                   f.mc_caption, f.ai_tags,
+                   f.image_type, f.scene_type, f.art_style,
+                   f.relative_path
             FROM files f
             WHERE f.file_path = ?
         """, (file_path,))
@@ -777,8 +984,13 @@ class SQLiteDB:
         # Check vec_text existence
         cursor.execute("SELECT COUNT(*) FROM vec_text WHERE file_id = ?", (file_id,))
         has_mv = cursor.fetchone()[0] > 0
+        
+        # Check vec_structure existence
+        # Note: vec_structure uses file_id as PK in our schema (though named 'file_id' explicitly)
+        cursor.execute("SELECT COUNT(*) FROM vec_structure WHERE file_id = ?", (file_id,))
+        has_structure = cursor.fetchone()[0] > 0
 
-        mc_caption = row[6] or ""
+        mc_caption = row[8] or ""
         return {
             "file_id": file_id,
             "caption_model": row[1],
@@ -786,14 +998,19 @@ class SQLiteDB:
             "text_embed_model": row[3],
             "mode_tier": row[4],
             "modified_at": row[5],
+            "file_size": row[6],
+            "content_hash": row[7],
             "has_mc": len(mc_caption.strip()) > 0,
             "mc_caption": mc_caption,
-            "ai_tags": row[7],
-            "image_type": row[8],
-            "scene_type": row[9],
-            "art_style": row[10],
+            "ai_tags": row[9],
+            "image_type": row[10],
+            "scene_type": row[11],
+            "art_style": row[12],
+            "relative_path": row[13],
+            "has_relative_path": bool((row[13] or "").strip()),
             "has_vv": has_vv,
             "has_mv": has_mv,
+            "has_structure": has_structure,
         }
 
     def find_by_content_hash(self, content_hash: str) -> List[Dict[str, Any]]:
@@ -855,21 +1072,21 @@ class SQLiteDB:
         cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
         self.conn.commit()
         return cursor.rowcount > 0
-
     def insert_file(
         self,
         file_path: str,
         metadata: Dict[str, Any],
-        embedding: np.ndarray
+        embedding: np.ndarray,
+        structure_embedding: Optional[np.ndarray] = None
     ) -> int:
         """
-        Insert or update file metadata + VV (SigLIP2).
+        Insert or update file metadata + VV (SigLIP2) + Structure (DINOv2).
 
         Args:
             file_path: Absolute file path (unique identifier)
             metadata: Full metadata dict from AssetMeta.model_dump()
             embedding: VV (Visual Vector) (dimension from active tier)
-
+            structure_embedding: DINOv2 (Structure Vector) (768-dim)
         Returns:
             Database ID of inserted/updated record
         """
@@ -1038,11 +1255,26 @@ class SQLiteDB:
 
             # Triaxis: Post-trigger FTS fix (2 columns: meta_strong, meta_weak)
             # SQL triggers set these to ''; Python updates with actual data
+            # Insert/update Structure vector (DINOv2)
+            if structure_embedding is not None:
+                try:
+                    struct_list = structure_embedding.astype(np.float32).tolist()
+                    cursor.execute("DELETE FROM vec_structure WHERE file_id = ?", (file_id,))
+                    cursor.execute(
+                        "INSERT INTO vec_structure (file_id, embedding) VALUES (?, ?)",
+                        (file_id, json.dumps(struct_list))
+                    )
+                except Exception as e:
+                     logger.warning(f"⚠️ Failed to insert structure embedding: {e}")
+
+            # Triaxis: Post-trigger FTS fix (2 columns: meta_strong, meta_weak)
+            # SQL triggers set these to ''; Python updates with actual data
             try:
                 # Get file data for FTS building
                 file_data = cursor.execute(
                     "SELECT id, file_path, file_name, mc_caption, ai_tags, "
                     "metadata, ocr_text, user_note, user_tags, "
+                    "folder_path, relative_path, "
                     "image_type, scene_type, art_style, folder_tags "
                     "FROM files WHERE id = ?",
                     (file_id,)
@@ -1198,6 +1430,73 @@ class SQLiteDB:
         cursor.execute("SELECT COUNT(*) FROM layers")
         return cursor.fetchone()[0]
 
+    def get_build_status(self) -> Dict[str, Any]:
+        """
+        Get data-build compatibility status for user-visible rebuild guidance.
+        """
+        cursor = self.conn.cursor()
+
+        total_files = cursor.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        db_fts_ver_raw = self._get_system_meta(self._META_KEY_FTS_INDEX_VERSION, "0")
+        db_level_raw = self._get_system_meta(self._META_KEY_DATA_BUILD_LEVEL, "0")
+
+        try:
+            db_fts_ver = int(db_fts_ver_raw or 0)
+        except Exception:
+            db_fts_ver = 0
+        try:
+            db_level = int(db_level_raw or 0)
+        except Exception:
+            db_level = 0
+
+        # Legacy quality gaps that require rebuild/reprocess
+        vector_extension_available = True
+        try:
+            missing_structure = cursor.execute("""
+                SELECT COUNT(*) FROM files f
+                WHERE EXISTS(SELECT 1 FROM vec_files vf WHERE vf.file_id = f.id)
+                  AND NOT EXISTS(SELECT 1 FROM vec_structure vs WHERE vs.file_id = f.id)
+            """).fetchone()[0]
+        except Exception:
+            # sqlite-vec extension not loaded in this runtime; avoid failing status API
+            missing_structure = 0
+            vector_extension_available = False
+
+        missing_relative = cursor.execute("""
+            SELECT COUNT(*) FROM files
+            WHERE relative_path IS NULL OR TRIM(relative_path) = ''
+        """).fetchone()[0]
+
+        reasons = []
+        if total_files > 0 and db_fts_ver < self.CURRENT_FTS_INDEX_VERSION:
+            reasons.append(
+                f"FTS index version is outdated (db={db_fts_ver}, expected={self.CURRENT_FTS_INDEX_VERSION})"
+            )
+        if missing_structure > 0:
+            reasons.append(f"{missing_structure} files are missing Structure vectors (DINOv2)")
+        if missing_relative > 0:
+            reasons.append(f"{missing_relative} files are missing relative_path metadata")
+
+        needs_rebuild = len(reasons) > 0
+
+        # If explicit db-level metadata is absent, infer from quality gaps.
+        if db_level <= 0:
+            inferred_level = self.CURRENT_DATA_BUILD_LEVEL if not needs_rebuild else max(1, self.CURRENT_DATA_BUILD_LEVEL - 1)
+        else:
+            inferred_level = min(db_level, self.CURRENT_DATA_BUILD_LEVEL if not needs_rebuild else db_level)
+
+        return {
+            "needs_rebuild": needs_rebuild,
+            "db_data_build_level": inferred_level,
+            "current_data_build_level": self.CURRENT_DATA_BUILD_LEVEL,
+            "db_fts_index_version": db_fts_ver,
+            "current_fts_index_version": self.CURRENT_FTS_INDEX_VERSION,
+            "missing_structure_count": missing_structure,
+            "missing_relative_path_count": missing_relative,
+            "vector_extension_available": vector_extension_available,
+            "reasons": reasons,
+        }
+
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics."""
         cursor = self.conn.cursor()
@@ -1225,13 +1524,17 @@ class SQLiteDB:
         stats['avg_layers_per_file'] = int(result) if result else 0
 
         # Fully archived (MC + VV + MV all done)
-        cursor.execute("""
-            SELECT COUNT(*) FROM files f
-            WHERE (mc_caption IS NOT NULL AND mc_caption != '')
-              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
-              AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
-        """)
-        stats['fully_archived'] = cursor.fetchone()[0]
+        try:
+            cursor.execute("""
+                SELECT COUNT(*) FROM files f
+                WHERE (mc_caption IS NOT NULL AND mc_caption != '')
+                  AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                  AND EXISTS(SELECT 1 FROM vec_structure WHERE file_id = f.id)
+                  AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
+            """)
+            stats['fully_archived'] = cursor.fetchone()[0]
+        except Exception:
+            stats['fully_archived'] = 0
 
         # Format distribution
         cursor.execute("""
@@ -1241,6 +1544,7 @@ class SQLiteDB:
             ORDER BY count DESC
         """)
         stats['format_distribution'] = dict(cursor.fetchall())
+        stats['build_status'] = self.get_build_status()
 
         return stats
 
@@ -1256,7 +1560,11 @@ class SQLiteDB:
                 f.storage_root,
                 COUNT(*) as total,
                 COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
-                COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) THEN 1 END) as vv,
+                COUNT(CASE 
+                    WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) 
+                     AND EXISTS(SELECT 1 FROM vec_structure WHERE file_id = f.id) 
+                    THEN 1 
+                END) as vv,
                 COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 END) as mv
             FROM files f
             GROUP BY f.storage_root
@@ -1291,21 +1599,85 @@ class SQLiteDB:
         root_path = unicodedata.normalize('NFC', root_path)
         cursor = self.conn.cursor()
         prefix = root_path.rstrip('/') + '/'
-        cursor.execute("""
-            SELECT
-                f.storage_root,
-                COUNT(*) as total,
-                COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
-                COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) THEN 1 END) as vv,
-                COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 END) as mv
-            FROM files f
-            WHERE f.file_path LIKE ? || '%'
-            GROUP BY f.storage_root
-        """, (prefix,))
-        return [
-            {"storage_root": row[0] or "", "total": row[1], "mc": row[2], "vv": row[3], "mv": row[4]}
-            for row in cursor.fetchall()
-        ]
+        # Global index-version drift affects all folders in this DB.
+        db_fts_ver_raw = self._get_system_meta(self._META_KEY_FTS_INDEX_VERSION, "0")
+        try:
+            db_fts_ver = int(db_fts_ver_raw or 0)
+        except Exception:
+            db_fts_ver = 0
+        fts_version_mismatch = db_fts_ver < self.CURRENT_FTS_INDEX_VERSION
+
+        rows = []
+        vector_extension_available = True
+        try:
+            cursor.execute("""
+                SELECT
+                    f.storage_root,
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
+                    -- VV now requires BOTH Visual (SigLIP) and Structure (DINOv2) vectors
+                    COUNT(CASE
+                        WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                         AND EXISTS(SELECT 1 FROM vec_structure WHERE file_id = f.id)
+                        THEN 1
+                    END) as vv,
+                    COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 END) as mv,
+                    COUNT(CASE WHEN f.relative_path IS NULL OR TRIM(f.relative_path) = '' THEN 1 END) as missing_relative,
+                    COUNT(CASE
+                        WHEN EXISTS(SELECT 1 FROM vec_files vf WHERE vf.file_id = f.id)
+                         AND NOT EXISTS(SELECT 1 FROM vec_structure vs WHERE vs.file_id = f.id)
+                        THEN 1
+                    END) as missing_structure
+                FROM files f
+                WHERE f.file_path LIKE ? || '%'
+                GROUP BY f.storage_root
+            """, (prefix,))
+            rows = cursor.fetchall()
+        except Exception:
+            # vec0 unavailable: fallback query without vec tables
+            vector_extension_available = False
+            cursor.execute("""
+                SELECT
+                    f.storage_root,
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
+                    0 as vv,
+                    0 as mv,
+                    COUNT(CASE WHEN f.relative_path IS NULL OR TRIM(f.relative_path) = '' THEN 1 END) as missing_relative,
+                    0 as missing_structure
+                FROM files f
+                WHERE f.file_path LIKE ? || '%'
+                GROUP BY f.storage_root
+            """, (prefix,))
+            rows = cursor.fetchall()
+
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            total = row[1] or 0
+            missing_relative = row[5] or 0
+            missing_structure = row[6] or 0
+            reasons = []
+
+            if missing_relative > 0:
+                reasons.append("missing_relative_path")
+            if missing_structure > 0:
+                reasons.append("missing_structure_vector")
+
+            results.append({
+                "storage_root": row[0] or "",
+                "total": total,
+                "mc": row[2] or 0,
+                "vv": row[3] or 0,
+                "mv": row[4] or 0,
+                "missing_relative_path_count": missing_relative,
+                "missing_structure_count": missing_structure,
+                "fts_version_mismatch": bool(total > 0 and fts_version_mismatch),
+                "vector_extension_available": vector_extension_available,
+                "rebuild_needed": len(reasons) > 0,
+                "rebuild_reasons": reasons,
+            })
+
+        return results
 
     def update_user_metadata(
         self,
