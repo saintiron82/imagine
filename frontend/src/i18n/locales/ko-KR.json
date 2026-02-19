@@ -271,5 +271,8 @@
   "worker.no_jobs": "활성 작업 없음",
   "worker.claimed": "{count}개 작업 수령",
   "worker.web_mode_notice": "워커는 Electron 앱이 필요합니다. 데스크톱 앱에서 작업을 처리하세요.",
-  "worker.connecting": "서버 연결 중..."
+  "worker.connecting": "서버 연결 중...",
+  "worker.server_url": "서버 URL",
+  "worker.username": "사용자명",
+  "worker.password": "비밀번호"
 }

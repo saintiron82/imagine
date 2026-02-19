@@ -271,5 +271,8 @@
   "worker.no_jobs": "No active jobs",
   "worker.claimed": "Claimed {count} jobs",
   "worker.web_mode_notice": "Worker requires Electron app. Use the desktop app to process jobs.",
-  "worker.connecting": "Connecting to server..."
+  "worker.connecting": "Connecting to server...",
+  "worker.server_url": "Server URL",
+  "worker.username": "Username",
+  "worker.password": "Password"
 }

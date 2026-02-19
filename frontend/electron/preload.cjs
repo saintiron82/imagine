@@ -120,5 +120,18 @@ contextBridge.exposeInMainWorld('electron', {
     metadata: {
         updateUserData: (filePath, updates) =>
             ipcRenderer.invoke('metadata:updateUserData', filePath, updates)
+    },
+
+    // Worker Daemon (server-mode job processing)
+    worker: {
+        start: (opts) => ipcRenderer.invoke('worker-start', opts),
+        stop: () => ipcRenderer.invoke('worker-stop'),
+        getStatus: () => ipcRenderer.invoke('worker-status'),
+        onStatus: (cb) => ipcRenderer.on('worker-status', (_, data) => cb(data)),
+        offStatus: () => ipcRenderer.removeAllListeners('worker-status'),
+        onLog: (cb) => ipcRenderer.on('worker-log', (_, data) => cb(data)),
+        offLog: () => ipcRenderer.removeAllListeners('worker-log'),
+        onJobDone: (cb) => ipcRenderer.on('worker-job-done', (_, data) => cb(data)),
+        offJobDone: () => ipcRenderer.removeAllListeners('worker-job-done'),
     }
 });

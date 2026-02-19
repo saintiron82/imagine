@@ -1162,6 +1162,163 @@ ipcMain.handle('update-config', async (_, key, value) => {
     }
 });
 
+// ── Worker Daemon (controlled via WorkerPage) ────────────────────
+// Spawns backend/worker/worker_ipc.py and relays JSON events to renderer.
+let workerProc = null;
+let workerBuffer = '';
+let workerMainWindow = null;  // BrowserWindow reference for sending events
+let workerStartCmd = null;    // Queued start command (sent after 'ready' event)
+
+function getWorkerScriptPath() {
+    return isDev
+        ? path.resolve(__dirname, '../../backend/worker/worker_ipc.py')
+        : path.join(process.resourcesPath, 'backend/worker/worker_ipc.py');
+}
+
+function sendWorkerEvent(channel, data) {
+    try {
+        if (workerMainWindow && !workerMainWindow.isDestroyed()) {
+            workerMainWindow.webContents.send(channel, data);
+        }
+    } catch (e) { /* window may be closed */ }
+}
+
+function processWorkerOutput() {
+    let newlineIdx;
+    while ((newlineIdx = workerBuffer.indexOf('\n')) !== -1) {
+        const line = workerBuffer.slice(0, newlineIdx).trim();
+        workerBuffer = workerBuffer.slice(newlineIdx + 1);
+        if (!line) continue;
+
+        try {
+            const parsed = JSON.parse(line);
+            const evt = parsed.event;
+
+            // 'ready' signal — send queued start command
+            if (evt === 'ready') {
+                console.log('[Worker] IPC ready');
+                if (workerStartCmd && workerProc) {
+                    workerProc.stdin.write(JSON.stringify(workerStartCmd) + '\n');
+                    workerStartCmd = null;
+                }
+                continue;
+            }
+
+            // Relay events to renderer
+            if (evt === 'status') {
+                sendWorkerEvent('worker-status', parsed);
+            } else if (evt === 'log') {
+                sendWorkerEvent('worker-log', parsed);
+            } else if (evt === 'job_done') {
+                sendWorkerEvent('worker-job-done', parsed);
+            } else if (evt === 'stats') {
+                sendWorkerEvent('worker-stats', parsed);
+            }
+        } catch (e) {
+            console.error('[Worker] JSON parse error:', e, line);
+        }
+    }
+}
+
+function killWorkerProc() {
+    if (!workerProc) return;
+    const proc = workerProc;
+    workerProc = null;
+    workerBuffer = '';
+    workerStartCmd = null;
+
+    try {
+        proc.stdin.write(JSON.stringify({ cmd: 'exit' }) + '\n');
+    } catch (e) { /* ignore */ }
+    setTimeout(() => {
+        try { proc.kill('SIGTERM'); } catch (e) { /* already dead */ }
+    }, 3000);
+}
+
+// IPC Handler: Start worker daemon
+ipcMain.handle('worker-start', async (event, { serverUrl, username, password }) => {
+    if (workerProc) {
+        return { success: false, error: 'Worker already running' };
+    }
+
+    const finalPython = resolvePython();
+    const scriptPath = getWorkerScriptPath();
+
+    // Store window reference for relaying events
+    workerMainWindow = BrowserWindow.fromWebContents(event.sender);
+
+    console.log('[Worker] Starting worker_ipc.py...');
+
+    workerProc = spawn(finalPython, ['-m', 'backend.worker.worker_ipc'], {
+        cwd: projectRoot,
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    // Queue the start command — will be sent after 'ready' event
+    workerStartCmd = {
+        cmd: 'start',
+        server_url: serverUrl,
+        username: username,
+        password: password,
+    };
+
+    workerProc.stdout.on('data', (chunk) => {
+        workerBuffer += chunk.toString();
+        processWorkerOutput();
+    });
+
+    workerProc.stderr.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg) {
+            console.error('[Worker:stderr]', msg);
+            // Forward errors as log events
+            if (/\bERROR\b|Traceback|Exception:|FAIL/i.test(msg)) {
+                sendWorkerEvent('worker-log', { message: msg, type: 'error' });
+            }
+        }
+    });
+
+    workerProc.on('close', (code) => {
+        console.log(`[Worker] Process exited (code: ${code})`);
+        workerProc = null;
+        workerBuffer = '';
+        workerStartCmd = null;
+        sendWorkerEvent('worker-status', { status: 'idle', jobs: [] });
+        sendWorkerEvent('worker-log', {
+            message: code === 0 ? 'Worker stopped' : `Worker exited (code: ${code})`,
+            type: code === 0 ? 'info' : 'error',
+        });
+    });
+
+    workerProc.on('error', (err) => {
+        console.error('[Worker] Spawn error:', err);
+        workerProc = null;
+        sendWorkerEvent('worker-status', { status: 'error', jobs: [] });
+        sendWorkerEvent('worker-log', { message: `Spawn error: ${err.message}`, type: 'error' });
+    });
+
+    return { success: true };
+});
+
+// IPC Handler: Stop worker daemon
+ipcMain.handle('worker-stop', async () => {
+    if (!workerProc) return { success: true };
+    try {
+        workerProc.stdin.write(JSON.stringify({ cmd: 'stop' }) + '\n');
+    } catch (e) { /* ignore */ }
+    return { success: true };
+});
+
+// IPC Handler: Query worker status
+ipcMain.handle('worker-status', async () => {
+    if (!workerProc) return { status: 'idle' };
+    try {
+        workerProc.stdin.write(JSON.stringify({ cmd: 'status' }) + '\n');
+    } catch (e) { /* ignore */ }
+    return { status: 'running' };
+});
+
 // ── Window creation (pure UI — no IPC registration) ──────────────
 
 function createWindow() {
@@ -1258,17 +1415,20 @@ function killActivePipeline() {
 app.on('before-quit', () => {
     killActivePipeline();
     killSearchDaemon();
+    killWorkerProc();
 });
 
 // Ensure daemon cleanup on unexpected termination signals
 process.on('SIGINT', () => {
     killActivePipeline();
     killSearchDaemon();
+    killWorkerProc();
     app.quit();
 });
 
 process.on('SIGTERM', () => {
     killActivePipeline();
     killSearchDaemon();
+    killWorkerProc();
     app.quit();
 });
