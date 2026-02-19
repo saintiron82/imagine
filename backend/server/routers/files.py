@@ -200,13 +200,43 @@ def get_thumbnail(
 ):
     """Serve thumbnail image for a file."""
     cursor = db.conn.cursor()
-    cursor.execute("SELECT thumbnail_url FROM files WHERE id = ?", (file_id,))
+    cursor.execute("SELECT thumbnail_url, file_name FROM files WHERE id = ?", (file_id,))
     row = cursor.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="File not found")
 
     thumb_path = row[0]
-    if not thumb_path or not Path(thumb_path).exists():
+    file_name = row[1]
+
+    # Resolve thumbnail path
+    resolved = _resolve_thumbnail(thumb_path, file_name)
+    if not resolved:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-    return FileResponse(thumb_path, media_type="image/png")
+    return FileResponse(str(resolved), media_type="image/png")
+
+
+# Project root for resolving relative paths
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+
+
+def _resolve_thumbnail(thumb_path: Optional[str], file_name: Optional[str]) -> Optional[Path]:
+    """Resolve thumbnail path: try DB value, then infer from file name."""
+    # 1) Try DB thumbnail_url (may be relative or absolute)
+    if thumb_path:
+        p = Path(thumb_path)
+        if p.is_absolute() and p.exists():
+            return p
+        # Relative → resolve from project root
+        resolved = _PROJECT_ROOT / thumb_path
+        if resolved.exists():
+            return resolved
+
+    # 2) Infer from file_name: {stem}_thumb.png in output/thumbnails/
+    if file_name:
+        stem = Path(file_name).stem
+        inferred = _PROJECT_ROOT / "output" / "thumbnails" / f"{stem}_thumb.png"
+        if inferred.exists():
+            return inferred
+
+    return None
