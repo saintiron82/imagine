@@ -59,6 +59,34 @@ CREATE TABLE IF NOT EXISTS worker_tokens (
 );
 
 -- ═══════════════════════════════════════════════════════════════
+-- Worker Sessions (live monitoring & control)
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS worker_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    worker_name TEXT NOT NULL,
+    hostname TEXT,
+    -- Status
+    status TEXT DEFAULT 'online'
+        CHECK (status IN ('online', 'offline', 'blocked')),
+    -- Metrics (reported by worker via heartbeat)
+    batch_capacity INTEGER DEFAULT 5,
+    jobs_completed INTEGER DEFAULT 0,
+    jobs_failed INTEGER DEFAULT 0,
+    current_job_id INTEGER,
+    current_file TEXT,
+    current_phase TEXT,
+    -- Command queue (server → worker, consumed on heartbeat)
+    pending_command TEXT DEFAULT NULL
+        CHECK (pending_command IN (NULL, 'stop', 'pause', 'block')),
+    -- Timestamps
+    connected_at TEXT DEFAULT (datetime('now')),
+    last_heartbeat TEXT DEFAULT (datetime('now')),
+    disconnected_at TEXT
+);
+
+-- ═══════════════════════════════════════════════════════════════
 -- Job Queue (distributed processing)
 -- ═══════════════════════════════════════════════════════════════
 
@@ -102,3 +130,5 @@ CREATE INDEX IF NOT EXISTS idx_worker_tokens_hash ON worker_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
 CREATE INDEX IF NOT EXISTS idx_job_queue_assigned ON job_queue(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_worker_sessions_user ON worker_sessions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status);

@@ -11,10 +11,11 @@ import {
   cleanupStaleJobs, getJobStats,
   browseFolders, scanFolder,
   listWorkerTokens, createWorkerToken, revokeWorkerToken,
+  listWorkerSessions, stopWorkerSession, blockWorkerSession,
 } from '../api/admin';
 import {
-  Users, Key, Activity, FolderSearch, Terminal,
-  Shield, ShieldOff, Trash2, Copy, Plus,
+  Users, Key, Activity, FolderSearch, Terminal, Server,
+  Shield, ShieldOff, Trash2, Copy, Plus, Square, Ban,
   RefreshCw, CheckCircle, XCircle, AlertTriangle,
   Folder, FolderOpen, ChevronRight, ArrowUp, Play, Loader2,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ export default function AdminPage() {
   const tabs = [
     { id: 'discover', label: t('admin.tab_discover'), icon: FolderSearch },
     { id: 'queue', label: t('admin.tab_queue'), icon: Activity },
+    { id: 'workers', label: t('admin.tab_workers'), icon: Server },
     { id: 'users', label: t('admin.tab_users'), icon: Users },
     { id: 'invites', label: t('admin.tab_invites'), icon: Key },
     { id: 'worker_tokens', label: t('admin.tab_worker_tokens'), icon: Terminal },
@@ -56,9 +58,177 @@ export default function AdminPage() {
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === 'discover' && <DiscoverPanel />}
         {activeTab === 'queue' && <QueuePanel />}
+        {activeTab === 'workers' && <WorkersPanel />}
         {activeTab === 'users' && <UsersPanel />}
         {activeTab === 'invites' && <InvitesPanel />}
         {activeTab === 'worker_tokens' && <WorkerTokensPanel />}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Workers Panel ────────────────────────────────────────
+
+function WorkersPanel() {
+  const { t } = useLocale();
+  const [workers, setWorkers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await listWorkerSessions();
+      setWorkers(data.workers || []);
+    } catch (e) {
+      console.error('Failed to load workers:', e);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  const handleStop = async (id) => {
+    if (!confirm(t('admin.worker_confirm_stop'))) return;
+    try {
+      await stopWorkerSession(id);
+      load();
+    } catch (e) {
+      console.error('Failed to stop worker:', e);
+    }
+  };
+
+  const handleBlock = async (id) => {
+    if (!confirm(t('admin.worker_confirm_block'))) return;
+    try {
+      await blockWorkerSession(id);
+      load();
+    } catch (e) {
+      console.error('Failed to block worker:', e);
+    }
+  };
+
+  const onlineCount = workers.filter(w => w.status === 'online').length;
+
+  const statusBadge = (status) => {
+    const map = {
+      online: 'bg-green-900/50 text-green-300',
+      offline: 'bg-gray-700 text-gray-400',
+      blocked: 'bg-red-900/50 text-red-300',
+    };
+    return (
+      <span className={`px-2 py-0.5 rounded text-xs ${map[status] || 'bg-gray-700 text-gray-400'}`}>
+        {t(`admin.worker_status_${status}`)}
+      </span>
+    );
+  };
+
+  const timeAgo = (isoStr) => {
+    if (!isoStr) return '-';
+    const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
+    if (diff < 60) return `${diff}s`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+    return `${Math.floor(diff / 3600)}h`;
+  };
+
+  if (loading) return <div className="text-gray-400 text-sm">{t('status.loading')}</div>;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">
+          {t('admin.workers_title')}
+          {onlineCount > 0 && (
+            <span className="ml-2 text-sm font-normal text-green-400">({onlineCount} online)</span>
+          )}
+        </h2>
+        <button
+          onClick={load}
+          className="p-1.5 rounded hover:bg-gray-600 text-gray-400 hover:text-white"
+        >
+          <RefreshCw size={14} />
+        </button>
+      </div>
+
+      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-700 text-gray-400">
+              <th className="text-left px-4 py-3">{t('admin.worker_name')}</th>
+              <th className="text-left px-4 py-3">{t('auth.username')}</th>
+              <th className="text-left px-4 py-3">Status</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_capacity')}</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_jobs_done')}</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_current_task')}</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_last_heartbeat')}</th>
+              <th className="text-right px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {workers.map((w) => (
+              <tr key={w.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                <td className="px-4 py-3 font-medium">
+                  <div>{w.worker_name}</div>
+                  {w.hostname && <div className="text-xs text-gray-500">{w.hostname}</div>}
+                </td>
+                <td className="px-4 py-3 text-gray-400">{w.username}</td>
+                <td className="px-4 py-3">{statusBadge(w.status)}</td>
+                <td className="px-4 py-3">
+                  <span className="font-mono text-yellow-300">B:{w.batch_capacity}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-green-400">{w.jobs_completed}</span>
+                  {w.jobs_failed > 0 && (
+                    <span className="text-red-400 ml-1">/ {w.jobs_failed} fail</span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-gray-400 text-xs">
+                  {w.current_phase ? (
+                    <span>
+                      <span className="text-blue-300">{w.current_phase}</span>
+                      {w.current_file && (
+                        <span className="ml-1 text-gray-500 truncate max-w-[120px] inline-block align-bottom">
+                          {w.current_file.split(/[/\\]/).pop()}
+                        </span>
+                      )}
+                    </span>
+                  ) : '-'}
+                </td>
+                <td className="px-4 py-3 text-gray-500 text-xs font-mono">
+                  {timeAgo(w.last_heartbeat)}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {w.status === 'online' && (
+                    <div className="flex gap-1 justify-end">
+                      <button
+                        onClick={() => handleStop(w.id)}
+                        className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-gray-700 hover:bg-yellow-900/50 text-gray-300 hover:text-yellow-300"
+                        title={t('admin.worker_action_stop')}
+                      >
+                        <Square size={10} />
+                        {t('admin.worker_action_stop')}
+                      </button>
+                      <button
+                        onClick={() => handleBlock(w.id)}
+                        className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-gray-700 hover:bg-red-900/50 text-gray-300 hover:text-red-300"
+                        title={t('admin.worker_action_block')}
+                      >
+                        <Ban size={10} />
+                        {t('admin.worker_action_block')}
+                      </button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {workers.length === 0 && (
+          <div className="text-center text-gray-500 py-8 text-sm">{t('admin.workers_empty')}</div>
+        )}
       </div>
     </div>
   );

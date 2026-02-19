@@ -4,6 +4,11 @@ Imagine Worker Daemon — headless distributed pipeline worker.
 Polls the server for pending jobs, downloads images (or accesses shared FS),
 runs the local pipeline (Parse → Vision → Embed), then uploads results.
 
+Features:
+    - Prefetch pool: keeps job buffer at 2x batch_capacity
+    - Heartbeat: periodic status report to server (30s)
+    - Server commands: responds to stop/block via heartbeat
+
 Usage:
     python -m backend.worker.worker_daemon
 
@@ -13,11 +18,14 @@ Environment variables (override config.yaml):
     IMAGINE_WORKER_PASSWORD  — Worker login password
 """
 
+import collections
 import gc
 import logging
 import signal
+import socket
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -32,6 +40,8 @@ from backend.worker.config import (
     get_claim_batch_size,
     get_poll_interval,
     get_storage_mode,
+    get_batch_capacity,
+    get_heartbeat_interval,
 )
 from backend.worker.result_uploader import ResultUploader
 
@@ -74,7 +84,24 @@ class WorkerDaemon:
         self.storage_mode = get_storage_mode()
         self.tmp_dir = tempfile.mkdtemp(prefix="imagine_worker_")
 
-        logger.info(f"Worker initialized: server={self.server_url}, mode={self.storage_mode}")
+        # Prefetch pool
+        self.batch_capacity = get_batch_capacity()
+        self.pool_size = self.batch_capacity * 2  # Target pool size
+        self._job_pool = collections.deque()
+        self._pool_lock = threading.Lock()
+
+        # Session tracking
+        self.session_id = None
+        self._total_completed = 0
+        self._total_failed = 0
+        self._current_job_id = None
+        self._current_file = None
+        self._current_phase = None
+
+        logger.info(
+            f"Worker initialized: server={self.server_url}, mode={self.storage_mode}, "
+            f"batch_capacity={self.batch_capacity}, pool_size={self.pool_size}"
+        )
 
     # ── Authentication ─────────────────────────────────────────
 
@@ -180,22 +207,92 @@ class WorkerDaemon:
                 resp = getattr(self.session, method)(url, **kwargs)
         return resp
 
-    # ── Job Lifecycle ──────────────────────────────────────────
+    # ── Session Management ─────────────────────────────────────
 
-    def claim_jobs(self) -> list:
-        """Claim pending jobs from the server."""
-        batch_size = get_claim_batch_size()
+    def _connect_session(self):
+        """Register worker session with server."""
+        try:
+            resp = self._authed_request(
+                "post",
+                f"{self.server_url}/api/v1/workers/connect",
+                json={
+                    "worker_name": f"{socket.gethostname()}-worker",
+                    "hostname": socket.gethostname(),
+                    "batch_capacity": self.batch_capacity,
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                self.session_id = data["session_id"]
+                if data.get("pool_hint"):
+                    self.pool_size = data["pool_hint"]
+                logger.info(f"Session registered: id={self.session_id}, pool_hint={self.pool_size}")
+            else:
+                logger.warning(f"Session connect failed: {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"Session connect error: {e}")
+
+    def _heartbeat(self) -> dict:
+        """Send heartbeat and receive server commands."""
+        if not self.session_id:
+            return {}
+        try:
+            with self._pool_lock:
+                pool_sz = len(self._job_pool)
+            resp = self._authed_request(
+                "post",
+                f"{self.server_url}/api/v1/workers/heartbeat",
+                json={
+                    "session_id": self.session_id,
+                    "jobs_completed": self._total_completed,
+                    "jobs_failed": self._total_failed,
+                    "current_job_id": self._current_job_id,
+                    "current_file": self._current_file,
+                    "current_phase": self._current_phase,
+                    "pool_size": pool_sz,
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("pool_hint"):
+                    self.pool_size = data["pool_hint"]
+                return data
+            return {}
+        except Exception as e:
+            logger.warning(f"Heartbeat failed: {e}")
+            return {}
+
+    def _disconnect_session(self):
+        """Notify server of graceful disconnect."""
+        if not self.session_id:
+            return
+        try:
+            self._authed_request(
+                "post",
+                f"{self.server_url}/api/v1/workers/disconnect",
+                json={"session_id": self.session_id},
+            )
+            logger.info(f"Session disconnected: id={self.session_id}")
+        except Exception as e:
+            logger.warning(f"Disconnect failed: {e}")
+
+    # ── Job Pool Management ────────────────────────────────────
+
+    def claim_jobs_count(self, count: int) -> list:
+        """Claim up to N jobs from the server."""
+        if count <= 0:
+            return []
         try:
             resp = self._authed_request(
                 "post",
                 f"{self.server_url}/api/v1/jobs/claim",
-                json={"count": batch_size},
+                json={"count": count},
             )
             if resp.status_code == 200:
                 data = resp.json()
                 jobs = data.get("jobs", [])
                 if jobs:
-                    logger.info(f"Claimed {len(jobs)} jobs")
+                    logger.info(f"Claimed {len(jobs)} jobs (requested {count})")
                 return jobs
             else:
                 logger.warning(f"Claim failed: {resp.status_code}")
@@ -204,11 +301,41 @@ class WorkerDaemon:
             logger.error(f"Claim request failed: {e}")
             return []
 
+    def claim_jobs(self) -> list:
+        """Claim jobs using legacy batch size (for embedded worker compatibility)."""
+        return self.claim_jobs_count(get_claim_batch_size())
+
+    def _fill_pool(self):
+        """Fill prefetch pool up to target size."""
+        with self._pool_lock:
+            current = len(self._job_pool)
+        deficit = self.pool_size - current
+        if deficit > 0:
+            jobs = self.claim_jobs_count(deficit)
+            if jobs:
+                with self._pool_lock:
+                    self._job_pool.extend(jobs)
+                logger.info(f"Pool filled: +{len(jobs)}, total={len(self._job_pool)}/{self.pool_size}")
+
+    def _take_batch(self) -> list:
+        """Take up to batch_capacity jobs from pool."""
+        batch = []
+        with self._pool_lock:
+            for _ in range(min(self.batch_capacity, len(self._job_pool))):
+                batch.append(self._job_pool.popleft())
+        return batch
+
+    # ── Job Lifecycle ──────────────────────────────────────────
+
     def process_job(self, job: dict) -> bool:
         """Process a single job: parse → vision → embed → upload results."""
         job_id = job["job_id"]
         file_id = job["file_id"]
         file_path = job["file_path"]
+
+        self._current_job_id = job_id
+        self._current_file = Path(file_path).name
+        self._current_phase = "parse"
 
         logger.info(f"Processing job {job_id}: {file_path}")
 
@@ -216,30 +343,38 @@ class WorkerDaemon:
         local_path = self._resolve_file(job)
         if not local_path:
             self.uploader.fail_job(job_id, f"Cannot access file: {file_path}")
+            self._total_failed += 1
+            self._clear_current()
             return False
 
         local_file = Path(local_path)
         if not local_file.exists():
             self.uploader.fail_job(job_id, f"File not found: {local_path}")
+            self._total_failed += 1
+            self._clear_current()
             return False
 
         try:
             # ── Phase P: Parse ──
+            self._current_phase = "parse"
             self.uploader.report_progress(job_id, "parse")
             parse_result = self._run_parse(local_file)
             if parse_result is None:
                 self.uploader.fail_job(job_id, f"Parse failed for {local_file.name}")
+                self._total_failed += 1
                 return False
 
             metadata, thumb_path, meta_obj = parse_result
 
             # ── Phase V: Vision (MC generation) ──
+            self._current_phase = "vision"
             self.uploader.report_progress(job_id, "vision")
             vision_fields = self._run_vision(local_file, thumb_path, meta_obj)
             if vision_fields:
                 metadata.update(vision_fields)
 
             # ── Phase E: Embed (VV + MV) ──
+            self._current_phase = "embed"
             self.uploader.report_progress(job_id, "embed")
             vv_vec, mv_vec, structure_vec = self._run_embed(thumb_path, metadata)
 
@@ -257,20 +392,31 @@ class WorkerDaemon:
                 self.uploader.upload_thumbnail(file_id, thumb_path)
 
             if success:
+                self._total_completed += 1
                 logger.info(f"Job {job_id} completed: {local_file.name}")
+            else:
+                self._total_failed += 1
             return success
 
         except Exception as e:
             logger.error(f"Job {job_id} failed: {e}", exc_info=True)
             self.uploader.fail_job(job_id, str(e))
+            self._total_failed += 1
             return False
         finally:
+            self._clear_current()
             # Cleanup downloaded temp files
             if self.storage_mode == "server_upload" and local_path != file_path:
                 try:
                     Path(local_path).unlink(missing_ok=True)
                 except Exception:
                     pass
+
+    def _clear_current(self):
+        """Clear current job tracking."""
+        self._current_job_id = None
+        self._current_file = None
+        self._current_phase = None
 
     def _resolve_file(self, job: dict) -> str:
         """Get local file path — either shared FS path or download from server."""
@@ -456,21 +602,46 @@ class WorkerDaemon:
     # ── Main Loop ─────────────────────────────────────────────
 
     def run(self):
-        """Main worker loop: login → claim → process → repeat."""
+        """Main worker loop: login → connect → prefetch → process + heartbeat."""
         logger.info("Imagine Worker Daemon starting...")
 
         if not self.login():
             logger.error("Authentication failed. Exiting.")
             return
 
+        # Register session with server
+        self._connect_session()
+
         poll_interval = get_poll_interval()
+        heartbeat_interval = get_heartbeat_interval()
+        last_heartbeat = time.time()
         consecutive_empty = 0
+
+        # Initial pool fill
+        self._fill_pool()
 
         while not _shutdown:
             try:
-                jobs = self.claim_jobs()
+                # Heartbeat check
+                if time.time() - last_heartbeat >= heartbeat_interval:
+                    hb = self._heartbeat()
+                    last_heartbeat = time.time()
+                    # Process server commands
+                    cmd = hb.get("command")
+                    if cmd in ("stop", "block"):
+                        logger.info(f"Server command received: {cmd}")
+                        break
 
-                if not jobs:
+                # Take a batch from pool
+                batch = self._take_batch()
+
+                if not batch:
+                    # Pool empty — try to fill
+                    self._fill_pool()
+                    batch = self._take_batch()
+
+                if not batch:
+                    # No jobs available anywhere
                     consecutive_empty += 1
                     wait = min(poll_interval * consecutive_empty, 300)  # Max 5 min
                     logger.info(f"No jobs available. Waiting {wait}s...")
@@ -478,14 +649,33 @@ class WorkerDaemon:
                         if _shutdown:
                             break
                         time.sleep(1)
+                        # Keep heartbeat alive during wait
+                        if time.time() - last_heartbeat >= heartbeat_interval:
+                            hb = self._heartbeat()
+                            last_heartbeat = time.time()
+                            if hb.get("command") in ("stop", "block"):
+                                _shutdown_from_server = True
+                                break
+                    else:
+                        continue
+                    # Check if we broke out due to server command
+                    if locals().get('_shutdown_from_server'):
+                        break
                     continue
 
                 consecutive_empty = 0
 
-                for job in jobs:
+                # Start background refill while processing
+                refill_thread = threading.Thread(target=self._fill_pool, daemon=True)
+                refill_thread.start()
+
+                for job in batch:
                     if _shutdown:
                         break
                     self.process_job(job)
+
+                # Wait for refill to complete
+                refill_thread.join(timeout=30)
 
                 # Cleanup GPU memory between batches
                 gc.collect()
@@ -504,7 +694,9 @@ class WorkerDaemon:
                 logger.error(f"Worker loop error: {e}", exc_info=True)
                 time.sleep(poll_interval)
 
-        logger.info("Worker daemon shutting down.")
+        # Graceful shutdown
+        self._disconnect_session()
+        logger.info(f"Worker daemon shutting down. (completed={self._total_completed}, failed={self._total_failed})")
         # Cleanup temp directory
         import shutil
         try:

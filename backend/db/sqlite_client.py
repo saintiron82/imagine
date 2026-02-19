@@ -88,12 +88,14 @@ class SQLiteDB:
                 self._ensure_fts()
                 self._migrate_auth_tables()
                 self._migrate_worker_tokens()
+                self._migrate_worker_sessions()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
                 self._ensure_system_meta()
                 self._migrate_auth_tables()
                 self._migrate_worker_tokens()
+                self._migrate_worker_sessions()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -163,6 +165,37 @@ class SQLiteDB:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_tokens_hash ON worker_tokens(token_hash)")
         self.conn.commit()
         logger.info("✅ worker_tokens table created")
+
+    def _migrate_worker_sessions(self):
+        """Create worker_sessions table if missing (added in v4.10)."""
+        if self._table_exists('worker_sessions'):
+            return
+        logger.info("Migrating: creating worker_sessions table...")
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS worker_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                worker_name TEXT NOT NULL,
+                hostname TEXT,
+                status TEXT DEFAULT 'online'
+                    CHECK (status IN ('online', 'offline', 'blocked')),
+                batch_capacity INTEGER DEFAULT 5,
+                jobs_completed INTEGER DEFAULT 0,
+                jobs_failed INTEGER DEFAULT 0,
+                current_job_id INTEGER,
+                current_file TEXT,
+                current_phase TEXT,
+                pending_command TEXT DEFAULT NULL
+                    CHECK (pending_command IN (NULL, 'stop', 'pause', 'block')),
+                connected_at TEXT DEFAULT (datetime('now')),
+                last_heartbeat TEXT DEFAULT (datetime('now')),
+                disconnected_at TEXT
+            )
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_sessions_user ON worker_sessions(user_id, status)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status)")
+        self.conn.commit()
+        logger.info("✅ worker_sessions table created")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

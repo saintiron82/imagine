@@ -63,7 +63,7 @@ def claim_jobs(
 ):
     """Claim pending jobs for processing."""
     queue = _get_queue(db)
-    jobs = queue.claim_jobs(user["id"], min(req.count, 20))
+    jobs = queue.claim_jobs(user["id"], min(req.count, 50))
     return {"success": True, "jobs": jobs, "count": len(jobs)}
 
 

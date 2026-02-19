@@ -62,6 +62,28 @@ export async function revokeWorkerToken(tokenId) {
   return apiClient.delete(`/api/v1/admin/worker-tokens/${tokenId}`);
 }
 
+// ── Worker Sessions ──────────────────────────────────────
+
+export async function listWorkerSessions() {
+  return apiClient.get('/api/v1/admin/workers');
+}
+
+export async function stopWorkerSession(sessionId) {
+  return apiClient.post(`/api/v1/admin/workers/${sessionId}/stop`);
+}
+
+export async function blockWorkerSession(sessionId) {
+  return apiClient.post(`/api/v1/admin/workers/${sessionId}/block`);
+}
+
+export async function listMyWorkers() {
+  return apiClient.get('/api/v1/workers/my');
+}
+
+export async function stopMyWorker(sessionId) {
+  return apiClient.post(`/api/v1/workers/${sessionId}/stop`);
+}
+
 // ── Worker Self-service ──────────────────────────────────
 
 export async function registerWorker() {

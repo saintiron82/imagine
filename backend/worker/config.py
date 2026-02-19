@@ -59,6 +59,19 @@ def get_poll_interval() -> int:
     return cfg.get("poll_interval_seconds", 30)
 
 
+def get_batch_capacity() -> int:
+    """Worker's actual batch processing capacity (file count).
+    Used to calculate prefetch pool size (capacity * 2)."""
+    cfg = get_worker_config()
+    return cfg.get("batch_capacity", 5)
+
+
+def get_heartbeat_interval() -> int:
+    """Heartbeat interval in seconds."""
+    cfg = get_worker_config()
+    return cfg.get("heartbeat_interval", 30)
+
+
 def get_storage_mode() -> str:
     """Get storage mode: 'server_upload' or 'shared_fs'."""
     try:
