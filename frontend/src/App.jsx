@@ -6,12 +6,16 @@ import SearchPanel from './components/SearchPanel';
 import FolderInfoBar from './components/FolderInfoBar';
 import ResumeDialog from './components/ResumeDialog';
 import ImportDbDialog from './components/ImportDbDialog';
-import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download } from 'lucide-react'; // Added Terminal
+import LoginPage from './pages/LoginPage';
+import AdminPage from './pages/AdminPage';
+import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, Settings, LogOut, User } from 'lucide-react';
 import { useLocale } from './i18n';
+import { useAuth } from './contexts/AuthContext';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
-  const [currentTab, setCurrentTab] = useState('search'); // 'search' or 'archive'
+  const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout } = useAuth();
+  const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archive' | 'admin'
   const [currentPath, setCurrentPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [logs, setLogs] = useState([]);
@@ -397,6 +401,20 @@ function App() {
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
 
+  // Auth loading state
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-900">
+        <div className="text-gray-400 text-sm">{t('status.loading')}</div>
+      </div>
+    );
+  }
+
+  // Show login page for web mode when not authenticated
+  if (!skipAuth && !isAuthenticated) {
+    return <LoginPage />;
+  }
+
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden flex-col">
       {/* Resume Dialog */}
@@ -445,6 +463,20 @@ function App() {
             <Archive size={16} />
             <span>{t('tab.archive')}</span>
           </button>
+
+          {/* Admin tab (admin users only, web mode) */}
+          {isAdmin && !skipAuth && (
+            <button
+              onClick={() => setCurrentTab('admin')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'admin'
+                ? 'bg-purple-700 text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+            >
+              <Settings size={16} />
+              <span>{t('tab.admin')}</span>
+            </button>
+          )}
 
           {currentTab === 'archive' && (
             <>
@@ -513,6 +545,24 @@ function App() {
             <Globe size={14} />
             <span>{localeLabel}</span>
           </button>
+
+          {/* User info + Logout (web mode only) */}
+          {!skipAuth && user && (
+            <>
+              <div className="w-px h-6 bg-gray-600 mx-1" />
+              <div className="flex items-center gap-2 text-xs text-gray-400">
+                <User size={14} />
+                <span>{user.username}</span>
+              </div>
+              <button
+                onClick={logout}
+                className="flex items-center space-x-1 px-2 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-red-400 hover:bg-gray-700/50 transition-colors"
+                title={t('auth.logout')}
+              >
+                <LogOut size={14} />
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -540,7 +590,9 @@ function App() {
         <div className="flex-1 flex flex-col bg-gray-900 relative">
           {/* Content Area */}
           <div className="flex-1 overflow-hidden">
-            {currentTab === 'search' ? (
+            {currentTab === 'admin' && isAdmin ? (
+              <AdminPage />
+            ) : currentTab === 'search' ? (
               <SearchPanel
                 onScanFolder={handleScanFolders}
                 isBusy={isProcessing || isDiscovering}
