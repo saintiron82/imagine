@@ -77,7 +77,7 @@ class WorkerDaemon:
     def login(self) -> bool:
         """Authenticate with the server and get JWT tokens."""
         creds = get_worker_credentials()
-        if not creds["email"] or not creds["password"]:
+        if not (creds.get("username") or creds.get("email")) or not creds.get("password"):
             logger.error("Worker credentials not configured. Set IMAGINE_WORKER_EMAIL/PASSWORD or config.yaml worker section.")
             return False
 
