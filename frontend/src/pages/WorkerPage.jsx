@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { useLocale } from '../i18n';
-import { isElectron, getServerUrl } from '../api/client';
+import { isElectron, getServerUrl, getAccessToken, getRefreshToken } from '../api/client';
 import { getJobStats } from '../api/worker';
 
 function WorkerPage() {
@@ -12,11 +12,6 @@ function WorkerPage() {
   const [currentJobs, setCurrentJobs] = useState([]);
   const logEndRef = useRef(null);
   const pollRef = useRef(null);
-
-  // Worker credentials
-  const [serverUrl, setServerUrl] = useState(() => getServerUrl() || 'http://localhost:8000');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
 
   const addLog = useCallback((message, type = 'info') => {
     const entry = { message, type, timestamp: new Date().toLocaleTimeString() };
@@ -72,12 +67,21 @@ function WorkerPage() {
 
   const handleStart = async () => {
     if (!isElectron) return;
-    if (!serverUrl || !username || !password) {
-      addLog('Server URL, username, and password are required', 'error');
+    const serverUrl = getServerUrl();
+    const accessToken = getAccessToken();
+    const refreshToken = getRefreshToken();
+
+    if (!serverUrl || !accessToken) {
+      addLog('Not logged in. Please login first.', 'error');
       return;
     }
+
     try {
-      const result = await window.electron.worker.start({ serverUrl, username, password });
+      const result = await window.electron.worker.start({
+        serverUrl,
+        accessToken,
+        refreshToken: refreshToken || '',
+      });
       if (result.success === false) {
         addLog(result.error || 'Failed to start worker', 'error');
         return;
@@ -136,54 +140,23 @@ function WorkerPage() {
 
         {/* Worker Control */}
         {isElectron && (
-          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
-            {/* Credentials Form (disabled while running) */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">{t('worker.server_url')}</label>
-                <input
-                  type="text"
-                  value={serverUrl}
-                  onChange={(e) => setServerUrl(e.target.value)}
-                  disabled={workerStatus === 'running'}
-                  placeholder="http://localhost:8000"
-                  className="w-full px-3 py-1.5 text-sm bg-gray-900 border border-gray-600 rounded text-gray-200 disabled:opacity-50 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">{t('worker.username')}</label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  disabled={workerStatus === 'running'}
-                  className="w-full px-3 py-1.5 text-sm bg-gray-900 border border-gray-600 rounded text-gray-200 disabled:opacity-50 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">{t('worker.password')}</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={workerStatus === 'running'}
-                  className="w-full px-3 py-1.5 text-sm bg-gray-900 border border-gray-600 rounded text-gray-200 disabled:opacity-50 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            {/* Status + Buttons */}
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className={`flex items-center gap-2 ${statusColor[workerStatus]}`}>
                   {statusIcon[workerStatus]}
                   {t(`worker.status_${workerStatus}`)}
                 </span>
+                {workerStatus !== 'running' && getServerUrl() && (
+                  <span className="text-xs text-gray-500 truncate max-w-[200px]">
+                    {getServerUrl()}
+                  </span>
+                )}
               </div>
               <div className="flex gap-2">
                 <button
                   onClick={handleStart}
-                  disabled={workerStatus === 'running' || !serverUrl || !username || !password}
+                  disabled={workerStatus === 'running' || !getAccessToken()}
                   className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-green-700 hover:bg-green-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <Play size={14} fill="currentColor" />

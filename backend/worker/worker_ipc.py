@@ -57,8 +57,14 @@ class WorkerIPCController:
         self._thread = None
         self._running = False
 
-    def start(self, server_url: str, username: str, password: str):
-        """Start the worker loop in a background thread."""
+    def start(self, server_url: str, username: str = "", password: str = "",
+               access_token: str = "", refresh_token: str = ""):
+        """Start the worker loop in a background thread.
+
+        Supports two auth modes:
+        - Token mode (access_token + refresh_token): reuse existing session from Electron
+        - Credential mode (username + password): login independently
+        """
         if self._running:
             _emit_log("Worker already running", "warning")
             return
@@ -66,8 +72,15 @@ class WorkerIPCController:
         # Override config for this session
         import os
         os.environ["IMAGINE_SERVER_URL"] = server_url
-        os.environ["IMAGINE_WORKER_USERNAME"] = username
-        os.environ["IMAGINE_WORKER_PASSWORD"] = password
+
+        # Store auth info for the worker thread
+        self._auth_mode = "token" if access_token else "credentials"
+        self._access_token = access_token
+        self._refresh_token = refresh_token
+
+        if not access_token:
+            os.environ["IMAGINE_WORKER_USERNAME"] = username
+            os.environ["IMAGINE_WORKER_PASSWORD"] = password
 
         self._running = True
         self._thread = threading.Thread(target=self._worker_loop, daemon=True)
@@ -94,9 +107,15 @@ class WorkerIPCController:
             daemon = WorkerDaemon()
             self._daemon = daemon
 
-            # Login
+            # Authenticate — token mode (from Electron session) or credentials mode
             _emit_log("Authenticating with server...", "info")
-            if not daemon.login():
+            if self._auth_mode == "token":
+                if not daemon.set_tokens(self._access_token, self._refresh_token):
+                    _emit_log("Token injection failed", "error")
+                    _emit_status("error")
+                    self._running = False
+                    return
+            elif not daemon.login():
                 _emit_log("Authentication failed", "error")
                 _emit_status("error")
                 self._running = False
@@ -178,6 +197,8 @@ def main():
                 server_url=cmd.get("server_url", "http://localhost:8000"),
                 username=cmd.get("username", ""),
                 password=cmd.get("password", ""),
+                access_token=cmd.get("access_token", ""),
+                refresh_token=cmd.get("refresh_token", ""),
             )
         elif action == "stop":
             controller.stop()

@@ -1236,7 +1236,7 @@ function killWorkerProc() {
 }
 
 // IPC Handler: Start worker daemon
-ipcMain.handle('worker-start', async (event, { serverUrl, username, password }) => {
+ipcMain.handle('worker-start', async (event, opts) => {
     if (workerProc) {
         return { success: false, error: 'Worker already running' };
     }
@@ -1256,11 +1256,14 @@ ipcMain.handle('worker-start', async (event, { serverUrl, username, password }) 
     });
 
     // Queue the start command — will be sent after 'ready' event
+    // Supports token mode (from existing session) or credential mode
     workerStartCmd = {
         cmd: 'start',
-        server_url: serverUrl,
-        username: username,
-        password: password,
+        server_url: opts.serverUrl || 'http://localhost:8000',
+        access_token: opts.accessToken || '',
+        refresh_token: opts.refreshToken || '',
+        username: opts.username || '',
+        password: opts.password || '',
     };
 
     workerProc.stdout.on('data', (chunk) => {

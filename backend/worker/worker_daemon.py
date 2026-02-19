@@ -74,6 +74,18 @@ class WorkerDaemon:
 
     # ── Authentication ─────────────────────────────────────────
 
+    def set_tokens(self, access_token: str, refresh_token: str = None) -> bool:
+        """Inject existing JWT tokens (skip login, reuse session from Electron)."""
+        if not access_token:
+            logger.error("No access token provided")
+            return False
+
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.session.headers["Authorization"] = f"Bearer {self.access_token}"
+        logger.info("Tokens injected from existing session")
+        return True
+
     def login(self) -> bool:
         """Authenticate with the server and get JWT tokens."""
         creds = get_worker_credentials()
