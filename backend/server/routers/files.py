@@ -7,16 +7,42 @@ import logging
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user, require_admin
+from backend.server.auth.jwt import decode_access_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+_security = HTTPBearer(auto_error=False)
+
+
+def _get_user_or_query_token(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+    db: SQLiteDB = Depends(get_db),
+) -> dict:
+    """Auth via header OR ?token= query param (for img src tags)."""
+    # 1) Try Authorization header
+    if credentials:
+        return get_current_user(credentials, db)
+
+    # 2) Try ?token= query param
+    token = request.query_params.get("token")
+    if token:
+        payload = decode_access_token(token)
+        if payload:
+            user_id_raw = payload.get("sub")
+            if user_id_raw is not None:
+                return {"id": int(user_id_raw), "role": payload.get("role", "user")}
+
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 # ── Schemas ──────────────────────────────────────────────────
@@ -195,10 +221,15 @@ def delete_file(
 @router.get("/{file_id}/thumbnail")
 def get_thumbnail(
     file_id: int,
-    _user: dict = Depends(get_current_user),
+    token: Optional[str] = Query(None, description="JWT token for img tag auth"),
+    _user: dict = Depends(_get_user_or_query_token),
     db: SQLiteDB = Depends(get_db),
 ):
-    """Serve thumbnail image for a file."""
+    """Serve thumbnail image for a file.
+
+    Supports both Authorization header and ?token= query param,
+    because <img src> tags cannot send headers.
+    """
     cursor = db.conn.cursor()
     cursor.execute("SELECT thumbnail_url, file_name FROM files WHERE id = ?", (file_id,))
     row = cursor.fetchone()

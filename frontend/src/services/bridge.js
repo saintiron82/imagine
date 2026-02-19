@@ -76,7 +76,9 @@ export function getThumbnailUrl(thumbnailPath, fileId) {
   }
   if (!fileId) return null;
   const base = getServerUrl();
-  return `${base}/api/v1/files/${fileId}/thumbnail`;
+  const token = getAccessToken();
+  const url = `${base}/api/v1/files/${fileId}/thumbnail`;
+  return token ? `${url}?token=${token}` : url;
 }
 
 
