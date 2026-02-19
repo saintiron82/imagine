@@ -22,7 +22,7 @@ def create_access_token(user_id: int, username: str, role: str) -> str:
     """Create a short-lived access token."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=get_access_token_minutes())
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "username": username,
         "role": role,
         "exp": expire,

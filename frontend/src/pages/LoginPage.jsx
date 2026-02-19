@@ -16,7 +16,7 @@ export default function LoginPage() {
 
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [serverUrl, setServerUrlLocal] = useState(
-    localStorage.getItem('imagine-server-url') || ''
+    localStorage.getItem('imagine-server-url') || 'http://localhost:8000'
   );
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -52,12 +52,12 @@ export default function LoginPage() {
     let success;
 
     if (mode === 'login') {
-      success = await login({ email, password, serverUrl: trimmedUrl });
+      success = await login({ username, password, serverUrl: trimmedUrl });
     } else {
       success = await register({
         invite_code: inviteCode,
         username,
-        email,
+        email: email || undefined,
         password,
         serverUrl: trimmedUrl,
       });
@@ -128,7 +128,7 @@ export default function LoginPage() {
                 <div className="relative flex-1">
                   <Server size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
                   <input
-                    type="url"
+                    type="text"
                     value={serverUrl}
                     onChange={(e) => {
                       setServerUrlLocal(e.target.value);
@@ -189,18 +189,36 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Email */}
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">{t('auth.email')}</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="user@example.com"
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-                required
-              />
-            </div>
+            {/* Username (login mode) */}
+            {mode === 'login' && (
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">{t('auth.username')}</label>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder={t('auth.username_placeholder')}
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                  required
+                />
+              </div>
+            )}
+
+            {/* Email (optional in register) */}
+            {mode === 'register' && (
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">
+                  {t('auth.email')} <span className="text-gray-600">({t('label.optional')})</span>
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="user@example.com"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            )}
 
             {/* Password */}
             <div>

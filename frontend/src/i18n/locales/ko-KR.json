@@ -137,6 +137,7 @@
   "label.search_mode_or": "OR",
   "label.search_mode_and_desc": "모든 이미지와 유사",
   "label.search_mode_or_desc": "하나라도 유사",
+  "label.optional": "선택사항",
   "msg.max_images_reached": "최대 10장까지 가능합니다",
   "msg.url_fetch_failed": "URL에서 이미지를 불러오지 못했습니다",
   "status.eta": "약 {time} 남음",

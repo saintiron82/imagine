@@ -17,8 +17,8 @@ export async function register({ invite_code, username, email, password }) {
   return data;
 }
 
-export async function login({ email, password }) {
-  const data = await apiClient.post('/api/v1/auth/login', { email, password });
+export async function login({ username, email, password }) {
+  const data = await apiClient.post('/api/v1/auth/login', { username, email, password });
   if (data.access_token) {
     setTokens(data.access_token, data.refresh_token);
   }

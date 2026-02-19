@@ -137,6 +137,7 @@
   "label.search_mode_or": "OR",
   "label.search_mode_and_desc": "Similar to all images",
   "label.search_mode_or_desc": "Similar to any image",
+  "label.optional": "optional",
   "msg.max_images_reached": "Maximum 10 images allowed",
   "msg.url_fetch_failed": "Failed to load image from URL",
   "status.eta": "~{time} remaining",

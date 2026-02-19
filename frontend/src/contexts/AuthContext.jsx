@@ -44,11 +44,11 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, [skipAuth]);
 
-  const login = useCallback(async ({ email, password, serverUrl }) => {
+  const login = useCallback(async ({ username, password, serverUrl }) => {
     setError('');
     try {
       if (serverUrl) setServerUrl(serverUrl);
-      const data = await apiLogin({ email, password });
+      const data = await apiLogin({ username, password });
       const me = await getMe();
       setUser(me.user || me);
       return true;

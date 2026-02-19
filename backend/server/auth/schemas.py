@@ -3,7 +3,7 @@ Pydantic schemas for authentication requests/responses.
 """
 
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 # ── Request schemas ──────────────────────────────────────────
@@ -11,12 +11,13 @@ from pydantic import BaseModel, EmailStr, Field
 class RegisterRequest(BaseModel):
     invite_code: str = Field(..., min_length=4, max_length=32)
     username: str = Field(..., min_length=2, max_length=50)
-    email: EmailStr
-    password: str = Field(..., min_length=8, max_length=128)
+    email: Optional[str] = Field(None, max_length=254)
+    password: str = Field(..., min_length=6, max_length=128)
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    username: Optional[str] = None
+    email: Optional[str] = None
     password: str
 
 
@@ -35,7 +36,7 @@ class TokenResponse(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
-    email: str
+    email: Optional[str] = None
     role: str
     is_active: bool
     created_at: Optional[str] = None

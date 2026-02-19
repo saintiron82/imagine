@@ -59,14 +59,16 @@ def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
         if exp < datetime.now(timezone.utc):
             raise HTTPException(status_code=400, detail="Invite code has expired")
 
-    # Check username/email uniqueness
+    # Check username uniqueness
     cursor.execute("SELECT id FROM users WHERE username = ?", (req.username,))
     if cursor.fetchone():
         raise HTTPException(status_code=409, detail="Username already taken")
 
-    cursor.execute("SELECT id FROM users WHERE email = ?", (req.email,))
-    if cursor.fetchone():
-        raise HTTPException(status_code=409, detail="Email already registered")
+    # Check email uniqueness (only if provided)
+    if req.email:
+        cursor.execute("SELECT id FROM users WHERE email = ?", (req.email,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=409, detail="Email already registered")
 
     # Create user
     password_hash = _hash_password(req.password)
@@ -110,11 +112,17 @@ def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest, db: SQLiteDB = Depends(get_db)):
-    """Login with email and password."""
+    """Login with username or email and password."""
     cursor = db.conn.cursor()
+
+    # Try username first, then email
+    identifier = req.username or req.email
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Username or email required")
+
     cursor.execute(
-        "SELECT id, username, email, password_hash, role, is_active FROM users WHERE email = ?",
-        (req.email,)
+        "SELECT id, username, email, password_hash, role, is_active FROM users WHERE username = ? OR email = ?",
+        (identifier, identifier)
     )
     row = cursor.fetchone()
     if row is None:
