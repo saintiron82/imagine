@@ -48,6 +48,11 @@ class RegisterPathsRequest(BaseModel):
     priority: int = 0
 
 
+class ScanFolderRequest(BaseModel):
+    folder_path: str
+    priority: int = 0
+
+
 # ── Job Queue Endpoints ──────────────────────────────────────
 
 @router.post("/api/v1/jobs/claim")
@@ -166,6 +171,129 @@ def fail_job(
     if not success:
         raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
     return {"success": True}
+
+
+# ── Discover: Browse & Scan server filesystem ────────────────
+
+SUPPORTED_EXTENSIONS = {'.psd', '.png', '.jpg', '.jpeg'}
+
+
+@router.get("/api/v1/discover/browse")
+def browse_folders(
+    path: str = "/",
+    admin: dict = Depends(require_admin),
+):
+    """Browse server filesystem directories (admin only).
+
+    Returns subdirectories and count of supported image files.
+    """
+    from pathlib import Path as P
+
+    target = P(path).resolve()
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="Directory not found")
+
+    dirs = []
+    files_count = 0
+
+    try:
+        for entry in sorted(target.iterdir(), key=lambda e: e.name.lower()):
+            if entry.name.startswith('.'):
+                continue
+            if entry.is_dir():
+                # Count supported files in subdir (non-recursive, for quick preview)
+                sub_count = sum(
+                    1 for f in entry.iterdir()
+                    if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+                )
+                dirs.append({"name": entry.name, "files_count": sub_count})
+            elif entry.is_file() and entry.suffix.lower() in SUPPORTED_EXTENSIONS:
+                files_count += 1
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    return {
+        "current": str(target),
+        "parent": str(target.parent) if target != target.parent else None,
+        "dirs": dirs,
+        "files_count": files_count,
+    }
+
+
+@router.post("/api/v1/discover/scan")
+def scan_folder(
+    req: ScanFolderRequest,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """DFS scan a folder and create processing jobs for all supported files (admin only).
+
+    Reuses the existing discover_files() logic from the pipeline engine.
+    """
+    from pathlib import Path as P
+    from backend.pipeline.ingest_engine import discover_files
+
+    folder = P(req.folder_path).resolve()
+    if not folder.exists() or not folder.is_dir():
+        raise HTTPException(status_code=404, detail="Directory not found")
+
+    # DFS scan
+    discovered = discover_files(folder)
+    if not discovered:
+        return {"success": True, "discovered": 0, "jobs_created": 0, "skipped": 0}
+
+    # Register files and create jobs
+    cursor = db.conn.cursor()
+    file_ids = []
+    file_paths = []
+    skipped = 0
+
+    for file_path, folder_str, depth, folder_tags in discovered:
+        fpath_str = str(file_path)
+
+        # Check if job already exists for this file (avoid duplicates)
+        cursor.execute(
+            "SELECT id FROM job_queue WHERE file_path = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
+            (fpath_str,)
+        )
+        if cursor.fetchone():
+            skipped += 1
+            continue
+
+        meta = {
+            "file_path": fpath_str,
+            "file_name": file_path.name,
+            "folder_path": folder_str,
+            "folder_depth": depth,
+            "folder_tags": folder_tags,
+        }
+        try:
+            fid = db.upsert_metadata(fpath_str, meta)
+            cursor.execute(
+                "UPDATE files SET uploaded_by = ? WHERE id = ? AND uploaded_by IS NULL",
+                (admin["id"], fid)
+            )
+            file_ids.append(fid)
+            file_paths.append(fpath_str)
+        except Exception as e:
+            logger.warning(f"Failed to register {fpath_str}: {e}")
+
+    db.conn.commit()
+
+    # Create jobs
+    queue = _get_queue(db)
+    jobs_created = queue.create_jobs(file_ids, file_paths, req.priority) if file_ids else 0
+
+    logger.info(
+        f"Discover scan: {req.folder_path} → {len(discovered)} found, "
+        f"{jobs_created} jobs created, {skipped} skipped"
+    )
+    return {
+        "success": True,
+        "discovered": len(discovered),
+        "jobs_created": jobs_created,
+        "skipped": skipped,
+    }
 
 
 # ── File Registration (shared_fs mode) ───────────────────────

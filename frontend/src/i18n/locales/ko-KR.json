@@ -249,5 +249,13 @@
   "admin.queue_total": "전체",
   "admin.cleanup_stale": "만료 작업 정리",
   "admin.cleanup_result": "{count}개 작업 재할당됨",
+  "admin.tab_discover": "폴더 탐색",
+  "admin.discover_title": "폴더 탐색 및 작업 등록",
+  "admin.discover_browse": "탐색",
+  "admin.discover_scan_all": "전체 스캔",
+  "admin.discover_priority": "우선순위",
+  "admin.discover_files_here": "개 파일",
+  "admin.discover_empty": "빈 디렉토리",
+  "admin.discover_scan_result": "{discovered}개 발견, {jobs}개 작업 생성, {skipped}개 건너뜀",
   "msg.logged_in_as": "{name}(으)로 로그인됨"
 }

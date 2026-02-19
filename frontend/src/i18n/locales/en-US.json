@@ -249,5 +249,13 @@
   "admin.queue_total": "Total",
   "admin.cleanup_stale": "Cleanup Stale Jobs",
   "admin.cleanup_result": "{count} jobs reassigned",
+  "admin.tab_discover": "Discover",
+  "admin.discover_title": "Folder Discovery",
+  "admin.discover_browse": "Browse",
+  "admin.discover_scan_all": "Scan All",
+  "admin.discover_priority": "Priority",
+  "admin.discover_files_here": "files in this folder",
+  "admin.discover_empty": "Empty directory",
+  "admin.discover_scan_result": "Found {discovered} files, {jobs} jobs created, {skipped} skipped",
   "msg.logged_in_as": "Logged in as {name}"
 }

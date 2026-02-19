@@ -33,3 +33,17 @@ export async function deleteUser(userId) {
 export async function cleanupStaleJobs() {
   return apiClient.post('/api/v1/admin/jobs/cleanup');
 }
+
+export async function getJobStats() {
+  return apiClient.get('/api/v1/jobs/stats');
+}
+
+// ── Discover (server filesystem) ────────────────────────
+
+export async function browseFolders(path = '/') {
+  return apiClient.get(`/api/v1/discover/browse?path=${encodeURIComponent(path)}`);
+}
+
+export async function scanFolder(folderPath, priority = 0) {
+  return apiClient.post('/api/v1/discover/scan', { folder_path: folderPath, priority });
+}

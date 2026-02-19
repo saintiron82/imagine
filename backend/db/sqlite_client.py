@@ -83,6 +83,7 @@ class SQLiteDB:
                 self._migrate_v3_columns()
                 self._migrate_content_hash()
                 self._migrate_structure_table()
+                self._migrate_uploaded_by()
                 self._ensure_system_meta()
                 self._ensure_fts()
                 self._migrate_auth_tables()
@@ -333,6 +334,17 @@ class SQLiteDB:
             except sqlite3.OperationalError as e:
                 logger.warning(f"Skipping vec_structure creation: {e}")
 
+
+    def _migrate_uploaded_by(self):
+        """Add uploaded_by column for server-mode file ownership tracking."""
+        try:
+            self.conn.execute("SELECT uploaded_by FROM files LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.info("Migrating: adding uploaded_by column to files table...")
+            self.conn.execute("ALTER TABLE files ADD COLUMN uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_files_uploaded_by ON files(uploaded_by)")
+            self.conn.commit()
+            logger.info("✅ uploaded_by migration complete")
 
     # ── FTS5 columns: 2-column BM25-weighted architecture ──
     #
