@@ -300,5 +300,11 @@
   "admin.worker_token_confirm_revoke": "이 토큰을 폐기하시겠습니까?",
   "admin.worker_token_last_used": "마지막 사용",
   "admin.worker_token_never_used": "미사용",
-  "admin.worker_token_created": "생성일"
+  "admin.worker_token_created": "생성일",
+  "worker.connect_title": "내 PC를 워커로 연결",
+  "worker.connect_desc": "GPU를 제공하여 이미지 처리를 돕습니다. 셋업 스크립트를 다운로드하고 프로젝트 폴더에서 실행하세요.",
+  "worker.download_setup": "셋업 스크립트 다운로드",
+  "worker.run_instruction": "프로젝트 루트에서 실행:",
+  "worker.python_required": "Python 3.10+ 필요. Imagine 프로젝트 폴더에서 실행하세요.",
+  "worker.setup_downloaded": "스크립트 다운로드 완료! 아래 명령어를 실행하세요."
 }

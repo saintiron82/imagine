@@ -1,8 +1,90 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2, Download, Copy, CheckCircle, Monitor } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { apiClient, isElectron, getServerUrl, getAccessToken, getRefreshToken } from '../api/client';
 import { getJobStats } from '../api/worker';
+import { registerWorker } from '../api/admin';
+
+function ConnectMyPC() {
+  const { t } = useLocale();
+  const [downloading, setDownloading] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const data = await registerWorker();
+      if (!data.token) throw new Error('No token returned');
+
+      const serverUrl = window.location.origin;
+      const scriptUrl = `/api/v1/worker/setup-script?token=${encodeURIComponent(data.token)}&server_url=${encodeURIComponent(serverUrl)}`;
+
+      // Trigger file download
+      const a = document.createElement('a');
+      a.href = scriptUrl;
+      a.download = 'setup_worker.py';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      setDownloaded(true);
+    } catch (e) {
+      console.error('Failed to register worker:', e);
+    }
+    setDownloading(false);
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText('python3 setup_worker.py');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+      <h3 className="text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
+        <Monitor size={14} className="text-blue-400" />
+        {t('worker.connect_title')}
+      </h3>
+      <p className="text-xs text-gray-500 mb-3">{t('worker.connect_desc')}</p>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <button
+          onClick={handleDownload}
+          disabled={downloading}
+          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white rounded text-sm font-medium transition-colors"
+        >
+          {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+          {t('worker.download_setup')}
+        </button>
+
+        {downloaded && (
+          <span className="text-xs text-green-400">{t('worker.setup_downloaded')}</span>
+        )}
+      </div>
+
+      {downloaded && (
+        <div className="mt-3 space-y-2">
+          <div className="text-xs text-gray-400">{t('worker.run_instruction')}</div>
+          <div className="flex gap-2">
+            <code className="flex-1 px-3 py-2 bg-gray-900 rounded text-xs font-mono text-blue-300 select-all">
+              python3 setup_worker.py
+            </code>
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-xs text-white flex-shrink-0"
+            >
+              {copied ? <CheckCircle size={12} className="text-green-400" /> : <Copy size={12} />}
+            </button>
+          </div>
+          <p className="text-xs text-gray-600">{t('worker.python_required')}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function WorkerPage() {
   const { t } = useLocale();
@@ -221,6 +303,9 @@ function WorkerPage() {
             </div>
           </div>
         </div>
+
+        {/* Connect My PC */}
+        <ConnectMyPC />
 
         {/* Queue Stats */}
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">

@@ -61,3 +61,9 @@ export async function listWorkerTokens() {
 export async function revokeWorkerToken(tokenId) {
   return apiClient.delete(`/api/v1/admin/worker-tokens/${tokenId}`);
 }
+
+// ── Worker Self-service ──────────────────────────────────
+
+export async function registerWorker() {
+  return apiClient.post('/api/v1/worker/register');
+}
