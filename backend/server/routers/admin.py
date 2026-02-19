@@ -1,20 +1,22 @@
 """
-Admin router — user management, invite codes.
+Admin router — user management, invite codes, embedded worker control.
 """
 
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, require_admin
+from backend.server.deps import get_db, require_admin, get_current_user
 from backend.server.auth.schemas import (
     InviteCodeCreate, InviteCodeResponse,
     UserResponse, UserUpdateRequest,
 )
+from backend.server.auth.jwt import create_access_token, create_refresh_token
 
 logger = logging.getLogger(__name__)
 
@@ -166,3 +168,54 @@ def delete_user(
     db.conn.commit()
     logger.info(f"Admin {admin['username']} deleted user {user_id}")
     return {"success": True, "deleted_user_id": user_id}
+
+
+# ── Embedded Worker Control ──────────────────────────────────
+
+@router.post("/worker/start")
+def start_embedded_worker(
+    request: Request,
+    admin: dict = Depends(require_admin),
+):
+    """Start the embedded worker (admin only).
+
+    Creates a long-lived JWT token for the worker thread and starts it.
+    The worker uses HTTP loopback to claim/complete jobs from this server.
+    """
+    from backend.server.embedded_worker import start_worker
+
+    # Create a long-lived token for the worker (24h)
+    worker_token = create_access_token(
+        admin["id"], admin["username"], admin["role"],
+        expires_minutes=1440,
+    )
+    worker_refresh = create_refresh_token()
+
+    # Determine server URL (loopback)
+    server_url = str(request.base_url).rstrip("/")
+
+    result = start_worker(server_url, worker_token, worker_refresh)
+    if result.get("success"):
+        logger.info(f"Admin {admin['username']} started embedded worker")
+    return result
+
+
+@router.post("/worker/stop")
+def stop_embedded_worker(
+    admin: dict = Depends(require_admin),
+):
+    """Stop the embedded worker (admin only)."""
+    from backend.server.embedded_worker import stop_worker
+
+    result = stop_worker()
+    logger.info(f"Admin {admin['username']} stopped embedded worker")
+    return result
+
+
+@router.get("/worker/status")
+def get_embedded_worker_status(
+    _user: dict = Depends(get_current_user),
+):
+    """Get embedded worker status (any authenticated user)."""
+    from backend.server.embedded_worker import get_status
+    return get_status()

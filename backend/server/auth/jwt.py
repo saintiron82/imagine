@@ -18,9 +18,10 @@ from backend.server.config import (
 ALGORITHM = "HS256"
 
 
-def create_access_token(user_id: int, username: str, role: str) -> str:
-    """Create a short-lived access token."""
-    expire = datetime.now(timezone.utc) + timedelta(minutes=get_access_token_minutes())
+def create_access_token(user_id: int, username: str, role: str, expires_minutes: int = None) -> str:
+    """Create an access token. Default expiry from config, or override with expires_minutes."""
+    minutes = expires_minutes or get_access_token_minutes()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     payload = {
         "sub": str(user_id),
         "username": username,

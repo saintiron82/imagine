@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { useLocale } from '../i18n';
-import { isElectron, getServerUrl, getAccessToken, getRefreshToken } from '../api/client';
+import { apiClient, isElectron, getServerUrl, getAccessToken, getRefreshToken } from '../api/client';
 import { getJobStats } from '../api/worker';
 
 function WorkerPage() {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
-  const [workerStatus, setWorkerStatus] = useState('idle'); // idle | running | error
+  const [workerStatus, setWorkerStatus] = useState('idle'); // idle | running | stopping | error
   const [logs, setLogs] = useState([]);
   const [currentJobs, setCurrentJobs] = useState([]);
+  const [jobsCompleted, setJobsCompleted] = useState(0);
   const logEndRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -21,7 +22,7 @@ function WorkerPage() {
     });
   }, []);
 
-  // Poll stats every 5 seconds
+  // Poll stats + worker status every 5 seconds
   useEffect(() => {
     const fetchStats = async () => {
       try {
@@ -29,8 +30,25 @@ function WorkerPage() {
         if (data.success !== false) setStats(data);
       } catch { /* ignore */ }
     };
+
+    const fetchWorkerStatus = async () => {
+      if (isElectron) return;
+      try {
+        const data = await apiClient.get('/api/v1/admin/worker/status');
+        setWorkerStatus(data.running ? 'running' : 'idle');
+        setJobsCompleted(data.jobs_completed || 0);
+        if (data.last_error) {
+          setWorkerStatus('error');
+        }
+      } catch { /* ignore - user may not be admin */ }
+    };
+
     fetchStats();
-    pollRef.current = setInterval(fetchStats, 5000);
+    fetchWorkerStatus();
+    pollRef.current = setInterval(() => {
+      fetchStats();
+      fetchWorkerStatus();
+    }, 5000);
     return () => clearInterval(pollRef.current);
   }, []);
 
@@ -66,55 +84,89 @@ function WorkerPage() {
   }, [addLog]);
 
   const handleStart = async () => {
-    if (!isElectron) return;
-    const serverUrl = getServerUrl();
-    const accessToken = getAccessToken();
-    const refreshToken = getRefreshToken();
+    if (isElectron) {
+      // Electron mode: use IPC
+      const serverUrl = getServerUrl();
+      const accessToken = getAccessToken();
+      const refreshToken = getRefreshToken();
 
-    if (!serverUrl || !accessToken) {
-      addLog('Not logged in. Please login first.', 'error');
-      return;
-    }
-
-    try {
-      const result = await window.electron.worker.start({
-        serverUrl,
-        accessToken,
-        refreshToken: refreshToken || '',
-      });
-      if (result.success === false) {
-        addLog(result.error || 'Failed to start worker', 'error');
+      if (!serverUrl || !accessToken) {
+        addLog('Not logged in. Please login first.', 'error');
         return;
       }
-      setWorkerStatus('running');
-      addLog(t('worker.connecting'), 'info');
-    } catch (e) {
-      addLog(e.message, 'error');
-      setWorkerStatus('error');
+
+      try {
+        const result = await window.electron.worker.start({
+          serverUrl,
+          accessToken,
+          refreshToken: refreshToken || '',
+        });
+        if (result.success === false) {
+          addLog(result.error || 'Failed to start worker', 'error');
+          return;
+        }
+        setWorkerStatus('running');
+        addLog(t('worker.connecting'), 'info');
+      } catch (e) {
+        addLog(e.message, 'error');
+        setWorkerStatus('error');
+      }
+    } else {
+      // Web mode: call server embedded worker API
+      try {
+        const result = await apiClient.post('/api/v1/admin/worker/start');
+        if (result.success === false) {
+          addLog(result.error || 'Failed to start worker', 'error');
+          return;
+        }
+        setWorkerStatus('running');
+        addLog(t('worker.connecting'), 'info');
+      } catch (e) {
+        addLog(e.detail || e.message, 'error');
+        setWorkerStatus('error');
+      }
     }
   };
 
   const handleStop = async () => {
-    if (!isElectron) return;
-    try {
-      await window.electron.worker.stop();
-      setWorkerStatus('idle');
-      setCurrentJobs([]);
-      addLog(t('worker.stop'), 'info');
-    } catch (e) {
-      addLog(e.message, 'error');
+    if (isElectron) {
+      try {
+        await window.electron.worker.stop();
+        setWorkerStatus('idle');
+        setCurrentJobs([]);
+        addLog(t('worker.stop'), 'info');
+      } catch (e) {
+        addLog(e.message, 'error');
+      }
+    } else {
+      // Web mode: call server embedded worker stop API
+      setWorkerStatus('stopping');
+      try {
+        const result = await apiClient.post('/api/v1/admin/worker/stop');
+        setWorkerStatus('idle');
+        setCurrentJobs([]);
+        addLog(t('worker.stop'), 'info');
+        if (result.jobs_completed) {
+          addLog(`${t('worker.jobs_completed')}: ${result.jobs_completed}`, 'success');
+        }
+      } catch (e) {
+        addLog(e.detail || e.message, 'error');
+        setWorkerStatus('error');
+      }
     }
   };
 
   const statusColor = {
     idle: 'text-gray-400',
     running: 'text-green-400',
+    stopping: 'text-yellow-400',
     error: 'text-red-400',
   };
 
   const statusIcon = {
     idle: <Clock size={16} />,
     running: <Activity size={16} className="animate-pulse" />,
+    stopping: <Loader2 size={16} className="animate-spin" />,
     error: <AlertCircle size={16} />,
   };
 
@@ -130,50 +182,45 @@ function WorkerPage() {
           </h2>
         </div>
 
-        {/* Web mode notice */}
-        {!isElectron && (
-          <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 text-yellow-300 text-sm">
-            <AlertCircle size={16} className="inline mr-2" />
-            {t('worker.web_mode_notice')}
-          </div>
-        )}
-
         {/* Worker Control */}
-        {isElectron && (
-          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className={`flex items-center gap-2 ${statusColor[workerStatus]}`}>
-                  {statusIcon[workerStatus]}
-                  {t(`worker.status_${workerStatus}`)}
+        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className={`flex items-center gap-2 ${statusColor[workerStatus] || 'text-gray-400'}`}>
+                {statusIcon[workerStatus] || <Clock size={16} />}
+                {t(`worker.status_${workerStatus}`)}
+              </span>
+              {!isElectron && workerStatus === 'running' && jobsCompleted > 0 && (
+                <span className="text-xs text-green-400 font-mono">
+                  {t('worker.jobs_completed')}: {jobsCompleted}
                 </span>
-                {workerStatus !== 'running' && getServerUrl() && (
-                  <span className="text-xs text-gray-500 truncate max-w-[200px]">
-                    {getServerUrl()}
-                  </span>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleStart}
-                  disabled={workerStatus === 'running' || !getAccessToken()}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-green-700 hover:bg-green-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Play size={14} fill="currentColor" />
-                  {t('worker.start')}
-                </button>
-                <button
-                  onClick={handleStop}
-                  disabled={workerStatus !== 'running'}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-red-700 hover:bg-red-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Square size={14} />
-                  {t('worker.stop')}
-                </button>
-              </div>
+              )}
+              {isElectron && workerStatus !== 'running' && getServerUrl() && (
+                <span className="text-xs text-gray-500 truncate max-w-[200px]">
+                  {getServerUrl()}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleStart}
+                disabled={workerStatus === 'running' || workerStatus === 'stopping' || (isElectron && !getAccessToken())}
+                className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-green-700 hover:bg-green-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Play size={14} fill="currentColor" />
+                {t('worker.start')}
+              </button>
+              <button
+                onClick={handleStop}
+                disabled={workerStatus !== 'running'}
+                className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-red-700 hover:bg-red-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Square size={14} />
+                {t('worker.stop')}
+              </button>
             </div>
           </div>
-        )}
+        </div>
 
         {/* Queue Stats */}
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
