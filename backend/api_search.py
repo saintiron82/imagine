@@ -133,6 +133,7 @@ def format_result(result: dict) -> dict:
     path_exists = bool(resolved_path and Path(resolved_path).exists())
 
     formatted = {
+        "id": result.get("id"),            # File ID (used for web-mode thumbnail/detail URLs)
         "path": resolved_path or db_path,  # Backward-compatible field used by UI
         "db_path": db_path,                # Original DB path (stable key for metadata)
         "resolved_path": resolved_path,    # Local resolved path (may equal db_path)

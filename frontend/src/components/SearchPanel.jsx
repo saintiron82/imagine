@@ -6,7 +6,7 @@ import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
 import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl } from '../services/bridge';
-import { isElectron } from '../api/client';
+import { isElectron, getServerUrl } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
@@ -190,17 +190,19 @@ const MetadataModal = ({ metadata, onClose }) => {
                                         </div>
                                     )}
                                 </div>
-                                {/* File Actions */}
-                                <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
-                                    <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
-                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
-                                        <FolderOpen size={12} /> {t('action.show_in_folder')}
-                                    </button>
-                                    <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
-                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
-                                        <ExternalLink size={12} /> {t('action.open_file')}
-                                    </button>
-                                </div>
+                                {/* File Actions (Electron only) */}
+                                {isElectron && (
+                                    <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
+                                        <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                            <FolderOpen size={12} /> {t('action.show_in_folder')}
+                                        </button>
+                                        <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                            <ExternalLink size={12} /> {t('action.open_file')}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -446,11 +448,10 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu }) => {
     };
 
     // Prefer DB thumbnail (always generated during Process), fallback to native preview
-    const thumbnailSrc = result.thumbnail_path
-        ? toFileUrl(result.thumbnail_path)
-        : canPreviewNatively
-            ? toFileUrl(localPath)
-            : null;
+    // Web mode: use server API for thumbnails (file:// URLs are blocked in browsers)
+    const thumbnailSrc = isElectron
+        ? (result.thumbnail_path ? toFileUrl(result.thumbnail_path) : canPreviewNatively ? toFileUrl(localPath) : null)
+        : getThumbnailUrl(result.thumbnail_path, result.id);
 
     return (
         <div
@@ -516,22 +517,24 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu }) => {
             <div className="p-3 flex-1 min-h-0 overflow-hidden flex flex-col">
                 <div className="flex items-center gap-1">
                     <div className="text-sm font-medium text-white truncate flex-1">{fileName}</div>
-                    <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(localPath); }}
-                            className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
-                            title={t('action.show_in_folder')}
-                        >
-                            <FolderOpen size={14} />
-                        </button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(localPath); }}
-                            className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
-                            title={t('action.open_file')}
-                        >
-                            <ExternalLink size={14} />
-                        </button>
-                    </div>
+                    {isElectron && (
+                        <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(localPath); }}
+                                className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                                title={t('action.show_in_folder')}
+                            >
+                                <FolderOpen size={14} />
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(localPath); }}
+                                className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                                title={t('action.open_file')}
+                            >
+                                <ExternalLink size={14} />
+                            </button>
+                        </div>
+                    )}
                 </div>
                 {result.folder_path && (
                     <div className="text-[10px] text-gray-500 truncate mt-0.5" title={localPath || dbPath}>
