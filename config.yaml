@@ -145,6 +145,36 @@ search:
   threshold:
     text_vec: 0.15
     visual: 0.05
+server:
+  enabled: false                    # true to start FastAPI server mode
+  host: 0.0.0.0
+  port: 8000
+  workers: 4                        # uvicorn worker count
+  cors_origins:
+    - "http://localhost:9274"       # Vite dev server
+    - "http://localhost:3000"       # Web production
+  auth:
+    jwt_secret: "change-this-secret-in-production"
+    access_token_expire_minutes: 15
+    refresh_token_expire_days: 7
+  storage:
+    mode: server_upload             # server_upload | shared_fs
+    upload_dir: ./uploads           # For server_upload mode
+    thumbnail_dir: ./thumbnails     # Server-side thumbnail storage
+    max_file_size_mb: 500
+  queue:
+    assignment_timeout_minutes: 30  # Reassign if no progress
+    max_retries: 3
+    claim_batch_size: 10            # Max jobs per claim request
+
+# Worker daemon settings (for distributed pipeline clients)
+worker:
+  server_url: "http://localhost:8000"   # Override with IMAGINE_SERVER_URL env var
+  email: ""                              # Override with IMAGINE_WORKER_EMAIL env var
+  password: ""                           # Override with IMAGINE_WORKER_PASSWORD env var
+  claim_batch_size: 5                    # Jobs to claim per poll
+  poll_interval_seconds: 30              # Wait time when no jobs available
+
 storage:
   path_style: posix
 thumbnail:

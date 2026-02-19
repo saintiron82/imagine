@@ -85,10 +85,12 @@ class SQLiteDB:
                 self._migrate_structure_table()
                 self._ensure_system_meta()
                 self._ensure_fts()
+                self._migrate_auth_tables()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
                 self._ensure_system_meta()
+                self._migrate_auth_tables()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -122,6 +124,21 @@ class SQLiteDB:
             )
         """)
         self.conn.commit()
+
+    def _migrate_auth_tables(self):
+        """Create auth & job queue tables for client-server mode if missing."""
+        if self._table_exists('users'):
+            return  # Already migrated
+
+        logger.info("Migrating: creating auth & job queue tables...")
+        auth_schema_path = Path(__file__).parent / "sqlite_schema_auth.sql"
+        if auth_schema_path.exists():
+            with open(auth_schema_path, encoding='utf-8') as f:
+                self.conn.executescript(f.read())
+            self.conn.commit()
+            logger.info("✅ Auth & job queue tables created")
+        else:
+            logger.warning(f"⚠️ Auth schema file not found: {auth_schema_path}")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""
