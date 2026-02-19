@@ -5,6 +5,8 @@ import SettingsModal from './SettingsModal';
 import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
+import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl } from '../services/bridge';
+import { isElectron } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
@@ -55,8 +57,8 @@ const MetadataModal = ({ metadata, onClose }) => {
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(async () => {
             try {
-                await window.electron.metadata.updateUserData(
-                    metadata.file_path, editedData
+                await updateUserMeta(
+                    isElectron ? metadata.file_path : metadata.id, editedData
                 );
                 Object.assign(metadata, editedData);
             } catch (err) {
@@ -831,11 +833,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     // Load DB stats on mount and when pipeline/discover refresh signal changes.
     useEffect(() => {
-        if (window.electron?.pipeline?.getDbStats) {
-            window.electron.pipeline.getDbStats()
-                .then(stats => { if (stats.success) setDbStats(stats); })
-                .catch(() => { });
-        }
+        bridgeGetDbStats()
+            .then(stats => { if (stats.success !== false) setDbStats(stats); })
+            .catch(() => { });
     }, [reloadSignal]);
 
     // Handle initial search trigger (e.g. from FileGrid context menu)
@@ -863,7 +863,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                         queryFileId,
                         mode
                     };
-                    const response = await window.electron.pipeline.searchVector(searchOptions);
+                    const response = await searchImages(searchOptions);
                     if (response.success) {
                         setResults(response.results);
                         setCurrentLimit(20);
@@ -909,7 +909,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     queryFileId: fileId,
                     mode
                 };
-                const response = await window.electron.pipeline.searchVector(searchOptions);
+                const response = await searchImages(searchOptions);
                 if (response.success) {
                     setResults(response.results);
                     setCurrentLimit(20);
@@ -977,7 +977,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 searchOptions.mode = 'triaxis';
             }
 
-            const response = await window.electron.pipeline.searchVector(searchOptions);
+            const response = await searchImages(searchOptions);
 
             if (response.success) {
                 setResults(response.results);
@@ -1042,7 +1042,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 }
             }
 
-            const response = await window.electron.pipeline.searchVector(searchOptions);
+            const response = await searchImages(searchOptions);
 
             if (response.success) {
                 setCurrentLimit(nextLimit);
@@ -1078,11 +1078,12 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setShowSettings(true);
     }, []);
 
-    const handleShowMeta = useCallback(async (filePath) => {
-        const meta = await window.electron?.pipeline?.readMetadata(filePath);
-        if (meta) {
-            setMetadata(meta);
-        }
+    const handleShowMeta = useCallback(async (filePathOrId) => {
+        try {
+            const result = await getFileDetail(filePathOrId);
+            const meta = result?.file || result;
+            if (meta) setMetadata(meta);
+        } catch { /* ignore */ }
     }, []);
 
     const hasActiveFilters = Object.values(activeFilters).some(v => v);
