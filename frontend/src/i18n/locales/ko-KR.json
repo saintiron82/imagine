@@ -257,5 +257,19 @@
   "admin.discover_files_here": "개 파일",
   "admin.discover_empty": "빈 디렉토리",
   "admin.discover_scan_result": "{discovered}개 발견, {jobs}개 작업 생성, {skipped}개 건너뜀",
-  "msg.logged_in_as": "{name}(으)로 로그인됨"
+  "msg.logged_in_as": "{name}(으)로 로그인됨",
+  "tab.worker": "워커",
+  "worker.title": "워커 제어",
+  "worker.status_idle": "대기 중",
+  "worker.status_running": "실행 중",
+  "worker.status_error": "오류",
+  "worker.start": "워커 시작",
+  "worker.stop": "워커 중지",
+  "worker.queue_stats": "큐 통계",
+  "worker.current_jobs": "현재 작업",
+  "worker.recent_log": "최근 로그",
+  "worker.no_jobs": "활성 작업 없음",
+  "worker.claimed": "{count}개 작업 수령",
+  "worker.web_mode_notice": "워커는 Electron 앱이 필요합니다. 데스크톱 앱에서 작업을 처리하세요.",
+  "worker.connecting": "서버 연결 중..."
 }

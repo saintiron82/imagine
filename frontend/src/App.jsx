@@ -8,14 +8,15 @@ import ResumeDialog from './components/ResumeDialog';
 import ImportDbDialog from './components/ImportDbDialog';
 import LoginPage from './pages/LoginPage';
 import AdminPage from './pages/AdminPage';
-import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, Settings, LogOut, User } from 'lucide-react';
+import WorkerPage from './pages/WorkerPage';
+import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, Settings, LogOut, User, Server } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
   const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout } = useAuth();
-  const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archive' | 'admin'
+  const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archive' | 'worker' | 'admin'
   const [currentPath, setCurrentPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [logs, setLogs] = useState([]);
@@ -464,6 +465,20 @@ function App() {
             <span>{t('tab.archive')}</span>
           </button>
 
+          {/* Worker tab (authenticated users) */}
+          {!skipAuth && isAuthenticated && (
+            <button
+              onClick={() => setCurrentTab('worker')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'worker'
+                ? 'bg-emerald-700 text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+            >
+              <Server size={16} />
+              <span>{t('tab.worker')}</span>
+            </button>
+          )}
+
           {/* Admin tab (admin users only, web mode) */}
           {isAdmin && !skipAuth && (
             <button
@@ -592,6 +607,8 @@ function App() {
           <div className="flex-1 overflow-hidden">
             {currentTab === 'admin' && isAdmin ? (
               <AdminPage />
+            ) : currentTab === 'worker' ? (
+              <WorkerPage />
             ) : currentTab === 'search' ? (
               <SearchPanel
                 onScanFolder={handleScanFolders}

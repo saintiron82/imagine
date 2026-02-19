@@ -257,5 +257,19 @@
   "admin.discover_files_here": "files in this folder",
   "admin.discover_empty": "Empty directory",
   "admin.discover_scan_result": "Found {discovered} files, {jobs} jobs created, {skipped} skipped",
-  "msg.logged_in_as": "Logged in as {name}"
+  "msg.logged_in_as": "Logged in as {name}",
+  "tab.worker": "Worker",
+  "worker.title": "Worker Control",
+  "worker.status_idle": "Idle",
+  "worker.status_running": "Running",
+  "worker.status_error": "Error",
+  "worker.start": "Start Worker",
+  "worker.stop": "Stop Worker",
+  "worker.queue_stats": "Queue Statistics",
+  "worker.current_jobs": "Current Jobs",
+  "worker.recent_log": "Recent Log",
+  "worker.no_jobs": "No active jobs",
+  "worker.claimed": "Claimed {count} jobs",
+  "worker.web_mode_notice": "Worker requires Electron app. Use the desktop app to process jobs.",
+  "worker.connecting": "Connecting to server..."
 }
