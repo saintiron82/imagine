@@ -274,5 +274,12 @@
   "worker.connecting": "서버 연결 중...",
   "worker.server_url": "서버 URL",
   "worker.username": "사용자명",
-  "worker.password": "비밀번호"
+  "worker.password": "비밀번호",
+  "server.mode": "서버",
+  "server.start": "서버 시작",
+  "server.stop": "서버 중지",
+  "server.running": "{url}에서 실행 중",
+  "server.stopped": "중지됨",
+  "server.copy_url": "URL 복사",
+  "server.port": "포트"
 }

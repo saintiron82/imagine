@@ -1322,6 +1322,98 @@ ipcMain.handle('worker-status', async () => {
     return { status: 'running' };
 });
 
+// ── Server Mode (embedded FastAPI) ────────────────────────────────
+// Allows Electron app to run a local FastAPI server so other clients can connect.
+let serverProc = null;
+let serverMainWindow = null;
+
+ipcMain.handle('server-start', async (event, opts) => {
+    if (serverProc) return { success: false, error: 'Server already running' };
+
+    const finalPython = resolvePython();
+    const port = opts?.port || 8000;
+
+    serverMainWindow = BrowserWindow.fromWebContents(event.sender);
+
+    console.log(`[Server] Starting FastAPI on port ${port}...`);
+
+    serverProc = spawn(finalPython, [
+        '-m', 'uvicorn', 'backend.server.app:app',
+        '--host', '0.0.0.0', '--port', String(port),
+    ], {
+        cwd: projectRoot,
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    serverProc.stdout.on('data', (chunk) => {
+        const msg = chunk.toString().trim();
+        if (msg) {
+            console.log('[Server:stdout]', msg);
+            try {
+                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                    serverMainWindow.webContents.send('server-log', { message: msg, type: 'info' });
+                }
+            } catch (e) { /* window may be closed */ }
+        }
+    });
+
+    serverProc.stderr.on('data', (chunk) => {
+        const msg = chunk.toString().trim();
+        if (msg) {
+            console.log('[Server:stderr]', msg);
+            try {
+                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                    // uvicorn logs to stderr by default
+                    const type = /\bERROR\b|Traceback|Exception:/i.test(msg) ? 'error' : 'info';
+                    serverMainWindow.webContents.send('server-log', { message: msg, type });
+                }
+            } catch (e) { /* window may be closed */ }
+        }
+    });
+
+    serverProc.on('close', (code) => {
+        console.log(`[Server] Process exited (code: ${code})`);
+        serverProc = null;
+        try {
+            if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                serverMainWindow.webContents.send('server-status-change', { running: false });
+            }
+        } catch (e) { /* ignore */ }
+    });
+
+    serverProc.on('error', (err) => {
+        console.error('[Server] Spawn error:', err);
+        serverProc = null;
+    });
+
+    return { success: true, port };
+});
+
+ipcMain.handle('server-stop', async () => {
+    if (!serverProc) return { success: true };
+    try {
+        serverProc.kill('SIGTERM');
+    } catch (e) { /* ignore */ }
+    // Force kill after 5s if still alive
+    const proc = serverProc;
+    setTimeout(() => {
+        try { proc?.kill('SIGKILL'); } catch (e) { /* already dead */ }
+    }, 5000);
+    serverProc = null;
+    return { success: true };
+});
+
+ipcMain.handle('server-status', async () => {
+    return { running: !!serverProc };
+});
+
+function killServerProc() {
+    if (!serverProc) return;
+    try { serverProc.kill('SIGTERM'); } catch (e) { /* ignore */ }
+    serverProc = null;
+}
+
 // ── Window creation (pure UI — no IPC registration) ──────────────
 
 function createWindow() {
@@ -1419,6 +1511,7 @@ app.on('before-quit', () => {
     killActivePipeline();
     killSearchDaemon();
     killWorkerProc();
+    killServerProc();
 });
 
 // Ensure daemon cleanup on unexpected termination signals
@@ -1426,6 +1519,7 @@ process.on('SIGINT', () => {
     killActivePipeline();
     killSearchDaemon();
     killWorkerProc();
+    killServerProc();
     app.quit();
 });
 
@@ -1433,5 +1527,6 @@ process.on('SIGTERM', () => {
     killActivePipeline();
     killSearchDaemon();
     killWorkerProc();
+    killServerProc();
     app.quit();
 });

@@ -9,9 +9,10 @@ import ImportDbDialog from './components/ImportDbDialog';
 import LoginPage from './pages/LoginPage';
 import AdminPage from './pages/AdminPage';
 import WorkerPage from './pages/WorkerPage';
-import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, Settings, LogOut, User, Server } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
+import { isElectron } from './api/client';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
@@ -48,6 +49,10 @@ function App() {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showDbMenu, setShowDbMenu] = useState(false);
   const [folderStatsVersion, setFolderStatsVersion] = useState(0);
+
+  // Server mode state (Electron only)
+  const [serverRunning, setServerRunning] = useState(false);
+  const [serverPort, setServerPort] = useState(8000);
 
   const MAX_LOGS = 200;
 
@@ -254,6 +259,34 @@ function App() {
       }
     };
   }, []);
+
+  // Server mode IPC listeners (Electron only)
+  useEffect(() => {
+    if (!isElectron || !window.electron?.server) return;
+    // Check initial status
+    window.electron.server.getStatus().then(s => setServerRunning(s.running));
+    // Listen for status changes (e.g. server process exit)
+    window.electron.server.onStatusChange((data) => setServerRunning(data.running));
+    return () => window.electron.server.offStatusChange();
+  }, []);
+
+  const handleServerToggle = async () => {
+    if (!isElectron) return;
+    if (serverRunning) {
+      await window.electron.server.stop();
+      setServerRunning(false);
+    } else {
+      const result = await window.electron.server.start({ port: serverPort });
+      if (result.success) {
+        setServerRunning(true);
+      }
+    }
+  };
+
+  const getLocalIp = () => {
+    // Simple heuristic — return hostname for display
+    return `${window.location.hostname || 'localhost'}:${serverPort}`;
+  };
 
   const handleFolderSelect = (path) => {
     setCurrentPath(path);
@@ -549,6 +582,38 @@ function App() {
               </>
             )}
           </div>
+
+          {/* Server Mode Toggle (Electron only) */}
+          {isElectron && (
+            <>
+              <div className="w-px h-6 bg-gray-600 mx-1" />
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleServerToggle}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                    serverRunning
+                      ? 'bg-green-700/60 text-green-300 hover:bg-green-600/60'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  }`}
+                  title={serverRunning ? t('server.stop') : t('server.start')}
+                >
+                  <Monitor size={14} />
+                  <span>{t('server.mode')}</span>
+                  <Power size={12} className={serverRunning ? 'text-green-400' : 'text-gray-500'} />
+                </button>
+                {serverRunning && (
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(`http://localhost:${serverPort}`)}
+                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] text-green-400 hover:bg-green-900/30 transition-colors"
+                    title={t('server.copy_url')}
+                  >
+                    <span className="font-mono">:{serverPort}</span>
+                    <Copy size={10} />
+                  </button>
+                )}
+              </div>
+            </>
+          )}
 
           {/* Language Switcher */}
           <div className="w-px h-6 bg-gray-600 mx-1" />

@@ -14,6 +14,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 # Ensure project root is in path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -53,6 +55,7 @@ app.add_middleware(
 async def startup():
     logger.info("Imagine Server starting up...")
     # DB will be lazily initialized on first request via get_db()
+    _create_default_admin()
 
 
 @app.on_event("shutdown")
@@ -84,6 +87,50 @@ app.include_router(upload_router, prefix="/api/v1")
 def health():
     """Health check endpoint."""
     return {"status": "ok", "version": "4.0.0"}
+
+
+# ── Default admin account ────────────────────────────────────
+
+def _create_default_admin():
+    """Create default admin account if no users exist (first startup)."""
+    try:
+        from backend.server.deps import get_db
+        db = get_db()
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users")
+        count = cursor.fetchone()[0]
+        if count == 0:
+            import bcrypt
+            password_hash = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
+            cursor.execute(
+                """INSERT INTO users (username, email, password_hash, role, is_active)
+                   VALUES (?, ?, ?, 'admin', 1)""",
+                ("admin", "admin@localhost", password_hash)
+            )
+            db.conn.commit()
+            logger.info("Created default admin account (admin / admin)")
+    except Exception as e:
+        logger.warning(f"Could not create default admin: {e}")
+
+
+# ── SPA Static Serving (React frontend) ─────────────────────
+
+DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
+
+if DIST_DIR.exists():
+    # Serve static assets (JS, CSS, images, fonts)
+    assets_dir = DIST_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="static-assets")
+
+    # SPA fallback: non-API routes → index.html
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve React SPA — static files or index.html fallback."""
+        file_path = DIST_DIR / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(DIST_DIR / "index.html"))
 
 
 # ── CLI entry point ──────────────────────────────────────────

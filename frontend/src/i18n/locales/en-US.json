@@ -274,5 +274,12 @@
   "worker.connecting": "Connecting to server...",
   "worker.server_url": "Server URL",
   "worker.username": "Username",
-  "worker.password": "Password"
+  "worker.password": "Password",
+  "server.mode": "Server",
+  "server.start": "Start Server",
+  "server.stop": "Stop Server",
+  "server.running": "Running on {url}",
+  "server.stopped": "Stopped",
+  "server.copy_url": "Copy URL",
+  "server.port": "Port"
 }

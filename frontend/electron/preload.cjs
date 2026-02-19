@@ -122,6 +122,17 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('metadata:updateUserData', filePath, updates)
     },
 
+    // Server Mode (embedded FastAPI)
+    server: {
+        start: (opts) => ipcRenderer.invoke('server-start', opts),
+        stop: () => ipcRenderer.invoke('server-stop'),
+        getStatus: () => ipcRenderer.invoke('server-status'),
+        onLog: (cb) => ipcRenderer.on('server-log', (_, data) => cb(data)),
+        offLog: () => ipcRenderer.removeAllListeners('server-log'),
+        onStatusChange: (cb) => ipcRenderer.on('server-status-change', (_, data) => cb(data)),
+        offStatusChange: () => ipcRenderer.removeAllListeners('server-status-change'),
+    },
+
     // Worker Daemon (server-mode job processing)
     worker: {
         start: (opts) => ipcRenderer.invoke('worker-start', opts),

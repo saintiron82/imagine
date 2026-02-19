@@ -41,7 +41,7 @@ def get_refresh_token_days() -> int:
 
 def get_cors_origins() -> List[str]:
     cfg = get_server_config()
-    return cfg.get("cors_origins", ["http://localhost:9274"])
+    return cfg.get("cors_origins", ["http://localhost:9274", "http://localhost:8000"])
 
 
 def get_storage_config() -> dict:
