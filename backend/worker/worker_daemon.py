@@ -51,8 +51,12 @@ def _signal_handler(signum, frame):
     _shutdown = True
 
 
-signal.signal(signal.SIGINT, _signal_handler)
-signal.signal(signal.SIGTERM, _signal_handler)
+try:
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+except ValueError:
+    # signal only works in main thread — skip when imported from embedded worker
+    pass
 
 
 class WorkerDaemon:
