@@ -65,3 +65,23 @@ class UserUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
     quota_files_per_day: Optional[int] = None
     quota_search_per_min: Optional[int] = None
+
+
+class WorkerTokenCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    expires_in_days: Optional[int] = Field(30, ge=1, le=365)
+
+
+class WorkerTokenResponse(BaseModel):
+    id: int
+    name: str
+    token: Optional[str] = None  # Only shown on creation
+    created_by: Optional[int] = None
+    is_active: bool = True
+    expires_at: Optional[str] = None
+    created_at: Optional[str] = None
+    last_used_at: Optional[str] = None
+
+
+class WorkerTokenExchange(BaseModel):
+    token: str

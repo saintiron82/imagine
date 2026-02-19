@@ -87,11 +87,13 @@ class SQLiteDB:
                 self._ensure_system_meta()
                 self._ensure_fts()
                 self._migrate_auth_tables()
+                self._migrate_worker_tokens()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
                 self._ensure_system_meta()
                 self._migrate_auth_tables()
+                self._migrate_worker_tokens()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -140,6 +142,27 @@ class SQLiteDB:
             logger.info("✅ Auth & job queue tables created")
         else:
             logger.warning(f"⚠️ Auth schema file not found: {auth_schema_path}")
+
+    def _migrate_worker_tokens(self):
+        """Create worker_tokens table if missing (added in v4.7)."""
+        if self._table_exists('worker_tokens'):
+            return
+        logger.info("Migrating: creating worker_tokens table...")
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS worker_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_hash TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                is_active INTEGER DEFAULT 1,
+                expires_at TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                last_used_at TEXT
+            )
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_tokens_hash ON worker_tokens(token_hash)")
+        self.conn.commit()
+        logger.info("✅ worker_tokens table created")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

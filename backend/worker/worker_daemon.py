@@ -90,6 +90,28 @@ class WorkerDaemon:
         logger.info("Tokens injected from existing session")
         return True
 
+    def exchange_worker_token(self, token_secret: str) -> bool:
+        """Exchange a worker token for JWT access/refresh tokens."""
+        try:
+            resp = self.session.post(
+                f"{self.server_url}/api/v1/auth/worker-token",
+                json={"token": token_secret},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                self.access_token = data["access_token"]
+                self.refresh_token = data.get("refresh_token")
+                self._worker_token_secret = token_secret
+                self.session.headers["Authorization"] = f"Bearer {self.access_token}"
+                logger.info("Worker token exchanged successfully")
+                return True
+            else:
+                logger.error(f"Worker token exchange failed: {resp.status_code} {resp.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Worker token exchange request failed: {e}")
+            return False
+
     def login(self) -> bool:
         """Authenticate with the server and get JWT tokens."""
         creds = get_worker_credentials()
@@ -117,8 +139,12 @@ class WorkerDaemon:
             return False
 
     def _refresh_auth(self) -> bool:
-        """Refresh the access token using the refresh token."""
+        """Refresh the access token using the refresh token or worker token."""
         if not self.refresh_token:
+            # Try worker token re-exchange if available
+            wt = getattr(self, '_worker_token_secret', None)
+            if wt:
+                return self.exchange_worker_token(wt)
             return self.login()
 
         try:
@@ -134,9 +160,15 @@ class WorkerDaemon:
                 logger.info("Token refreshed")
                 return True
             else:
-                logger.warning("Token refresh failed, re-logging in...")
+                logger.warning("Token refresh failed, re-authenticating...")
+                wt = getattr(self, '_worker_token_secret', None)
+                if wt:
+                    return self.exchange_worker_token(wt)
                 return self.login()
         except Exception:
+            wt = getattr(self, '_worker_token_secret', None)
+            if wt:
+                return self.exchange_worker_token(wt)
             return self.login()
 
     def _authed_request(self, method: str, url: str, **kwargs):
@@ -482,9 +514,29 @@ class WorkerDaemon:
 
 
 def main():
-    """CLI entry point."""
+    """CLI entry point with optional --server/--token args."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Imagine Worker Daemon")
+    parser.add_argument("--server", type=str, help="Server URL (e.g., http://192.168.1.10:8000)")
+    parser.add_argument("--token", type=str, help="Worker token (from admin panel)")
+    args = parser.parse_args()
+
     daemon = WorkerDaemon()
-    daemon.run()
+
+    if args.server:
+        daemon.server_url = args.server
+        daemon.uploader.server_url = args.server
+
+    if args.token:
+        # Exchange worker token for JWT
+        if not daemon.exchange_worker_token(args.token):
+            logger.error("Worker token exchange failed. Exiting.")
+            sys.exit(1)
+        daemon.run()
+    else:
+        # Default: use env/config credentials
+        daemon.run()
 
 
 if __name__ == "__main__":

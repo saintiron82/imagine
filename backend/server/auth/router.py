@@ -12,7 +12,7 @@ from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user
 from backend.server.auth.schemas import (
     RegisterRequest, LoginRequest, RefreshRequest,
-    TokenResponse, UserResponse,
+    TokenResponse, UserResponse, WorkerTokenExchange,
 )
 from backend.server.auth.jwt import (
     create_access_token, create_refresh_token,
@@ -212,6 +212,66 @@ def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db)):
     return TokenResponse(
         access_token=access_token,
         refresh_token=new_refresh_token,
+    )
+
+
+@router.post("/worker-token", response_model=TokenResponse)
+def exchange_worker_token(req: WorkerTokenExchange, db: SQLiteDB = Depends(get_db)):
+    """Exchange a worker token secret for JWT access/refresh tokens."""
+    import hashlib
+
+    token_hash = hashlib.sha256(req.token.encode()).hexdigest()
+
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """SELECT wt.id, wt.is_active, wt.expires_at, wt.created_by,
+                  u.id, u.username, u.role, u.is_active
+           FROM worker_tokens wt
+           JOIN users u ON u.id = wt.created_by
+           WHERE wt.token_hash = ?""",
+        (token_hash,)
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=401, detail="Invalid worker token")
+
+    wt_id, wt_active, wt_expires, created_by, user_id, username, role, user_active = row
+
+    if not wt_active:
+        raise HTTPException(status_code=401, detail="Worker token has been revoked")
+
+    if not user_active:
+        raise HTTPException(status_code=403, detail="Token owner account is deactivated")
+
+    if wt_expires:
+        from datetime import datetime, timezone
+        exp = datetime.fromisoformat(wt_expires.replace("Z", "+00:00"))
+        if exp < datetime.now(timezone.utc):
+            raise HTTPException(status_code=401, detail="Worker token has expired")
+
+    # Update last_used_at
+    cursor.execute(
+        "UPDATE worker_tokens SET last_used_at = datetime('now') WHERE id = ?",
+        (wt_id,)
+    )
+
+    # Generate JWT tokens (1 hour access, standard refresh)
+    access_token = create_access_token(user_id, username, role, expires_minutes=60)
+    refresh_token = create_refresh_token()
+
+    cursor.execute(
+        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+           VALUES (?, ?, ?)""",
+        (user_id, hash_refresh_token(refresh_token),
+         get_refresh_token_expiry().isoformat())
+    )
+
+    db.conn.commit()
+    logger.info(f"Worker token exchanged for user {username} (token ID: {wt_id})")
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
     )
 
 

@@ -47,6 +47,17 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     revoked INTEGER DEFAULT 0        -- boolean: 0/1
 );
 
+CREATE TABLE IF NOT EXISTS worker_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT UNIQUE NOT NULL,  -- SHA256 of token secret
+    name TEXT NOT NULL,               -- Human-readable label (e.g. "김철수 GPU PC")
+    created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    is_active INTEGER DEFAULT 1,      -- boolean: 0/1
+    expires_at TEXT,                   -- ISO 8601
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT
+);
+
 -- ═══════════════════════════════════════════════════════════════
 -- Job Queue (distributed processing)
 -- ═══════════════════════════════════════════════════════════════
@@ -87,6 +98,7 @@ CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_worker_tokens_hash ON worker_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
 CREATE INDEX IF NOT EXISTS idx_job_queue_assigned ON job_queue(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority DESC, created_at ASC);

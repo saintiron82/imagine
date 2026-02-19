@@ -47,3 +47,17 @@ export async function browseFolders(path = '/') {
 export async function scanFolder(folderPath, priority = 0) {
   return apiClient.post('/api/v1/discover/scan', { folder_path: folderPath, priority });
 }
+
+// ── Worker Tokens ────────────────────────────────────────
+
+export async function createWorkerToken({ name, expires_in_days = 30 } = {}) {
+  return apiClient.post('/api/v1/admin/worker-tokens', { name, expires_in_days });
+}
+
+export async function listWorkerTokens() {
+  return apiClient.get('/api/v1/admin/worker-tokens');
+}
+
+export async function revokeWorkerToken(tokenId) {
+  return apiClient.delete(`/api/v1/admin/worker-tokens/${tokenId}`);
+}

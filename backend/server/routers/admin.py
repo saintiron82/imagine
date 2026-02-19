@@ -15,8 +15,9 @@ from backend.server.deps import get_db, require_admin, get_current_user
 from backend.server.auth.schemas import (
     InviteCodeCreate, InviteCodeResponse,
     UserResponse, UserUpdateRequest,
+    WorkerTokenCreate, WorkerTokenResponse,
 )
-from backend.server.auth.jwt import create_access_token, create_refresh_token
+from backend.server.auth.jwt import create_access_token, create_refresh_token, hash_refresh_token
 
 logger = logging.getLogger(__name__)
 
@@ -219,3 +220,78 @@ def get_embedded_worker_status(
     """Get embedded worker status (any authenticated user)."""
     from backend.server.embedded_worker import get_status
     return get_status()
+
+
+# ── Worker Tokens ─────────────────────────────────────────────
+
+@router.post("/worker-tokens", response_model=WorkerTokenResponse)
+def create_worker_token(
+    req: WorkerTokenCreate,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Create a worker token for external workers (admin only)."""
+    import hashlib
+
+    token_secret = "WK_" + secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token_secret.encode()).hexdigest()
+
+    expires_at = None
+    if req.expires_in_days:
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(days=req.expires_in_days)
+        ).isoformat()
+
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """INSERT INTO worker_tokens (token_hash, name, created_by, expires_at)
+           VALUES (?, ?, ?, ?)""",
+        (token_hash, req.name, admin["id"], expires_at)
+    )
+    db.conn.commit()
+    token_id = cursor.lastrowid
+
+    logger.info(f"Admin {admin['username']} created worker token: {req.name}")
+    return WorkerTokenResponse(
+        id=token_id, name=req.name, token=token_secret,
+        created_by=admin["id"], expires_at=expires_at,
+    )
+
+
+@router.get("/worker-tokens", response_model=List[WorkerTokenResponse])
+def list_worker_tokens(
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """List all worker tokens (admin only). Token secrets are NOT shown."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """SELECT id, name, created_by, is_active, expires_at, created_at, last_used_at
+           FROM worker_tokens ORDER BY created_at DESC"""
+    )
+    return [
+        WorkerTokenResponse(
+            id=row[0], name=row[1], created_by=row[2],
+            is_active=bool(row[3]), expires_at=row[4],
+            created_at=row[5], last_used_at=row[6],
+        )
+        for row in cursor.fetchall()
+    ]
+
+
+@router.delete("/worker-tokens/{token_id}")
+def revoke_worker_token(
+    token_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Revoke a worker token (admin only)."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "UPDATE worker_tokens SET is_active = 0 WHERE id = ?", (token_id,)
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Worker token not found")
+    db.conn.commit()
+    logger.info(f"Admin {admin['username']} revoked worker token {token_id}")
+    return {"success": True}
