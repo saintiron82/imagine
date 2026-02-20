@@ -3,12 +3,14 @@ Platform Detection and Optimal Backend Selection
 
 Automatically determines the best vision backend based on:
 - Operating system (Windows/Mac/Linux)
-- Available software (vLLM, Ollama)
+- Available software (MLX, vLLM, Ollama)
 - Hardware capabilities (VRAM, GPU)
 
 v3.1: Cross-platform optimization for ImageParser
 - Windows: Ollama (sequential processing)
 - Mac/Linux: vLLM or Ollama (batch processing capable)
+v6.4: MLX backend support for Apple Silicon
+- Darwin: MLX (native Apple Silicon) > vLLM > Ollama > Transformers
 """
 
 import platform
@@ -93,14 +95,60 @@ def is_ollama_available() -> bool:
         return False
 
 
+def is_mlx_available() -> bool:
+    """
+    Check if MLX framework is available (Apple Silicon only).
+
+    Returns:
+        True if mlx can be imported (macOS Apple Silicon)
+    """
+    if platform.system() != 'Darwin':
+        logger.debug("MLX not available: non-Darwin platform")
+        return False
+
+    try:
+        import mlx.core
+        logger.debug("MLX framework available")
+        return True
+    except ImportError:
+        logger.debug("MLX not available: mlx package not installed")
+        return False
+
+
+def is_mlx_vlm_available() -> bool:
+    """
+    Check if mlx-vlm package is available for vision-language models.
+
+    Returns:
+        True if mlx_vlm can be imported
+    """
+    if not is_mlx_available():
+        return False
+
+    try:
+        import mlx_vlm
+        logger.debug(f"mlx-vlm available")
+        return True
+    except ImportError:
+        logger.debug("mlx-vlm not available: package not installed")
+        return False
+
+
 def get_optimal_backend(tier: str = 'ultra') -> str:
     """
     Determine optimal vision backend for current platform.
 
     Decision logic:
-        Mac/Linux:
+        Darwin (macOS):
+            1. MLX (if available) - native Apple Silicon, best performance
+            2. vLLM (if available) - batch processing
+            3. Ollama (fallback) - stable but slower
+            4. Transformers (last resort)
+
+        Linux:
             1. vLLM (if available) - best batch performance
             2. Ollama (fallback) - stable but slower
+            3. Transformers (last resort)
 
         Windows:
             1. Ollama (only option) - sequential processing
@@ -110,14 +158,29 @@ def get_optimal_backend(tier: str = 'ultra') -> str:
         tier: AI tier name ('standard', 'pro', 'ultra')
 
     Returns:
-        'vllm', 'ollama', or 'transformers'
+        'mlx', 'vllm', 'ollama', or 'transformers'
     """
     system = platform.system()
 
     logger.info(f"Detecting optimal backend for {system} (tier: {tier})")
 
-    # Mac/Linux: vLLM preferred for batch processing
-    if system in ['Darwin', 'Linux']:
+    if system == 'Darwin':
+        # macOS: MLX preferred for native Apple Silicon performance
+        if is_mlx_vlm_available():
+            logger.info("[OK] MLX available - native Apple Silicon acceleration")
+            return 'mlx'
+        elif is_vllm_available():
+            logger.info("[OK] vLLM available - batch processing")
+            return 'vllm'
+        elif is_ollama_available():
+            logger.info("[OK] Ollama available (MLX/vLLM not installed)")
+            return 'ollama'
+        else:
+            logger.warning("[WARNING] No accelerated backend available, falling back to Transformers")
+            return 'transformers'
+
+    elif system == 'Linux':
+        # Linux: vLLM preferred for batch processing
         if is_vllm_available():
             logger.info("[OK] vLLM available - optimal batch processing")
             return 'vllm'
@@ -167,7 +230,11 @@ def get_optimal_batch_size(backend: str, tier: str = 'ultra') -> int:
     Returns:
         Recommended batch size
     """
-    if backend == 'vllm':
+    if backend == 'mlx':
+        # MLX: sequential processing (single image is already fast)
+        return 1
+
+    elif backend == 'vllm':
         # vLLM supports excellent batch processing
         batch_sizes = {
             'standard': 8,
@@ -212,6 +279,8 @@ def get_platform_recommendations() -> Dict[str, Any]:
     optimal_batch_size = get_optimal_batch_size(optimal_backend)
 
     available = []
+    if is_mlx_vlm_available():
+        available.append('mlx')
     if is_vllm_available():
         available.append('vllm')
     if is_ollama_available():
@@ -230,13 +299,13 @@ def get_platform_recommendations() -> Dict[str, Any]:
     if optimal_backend == 'transformers':
         warnings.append(
             "Falling back to Transformers. "
-            "For better performance, install Ollama or vLLM (Mac/Linux only)."
+            "For better performance, install MLX (Mac) or vLLM (Mac/Linux)."
         )
 
-    if system == 'Darwin' and 'vllm' not in available:
+    if system == 'Darwin' and 'mlx' not in available:
         warnings.append(
-            "Mac detected: vLLM not installed. "
-            "Install vLLM for 3-5x faster batch processing: pip install vllm"
+            "Mac detected: MLX not installed. "
+            "Install mlx-vlm for native Apple Silicon acceleration: pip install mlx-vlm"
         )
 
     return {

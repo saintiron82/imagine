@@ -181,6 +181,81 @@ def pull_ollama_models(tier_name=None):
 
     return True
 
+def check_mlx():
+    """Check if MLX and mlx-vlm are available (macOS only)."""
+    if platform.system() != 'Darwin':
+        return False, "MLX is only available on macOS"
+
+    try:
+        import mlx.core
+        mlx_ok = True
+    except ImportError:
+        return False, "MLX not installed (pip install mlx)"
+
+    try:
+        import mlx_vlm
+        return True, "MLX + mlx-vlm available"
+    except ImportError:
+        return False, "mlx-vlm not installed (pip install mlx-vlm)"
+
+
+def check_mlx_model():
+    """Check if MLX VLM model is cached."""
+    if platform.system() != 'Darwin':
+        return False, "N/A (non-macOS)"
+
+    try:
+        tier_name, tier_config = _get_tier_config()
+        vlm_config = tier_config.get("vlm", {})
+
+        # Check for darwin-specific MLX model
+        backends = vlm_config.get("backends", {})
+        darwin_config = backends.get("darwin", {})
+        mlx_model = darwin_config.get("model", "")
+
+        if not mlx_model or darwin_config.get("backend") != "mlx":
+            return False, "No MLX model configured for this tier"
+
+        # Check HuggingFace cache for MLX model
+        cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+        safe_name = mlx_model.replace("/", "--")
+        model_dirs = list(cache_dir.glob(f"models--{safe_name}"))
+        cached = len(model_dirs) > 0
+        return cached, mlx_model
+    except Exception:
+        return False, "unknown"
+
+
+def download_mlx_model():
+    """Download MLX VLM model for Apple Silicon."""
+    if platform.system() != 'Darwin':
+        logger.info("Skipping MLX model download (non-macOS platform)")
+        return True
+
+    tier_name, tier_config = _get_tier_config()
+    vlm_config = tier_config.get("vlm", {})
+    backends = vlm_config.get("backends", {})
+    darwin_config = backends.get("darwin", {})
+    mlx_model = darwin_config.get("model", "")
+
+    if not mlx_model or darwin_config.get("backend") != "mlx":
+        logger.info("No MLX model configured for current tier, skipping")
+        return True
+
+    logger.info(f"Downloading MLX VLM model ({tier_name} tier): {mlx_model}")
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(mlx_model)
+        logger.info(f"  MLX model downloaded: {mlx_model}")
+        return True
+    except ImportError:
+        logger.warning("huggingface_hub not installed, MLX model will download on first use")
+        return True
+    except Exception as e:
+        logger.warning(f"MLX model download failed: {e} (will download on first use)")
+        return True
+
+
 def install_packages():
     """Install packages via pip."""
     logger.info("Installing dependencies...")
@@ -336,6 +411,8 @@ def main():
         ollama_ok, ollama_models = check_ollama()
         ollama_models_ok, required_models, missing_models = check_ollama_models()
         gpu_ok, gpu_msg = check_gpu()
+        mlx_ok, mlx_msg = check_mlx()
+        mlx_model_ok, mlx_model_name = check_mlx_model()
         tier_name, _ = _get_tier_config()
 
         result = {
@@ -351,6 +428,10 @@ def main():
             "ollama_models_ok": ollama_models_ok,
             "ollama_required": required_models,
             "ollama_missing": missing_models,
+            "mlx_available": mlx_ok,
+            "mlx_message": mlx_msg,
+            "mlx_model_cached": mlx_model_ok,
+            "mlx_model": mlx_model_name,
             "gpu": gpu_msg,
             "gpu_available": gpu_ok,
             "tier": tier_name,
@@ -369,6 +450,9 @@ def main():
         logger.info(f"sqlite-vec Extension: {'✅ ' + sqlitevec_msg if sqlitevec_ok else '❌ ' + sqlitevec_msg}")
         logger.info(f"Ollama Running:       {'✅ Yes' if ollama_ok else '❌ No'}")
         logger.info(f"Ollama Models:        {'✅ Ready' if ollama_models_ok else '❌ Missing: ' + ', '.join(missing_models)}")
+        if platform.system() == 'Darwin':
+            logger.info(f"MLX Framework:        {'✅ ' + mlx_msg if mlx_ok else '❌ ' + mlx_msg}")
+            logger.info(f"MLX VLM Model:        {'✅ ' + mlx_model_name if mlx_model_ok else '❌ ' + mlx_model_name}")
         logger.info(f"GPU:                  {gpu_msg}")
         logger.info("="*80)
 
@@ -422,6 +506,10 @@ def main():
             logger.warning("⚠️ Ollama is not running - skipping model pull")
             logger.warning("   Install Ollama: https://ollama.com/download")
             logger.warning("   Then run: python backend/setup/installer.py --setup-ollama")
+
+        # 5. Download MLX model (macOS only)
+        if platform.system() == 'Darwin':
+            download_mlx_model()
 
         logger.info("\n✅ Full setup complete!")
         return

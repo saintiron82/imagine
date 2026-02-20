@@ -2,10 +2,12 @@
 Vision Analyzer Factory - Environment-based adapter selection.
 
 Automatically chooses between:
+- MLX (Apple Silicon): Native acceleration, best performance on Mac
 - Transformers (development): High accuracy, requires GPU/CPU resources
 - Ollama (deployment): Memory-efficient, automatic model management
 
 v3.1: Supports 3-Tier architecture (Standard/Pro/Ultra) with automatic VRAM detection.
+v6.4: MLX backend for native Apple Silicon acceleration.
 """
 
 import os
@@ -19,10 +21,12 @@ from PIL import Image
 from backend.utils.tier_config import get_active_tier
 
 # v3.1.1: Platform-specific optimization
+# v6.4: MLX backend detection
 from backend.utils.platform_detector import (
     get_optimal_backend,
     get_optimal_batch_size,
-    get_platform_info
+    get_platform_info,
+    is_mlx_vlm_available,
 )
 
 # Load environment variables
@@ -99,6 +103,24 @@ class VisionAnalyzerFactory:
                 logger.info(f"[OK] Platform detector selected: {backend}")
 
         # Backend instantiation
+        if backend == 'mlx':
+            logger.info(f"Using MLX vision backend (tier: {tier_name})")
+
+            # MLX is only supported on macOS Apple Silicon
+            if platform.system() != 'Darwin':
+                logger.error("MLX is only supported on macOS. Falling back to Transformers.")
+                backend = 'transformers'
+            else:
+                from .mlx_adapter import MLXVisionAdapter
+
+                model = model or vlm_config.get("model") or "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+
+                cls._cached_analyzer = MLXVisionAdapter(
+                    model=model,
+                    tier_name=tier_name
+                )
+                return cls._cached_analyzer
+
         if backend == 'vllm':
             logger.info(f"Using vLLM vision backend (tier: {tier_name})")
 
