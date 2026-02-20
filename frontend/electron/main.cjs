@@ -1327,14 +1327,24 @@ ipcMain.handle('worker-status', async () => {
 let serverProc = null;
 let serverMainWindow = null;
 
-ipcMain.handle('server-start', async (event, opts) => {
+/** Load config.yaml and return parsed config object (or null on error). */
+function loadAppConfig() {
+    try {
+        const yaml = require('js-yaml');
+        const configPath = path.join(projectRoot, 'config.yaml');
+        if (!fs.existsSync(configPath)) return null;
+        return yaml.load(fs.readFileSync(configPath, 'utf8'));
+    } catch (e) {
+        console.error('[Config] Failed to load config.yaml:', e.message);
+        return null;
+    }
+}
+
+/** Start embedded FastAPI server. Returns { success, port } or { success: false, error }. */
+function startEmbeddedServer(port = 8000) {
     if (serverProc) return { success: false, error: 'Server already running' };
 
     const finalPython = resolvePython();
-    const port = opts?.port || 8000;
-
-    serverMainWindow = BrowserWindow.fromWebContents(event.sender);
-
     console.log(`[Server] Starting FastAPI on port ${port}...`);
 
     serverProc = spawn(finalPython, [
@@ -1388,6 +1398,39 @@ ipcMain.handle('server-start', async (event, opts) => {
     });
 
     return { success: true, port };
+}
+
+/** Poll /api/v1/health until server responds or timeout. */
+async function waitForServerReady(port = 8000, timeoutMs = 30000) {
+    const http = require('http');
+    const start = Date.now();
+    const interval = 500;
+
+    while (Date.now() - start < timeoutMs) {
+        try {
+            await new Promise((resolve, reject) => {
+                const req = http.get(`http://127.0.0.1:${port}/api/v1/health`, (res) => {
+                    if (res.statusCode === 200) resolve();
+                    else reject(new Error(`Status ${res.statusCode}`));
+                    res.resume();
+                });
+                req.on('error', reject);
+                req.setTimeout(2000, () => { req.destroy(); reject(new Error('timeout')); });
+            });
+            console.log(`[Server] Ready on port ${port}`);
+            return true;
+        } catch {
+            await new Promise(r => setTimeout(r, interval));
+        }
+    }
+    console.warn(`[Server] Timed out waiting for server on port ${port}`);
+    return false;
+}
+
+ipcMain.handle('server-start', async (event, opts) => {
+    const port = opts?.port || 8000;
+    serverMainWindow = BrowserWindow.fromWebContents(event.sender);
+    return startEmbeddedServer(port);
 });
 
 ipcMain.handle('server-stop', async () => {
@@ -1447,7 +1490,7 @@ function createWindow() {
 
 app.setName('Imagine');
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     // Set macOS dock icon
     if (process.platform === 'darwin' && app.dock) {
         const { nativeImage } = require('electron');
@@ -1461,6 +1504,26 @@ app.whenReady().then(() => {
 
     // Kill any orphaned search daemons from previous crashed sessions
     cleanupOrphanDaemons();
+
+    // ── Auto-start embedded server in server mode ──
+    const config = loadAppConfig();
+    const appMode = config?.app?.mode;
+
+    if (appMode === 'server') {
+        const port = config?.server?.port || 8000;
+        console.log('[App] Server mode detected — auto-starting FastAPI...');
+        const result = startEmbeddedServer(port);
+        if (result.success) {
+            const ready = await waitForServerReady(port);
+            if (ready) {
+                console.log('[App] Embedded server is ready.');
+            } else {
+                console.warn('[App] Server started but health check timed out. Continuing anyway...');
+            }
+        } else {
+            console.error('[App] Failed to start embedded server:', result.error);
+        }
+    }
 
     // Do NOT start search daemon here — it starts lazily on first search
     createWindow();
