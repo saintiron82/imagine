@@ -113,6 +113,10 @@ contextBridge.exposeInMainWorld('electron', {
         scanFolder: (folderPath, priority) =>
             ipcRenderer.invoke('queue-scan-folder', { folderPath, priority }),
         getStats: () => ipcRenderer.invoke('queue-stats'),
+        listJobs: (opts) => ipcRenderer.invoke('queue-list-jobs', opts || {}),
+        cancelJob: (jobId) => ipcRenderer.invoke('queue-cancel-job', { jobId }),
+        retryFailed: () => ipcRenderer.invoke('queue-retry-failed'),
+        clearCompleted: () => ipcRenderer.invoke('queue-clear-completed'),
     },
 
     // DB Import/Export

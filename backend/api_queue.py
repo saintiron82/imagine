@@ -127,6 +127,54 @@ def get_stats():
         return {"success": False, "error": str(e)}
 
 
+def list_jobs(status=None, limit=50, offset=0):
+    """List jobs with optional filtering and pagination."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        result = queue.list_jobs(status=status, limit=limit, offset=offset)
+        db.close()
+        return {"success": True, **result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def cancel_job(job_id):
+    """Cancel a job."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        success = queue.cancel_job(job_id)
+        db.close()
+        return {"success": success}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def retry_failed():
+    """Retry all failed jobs."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        count = queue.retry_failed_jobs()
+        db.close()
+        return {"success": True, "retried": count}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def clear_completed():
+    """Clear all completed jobs."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        count = queue.clear_completed_jobs()
+        db.close()
+        return {"success": True, "deleted": count}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(json.dumps({"success": False, "error": "No command specified"}))
@@ -142,6 +190,20 @@ if __name__ == "__main__":
         result = scan_folder(data.get("folder_path", ""), data.get("priority", 0))
     elif cmd == "stats":
         result = get_stats()
+    elif cmd == "list-jobs":
+        data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
+        result = list_jobs(
+            status=data.get("status"),
+            limit=data.get("limit", 50),
+            offset=data.get("offset", 0),
+        )
+    elif cmd == "cancel-job":
+        data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
+        result = cancel_job(data.get("job_id", 0))
+    elif cmd == "retry-failed":
+        result = retry_failed()
+    elif cmd == "clear-completed":
+        result = clear_completed()
     else:
         result = {"success": False, "error": f"Unknown command: {cmd}"}
 

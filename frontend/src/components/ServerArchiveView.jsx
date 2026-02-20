@@ -4,23 +4,23 @@ import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
 import { MyWorkersSection } from '../pages/WorkerPage';
+import QueueManagerPanel from './QueueManagerPanel';
 import FolderInfoBar from './FolderInfoBar';
 import FileGrid from './FileGrid';
 
 function QueueStatusBar({ appMode, reloadSignal }) {
   const { t } = useLocale();
   const [expanded, setExpanded] = useState(false);
+  const [showWorkers, setShowWorkers] = useState(false);
   const [stats, setStats] = useState(null);
 
   const fetchStats = useCallback(async () => {
     try {
-      // Server mode Electron: use IPC (bypass HTTP auth)
       if (isElectron && window.electron?.queue) {
         const data = await window.electron.queue.getStats();
         if (data.success !== false) setStats(data);
         return;
       }
-      // Web mode: use HTTP API
       const data = await getJobStats();
       if (data.success !== false) setStats(data);
     } catch { /* ignore */ }
@@ -32,7 +32,6 @@ function QueueStatusBar({ appMode, reloadSignal }) {
     return () => clearInterval(interval);
   }, [fetchStats]);
 
-  // Refresh on reloadSignal (after queue registration)
   useEffect(() => {
     if (reloadSignal > 0) fetchStats();
   }, [reloadSignal, fetchStats]);
@@ -59,7 +58,6 @@ function QueueStatusBar({ appMode, reloadSignal }) {
             <span className="text-xs font-semibold text-gray-300">{t('archive.queue_dashboard')}</span>
           </div>
 
-          {/* Inline stats chips */}
           {stats && (
             <div className="flex items-center gap-2">
               {pending > 0 && (
@@ -112,32 +110,28 @@ function QueueStatusBar({ appMode, reloadSignal }) {
         </div>
       </button>
 
-      {/* Expanded: detailed grid + workers */}
+      {/* Expanded: QueueManagerPanel + Workers */}
       {expanded && (
-        <div className="px-4 pb-3 space-y-3 border-t border-gray-700/50">
-          {/* Queue Stats Grid */}
-          {stats && (
-            <div className="pt-2">
-              <div className="grid grid-cols-6 gap-2">
-                {[
-                  { key: 'pending', value: pending, color: 'text-yellow-400' },
-                  { key: 'assigned', value: assigned, color: 'text-blue-400' },
-                  { key: 'processing', value: processing, color: 'text-cyan-400' },
-                  { key: 'completed', value: completed, color: 'text-green-400' },
-                  { key: 'failed', value: failed, color: 'text-red-400' },
-                  { key: 'total', value: total, color: 'text-gray-300' },
-                ].map(({ key, value, color }) => (
-                  <div key={key} className="text-center">
-                    <div className={`text-sm font-bold ${color}`}>{value}</div>
-                    <div className="text-[10px] text-gray-500">{t(`admin.queue_${key}`)}</div>
-                  </div>
-                ))}
-              </div>
+        <div className="px-4 pb-3 border-t border-gray-700/50">
+          <QueueManagerPanel stats={stats} onRefresh={fetchStats} />
+
+          {/* Workers toggle (server mode only) */}
+          {appMode === 'server' && (
+            <div className="mt-2 pt-2 border-t border-gray-700/30">
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowWorkers(!showWorkers); }}
+                className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-300 transition-colors"
+              >
+                <Users size={11} />
+                <span>{t('worker.my_workers_title')}</span>
+                {showWorkers
+                  ? <ChevronUp size={10} className="text-gray-500" />
+                  : <ChevronDown size={10} className="text-gray-500" />
+                }
+              </button>
+              {showWorkers && <MyWorkersSection />}
             </div>
           )}
-
-          {/* Connected Workers (server mode only, Electron) */}
-          {appMode === 'server' && <MyWorkersSection />}
         </div>
       )}
     </div>
@@ -158,7 +152,6 @@ export default function ServerArchiveView({
 }) {
   return (
     <div className="h-full flex flex-col">
-      {/* Queue Status Bar - always visible at TOP */}
       <QueueStatusBar appMode={appMode} reloadSignal={queueReloadSignal} />
 
       <FolderInfoBar

@@ -38,6 +38,26 @@ export async function getJobStats() {
   return apiClient.get('/api/v1/jobs/stats');
 }
 
+export async function listJobs(status = null, limit = 20, offset = 0) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  return apiClient.get(`/api/v1/jobs/list?${params.toString()}`);
+}
+
+export async function cancelJob(jobId) {
+  return apiClient.patch(`/api/v1/jobs/${jobId}/cancel`);
+}
+
+export async function retryFailedJobs() {
+  return apiClient.post('/api/v1/admin/jobs/retry-failed');
+}
+
+export async function clearCompletedJobs() {
+  return apiClient.delete('/api/v1/admin/jobs/clear-completed');
+}
+
 // ── Discover (server filesystem) ────────────────────────
 
 export async function browseFolders(path = '/') {

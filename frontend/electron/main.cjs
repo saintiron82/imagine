@@ -549,6 +549,22 @@ ipcMain.handle('queue-stats', async () => {
     return spawnQueueCmd('stats');
 });
 
+ipcMain.handle('queue-list-jobs', async (_, { status, limit, offset }) => {
+    return spawnQueueCmd('list-jobs', { status: status || null, limit: limit || 50, offset: offset || 0 });
+});
+
+ipcMain.handle('queue-cancel-job', async (_, { jobId }) => {
+    return spawnQueueCmd('cancel-job', { job_id: jobId });
+});
+
+ipcMain.handle('queue-retry-failed', async () => {
+    return spawnQueueCmd('retry-failed');
+});
+
+ipcMain.handle('queue-clear-completed', async () => {
+    return spawnQueueCmd('clear-completed');
+});
+
 // IPC Handler: Incomplete Stats (for resume dialog on startup)
 ipcMain.handle('get-incomplete-stats', async () => {
     const finalPython = resolvePython();

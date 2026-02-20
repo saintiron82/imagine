@@ -206,6 +206,93 @@ class JobQueueManager:
             "failed": status_counts.get("failed", 0),
         }
 
+    def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """List all jobs with optional status filter and pagination."""
+        cursor = self.db.conn.cursor()
+
+        # Total count
+        if status:
+            cursor.execute("SELECT COUNT(*) FROM job_queue WHERE status = ?", (status,))
+        else:
+            cursor.execute("SELECT COUNT(*) FROM job_queue")
+        total = cursor.fetchone()[0]
+
+        # Fetch page
+        if status:
+            cursor.execute(
+                """SELECT id, file_path, status, phase_completed, priority,
+                          error_message, retry_count, created_at, started_at, completed_at
+                   FROM job_queue
+                   WHERE status = ?
+                   ORDER BY created_at DESC
+                   LIMIT ? OFFSET ?""",
+                (status, limit, offset)
+            )
+        else:
+            cursor.execute(
+                """SELECT id, file_path, status, phase_completed, priority,
+                          error_message, retry_count, created_at, started_at, completed_at
+                   FROM job_queue
+                   ORDER BY created_at DESC
+                   LIMIT ? OFFSET ?""",
+                (limit, offset)
+            )
+        jobs = [
+            {
+                "job_id": row[0],
+                "file_path": row[1],
+                "status": row[2],
+                "phase_completed": json.loads(row[3] or "{}"),
+                "priority": row[4],
+                "error_message": row[5],
+                "retry_count": row[6],
+                "created_at": row[7],
+                "started_at": row[8],
+                "completed_at": row[9],
+            }
+            for row in cursor.fetchall()
+        ]
+        return {"jobs": jobs, "total": total}
+
+    def cancel_job(self, job_id: int) -> bool:
+        """Cancel a job (only pending/assigned/failed)."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """UPDATE job_queue SET status = 'cancelled', assigned_to = NULL
+               WHERE id = ? AND status IN ('pending', 'assigned', 'failed')""",
+            (job_id,)
+        )
+        self.db.conn.commit()
+        success = cursor.rowcount > 0
+        if success:
+            logger.info(f"Job {job_id} cancelled")
+        return success
+
+    def retry_failed_jobs(self) -> int:
+        """Retry all failed jobs by resetting them to pending."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """UPDATE job_queue
+               SET status = 'pending', retry_count = 0,
+                   error_message = NULL, assigned_to = NULL, assigned_at = NULL
+               WHERE status = 'failed'"""
+        )
+        self.db.conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.info(f"Retried {count} failed jobs")
+        return count
+
+    def clear_completed_jobs(self) -> int:
+        """Delete all completed jobs."""
+        cursor = self.db.conn.cursor()
+        cursor.execute("DELETE FROM job_queue WHERE status = 'completed'")
+        self.db.conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.info(f"Cleared {count} completed jobs")
+        return count
+
     def get_user_jobs(self, user_id: int) -> List[Dict[str, Any]]:
         """Get jobs assigned to or completed by a user."""
         cursor = self.db.conn.cursor()

@@ -355,6 +355,56 @@ def cleanup_stale_jobs(
     return {"success": True, "reassigned": count}
 
 
+@router.get("/api/v1/jobs/list")
+def list_all_jobs(
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db),
+):
+    """List all jobs with optional status filter and pagination."""
+    queue = _get_queue(db)
+    result = queue.list_jobs(status=status, limit=min(limit, 100), offset=offset)
+    return {"success": True, **result}
+
+
+@router.patch("/api/v1/jobs/{job_id}/cancel")
+def cancel_job(
+    job_id: int,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Cancel a pending/assigned/failed job."""
+    queue = _get_queue(db)
+    success = queue.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Job cannot be cancelled (may be processing or already completed)")
+    return {"success": True}
+
+
+@router.post("/api/v1/admin/jobs/retry-failed")
+def retry_failed_jobs(
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Retry all failed jobs by resetting them to pending (admin only)."""
+    queue = _get_queue(db)
+    count = queue.retry_failed_jobs()
+    return {"success": True, "retried": count}
+
+
+@router.delete("/api/v1/admin/jobs/clear-completed")
+def clear_completed_jobs(
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Delete all completed jobs (admin only)."""
+    queue = _get_queue(db)
+    count = queue.clear_completed_jobs()
+    return {"success": True, "deleted": count}
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 def _decode_vector(encoded: Optional[str]) -> Optional[np.ndarray]:
