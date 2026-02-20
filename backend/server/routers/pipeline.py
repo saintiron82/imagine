@@ -181,9 +181,9 @@ SUPPORTED_EXTENSIONS = {'.psd', '.png', '.jpg', '.jpeg'}
 @router.get("/api/v1/discover/browse")
 def browse_folders(
     path: str = "/",
-    admin: dict = Depends(require_admin),
+    user: dict = Depends(get_current_user),
 ):
-    """Browse server filesystem directories (admin only).
+    """Browse server filesystem directories (authenticated users).
 
     Returns subdirectories and count of supported image files.
     """
@@ -206,7 +206,7 @@ def browse_folders(
                     1 for f in entry.iterdir()
                     if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
                 )
-                dirs.append({"name": entry.name, "files_count": sub_count})
+                dirs.append({"name": entry.name, "path": str(entry), "files_count": sub_count})
             elif entry.is_file() and entry.suffix.lower() in SUPPORTED_EXTENSIONS:
                 files_count += 1
     except PermissionError:

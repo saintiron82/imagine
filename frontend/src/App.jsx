@@ -104,6 +104,12 @@ function App() {
       if (window.electron.fs) {
         setCurrentPath(window.electron.fs.getHomeDir());
       }
+    } else {
+      // Web mode: start at server root
+      setCurrentPath('/');
+    }
+
+    if (window.electron) {
 
       if (window.electron.pipeline) {
         // Stable log listener - feeds StatusBar (never removed mid-session)

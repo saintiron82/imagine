@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare } from 'lucide-react';
 import { useLocale } from '../i18n';
+import { isElectron } from '../api/client';
+import { browseFolders } from '../api/admin';
 
 /** Aggregate phase stats for entries whose storage_root starts with prefix */
 function aggregateStats(phaseStats, folderPath) {
@@ -55,9 +57,18 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
     const loadChildren = async () => {
         setIsLoading(true);
         try {
-            if (window.electron && window.electron.fs) {
+            if (isElectron && window.electron?.fs) {
                 const items = await window.electron.fs.listDir(path);
                 const folders = items.filter(item => item.isDirectory);
+                setChildren(folders);
+            } else {
+                // Web mode: browse server filesystem via API
+                const data = await browseFolders(path);
+                const folders = (data.dirs || []).map(d => ({
+                    name: d.name,
+                    path: d.path,
+                    isDirectory: true,
+                }));
                 setChildren(folders);
             }
         } catch (err) {
