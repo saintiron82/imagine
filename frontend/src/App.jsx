@@ -711,7 +711,7 @@ function App() {
             {currentTab === 'admin' && isAdmin ? (
               <AdminPage />
             ) : currentTab === 'worker' ? (
-              <WorkerPage />
+              <WorkerPage appMode={appMode} />
             ) : currentTab === 'search' ? (
               <SearchPanel
                 onScanFolder={handleScanFolders}

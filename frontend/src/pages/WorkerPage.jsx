@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2, Download, Copy, CheckCircle, Monitor, Cpu } from 'lucide-react';
+import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2, Download, Copy, CheckCircle, Monitor, Cpu, Sliders, Zap } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { apiClient, isElectron, getServerUrl, getAccessToken, getRefreshToken } from '../api/client';
 import { getJobStats } from '../api/worker';
@@ -172,7 +172,129 @@ function ConnectMyPC() {
 }
 
 
-function WorkerPage() {
+function PerformanceLimits({ t }) {
+  const maxCpuCores = navigator.hardwareConcurrency || 8;
+  const [batchSize, setBatchSize] = useState(5);
+  const [gpuLimit, setGpuLimit] = useState(100);
+  const [cpuCores, setCpuCores] = useState(Math.max(1, Math.floor(maxCpuCores / 2)));
+  const [saved, setSaved] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  // Load settings from config.yaml
+  useEffect(() => {
+    if (!isElectron) { setLoaded(true); return; }
+    const load = async () => {
+      try {
+        const result = await window.electron?.pipeline?.getConfig();
+        if (result?.success) {
+          const w = result.config?.worker || {};
+          if (w.claim_batch_size) setBatchSize(w.claim_batch_size);
+          if (w.gpu_memory_percent != null) setGpuLimit(w.gpu_memory_percent);
+          if (w.cpu_cores != null) setCpuCores(w.cpu_cores);
+        }
+      } catch (e) { console.error('Failed to load worker config:', e); }
+      setLoaded(true);
+    };
+    load();
+  }, []);
+
+  const saveSettings = useCallback(async (key, value) => {
+    if (!isElectron) return;
+    try {
+      await window.electron.pipeline.updateConfig(key, value);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e) { console.error('Failed to save worker setting:', e); }
+  }, []);
+
+  if (!loaded) return null;
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+      <h3 className="text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
+        <Sliders size={14} className="text-purple-400" />
+        {t('worker.perf_title')}
+        {saved && <span className="text-xs text-green-400 ml-auto">{t('worker.perf_saved')}</span>}
+      </h3>
+      <p className="text-xs text-gray-500 mb-4">{t('worker.perf_desc')}</p>
+
+      <div className="space-y-4">
+        {/* Batch Size */}
+        <div>
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-xs text-gray-400">{t('worker.perf_batch_size')}</label>
+            <span className="text-xs font-mono text-yellow-300">{batchSize}</span>
+          </div>
+          <input
+            type="range" min="1" max="20" step="1" value={batchSize}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setBatchSize(v);
+              saveSettings('worker.claim_batch_size', v);
+            }}
+            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+          />
+          <div className="flex justify-between text-[10px] text-gray-600 mt-0.5">
+            <span>1</span>
+            <span className="text-gray-500">{t('worker.perf_batch_desc')}</span>
+            <span>20</span>
+          </div>
+        </div>
+
+        {/* GPU Memory Limit */}
+        <div>
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-xs text-gray-400">{t('worker.perf_gpu_limit')}</label>
+            <span className="text-xs font-mono text-cyan-300">
+              {gpuLimit >= 100 ? t('worker.perf_unlimited') : `${gpuLimit}%`}
+            </span>
+          </div>
+          <input
+            type="range" min="20" max="100" step="10" value={gpuLimit}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setGpuLimit(v);
+              saveSettings('worker.gpu_memory_percent', v);
+            }}
+            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+          />
+          <div className="flex justify-between text-[10px] text-gray-600 mt-0.5">
+            <span>20%</span>
+            <span className="text-gray-500">{t('worker.perf_gpu_desc')}</span>
+            <span>100%</span>
+          </div>
+        </div>
+
+        {/* CPU Cores */}
+        <div>
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-xs text-gray-400">{t('worker.perf_cpu_cores')}</label>
+            <span className="text-xs font-mono text-orange-300">
+              {cpuCores >= maxCpuCores ? `${maxCpuCores} (max)` : `${cpuCores} / ${maxCpuCores}`}
+            </span>
+          </div>
+          <input
+            type="range" min="1" max={maxCpuCores} step="1" value={cpuCores}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setCpuCores(v);
+              saveSettings('worker.cpu_cores', v);
+            }}
+            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
+          />
+          <div className="flex justify-between text-[10px] text-gray-600 mt-0.5">
+            <span>1</span>
+            <span className="text-gray-500">{t('worker.perf_cpu_desc')}</span>
+            <span>{maxCpuCores}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function WorkerPage({ appMode }) {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
   const [workerStatus, setWorkerStatus] = useState('idle'); // idle | running | stopping | error
@@ -390,11 +512,14 @@ function WorkerPage() {
           </div>
         </div>
 
-        {/* My Workers */}
-        <MyWorkersSection />
+        {/* Performance Limits */}
+        <PerformanceLimits t={t} />
 
-        {/* Connect My PC */}
-        <ConnectMyPC />
+        {/* My Workers (server mode only) */}
+        {appMode === 'server' && <MyWorkersSection />}
+
+        {/* Connect My PC (server mode only) */}
+        {appMode === 'server' && <ConnectMyPC />}
 
         {/* Queue Stats */}
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">

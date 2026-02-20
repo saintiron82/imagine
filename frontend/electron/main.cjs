@@ -1523,6 +1523,9 @@ app.whenReady().then(async () => {
         } else {
             console.error('[App] Failed to start embedded server:', result.error);
         }
+    } else if (appMode === 'client') {
+        const serverUrl = config?.app?.server_url;
+        console.log(`[App] Client mode — server: ${serverUrl || '(not configured)'}`);
     }
 
     // Do NOT start search daemon here — it starts lazily on first search
