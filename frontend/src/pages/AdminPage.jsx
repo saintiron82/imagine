@@ -112,6 +112,8 @@ function WorkersPanel() {
   };
 
   const onlineCount = workers.filter(w => w.status === 'online').length;
+  const totalThroughput = workers.reduce((sum, w) => sum + (w.throughput || 0), 0);
+  const totalCompleted = workers.reduce((sum, w) => sum + (w.jobs_completed || 0), 0);
 
   const statusBadge = (status) => {
     const map = {
@@ -153,6 +155,27 @@ function WorkersPanel() {
         </button>
       </div>
 
+      {/* Aggregate stats */}
+      {onlineCount > 0 && (
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
+            <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_total_speed')}</div>
+            <div className="text-xl font-bold text-emerald-400 font-mono">
+              {totalThroughput > 0 ? totalThroughput.toFixed(1) : '-'}
+              {totalThroughput > 0 && <span className="text-xs font-normal text-emerald-400/60 ml-1">{t('admin.queue_files_per_min')}</span>}
+            </div>
+          </div>
+          <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
+            <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_online_count')}</div>
+            <div className="text-xl font-bold text-green-400 font-mono">{onlineCount}</div>
+          </div>
+          <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
+            <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_total_completed')}</div>
+            <div className="text-xl font-bold text-blue-400 font-mono">{totalCompleted}</div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -161,6 +184,7 @@ function WorkersPanel() {
               <th className="text-left px-4 py-3">{t('auth.username')}</th>
               <th className="text-left px-4 py-3">Status</th>
               <th className="text-left px-4 py-3">{t('admin.worker_capacity')}</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_speed')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_jobs_done')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_current_task')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_last_heartbeat')}</th>
@@ -178,6 +202,13 @@ function WorkersPanel() {
                 <td className="px-4 py-3">{statusBadge(w.status)}</td>
                 <td className="px-4 py-3">
                   <span className="font-mono text-yellow-300">B:{w.batch_capacity}</span>
+                </td>
+                <td className="px-4 py-3">
+                  {w.throughput > 0 ? (
+                    <span className="font-mono text-emerald-400">{w.throughput.toFixed(1)}<span className="text-emerald-400/50 text-xs ml-0.5">/m</span></span>
+                  ) : (
+                    <span className="text-gray-600">-</span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-green-400">{w.jobs_completed}</span>

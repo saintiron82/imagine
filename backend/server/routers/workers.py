@@ -204,14 +204,14 @@ def admin_list_workers(
     admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db),
 ):
-    """List all worker sessions (admin only)."""
+    """List all worker sessions (admin only), with per-worker throughput."""
     cursor = db.conn.cursor()
     cursor.execute(
         """SELECT ws.id, ws.worker_name, ws.hostname, ws.status,
                   ws.batch_capacity, ws.jobs_completed, ws.jobs_failed,
                   ws.current_file, ws.current_phase,
                   ws.last_heartbeat, ws.connected_at, ws.disconnected_at,
-                  ws.pending_command, u.username
+                  ws.pending_command, u.username, ws.user_id
            FROM worker_sessions ws
            JOIN users u ON ws.user_id = u.id
            ORDER BY
@@ -219,8 +219,40 @@ def admin_list_workers(
                ws.last_heartbeat DESC
            LIMIT 100"""
     )
+    rows = cursor.fetchall()
+
+    # Per-user throughput: completed jobs in the last 5 minutes by assigned_to
+    cursor.execute(
+        """SELECT assigned_to, COUNT(*) FROM job_queue
+           WHERE status = 'completed'
+             AND completed_at IS NOT NULL
+             AND datetime(completed_at) > datetime('now', '-5 minutes')
+           GROUP BY assigned_to"""
+    )
+    user_recent_5m = dict(cursor.fetchall())
+
+    cursor.execute(
+        """SELECT assigned_to, COUNT(*) FROM job_queue
+           WHERE status = 'completed'
+             AND completed_at IS NOT NULL
+             AND datetime(completed_at) > datetime('now', '-1 minute')
+           GROUP BY assigned_to"""
+    )
+    user_recent_1m = dict(cursor.fetchall())
+
     workers = []
-    for row in cursor.fetchall():
+    for row in rows:
+        user_id = row[14]
+        r1 = user_recent_1m.get(user_id, 0)
+        r5 = user_recent_5m.get(user_id, 0)
+        # Use 1-min if active, otherwise 5-min average
+        if r1 > 0:
+            throughput = float(r1)
+        elif r5 > 0:
+            throughput = round(r5 / 5.0, 1)
+        else:
+            throughput = 0.0
+
         workers.append({
             "id": row[0], "worker_name": row[1], "hostname": row[2],
             "status": row[3], "batch_capacity": row[4],
@@ -229,6 +261,7 @@ def admin_list_workers(
             "last_heartbeat": row[9], "connected_at": row[10],
             "disconnected_at": row[11], "pending_command": row[12],
             "username": row[13],
+            "throughput": throughput,
         })
     return {"workers": workers}
 
