@@ -1,20 +1,28 @@
 """
-Vision Analyzer Factory - Environment-based adapter selection.
+Vision Analyzer Factory - Fallback-chain based adapter selection.
 
 Automatically chooses between:
 - MLX (Apple Silicon): Native acceleration, best performance on Mac
-- Transformers (development): High accuracy, requires GPU/CPU resources
-- Ollama (deployment): Memory-efficient, automatic model management
+- vLLM (Linux/Mac): High-throughput batch processing
+- Ollama (all platforms): Memory-efficient, automatic model management
+- Transformers (all platforms): Universal fallback, always available
 
-v3.1: Supports 3-Tier architecture (Standard/Pro/Ultra) with automatic VRAM detection.
+Backend selection uses an explicit fallback chain:
+  1. Read primary backend from config.yaml (tier + platform)
+  2. Read `fallback` field for next option
+  3. Always append `transformers` as final safety net
+
+v3.1: Supports 3-Tier architecture (Standard/Pro/Ultra).
 v6.4: MLX backend for native Apple Silicon acceleration.
+v8.0: Explicit fallback chain — every platform+tier combination
+      degrades gracefully to transformers.
 """
 
 import os
 import logging
 import platform
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from PIL import Image
 
 # v3.1: Tier-aware configuration
@@ -22,11 +30,14 @@ from backend.utils.tier_config import get_active_tier
 
 # v3.1.1: Platform-specific optimization
 # v6.4: MLX backend detection
+# v8.0: All availability checks for pre-flight validation
 from backend.utils.platform_detector import (
     get_optimal_backend,
     get_optimal_batch_size,
     get_platform_info,
     is_mlx_vlm_available,
+    is_vllm_available,
+    is_ollama_available,
 )
 
 # Load environment variables
@@ -48,123 +59,240 @@ logger = logging.getLogger(__name__)
 
 class VisionAnalyzerFactory:
     """
-    Factory for creating vision analyzers based on environment configuration.
+    Factory for creating vision analyzers with explicit fallback chains.
 
-    Environment Variables:
-        VISION_BACKEND: 'transformers' or 'ollama' (default: 'transformers')
-        VISION_MODEL: Model to use (backend-specific)
+    Uses config.yaml `fallback` field to build an ordered list of backends
+    to try. Always ends with `transformers` as the universal safety net.
+
+    Environment Variables (override only, tier config takes priority):
+        VISION_BACKEND: Force specific backend
+        VISION_MODEL: Force specific model
         OLLAMA_HOST: Ollama server URL (default: http://localhost:11434)
     """
 
     _cached_analyzer = None
 
-    @classmethod
-    def create(cls) -> "BaseVisionAnalyzer":
-        """
-        Create vision analyzer based on environment configuration.
+    # ── Fallback Chain Resolution ────────────────────────────
 
-        v3.1: Uses tier-aware configuration (Standard/Pro/Ultra).
-        v3.1.1: Platform-specific optimization (auto backend selection).
+    @classmethod
+    def _resolve_backend_chain(
+        cls, vlm_config: dict, tier_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Build ordered fallback chain from config.yaml.
+
+        Reads `backend` + `fallback` from platform-specific config.
+        Always appends `transformers` as the final safety net.
 
         Returns:
-            VisionAnalyzer (Transformers), OllamaVisionAdapter, or VLLMAdapter
+            List of dicts: [{"backend": str, "model": str|None, "batch_size": int|None}, ...]
         """
-        # Use cached instance for efficiency
-        if cls._cached_analyzer is not None:
-            return cls._cached_analyzer
+        backend = (
+            vlm_config.get("backend")
+            or os.getenv('VISION_BACKEND')
+            or "transformers"
+        ).lower()
 
-        # v3.1: Load tier configuration
-        tier_name, tier_config = get_active_tier()
-        vlm_config = tier_config.get("vlm", {})
+        chain = []
 
-        # Backend selection: tier config > env var > default
-        # Fix: Tier config should take priority over .env (GUI settings must be respected)
-        backend = vlm_config.get("backend") or os.getenv('VISION_BACKEND') or "transformers"
-        backend = backend.lower()
-
-        # v3.1.1: AUTO mode - platform-specific optimization
-        model = None  # Will be set by platform config or fallback
         if backend == 'auto':
-            current_platform = platform.system().lower()  # 'windows', 'darwin', 'linux'
-
-            logger.info(f"AUTO mode enabled (platform: {current_platform}, tier: {tier_name})")
-
-            # Try platform-specific config first
+            current_platform = platform.system().lower()
             platform_configs = vlm_config.get("backends", {})
+
             if current_platform in platform_configs:
-                platform_config = platform_configs[current_platform]
-                backend = platform_config.get("backend", "ollama")
-                model = platform_config.get("model")
-
-                logger.info(f"[OK] Platform-specific config found: {backend} ({model})")
+                plat_cfg = platform_configs[current_platform]
+                # Primary backend from platform config
+                chain.append({
+                    "backend": plat_cfg.get("backend", "transformers"),
+                    "model": plat_cfg.get("model"),
+                    "batch_size": plat_cfg.get("batch_size"),
+                })
+                # Explicit fallback from config (1 level)
+                fallback = plat_cfg.get("fallback")
+                if fallback:
+                    chain.append({
+                        "backend": fallback,
+                        "model": None,
+                        "batch_size": None,
+                    })
             else:
-                # Fallback to platform detector
-                backend = get_optimal_backend(tier_name)
-                logger.info(f"[OK] Platform detector selected: {backend}")
+                # No platform config — use platform detector
+                detected = get_optimal_backend(tier_name)
+                chain.append({
+                    "backend": detected,
+                    "model": None,
+                    "batch_size": None,
+                })
+        else:
+            # Explicit backend (e.g., standard tier: backend: transformers)
+            chain.append({
+                "backend": backend,
+                "model": vlm_config.get("model"),
+                "batch_size": vlm_config.get("batch_size"),
+            })
 
-        # Backend instantiation
-        if backend == 'mlx':
-            logger.info(f"Using MLX vision backend (tier: {tier_name})")
+        # Always ensure transformers is the final fallback
+        seen = {entry["backend"] for entry in chain}
+        if "transformers" not in seen:
+            chain.append({
+                "backend": "transformers",
+                "model": None,
+                "batch_size": None,
+            })
 
-            # MLX is only supported on macOS Apple Silicon
+        return chain
+
+    # ── Pre-flight Availability Check ────────────────────────
+
+    @staticmethod
+    def _check_backend_available(backend_name: str) -> bool:
+        """
+        Quick pre-flight check before attempting instantiation.
+
+        Returns True if the backend is likely available on this system.
+        """
+        if backend_name == 'mlx':
+            return is_mlx_vlm_available()
+        elif backend_name == 'vllm':
+            return is_vllm_available()
+        elif backend_name == 'ollama':
+            return is_ollama_available()
+        elif backend_name == 'transformers':
+            return True  # Always available (torch is a required dependency)
+        else:
+            return False
+
+    # ── Backend Instantiation ────────────────────────────────
+
+    @classmethod
+    def _instantiate_backend(
+        cls,
+        backend_name: str,
+        entry: Dict[str, Any],
+        vlm_config: dict,
+        tier_name: str,
+    ) -> "BaseVisionAnalyzer":
+        """
+        Create a single backend instance. Raises on failure.
+
+        Args:
+            backend_name: 'mlx', 'vllm', 'ollama', or 'transformers'
+            entry: Chain entry with model/batch_size overrides
+            vlm_config: Full VLM config from tier
+            tier_name: Active tier name
+        """
+        model = entry.get("model") or vlm_config.get("model")
+
+        if backend_name == 'mlx':
             if platform.system() != 'Darwin':
-                logger.error("MLX is only supported on macOS. Falling back to Transformers.")
-                backend = 'transformers'
-            else:
-                from .mlx_adapter import MLXVisionAdapter
+                raise RuntimeError("MLX is only supported on macOS")
+            from .mlx_adapter import MLXVisionAdapter
 
-                model = model or vlm_config.get("model") or "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+            model = model or "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+            return MLXVisionAdapter(model=model, tier_name=tier_name)
 
-                cls._cached_analyzer = MLXVisionAdapter(
-                    model=model,
-                    tier_name=tier_name
-                )
-                return cls._cached_analyzer
-
-        if backend == 'vllm':
-            logger.info(f"Using vLLM vision backend (tier: {tier_name})")
-
-            # Check platform compatibility
+        elif backend_name == 'vllm':
             if platform.system() == 'Windows':
-                logger.error("vLLM is not supported on Windows. Falling back to Ollama.")
-                backend = 'ollama'
-            else:
-                from .vllm_adapter import VLLMAdapter
+                raise RuntimeError("vLLM is not supported on Windows")
+            from .vllm_adapter import VLLMAdapter
 
-                # Model selection
-                model = model or vlm_config.get("model") or os.getenv('VISION_MODEL') or "Qwen/Qwen3-VL-8B-Instruct"
+            model = (
+                model
+                or os.getenv('VISION_MODEL')
+                or "Qwen/Qwen3-VL-8B-Instruct"
+            )
+            return VLLMAdapter(model=model, tier_name=tier_name)
 
-                cls._cached_analyzer = VLLMAdapter(
-                    model=model,
-                    tier_name=tier_name
-                )
-                return cls._cached_analyzer
-
-        if backend == 'ollama':
-            logger.info(f"Using Ollama vision backend (tier: {tier_name})")
+        elif backend_name == 'ollama':
             from .ollama_adapter import OllamaVisionAdapter
 
-            # Fix: Tier-specific model takes priority over env override
-            model = model or vlm_config.get("model") or os.getenv('VISION_MODEL') or "qwen3-vl:4b"
-            cls._cached_analyzer = OllamaVisionAdapter(model=model)
+            model = (
+                model
+                or os.getenv('VISION_MODEL')
+                or "qwen3-vl:4b"
+            )
+            return OllamaVisionAdapter(model=model)
 
-        else:  # transformers (default)
-            logger.info(f"Using Transformers vision backend (tier: {tier_name})")
+        elif backend_name == 'transformers':
             from .analyzer import VisionAnalyzer
 
-            # Fix: Tier-specific model takes priority over env override
-            model = model or vlm_config.get("model") or os.getenv('VISION_MODEL') or "Qwen/Qwen2-VL-2B-Instruct"
+            model = (
+                model
+                or os.getenv('VISION_MODEL')
+                or "Qwen/Qwen2-VL-2B-Instruct"
+            )
             device = vlm_config.get("device") or os.getenv('VISION_DEVICE') or "auto"
             dtype = vlm_config.get("dtype", "float16")
-
-            cls._cached_analyzer = VisionAnalyzer(
+            return VisionAnalyzer(
                 device=device,
                 model_id=model,
                 dtype=dtype,
-                tier_name=tier_name  # v3.1: Pass tier for metadata tracking
+                tier_name=tier_name,
             )
 
-        return cls._cached_analyzer
+        else:
+            raise ValueError(f"Unknown backend: {backend_name}")
+
+    # ── Main Factory Method ──────────────────────────────────
+
+    @classmethod
+    def create(cls) -> "BaseVisionAnalyzer":
+        """
+        Create vision analyzer using fallback chain.
+
+        Builds an ordered list of backends to try, checks availability,
+        and instantiates the first one that succeeds.
+
+        v8.0: Explicit fallback chain — always ends at transformers.
+        """
+        if cls._cached_analyzer is not None:
+            return cls._cached_analyzer
+
+        tier_name, tier_config = get_active_tier()
+        vlm_config = tier_config.get("vlm", {})
+
+        # Build fallback chain
+        chain = cls._resolve_backend_chain(vlm_config, tier_name)
+        chain_names = [e["backend"] for e in chain]
+        logger.info(
+            f"VLM backend chain (tier: {tier_name}): "
+            f"{' → '.join(chain_names)}"
+        )
+
+        # Try each backend in order
+        last_error = None
+        for entry in chain:
+            backend_name = entry["backend"]
+
+            # Pre-flight availability check
+            if not cls._check_backend_available(backend_name):
+                logger.info(
+                    f"[SKIP] {backend_name}: not available, trying next"
+                )
+                continue
+
+            # Attempt instantiation
+            try:
+                analyzer = cls._instantiate_backend(
+                    backend_name, entry, vlm_config, tier_name
+                )
+                logger.info(
+                    f"[OK] VLM backend: {backend_name} (tier: {tier_name})"
+                )
+                cls._cached_analyzer = analyzer
+                return analyzer
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"[FAIL] {backend_name}: {e}, trying next"
+                )
+                continue
+
+        # All backends exhausted
+        raise RuntimeError(
+            f"All VLM backends failed for tier '{tier_name}'. "
+            f"Chain: {chain_names}. Last error: {last_error}"
+        )
 
     @classmethod
     def reset(cls):

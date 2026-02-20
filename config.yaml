@@ -72,6 +72,7 @@ ai_mode:
             backend: ollama
             model: qwen3-vl:8b
             batch_size: 1
+            fallback: transformers
           darwin:
             backend: mlx
             model: mlx-community/Qwen3-VL-8B-Instruct-4bit
@@ -201,4 +202,4 @@ vision:
   require_local_models: true
   temperature: 0.1
 app:
-  mode: server
+  mode:
