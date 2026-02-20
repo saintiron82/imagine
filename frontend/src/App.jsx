@@ -13,7 +13,7 @@ import AppDownloadBanner from './components/AppDownloadBanner';
 import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
-import { isElectron, setServerUrl } from './api/client';
+import { isElectron, setServerUrl, getAccessToken, clearTokens } from './api/client';
 import { registerPaths, scanFolder } from './api/admin';
 
 function App() {
@@ -320,11 +320,31 @@ function App() {
     return () => window.electron.server.offStatusChange();
   }, []);
 
+  // Auto-login to local server for API access (JWT) in server mode
+  useEffect(() => {
+    if (!isElectron || appMode !== 'server' || !serverRunning) return;
+
+    const autoLogin = async () => {
+      try {
+        const url = `http://localhost:${serverPort}`;
+        setServerUrl(url);
+        if (getAccessToken()) return; // already have token
+        await login({ username: 'admin', password: 'admin', serverUrl: url });
+      } catch (e) {
+        console.warn('Server auto-login failed:', e);
+      }
+    };
+
+    const timer = setTimeout(autoLogin, 1000);
+    return () => clearTimeout(timer);
+  }, [serverRunning, appMode, serverPort, login]);
+
   const handleServerToggle = async () => {
     if (!isElectron) return;
     if (serverRunning) {
       await window.electron.server.stop();
       setServerRunning(false);
+      clearTokens(); // clean up JWT when server stops
     } else {
       const result = await window.electron.server.start({ port: serverPort });
       if (result.success) {
@@ -624,8 +644,8 @@ function App() {
             </button>
           )}
 
-          {/* Admin tab (admin users only, non-skipAuth modes) */}
-          {isAdmin && !skipAuth && (
+          {/* Admin tab (server mode always, web/client only when authenticated) */}
+          {isAdmin && (appMode === 'server' || !skipAuth) && (
             <button
               onClick={() => setCurrentTab('admin')}
               className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'admin'
