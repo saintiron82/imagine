@@ -100,6 +100,15 @@ function App() {
     }
   };
 
+  const handleModeReset = async () => {
+    try {
+      await window.electron?.pipeline?.updateConfig('app.mode', null);
+      setAppMode(null); // Show SetupPage
+    } catch (e) {
+      console.error('Failed to reset mode:', e);
+    }
+  };
+
   const MAX_LOGS = 200;
 
   const appendLog = (data) => {
@@ -622,10 +631,23 @@ function App() {
 
       {/* Header Bar */}
       <div className="h-14 border-b border-gray-700 flex items-center px-4 justify-between bg-gray-800 shadow-sm z-10 shrink-0">
-        {/* Left: App Name */}
+        {/* Left: App Name + Mode Badge */}
         <div className="flex items-center space-x-2">
           <Search className="text-blue-400" size={20} />
           <h1 className="font-bold text-lg">{t('app.title')}</h1>
+          {isElectron && appMode && (
+            <button
+              onClick={handleModeReset}
+              className={`text-[10px] font-medium px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                appMode === 'server'
+                  ? 'bg-blue-900/50 text-blue-300 hover:bg-blue-800/60'
+                  : 'bg-emerald-900/50 text-emerald-300 hover:bg-emerald-800/60'
+              }`}
+              title={t('setup.changeable_later')}
+            >
+              {appMode === 'server' ? t('setup.server_title') : t('setup.client_title')}
+            </button>
+          )}
         </div>
 
         {/* Right: Tab Buttons + Process (in archive mode) + Language */}

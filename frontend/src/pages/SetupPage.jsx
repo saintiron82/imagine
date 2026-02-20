@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Server, Monitor, ArrowRight, Wifi } from 'lucide-react';
+import { Shield, Cpu, ArrowRight, Wifi } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 const SetupPage = ({ onComplete }) => {
@@ -65,7 +65,7 @@ const SetupPage = ({ onComplete }) => {
                             <div className={`p-2.5 rounded-lg ${
                                 selectedMode === 'server' ? 'bg-blue-600' : 'bg-gray-700'
                             }`}>
-                                <Server size={24} />
+                                <Shield size={24} />
                             </div>
                             <h2 className="text-lg font-bold">{t('setup.server_title')}</h2>
                         </div>
@@ -101,7 +101,7 @@ const SetupPage = ({ onComplete }) => {
                             <div className={`p-2.5 rounded-lg ${
                                 selectedMode === 'client' ? 'bg-emerald-600' : 'bg-gray-700'
                             }`}>
-                                <Monitor size={24} />
+                                <Cpu size={24} />
                             </div>
                             <h2 className="text-lg font-bold">{t('setup.client_title')}</h2>
                         </div>
