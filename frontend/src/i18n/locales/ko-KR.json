@@ -326,5 +326,21 @@
   "worker.my_workers_title": "내 워커 현황",
   "worker.my_workers_empty": "연결된 워커가 없습니다",
   "worker.last_heartbeat_ago": "{seconds}초 전",
-  "worker.action_stop_worker": "정지"
+  "worker.action_stop_worker": "정지",
+  "setup.subtitle": "이 앱을 어떻게 사용하시겠습니까?",
+  "setup.server_title": "서버",
+  "setup.server_desc": "이 PC가 서비스 주체가 됩니다. 다른 사람이 접속하여 검색하고 처리할 수 있습니다.",
+  "setup.server_feature1": "파일, 데이터베이스, 벡터를 소유",
+  "setup.server_feature2": "작업 큐와 접속 클라이언트 관리",
+  "setup.server_feature3": "모든 클라이언트에게 검색 API 제공",
+  "setup.client_title": "클라이언트",
+  "setup.client_desc": "기존 서버에 접속합니다. 검색하고 선택적으로 파일 처리를 도울 수 있습니다.",
+  "setup.client_feature1": "서버 파일 검색 및 탐색",
+  "setup.client_feature2": "워커를 켜서 처리 참여 가능",
+  "setup.client_feature3": "처리 성능 제한 설정 가능",
+  "setup.server_url": "서버 주소",
+  "setup.start": "시작",
+  "setup.changeable_later": "나중에 설정에서 변경할 수 있습니다.",
+  "setup.invalid_url": "올바른 서버 URL을 입력해주세요.",
+  "status.saving": "저장 중..."
 }

@@ -9,6 +9,7 @@ import ImportDbDialog from './components/ImportDbDialog';
 import LoginPage from './pages/LoginPage';
 import AdminPage from './pages/AdminPage';
 import WorkerPage from './pages/WorkerPage';
+import SetupPage from './pages/SetupPage';
 import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
@@ -50,9 +51,41 @@ function App() {
   const [showDbMenu, setShowDbMenu] = useState(false);
   const [folderStatsVersion, setFolderStatsVersion] = useState(0);
 
+  // App mode: 'server' | 'client' | null (not configured)
+  const [appMode, setAppMode] = useState(isElectron ? null : 'web');
+  const [appModeLoading, setAppModeLoading] = useState(isElectron);
+
   // Server mode state (Electron only)
   const [serverRunning, setServerRunning] = useState(false);
   const [serverPort, setServerPort] = useState(8000);
+
+  // Load app mode from config.yaml (Electron only)
+  useEffect(() => {
+    if (!isElectron) return;
+    const loadMode = async () => {
+      try {
+        const result = await window.electron?.pipeline?.getConfig();
+        if (result?.success && result.config?.app?.mode) {
+          setAppMode(result.config.app.mode);
+        }
+        // If no mode set, appMode stays null → show SetupPage
+      } catch (e) {
+        console.error('Failed to load app mode:', e);
+      }
+      setAppModeLoading(false);
+    };
+    loadMode();
+  }, []);
+
+  const handleSetupComplete = (mode, serverUrl) => {
+    setAppMode(mode);
+    // Reload the app to apply the new mode (server needs to start, etc.)
+    if (window.electron?.app?.relaunch) {
+      window.electron.app.relaunch();
+    } else {
+      window.location.reload();
+    }
+  };
 
   const MAX_LOGS = 200;
 
@@ -435,13 +468,18 @@ function App() {
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
 
-  // Auth loading state
-  if (authLoading) {
+  // App mode loading state (Electron only)
+  if (appModeLoading || authLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-900">
         <div className="text-gray-400 text-sm">{t('status.loading')}</div>
       </div>
     );
+  }
+
+  // First-run setup: no mode selected yet (Electron only)
+  if (isElectron && !appMode) {
+    return <SetupPage onComplete={handleSetupComplete} />;
   }
 
   // Show login page for web mode when not authenticated
