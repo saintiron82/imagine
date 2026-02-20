@@ -27,7 +27,9 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Optional
 
 # Ensure project root is in path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -67,6 +69,31 @@ try:
 except ValueError:
     # signal only works in main thread — skip when imported from embedded worker
     pass
+
+
+@dataclass
+class _JobContext:
+    """Intermediate results for a single job during batch processing."""
+    job: dict = field(default_factory=dict)
+    local_path: Optional[str] = None
+    metadata: Optional[dict] = None
+    thumb_path: Optional[str] = None
+    meta_obj: Any = None
+    vision_fields: dict = field(default_factory=dict)
+    vv_vec: Any = None
+    mv_vec: Any = None
+    structure_vec: Any = None
+    failed: bool = False
+    error: str = ""
+
+
+def _notify(callback, event_type: str, data: dict):
+    """Call progress callback if provided."""
+    if callback:
+        try:
+            callback(event_type, data)
+        except Exception:
+            pass
 
 
 class WorkerDaemon:
@@ -626,6 +653,214 @@ class WorkerDaemon:
                 "file_size": getattr(meta, "file_size", 0),
             }
 
+    # ── Batch Processing (Phase-Level) ────────────────────────
+
+    def process_batch_phased(self, jobs: list, progress_callback=None) -> list:
+        """Process a batch of jobs using phase-level batching.
+
+        Instead of processing each file through all phases sequentially,
+        this processes ALL files through each phase before moving to the next.
+        This minimizes model loading/unloading and enables batch inference.
+
+        Args:
+            jobs: List of job dicts with job_id, file_id, file_path.
+            progress_callback: Optional callback(event_type, data) for IPC progress.
+                event_type: "phase_start", "file_done", "phase_complete", "job_upload"
+        Returns:
+            List of (job_id, success) tuples.
+        """
+        # Build job contexts and resolve file access
+        contexts = []
+        for job in jobs:
+            ctx = _JobContext(job=job)
+            ctx.local_path = self._resolve_file(job)
+            if not ctx.local_path or not Path(ctx.local_path).exists():
+                ctx.failed = True
+                ctx.error = f"Cannot access file: {job['file_path']}"
+            contexts.append(ctx)
+
+        active = [c for c in contexts if not c.failed]
+
+        # ── Phase P: Parse all ──
+        _notify(progress_callback, "phase_start", {"phase": "parse", "count": len(active)})
+        for i, ctx in enumerate(active):
+            self._current_phase = "parse"
+            self._current_file = Path(ctx.job["file_path"]).name
+            self.uploader.report_progress(ctx.job["job_id"], "parse")
+
+            result = self._run_parse(Path(ctx.local_path))
+            if result is None:
+                ctx.failed = True
+                ctx.error = f"Parse failed: {ctx.job['file_path']}"
+            else:
+                ctx.metadata, ctx.thumb_path, ctx.meta_obj = result
+
+            _notify(progress_callback, "file_done", {
+                "phase": "parse", "file_name": self._current_file,
+                "index": i + 1, "count": len(active), "success": not ctx.failed,
+            })
+        _notify(progress_callback, "phase_complete", {"phase": "parse", "count": len(active)})
+
+        active = [c for c in contexts if not c.failed]
+
+        # ── Phase V: Vision all (VLM) ──
+        _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
+        for i, ctx in enumerate(active):
+            self._current_phase = "vision"
+            self._current_file = Path(ctx.job["file_path"]).name
+            self.uploader.report_progress(ctx.job["job_id"], "vision")
+
+            vision_fields = self._run_vision(
+                Path(ctx.local_path), ctx.thumb_path, ctx.meta_obj
+            )
+            if vision_fields:
+                ctx.metadata.update(vision_fields)
+                ctx.vision_fields = vision_fields
+
+            _notify(progress_callback, "file_done", {
+                "phase": "vision", "file_name": self._current_file,
+                "index": i + 1, "count": len(active), "success": True,
+            })
+        _notify(progress_callback, "phase_complete", {"phase": "vision", "count": len(active)})
+
+        # Unload VLM to free GPU memory for embedding phases
+        self._unload_vlm()
+
+        # ── Phase VV: SigLIP2 all ──
+        _notify(progress_callback, "phase_start", {"phase": "embed_vv", "count": len(active)})
+        for i, ctx in enumerate(active):
+            self._current_phase = "embed"
+            self._current_file = Path(ctx.job["file_path"]).name
+            self.uploader.report_progress(ctx.job["job_id"], "embed")
+
+            ctx.vv_vec, ctx.structure_vec = self._run_embed_vv(ctx.thumb_path)
+
+            _notify(progress_callback, "file_done", {
+                "phase": "embed_vv", "file_name": self._current_file,
+                "index": i + 1, "count": len(active),
+                "success": ctx.vv_vec is not None,
+            })
+        _notify(progress_callback, "phase_complete", {"phase": "embed_vv", "count": len(active)})
+
+        # Unload SigLIP2 to free GPU memory for MV phase
+        self._unload_vv()
+
+        # ── Phase MV: Qwen3-Embedding all ──
+        _notify(progress_callback, "phase_start", {"phase": "embed_mv", "count": len(active)})
+        for i, ctx in enumerate(active):
+            self._current_phase = "embed"
+            self._current_file = Path(ctx.job["file_path"]).name
+
+            ctx.mv_vec = self._run_embed_mv(ctx.metadata)
+
+            _notify(progress_callback, "file_done", {
+                "phase": "embed_mv", "file_name": self._current_file,
+                "index": i + 1, "count": len(active),
+                "success": ctx.mv_vec is not None,
+            })
+        _notify(progress_callback, "phase_complete", {"phase": "embed_mv", "count": len(active)})
+
+        # Unload MV model
+        self._unload_mv()
+
+        # ── Upload all results ──
+        results = []
+        for ctx in contexts:
+            job_id = ctx.job["job_id"]
+            file_id = ctx.job["file_id"]
+
+            if ctx.failed:
+                self.uploader.fail_job(job_id, ctx.error)
+                self._total_failed += 1
+                results.append((job_id, False))
+                continue
+
+            success = self.uploader.complete_job(
+                job_id,
+                metadata=ctx.metadata,
+                vv_vec=ctx.vv_vec,
+                mv_vec=ctx.mv_vec,
+                structure_vec=ctx.structure_vec,
+            )
+
+            # Upload thumbnail to server
+            if ctx.thumb_path and Path(ctx.thumb_path).exists():
+                self.uploader.upload_thumbnail(file_id, ctx.thumb_path)
+
+            if success:
+                self._total_completed += 1
+            else:
+                self._total_failed += 1
+            results.append((job_id, success))
+
+            _notify(progress_callback, "job_upload", {
+                "job_id": job_id, "success": success,
+                "file_name": Path(ctx.job["file_path"]).name,
+            })
+
+            # Cleanup downloaded temp files
+            if self.storage_mode == "server_upload" and ctx.local_path != ctx.job["file_path"]:
+                try:
+                    Path(ctx.local_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        self._clear_current()
+
+        # GPU memory cleanup
+        gc.collect()
+        self._try_empty_gpu_cache()
+
+        return results
+
+    # ── Model Unload Helpers ──────────────────────────────────
+
+    def _unload_vlm(self):
+        """Unload VLM to free GPU memory between phases."""
+        try:
+            from backend.vision.vision_factory import get_vision_analyzer, VisionAnalyzerFactory
+            analyzer = get_vision_analyzer()
+            if hasattr(analyzer, 'unload_model'):
+                analyzer.unload_model()
+            VisionAnalyzerFactory.reset()
+        except Exception:
+            pass
+        gc.collect()
+        self._try_empty_gpu_cache()
+        logger.info("VLM unloaded")
+
+    def _unload_vv(self):
+        """Unload SigLIP2 encoder to free GPU memory."""
+        if WorkerDaemon._vv_encoder is not None:
+            if hasattr(WorkerDaemon._vv_encoder, 'unload'):
+                WorkerDaemon._vv_encoder.unload()
+            WorkerDaemon._vv_encoder = None
+        gc.collect()
+        self._try_empty_gpu_cache()
+        logger.info("SigLIP2 unloaded")
+
+    def _unload_mv(self):
+        """Unload text embedding model to free GPU memory."""
+        try:
+            from backend.vector.text_embedding import reset_provider
+            reset_provider()
+        except Exception:
+            pass
+        gc.collect()
+        self._try_empty_gpu_cache()
+        logger.info("MV embedder unloaded")
+
+    def _try_empty_gpu_cache(self):
+        """Helper to clear GPU memory cache."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        except ImportError:
+            pass
+
     # ── Main Loop ─────────────────────────────────────────────
 
     def run(self):
@@ -696,24 +931,12 @@ class WorkerDaemon:
                 refill_thread = threading.Thread(target=self._fill_pool, daemon=True)
                 refill_thread.start()
 
-                for job in batch:
-                    if _shutdown:
-                        break
-                    self.process_job(job)
+                # Phase-level batch processing (all files through each phase)
+                if not _shutdown:
+                    self.process_batch_phased(batch)
 
                 # Wait for refill to complete
                 refill_thread.join(timeout=30)
-
-                # Cleanup GPU memory between batches
-                gc.collect()
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                        torch.mps.empty_cache()
-                except ImportError:
-                    pass
 
             except KeyboardInterrupt:
                 break

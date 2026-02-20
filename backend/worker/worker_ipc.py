@@ -100,7 +100,7 @@ class WorkerIPCController:
         _emit_status(status)
 
     def _worker_loop(self):
-        """Main worker loop — claim → process → repeat."""
+        """Main worker loop — claim → batch process by phase → repeat."""
         try:
             from backend.worker.worker_daemon import WorkerDaemon
 
@@ -133,33 +133,31 @@ class WorkerIPCController:
                     time.sleep(poll_interval)
                     continue
 
-                _emit_log(f"Claimed {len(jobs)} jobs", "info")
+                _emit_log(f"Claimed {len(jobs)} jobs — batch processing", "info")
+                _emit({"event": "batch_start", "batch_size": len(jobs)})
 
-                # Process each job
-                for job in jobs:
-                    if not self._running:
-                        break
+                # Batch progress callback — relay events to Electron
+                def _batch_progress_cb(event_type, data):
+                    _emit({"event": f"batch_{event_type}", **data})
 
-                    _emit_status("running", [job])
-                    file_name = job.get("file_path", "").rsplit("/", 1)[-1]
-                    _emit_log(f"Processing: {file_name}", "info")
+                # Phase-level batch processing
+                results = daemon.process_batch_phased(
+                    jobs, progress_callback=_batch_progress_cb
+                )
 
-                    def _progress_cb(phase, fname):
-                        if phase.endswith("_done"):
-                            _emit({"event": "phase_done", "phase": phase, "file_name": fname})
-                        else:
-                            _emit({"event": "phase_progress", "phase": phase, "file_name": fname})
-
-                    success = daemon.process_job(job, progress_callback=_progress_cb)
-
+                # Emit individual job_done events (for compatibility)
+                for job_id, success in results:
+                    job_info = next(
+                        (j for j in jobs if j.get("job_id") == job_id), {}
+                    )
+                    file_name = job_info.get("file_path", "").rsplit("/", 1)[-1]
                     _emit({
                         "event": "job_done",
-                        "job_id": job.get("job_id"),
-                        "file_path": job.get("file_path"),
+                        "job_id": job_id,
+                        "file_path": job_info.get("file_path"),
                         "file_name": file_name,
                         "success": success,
                     })
-
                     if not success:
                         _emit_log(f"Failed: {file_name}", "error")
 

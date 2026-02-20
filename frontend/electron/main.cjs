@@ -1305,10 +1305,16 @@ function processWorkerOutput() {
                 sendWorkerEvent('worker-job-done', parsed);
             } else if (evt === 'stats') {
                 sendWorkerEvent('worker-stats', parsed);
-            } else if (evt === 'phase_progress') {
-                sendWorkerEvent('worker-phase-progress', parsed);
-            } else if (evt === 'phase_done') {
-                sendWorkerEvent('worker-phase-done', parsed);
+            } else if (evt === 'batch_start') {
+                sendWorkerEvent('worker-batch-start', parsed);
+            } else if (evt === 'batch_phase_start') {
+                sendWorkerEvent('worker-batch-phase-start', parsed);
+            } else if (evt === 'batch_file_done') {
+                sendWorkerEvent('worker-batch-file-done', parsed);
+            } else if (evt === 'batch_phase_complete') {
+                sendWorkerEvent('worker-batch-phase-complete', parsed);
+            } else if (evt === 'batch_job_upload') {
+                sendWorkerEvent('worker-batch-job-upload', parsed);
             }
         } catch (e) {
             console.error('[Worker] JSON parse error:', e, line);

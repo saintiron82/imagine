@@ -157,9 +157,13 @@ contextBridge.exposeInMainWorld('electron', {
         offLog: () => ipcRenderer.removeAllListeners('worker-log'),
         onJobDone: (cb) => ipcRenderer.on('worker-job-done', (_, data) => cb(data)),
         offJobDone: () => ipcRenderer.removeAllListeners('worker-job-done'),
-        onPhaseProgress: (cb) => ipcRenderer.on('worker-phase-progress', (_, data) => cb(data)),
-        offPhaseProgress: () => ipcRenderer.removeAllListeners('worker-phase-progress'),
-        onPhaseDone: (cb) => ipcRenderer.on('worker-phase-done', (_, data) => cb(data)),
-        offPhaseDone: () => ipcRenderer.removeAllListeners('worker-phase-done'),
+        onBatchStart: (cb) => ipcRenderer.on('worker-batch-start', (_, data) => cb(data)),
+        offBatchStart: () => ipcRenderer.removeAllListeners('worker-batch-start'),
+        onBatchPhaseStart: (cb) => ipcRenderer.on('worker-batch-phase-start', (_, data) => cb(data)),
+        offBatchPhaseStart: () => ipcRenderer.removeAllListeners('worker-batch-phase-start'),
+        onBatchFileDone: (cb) => ipcRenderer.on('worker-batch-file-done', (_, data) => cb(data)),
+        offBatchFileDone: () => ipcRenderer.removeAllListeners('worker-batch-file-done'),
+        onBatchPhaseComplete: (cb) => ipcRenderer.on('worker-batch-phase-complete', (_, data) => cb(data)),
+        offBatchPhaseComplete: () => ipcRenderer.removeAllListeners('worker-batch-phase-complete'),
     }
 });

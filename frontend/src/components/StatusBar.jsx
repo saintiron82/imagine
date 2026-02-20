@@ -247,27 +247,30 @@ const StatusBar = ({
                     );
                 })()}
 
-                {/* Worker progress — completed + current phase + throughput/min (client mode) */}
+                {/* Worker progress — phase batch progress + throughput/min (client mode) */}
                 {isWorkerProcessing && !isProcessing && !isDiscovering && (() => {
                     const wp = workerProgress;
                     const completed = wp.completed || 0;
                     const totalQ = wp.totalQueue || 0;
-                    const pending = wp.pending || 0;
-                    const phaseLabels = [t('status.phase.parse'), 'MC', 'VV', 'MV'];
-                    const phaseColors = ['text-cyan-400', 'text-blue-400', 'text-purple-400', 'text-green-400'];
-                    const activePhase = wp.activePhase || 0;
-                    const perMin = (wp.throughput || 0) * 60;
+                    const phaseLabels = { parse: 'P', vision: 'MC', embed_vv: 'VV', embed_mv: 'MV', uploading: 'UP', starting: '...' };
+                    const phaseColors = { parse: 'text-cyan-400', vision: 'text-blue-400', embed_vv: 'text-purple-400', embed_mv: 'text-green-400', uploading: 'text-yellow-400', starting: 'text-gray-400' };
+                    const perMin = wp.throughput || 0;
 
                     return (
                         <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
                             <Loader2 className="animate-spin text-emerald-400" size={14} />
 
+                            {/* Current phase + progress within phase */}
+                            {wp.currentPhase && (
+                                <span className={`font-mono font-bold text-[11px] ${phaseColors[wp.currentPhase] || 'text-gray-400'}`}>
+                                    {phaseLabels[wp.currentPhase] || wp.currentPhase}
+                                    {wp.phaseCount > 0 && ` ${wp.phaseIndex}/${wp.phaseCount}`}
+                                </span>
+                            )}
+
+                            {/* Overall completed / total */}
                             <span className="text-emerald-300 font-mono font-bold text-[11px]">
                                 {completed}/{totalQ}
-                            </span>
-
-                            <span className={`font-mono font-bold text-[11px] ${phaseColors[activePhase]}`}>
-                                {phaseLabels[activePhase]}
                             </span>
 
                             {perMin > 0 && (

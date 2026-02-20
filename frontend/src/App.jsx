@@ -59,10 +59,14 @@ function App() {
   // Worker progress state (client mode)
   const [isWorkerRunning, setIsWorkerRunning] = useState(false);
   const [workerProgress, setWorkerProgress] = useState({
-    cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
-    activePhase: 0, currentFile: '', completed: 0,
-    totalQueue: 0, pending: 0, batchCapacity: 5,
-    etaMs: null, throughput: 0,
+    batchSize: 0,
+    currentPhase: '',       // "parse" | "vision" | "embed_vv" | "embed_mv" | "uploading"
+    phaseIndex: 0,          // 1-based progress within current phase
+    phaseCount: 0,          // total files in current phase
+    currentFile: '',
+    completed: 0,
+    totalQueue: 0, pending: 0,
+    etaMs: null, throughput: 0,  // items/min
   });
   const workerThroughputRef = useRef({ windowTimes: [] });
 
@@ -381,24 +385,36 @@ function App() {
       setIsWorkerRunning(data.status === 'running');
     };
 
-    const PHASE_MAP = { parse: 0, vision: 1, embed_vv: 2, embed_mv: 3 };
-    const onPhaseProgress = (data) => {
+    const onBatchStart = (data) => {
       setWorkerProgress(prev => ({
         ...prev,
-        activePhase: PHASE_MAP[data.phase] ?? prev.activePhase,
+        batchSize: data.batch_size,
+        currentPhase: 'starting',
+        phaseIndex: 0,
+      }));
+    };
+
+    const onBatchPhaseStart = (data) => {
+      setWorkerProgress(prev => ({
+        ...prev,
+        currentPhase: data.phase,
+        phaseIndex: 0,
+        phaseCount: data.count,
+      }));
+    };
+
+    const onBatchFileDone = (data) => {
+      setWorkerProgress(prev => ({
+        ...prev,
+        currentPhase: data.phase,
+        phaseIndex: data.index,
+        phaseCount: data.count,
         currentFile: data.file_name || prev.currentFile,
       }));
     };
 
-    const onPhaseDone = (data) => {
-      setWorkerProgress(prev => {
-        const next = { ...prev };
-        if (data.phase === 'parse_done') next.cumParse = prev.cumParse + 1;
-        else if (data.phase === 'vision_done') next.cumMC = prev.cumMC + 1;
-        else if (data.phase === 'embed_vv_done') next.cumVV = prev.cumVV + 1;
-        else if (data.phase === 'embed_mv_done') next.cumMV = prev.cumMV + 1;
-        return next;
-      });
+    const onBatchPhaseComplete = (_data) => {
+      // Phase complete — UI will show next phase on phase_start
     };
 
     const onJobDone = (data) => {
@@ -406,29 +422,38 @@ function App() {
       const now = Date.now();
       const ref = workerThroughputRef.current;
       ref.windowTimes.push(now);
-      // Keep 30-second sliding window
-      ref.windowTimes = ref.windowTimes.filter(t => now - t < 30000);
-      const throughput = ref.windowTimes.length > 1
-        ? ref.windowTimes.length / ((now - ref.windowTimes[0]) / 1000)
+      // Keep 60-second sliding window for items/min calculation
+      ref.windowTimes = ref.windowTimes.filter(t => now - t < 60000);
+      const elapsedSec = ref.windowTimes.length > 1
+        ? (now - ref.windowTimes[0]) / 1000
+        : 0;
+      // Throughput in items/min
+      const throughput = elapsedSec > 0
+        ? (ref.windowTimes.length / elapsedSec) * 60
         : 0;
 
       setWorkerProgress(prev => {
         const newCompleted = prev.completed + 1;
         const remaining = Math.max(0, prev.pending - 1);
-        const etaMs = throughput > 0 && remaining > 0 ? (remaining / throughput) * 1000 : null;
+        const perSec = throughput / 60;
+        const etaMs = perSec > 0 && remaining > 0 ? (remaining / perSec) * 1000 : null;
         return { ...prev, completed: newCompleted, pending: remaining, throughput, etaMs };
       });
     };
 
     w.onStatus(onStatus);
-    w.onPhaseProgress?.(onPhaseProgress);
-    w.onPhaseDone?.(onPhaseDone);
+    w.onBatchStart?.(onBatchStart);
+    w.onBatchPhaseStart?.(onBatchPhaseStart);
+    w.onBatchFileDone?.(onBatchFileDone);
+    w.onBatchPhaseComplete?.(onBatchPhaseComplete);
     w.onJobDone(onJobDone);
 
     return () => {
       w.offStatus();
-      w.offPhaseProgress?.();
-      w.offPhaseDone?.();
+      w.offBatchStart?.();
+      w.offBatchPhaseStart?.();
+      w.offBatchFileDone?.();
+      w.offBatchPhaseComplete?.();
       w.offJobDone();
     };
   }, [appMode]);
@@ -483,9 +508,8 @@ function App() {
       await window.electron.worker.stop();
       setIsWorkerRunning(false);
       setWorkerProgress({
-        cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
-        activePhase: 0, currentFile: '', completed: 0,
-        totalQueue: 0, pending: 0, batchCapacity: 5,
+        batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
+        currentFile: '', completed: 0, totalQueue: 0, pending: 0,
         etaMs: null, throughput: 0,
       });
       workerThroughputRef.current = { windowTimes: [] };

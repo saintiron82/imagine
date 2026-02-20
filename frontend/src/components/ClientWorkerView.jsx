@@ -222,10 +222,16 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
           const totalQ = wp.totalQueue || 0;
           const pending = wp.pending || 0;
           const progressPct = totalQ > 0 ? Math.min(100, (completed / totalQ) * 100) : 0;
-          const phaseLabels = [t('status.phase.parse'), 'MC', 'VV', 'MV'];
-          const phaseColors = ['text-cyan-400', 'text-blue-400', 'text-purple-400', 'text-green-400'];
-          const activePhase = wp.activePhase || 0;
-          const perMin = (wp.throughput || 0) * 60;
+          const perMin = wp.throughput || 0;
+
+          const phaseOrder = ['parse', 'vision', 'embed_vv', 'embed_mv'];
+          const phaseConfig = {
+            parse:    { label: t('status.phase.parse'), color: 'bg-cyan-500',   textColor: 'text-cyan-400' },
+            vision:   { label: 'MC',                    color: 'bg-blue-500',   textColor: 'text-blue-400' },
+            embed_vv: { label: 'VV',                    color: 'bg-purple-500', textColor: 'text-purple-400' },
+            embed_mv: { label: 'MV',                    color: 'bg-green-500',  textColor: 'text-green-400' },
+          };
+          const currentIdx = phaseOrder.indexOf(wp.currentPhase);
 
           return (
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
@@ -234,11 +240,44 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                 {t('worker.progress_title')}
               </h3>
 
-              {/* Progress bar */}
+              {/* Overall progress bar */}
               <div className="w-full h-2 bg-gray-700 rounded-full mb-4">
                 <div className="h-full rounded-full bg-emerald-500 transition-all duration-500"
                   style={{ width: `${progressPct}%` }}
                 />
+              </div>
+
+              {/* 4-Phase Independent Progress Bars */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {phaseOrder.map((phase, idx) => {
+                  const cfg = phaseConfig[phase];
+                  const isActive = wp.currentPhase === phase;
+                  const isDone = currentIdx > idx;
+                  const pct = isActive && wp.phaseCount > 0
+                    ? Math.round((wp.phaseIndex / wp.phaseCount) * 100)
+                    : isDone ? 100 : 0;
+
+                  return (
+                    <div key={phase} className={`bg-gray-900 rounded-lg p-3 ${isActive ? 'ring-1 ring-blue-500/50' : ''}`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className={`text-xs font-bold ${isDone ? 'text-green-400' : isActive ? cfg.textColor : 'text-gray-600'}`}>
+                          {cfg.label}
+                        </span>
+                        <span className={`text-[10px] font-mono ${isDone ? 'text-green-400' : isActive ? 'text-gray-300' : 'text-gray-600'}`}>
+                          {isDone ? `${wp.phaseCount}/${wp.phaseCount}` :
+                           isActive ? `${wp.phaseIndex}/${wp.phaseCount}` :
+                           `-`}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${isDone ? 'bg-green-500' : isActive ? `${cfg.color} animate-pulse` : 'bg-gray-700'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Stats Grid */}
@@ -262,11 +301,13 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                 </div>
               </div>
 
-              {/* Current file + phase */}
+              {/* Current file */}
               <div className="flex items-center gap-3 text-xs">
-                <span className={`font-mono font-bold ${phaseColors[activePhase]}`}>
-                  {phaseLabels[activePhase]}
-                </span>
+                {wp.currentPhase && (
+                  <span className={`font-mono font-bold ${phaseConfig[wp.currentPhase]?.textColor || 'text-gray-400'}`}>
+                    {phaseConfig[wp.currentPhase]?.label || wp.currentPhase}
+                  </span>
+                )}
                 <span className="text-gray-400 truncate">
                   {wp.currentFile?.split(/[/\\]/).pop() || t('worker.no_jobs')}
                 </span>
@@ -276,7 +317,7 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
         })()}
 
         {/* Waiting for jobs */}
-        {isWorkerRunning && !workerProgress.currentFile && (
+        {isWorkerRunning && !workerProgress.currentPhase && (
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 text-center text-gray-500 text-sm">
             {t('worker.no_jobs')}
           </div>
