@@ -12,7 +12,7 @@ ai_mode:
         model: qwen3-embedding:0.6b
       visual:
         dimensions: 1152
-        model: google/siglip2-so400m-patch14-384
+        model: google/siglip2-so400m-patch16-naflex
       vlm:
         backend: auto
         batch_size: 8
@@ -40,12 +40,11 @@ ai_mode:
         max_edge: 512
         padding_color: '#FFFFFF'
       text_embed:
-        dimensions: 256
+        dimensions: 1024
         model: qwen3-embedding:0.6b
-        normalize: true
       visual:
-        dimensions: 768
-        model: google/siglip2-base-patch16-224
+        dimensions: 1152
+        model: google/siglip2-so400m-patch16-naflex
       vlm:
         backend: transformers
         batch_size: 16
@@ -61,8 +60,8 @@ ai_mode:
         dimensions: 4096
         model: qwen3-embedding:8b
       visual:
-        dimensions: 1664
-        model: google/siglip2-giant-opt-patch16-256
+        dimensions: 1152
+        model: google/siglip2-so400m-patch16-naflex
       vlm:
         backend: auto
         device: auto
