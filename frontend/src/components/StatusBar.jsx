@@ -50,7 +50,8 @@ const StatusBar = ({
     processed = 0, total = 0, skipped = 0, currentFile = '', etaMs = null,
     cumParse = 0, cumMC = 0, cumVV = 0, cumMV = 0,
     activePhase = 0, phaseSubCount = 0, phaseSubTotal = 0,
-    batchInfo = '', fileStep = {}, onStop
+    batchInfo = '', fileStep = {}, onStop,
+    isWorkerProcessing = false, workerProgress = {}, onWorkerStop
 }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
@@ -246,8 +247,75 @@ const StatusBar = ({
                     );
                 })()}
 
+                {/* Worker progress — 4-phase pills (client mode) */}
+                {isWorkerProcessing && !isProcessing && !isDiscovering && (() => {
+                    const wp = workerProgress;
+                    const wPhases = [
+                        { label: t('status.phase.parse'), count: wp.cumParse || 0, color: 'bg-cyan-400' },
+                        { label: 'MC', count: wp.cumMC || 0, color: 'bg-blue-400' },
+                        { label: 'VV', count: wp.cumVV || 0, color: 'bg-purple-400' },
+                        { label: 'MV', count: wp.cumMV || 0, color: 'bg-green-400' },
+                    ];
+                    const completed = wp.completed || 0;
+                    const totalQ = wp.totalQueue || 0;
+
+                    return (
+                        <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
+                            <Loader2 className="animate-spin text-emerald-400" size={14} />
+
+                            <div className="flex items-center space-x-0.5">
+                                {wPhases.map((p, i) => (
+                                    <PhasePill
+                                        key={p.label}
+                                        label={p.label}
+                                        count={p.count}
+                                        total={totalQ || (completed + (wp.pending || 0))}
+                                        isActive={i === (wp.activePhase || 0)}
+                                        color={p.color}
+                                    />
+                                ))}
+                            </div>
+
+                            <div className="flex items-center space-x-1.5 border-l border-emerald-700 pl-2">
+                                <span className="text-emerald-300 font-mono font-bold text-[11px]">
+                                    {completed}/{totalQ}
+                                </span>
+                            </div>
+
+                            {wp.throughput > 0 && (
+                                <span className="text-yellow-300 font-mono text-[10px]">
+                                    {wp.throughput.toFixed(2)}/s
+                                </span>
+                            )}
+
+                            {wp.batchCapacity && (
+                                <div className="flex items-center gap-1 bg-yellow-900/40 border border-yellow-600/50 px-1.5 py-0.5 rounded" title={t('status.batch_size')}>
+                                    <Layers size={11} className="text-yellow-400 flex-shrink-0" />
+                                    <span className="text-yellow-300 font-mono font-bold text-[11px]">{wp.batchCapacity}</span>
+                                </div>
+                            )}
+
+                            <span className="text-gray-400 truncate max-w-[100px]">
+                                {wp.currentFile?.split(/[/\\]/).pop()}
+                            </span>
+
+                            {wp.etaMs != null && wp.etaMs > 0 && (
+                                <span className="text-emerald-300 font-mono text-[11px]">~{formatEta(wp.etaMs)}</span>
+                            )}
+
+                            <button
+                                onClick={onWorkerStop}
+                                className="p-0.5 rounded hover:bg-red-900/50 text-red-400 hover:text-red-300 transition-colors"
+                                title={t('worker.stop')}
+                            >
+                                <Square size={12} />
+                            </button>
+                        </div>
+                    );
+                })()}
+
                 {/* AI Tier Display */}
-                {aiTier && !isProcessing && !isDiscovering && (
+                {aiTier && !isProcessing && !isDiscovering && !isWorkerProcessing && (
                     <div className="flex items-center gap-1.5 text-xs text-gray-400 border-l border-blue-700 pl-3 mr-3">
                         <Cpu size={12} className="flex-shrink-0" />
                         <span className="font-mono">

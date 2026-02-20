@@ -157,5 +157,9 @@ contextBridge.exposeInMainWorld('electron', {
         offLog: () => ipcRenderer.removeAllListeners('worker-log'),
         onJobDone: (cb) => ipcRenderer.on('worker-job-done', (_, data) => cb(data)),
         offJobDone: () => ipcRenderer.removeAllListeners('worker-job-done'),
+        onPhaseProgress: (cb) => ipcRenderer.on('worker-phase-progress', (_, data) => cb(data)),
+        offPhaseProgress: () => ipcRenderer.removeAllListeners('worker-phase-progress'),
+        onPhaseDone: (cb) => ipcRenderer.on('worker-phase-done', (_, data) => cb(data)),
+        offPhaseDone: () => ipcRenderer.removeAllListeners('worker-phase-done'),
     }
 });

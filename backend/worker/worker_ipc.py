@@ -144,7 +144,13 @@ class WorkerIPCController:
                     file_name = job.get("file_path", "").rsplit("/", 1)[-1]
                     _emit_log(f"Processing: {file_name}", "info")
 
-                    success = daemon.process_job(job)
+                    def _progress_cb(phase, fname):
+                        if phase.endswith("_done"):
+                            _emit({"event": "phase_done", "phase": phase, "file_name": fname})
+                        else:
+                            _emit({"event": "phase_progress", "phase": phase, "file_name": fname})
+
+                    success = daemon.process_job(job, progress_callback=_progress_cb)
 
                     _emit({
                         "event": "job_done",

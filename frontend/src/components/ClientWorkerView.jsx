@@ -5,7 +5,18 @@ import { apiClient, isElectron, getServerUrl, getAccessToken, getRefreshToken } 
 import { getJobStats } from '../api/worker';
 import { PerformanceLimits } from '../pages/WorkerPage';
 
-export default function ClientWorkerView({ appMode }) {
+function formatEta(ms) {
+    const sec = Math.ceil(ms / 1000);
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    const remSec = sec % 60;
+    if (min < 60) return `${min}m ${remSec}s`;
+    const hr = Math.floor(min / 60);
+    const remMin = min % 60;
+    return `${hr}h ${remMin}m`;
+}
+
+export default function ClientWorkerView({ appMode, isWorkerRunning = false, workerProgress = {}, onWorkerStop }) {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
   const [workerStatus, setWorkerStatus] = useState('idle');
@@ -119,6 +130,7 @@ export default function ClientWorkerView({ appMode }) {
         setWorkerStatus('idle');
         setCurrentJobs([]);
         addLog(t('worker.stop'), 'info');
+        onWorkerStop?.();
       } catch (e) {
         addLog(e.message, 'error');
       }
@@ -244,23 +256,69 @@ export default function ClientWorkerView({ appMode }) {
           )}
         </div>
 
-        {/* Current Jobs */}
-        {currentJobs.length > 0 && (
-          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">{t('worker.current_jobs')}</h3>
-            <div className="space-y-2">
-              {currentJobs.map((job, i) => (
-                <div key={job.id || i} className="flex items-center gap-3 text-sm">
-                  <Loader2 size={14} className="animate-spin text-blue-400" />
-                  <span className="text-gray-300 truncate flex-1">{job.file_path?.split('/').pop()}</span>
-                  <span className="text-xs text-gray-500">{job.phase || ''}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Detailed Progress Card (when running) */}
+        {(isWorkerRunning || workerStatus === 'running') && (() => {
+          const wp = workerProgress;
+          const phaseCards = [
+            { label: t('status.phase.parse'), count: wp.cumParse || 0, color: 'bg-cyan-400', text: 'text-cyan-300', active: 0 },
+            { label: 'MC', count: wp.cumMC || 0, color: 'bg-blue-400', text: 'text-blue-300', active: 1 },
+            { label: 'VV', count: wp.cumVV || 0, color: 'bg-purple-400', text: 'text-purple-300', active: 2 },
+            { label: 'MV', count: wp.cumMV || 0, color: 'bg-green-400', text: 'text-green-300', active: 3 },
+          ];
+          const completed = wp.completed || 0;
+          const totalQ = wp.totalQueue || 0;
+          const pending = wp.pending || 0;
+          const progressTarget = totalQ || (completed + pending) || 1;
 
-        {currentJobs.length === 0 && workerStatus === 'running' && (
+          return (
+            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <h3 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+                <Activity size={14} className="text-emerald-400 animate-pulse" />
+                {t('worker.progress_title')}
+              </h3>
+
+              {/* 4-Phase Cards */}
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                {phaseCards.map((p) => (
+                  <div key={p.label} className={`bg-gray-900 rounded-lg p-3 ${
+                    p.active === (wp.activePhase || 0) ? 'ring-1 ring-blue-500/50' : ''
+                  }`}>
+                    <div className="text-[10px] text-gray-500 mb-1">{p.label}</div>
+                    <div className={`text-lg font-bold font-mono ${p.text}`}>{p.count}</div>
+                    <div className="w-full h-1 bg-gray-700 rounded-full mt-1.5">
+                      <div className={`h-full rounded-full ${p.color} transition-all duration-300`}
+                        style={{ width: `${Math.min(100, (p.count / progressTarget) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Stats Row */}
+              <div className="flex items-center gap-4 text-xs flex-wrap">
+                <span className="text-gray-400">
+                  {t('worker.current_file')}: <span className="text-white font-mono">{wp.currentFile?.split(/[/\\]/).pop() || '-'}</span>
+                </span>
+                <span className="text-emerald-300 font-mono font-bold">
+                  {completed}/{totalQ}
+                </span>
+                {wp.throughput > 0 && (
+                  <span className="text-yellow-300 font-mono">
+                    {wp.throughput.toFixed(2)} {t('worker.items_per_sec')}
+                  </span>
+                )}
+                {wp.etaMs > 0 && (
+                  <span className="text-emerald-300 font-mono">
+                    ETA: {formatEta(wp.etaMs)}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Waiting for jobs */}
+        {(isWorkerRunning || workerStatus === 'running') && !workerProgress.currentFile && (
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 text-center text-gray-500 text-sm">
             {t('worker.no_jobs')}
           </div>

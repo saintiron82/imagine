@@ -14,9 +14,9 @@ import AppDownloadBanner from './components/AppDownloadBanner';
 import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
-import { isElectron, setServerUrl, getAccessToken, clearTokens } from './api/client';
+import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
 import { setUseLocalBackend } from './services/bridge';
-import { registerPaths, scanFolder } from './api/admin';
+import { registerPaths, scanFolder, getJobStats } from './api/admin';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
@@ -55,6 +55,17 @@ function App() {
   const [folderStatsVersion, setFolderStatsVersion] = useState(0);
   const [queueReloadSignal, setQueueReloadSignal] = useState(0);
   const [showDownloadPage, setShowDownloadPage] = useState(false);
+
+  // Worker progress state (client mode)
+  const [isWorkerRunning, setIsWorkerRunning] = useState(false);
+  const [workerProgress, setWorkerProgress] = useState({
+    cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
+    activePhase: 0, currentFile: '', completed: 0,
+    totalQueue: 0, pending: 0, batchCapacity: 5,
+    etaMs: null, throughput: 0,
+  });
+  const workerThroughputRef = useRef({ windowTimes: [] });
+  const workerAutoStarted = useRef(false);
 
   // App mode: 'server' | 'client' | null (show SetupPage) | 'web'
   // Electron: always starts null → SetupPage shown every launch
@@ -360,6 +371,132 @@ function App() {
     const timer = setTimeout(autoLogin, 1000);
     return () => clearTimeout(timer);
   }, [serverRunning, appMode, serverPort, login]);
+
+  // Worker IPC event listeners (Electron client mode)
+  useEffect(() => {
+    if (!isElectron || appMode !== 'client') return;
+    const w = window.electron?.worker;
+    if (!w) return;
+
+    const onStatus = (data) => {
+      setIsWorkerRunning(data.status === 'running');
+    };
+
+    const PHASE_MAP = { parse: 0, vision: 1, embed_vv: 2, embed_mv: 3 };
+    const onPhaseProgress = (data) => {
+      setWorkerProgress(prev => ({
+        ...prev,
+        activePhase: PHASE_MAP[data.phase] ?? prev.activePhase,
+        currentFile: data.file_name || prev.currentFile,
+      }));
+    };
+
+    const onPhaseDone = (data) => {
+      setWorkerProgress(prev => {
+        const next = { ...prev };
+        if (data.phase === 'parse_done') next.cumParse = prev.cumParse + 1;
+        else if (data.phase === 'vision_done') next.cumMC = prev.cumMC + 1;
+        else if (data.phase === 'embed_vv_done') next.cumVV = prev.cumVV + 1;
+        else if (data.phase === 'embed_mv_done') next.cumMV = prev.cumMV + 1;
+        return next;
+      });
+    };
+
+    const onJobDone = (data) => {
+      if (!data.success) return;
+      const now = Date.now();
+      const ref = workerThroughputRef.current;
+      ref.windowTimes.push(now);
+      // Keep 30-second sliding window
+      ref.windowTimes = ref.windowTimes.filter(t => now - t < 30000);
+      const throughput = ref.windowTimes.length > 1
+        ? ref.windowTimes.length / ((now - ref.windowTimes[0]) / 1000)
+        : 0;
+
+      setWorkerProgress(prev => {
+        const newCompleted = prev.completed + 1;
+        const remaining = Math.max(0, prev.pending - 1);
+        const etaMs = throughput > 0 && remaining > 0 ? (remaining / throughput) * 1000 : null;
+        return { ...prev, completed: newCompleted, pending: remaining, throughput, etaMs };
+      });
+    };
+
+    w.onStatus(onStatus);
+    w.onPhaseProgress?.(onPhaseProgress);
+    w.onPhaseDone?.(onPhaseDone);
+    w.onJobDone(onJobDone);
+
+    return () => {
+      w.offStatus();
+      w.offPhaseProgress?.();
+      w.offPhaseDone?.();
+      w.offJobDone();
+    };
+  }, [appMode]);
+
+  // Worker queue stats polling (client mode, 5s interval)
+  useEffect(() => {
+    if (appMode !== 'client' || !isWorkerRunning) return;
+    const fetchStats = async () => {
+      try {
+        const data = await getJobStats();
+        if (data && data.success !== false) {
+          setWorkerProgress(prev => ({
+            ...prev,
+            totalQueue: data.total || 0,
+            pending: (data.pending || 0) + (data.assigned || 0) + (data.processing || 0),
+          }));
+        }
+      } catch { /* ignore */ }
+    };
+    fetchStats();
+    const interval = setInterval(fetchStats, 5000);
+    return () => clearInterval(interval);
+  }, [appMode, isWorkerRunning]);
+
+  // Auto-start worker after login in client mode
+  useEffect(() => {
+    if (!isElectron || appMode !== 'client') return;
+    if (!user || workerAutoStarted.current || isWorkerRunning) return;
+    const w = window.electron?.worker;
+    if (!w) return;
+
+    workerAutoStarted.current = true;
+    const timer = setTimeout(async () => {
+      try {
+        appendLog({ message: t('worker.auto_starting'), type: 'info' });
+        const result = await w.start({
+          serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
+          accessToken: getAccessToken() || '',
+          refreshToken: getRefreshToken() || '',
+        });
+        if (result?.success) {
+          setIsWorkerRunning(true);
+          appendLog({ message: t('worker.auto_started'), type: 'success' });
+        }
+      } catch (e) {
+        appendLog({ message: `Worker auto-start failed: ${e.message}`, type: 'error' });
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [appMode, user]);
+
+  const handleWorkerStop = async () => {
+    if (!isElectron || !window.electron?.worker) return;
+    try {
+      await window.electron.worker.stop();
+      setIsWorkerRunning(false);
+      setWorkerProgress({
+        cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
+        activePhase: 0, currentFile: '', completed: 0,
+        totalQueue: 0, pending: 0, batchCapacity: 5,
+        etaMs: null, throughput: 0,
+      });
+      workerThroughputRef.current = { windowTimes: [] };
+    } catch (e) {
+      appendLog({ message: `Worker stop failed: ${e.message}`, type: 'error' });
+    }
+  };
 
   const handleServerToggle = async () => {
     if (!isElectron) return;
@@ -858,7 +995,12 @@ function App() {
                 reloadSignal={folderStatsVersion}
               />
             ) : currentTab === 'archive' && !isAdmin ? (
-              <ClientWorkerView appMode={appMode} />
+              <ClientWorkerView
+                appMode={appMode}
+                isWorkerRunning={isWorkerRunning}
+                workerProgress={workerProgress}
+                onWorkerStop={handleWorkerStop}
+              />
             ) : currentTab === 'archive' && isAdmin ? (
               <ServerArchiveView
                 currentPath={currentPath}
@@ -897,6 +1039,9 @@ function App() {
             batchInfo={processProgress.batchInfo}
             fileStep={fileStep}
             onStop={handleStopProcess}
+            isWorkerProcessing={isWorkerRunning && appMode === 'client'}
+            workerProgress={workerProgress}
+            onWorkerStop={handleWorkerStop}
           />
         </div>
       </div>

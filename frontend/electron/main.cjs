@@ -1305,6 +1305,10 @@ function processWorkerOutput() {
                 sendWorkerEvent('worker-job-done', parsed);
             } else if (evt === 'stats') {
                 sendWorkerEvent('worker-stats', parsed);
+            } else if (evt === 'phase_progress') {
+                sendWorkerEvent('worker-phase-progress', parsed);
+            } else if (evt === 'phase_done') {
+                sendWorkerEvent('worker-phase-done', parsed);
             }
         } catch (e) {
             console.error('[Worker] JSON parse error:', e, line);

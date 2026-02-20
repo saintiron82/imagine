@@ -327,14 +327,22 @@ class WorkerDaemon:
 
     # ── Job Lifecycle ──────────────────────────────────────────
 
-    def process_job(self, job: dict) -> bool:
-        """Process a single job: parse → vision → embed → upload results."""
+    def process_job(self, job: dict, progress_callback=None) -> bool:
+        """Process a single job: parse → vision → embed → upload results.
+
+        Args:
+            job: Job dict with job_id, file_id, file_path.
+            progress_callback: Optional callback(phase, file_name) for IPC progress.
+                Phase values: parse, parse_done, vision, vision_done,
+                              embed_vv, embed_vv_done, embed_mv, embed_mv_done.
+        """
         job_id = job["job_id"]
         file_id = job["file_id"]
         file_path = job["file_path"]
+        file_name = Path(file_path).name
 
         self._current_job_id = job_id
-        self._current_file = Path(file_path).name
+        self._current_file = file_name
         self._current_phase = "parse"
 
         logger.info(f"Processing job {job_id}: {file_path}")
@@ -354,29 +362,44 @@ class WorkerDaemon:
             self._clear_current()
             return False
 
+        def _cb(phase):
+            if progress_callback:
+                progress_callback(phase, file_name)
+
         try:
             # ── Phase P: Parse ──
             self._current_phase = "parse"
+            _cb("parse")
             self.uploader.report_progress(job_id, "parse")
             parse_result = self._run_parse(local_file)
             if parse_result is None:
                 self.uploader.fail_job(job_id, f"Parse failed for {local_file.name}")
                 self._total_failed += 1
                 return False
+            _cb("parse_done")
 
             metadata, thumb_path, meta_obj = parse_result
 
             # ── Phase V: Vision (MC generation) ──
             self._current_phase = "vision"
+            _cb("vision")
             self.uploader.report_progress(job_id, "vision")
             vision_fields = self._run_vision(local_file, thumb_path, meta_obj)
             if vision_fields:
                 metadata.update(vision_fields)
+            _cb("vision_done")
 
-            # ── Phase E: Embed (VV + MV) ──
+            # ── Phase E-VV: Visual Vector (SigLIP2) ──
             self._current_phase = "embed"
+            _cb("embed_vv")
             self.uploader.report_progress(job_id, "embed")
-            vv_vec, mv_vec, structure_vec = self._run_embed(thumb_path, metadata)
+            vv_vec, structure_vec = self._run_embed_vv(thumb_path)
+            _cb("embed_vv_done")
+
+            # ── Phase E-MV: Meaning Vector (Qwen3-Embedding) ──
+            _cb("embed_mv")
+            mv_vec = self._run_embed_mv(metadata)
+            _cb("embed_mv_done")
 
             # ── Upload results ──
             success = self.uploader.complete_job(
@@ -533,14 +556,11 @@ class WorkerDaemon:
 
     _vv_encoder = None  # Cached SigLIP2 encoder (class-level singleton)
 
-    def _run_embed(self, thumb_path: str, metadata: dict):
-        """Phase E: Generate VV + MV vectors."""
-        import numpy as np
+    def _run_embed_vv(self, thumb_path: str):
+        """Phase E-VV: Generate visual vector (SigLIP2)."""
         vv_vec = None
-        mv_vec = None
         structure_vec = None
 
-        # VV: SigLIP2 visual embedding
         if thumb_path and Path(thumb_path).exists():
             try:
                 from backend.vector.siglip2_encoder import SigLIP2Encoder
@@ -552,14 +572,18 @@ class WorkerDaemon:
                 img = Image.open(thumb_path).convert("RGB")
                 vv_vec = encoder.encode_image(img)
 
-                # Structure vector (if supported)
                 if hasattr(encoder, 'encode_structure'):
                     structure_vec = encoder.encode_structure(img)
 
             except Exception as e:
                 logger.warning(f"VV encoding failed: {e}")
 
-        # MV: Qwen3-Embedding text meaning vector
+        return vv_vec, structure_vec
+
+    def _run_embed_mv(self, metadata: dict):
+        """Phase E-MV: Generate meaning vector (Qwen3-Embedding)."""
+        mv_vec = None
+
         mc_caption = metadata.get("mc_caption", "")
         ai_tags = metadata.get("ai_tags", "")
         if mc_caption or ai_tags:
@@ -567,7 +591,6 @@ class WorkerDaemon:
                 from backend.vector.text_embedding import get_text_embedder
 
                 embedder = get_text_embedder()
-                # Combine caption and tags for MV
                 mv_text = f"{mc_caption} {ai_tags}".strip()
                 if mv_text:
                     mv_vec = embedder.encode(mv_text)
@@ -575,7 +598,7 @@ class WorkerDaemon:
             except Exception as e:
                 logger.warning(f"MV encoding failed: {e}")
 
-        return vv_vec, mv_vec, structure_vec
+        return mv_vec
 
     def _meta_to_dict(self, meta) -> dict:
         """Convert AssetMeta dataclass to dict for API submission."""
