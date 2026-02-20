@@ -360,6 +360,7 @@
   "worker.current_file": "파일",
   "worker.items_per_sec": "항목/분",
   "worker.throughput": "처리량",
+  "worker.phase_speed": "단계별 속도",
   "setup.subtitle": "사용 모드를 선택하세요",
   "setup.server_title": "관리",
   "setup.server_desc": "이 PC에서 서버를 개설하고, 이미지 데이터와 작업 큐를 관리합니다.",

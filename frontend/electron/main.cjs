@@ -1306,15 +1306,23 @@ function processWorkerOutput() {
             } else if (evt === 'stats') {
                 sendWorkerEvent('worker-stats', parsed);
             } else if (evt === 'batch_start') {
+                console.log('[Worker:batch] START size=', parsed.batch_size);
                 sendWorkerEvent('worker-batch-start', parsed);
             } else if (evt === 'batch_phase_start') {
+                console.log('[Worker:batch] PHASE_START', parsed.phase, 'count=', parsed.count);
                 sendWorkerEvent('worker-batch-phase-start', parsed);
             } else if (evt === 'batch_file_done') {
+                console.log('[Worker:batch] FILE_DONE', parsed.phase, parsed.index, '/', parsed.count, parsed.file_name);
                 sendWorkerEvent('worker-batch-file-done', parsed);
             } else if (evt === 'batch_phase_complete') {
+                console.log('[Worker:batch] PHASE_COMPLETE', parsed.phase);
                 sendWorkerEvent('worker-batch-phase-complete', parsed);
             } else if (evt === 'batch_job_upload') {
+                console.log('[Worker:batch] JOB_UPLOAD', parsed.job_id, parsed.success);
                 sendWorkerEvent('worker-batch-job-upload', parsed);
+            } else if (evt === 'batch_complete') {
+                console.log('[Worker:batch] COMPLETE', parsed.count, 'files in', parsed.elapsed_s, 's', parsed.files_per_min, '/min');
+                sendWorkerEvent('worker-batch-complete', parsed);
             }
         } catch (e) {
             console.error('[Worker] JSON parse error:', e, line);

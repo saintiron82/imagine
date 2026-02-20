@@ -138,7 +138,22 @@ class WorkerIPCController:
 
                 # Batch progress callback — relay events to Electron
                 def _batch_progress_cb(event_type, data):
-                    _emit({"event": f"batch_{event_type}", **data})
+                    evt = {"event": f"batch_{event_type}", **data}
+                    _emit(evt)
+                    if event_type == "phase_start":
+                        _emit_log(f"Phase {data.get('phase', '?')} — {data.get('count', 0)} files", "info")
+                    elif event_type == "file_done":
+                        bs = data.get('batch_size', 1)
+                        bs_tag = f" [x{bs}]" if bs > 1 else ""
+                        _emit_log(f"  [{data.get('phase', '?')}] {data.get('index', 0)}/{data.get('count', 0)} {data.get('file_name', '')}{bs_tag}", "info")
+                    elif event_type == "phase_complete":
+                        fpm = data.get('files_per_min', 0)
+                        elapsed = data.get('elapsed_s', 0)
+                        _emit_log(f"Phase {data.get('phase', '?')} done — {elapsed}s ({fpm:.1f}/min)", "success")
+                    elif event_type == "batch_complete":
+                        fpm = data.get('files_per_min', 0)
+                        elapsed = data.get('elapsed_s', 0)
+                        _emit_log(f"Batch complete — {data.get('count', 0)} files in {elapsed}s ({fpm:.1f}/min)", "success")
 
                 # Phase-level batch processing
                 results = daemon.process_batch_phased(

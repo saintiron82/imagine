@@ -247,7 +247,7 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                 />
               </div>
 
-              {/* 4-Phase Independent Progress Bars */}
+              {/* 4-Phase Independent Progress Bars with per-phase speed */}
               <div className="grid grid-cols-2 gap-3 mb-4">
                 {phaseOrder.map((phase, idx) => {
                   const cfg = phaseConfig[phase];
@@ -256,6 +256,8 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                   const pct = isActive && wp.phaseCount > 0
                     ? Math.round((wp.phaseIndex / wp.phaseCount) * 100)
                     : isDone ? 100 : 0;
+                  const fpm = wp.phaseFpm?.[phase] || 0;
+                  const elapsed = wp.phaseElapsed?.[phase] || 0;
 
                   return (
                     <div key={phase} className={`bg-gray-900 rounded-lg p-3 ${isActive ? 'ring-1 ring-blue-500/50' : ''}`}>
@@ -263,11 +265,19 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                         <span className={`text-xs font-bold ${isDone ? 'text-green-400' : isActive ? cfg.textColor : 'text-gray-600'}`}>
                           {cfg.label}
                         </span>
-                        <span className={`text-[10px] font-mono ${isDone ? 'text-green-400' : isActive ? 'text-gray-300' : 'text-gray-600'}`}>
-                          {isDone ? `${wp.phaseCount}/${wp.phaseCount}` :
-                           isActive ? `${wp.phaseIndex}/${wp.phaseCount}` :
-                           `-`}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          {(isDone || isActive) && fpm > 0 && (
+                            <span className="text-[9px] font-mono text-yellow-400">{fpm.toFixed(1)}/m</span>
+                          )}
+                          {isDone && elapsed > 0 && (
+                            <span className="text-[9px] font-mono text-gray-500">{elapsed.toFixed(1)}s</span>
+                          )}
+                          <span className={`text-[10px] font-mono ${isDone ? 'text-green-400' : isActive ? 'text-gray-300' : 'text-gray-600'}`}>
+                            {isDone ? `${wp.phaseCount}/${wp.phaseCount}` :
+                             isActive ? `${wp.phaseIndex}/${wp.phaseCount}` :
+                             `-`}
+                          </span>
+                        </div>
                       </div>
                       <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
                         <div
@@ -280,7 +290,7 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                 })}
               </div>
 
-              {/* Stats Grid */}
+              {/* Stats Grid — overall + per-phase speeds */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                 <div className="bg-gray-900 rounded-lg p-3 text-center">
                   <div className="text-[10px] text-gray-500 mb-1">{t('admin.queue_completed')}</div>
@@ -300,6 +310,23 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                   <div className="text-xl font-bold font-mono text-emerald-300">{wp.etaMs > 0 ? formatEta(wp.etaMs) : '-'}</div>
                 </div>
               </div>
+
+              {/* Per-phase speed breakdown */}
+              {(wp.phaseFpm?.parse > 0 || wp.phaseFpm?.vision > 0 || wp.phaseFpm?.embed_vv > 0 || wp.phaseFpm?.embed_mv > 0) && (
+                <div className="flex items-center gap-3 mb-3 text-[10px] font-mono">
+                  <span className="text-gray-500">{t('worker.phase_speed')}:</span>
+                  {phaseOrder.map(phase => {
+                    const fpm = wp.phaseFpm?.[phase] || 0;
+                    if (fpm <= 0) return null;
+                    const cfg = phaseConfig[phase];
+                    return (
+                      <span key={phase} className={cfg.textColor}>
+                        {cfg.label} {fpm.toFixed(1)}/m
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Current file */}
               <div className="flex items-center gap-3 text-xs">

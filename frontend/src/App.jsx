@@ -66,7 +66,11 @@ function App() {
     currentFile: '',
     completed: 0,
     totalQueue: 0, pending: 0,
-    etaMs: null, throughput: 0,  // items/min
+    etaMs: null, throughput: 0,  // overall items/min
+    // Per-phase speed (files/min) — updated on phase_complete
+    phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+    // Per-phase elapsed (seconds) — updated on phase_complete
+    phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
   });
   const workerThroughputRef = useRef({ windowTimes: [] });
 
@@ -413,8 +417,23 @@ function App() {
       }));
     };
 
-    const onBatchPhaseComplete = (_data) => {
-      // Phase complete — UI will show next phase on phase_start
+    const onBatchPhaseComplete = (data) => {
+      // Update per-phase speed when a phase finishes
+      setWorkerProgress(prev => ({
+        ...prev,
+        phaseFpm: { ...prev.phaseFpm, [data.phase]: data.files_per_min || 0 },
+        phaseElapsed: { ...prev.phaseElapsed, [data.phase]: data.elapsed_s || 0 },
+      }));
+    };
+
+    const onBatchComplete = (data) => {
+      // Batch complete — update overall throughput from backend timing
+      if (data.phase_fpm) {
+        setWorkerProgress(prev => ({
+          ...prev,
+          phaseFpm: { ...prev.phaseFpm, ...data.phase_fpm },
+        }));
+      }
     };
 
     const onJobDone = (data) => {
@@ -446,6 +465,7 @@ function App() {
     w.onBatchPhaseStart?.(onBatchPhaseStart);
     w.onBatchFileDone?.(onBatchFileDone);
     w.onBatchPhaseComplete?.(onBatchPhaseComplete);
+    w.onBatchComplete?.(onBatchComplete);
     w.onJobDone(onJobDone);
 
     return () => {
@@ -454,6 +474,7 @@ function App() {
       w.offBatchPhaseStart?.();
       w.offBatchFileDone?.();
       w.offBatchPhaseComplete?.();
+      w.offBatchComplete?.();
       w.offJobDone();
     };
   }, [appMode]);
@@ -511,6 +532,8 @@ function App() {
         batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
         currentFile: '', completed: 0, totalQueue: 0, pending: 0,
         etaMs: null, throughput: 0,
+        phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+        phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
       });
       workerThroughputRef.current = { windowTimes: [] };
     } catch (e) {

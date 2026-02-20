@@ -256,6 +256,9 @@ const StatusBar = ({
                     const phaseColors = { parse: 'text-cyan-400', vision: 'text-blue-400', embed_vv: 'text-purple-400', embed_mv: 'text-green-400', uploading: 'text-yellow-400', starting: 'text-gray-400' };
                     const perMin = wp.throughput || 0;
 
+                    // Phase-level speed (from latest batch)
+                    const pFpm = wp.phaseFpm || {};
+
                     return (
                         <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
                             <Loader2 className="animate-spin text-emerald-400" size={14} />
@@ -272,6 +275,16 @@ const StatusBar = ({
                             <span className="text-emerald-300 font-mono font-bold text-[11px]">
                                 {completed}/{totalQ}
                             </span>
+
+                            {/* Per-phase speeds (compact) */}
+                            {(pFpm.parse > 0 || pFpm.vision > 0 || pFpm.embed_vv > 0 || pFpm.embed_mv > 0) && (
+                                <span className="font-mono text-[9px] text-gray-400">
+                                    {pFpm.parse > 0 && <span className="text-cyan-400">P:{pFpm.parse.toFixed(0)} </span>}
+                                    {pFpm.vision > 0 && <span className="text-blue-400">MC:{pFpm.vision.toFixed(1)} </span>}
+                                    {pFpm.embed_vv > 0 && <span className="text-purple-400">VV:{pFpm.embed_vv.toFixed(0)} </span>}
+                                    {pFpm.embed_mv > 0 && <span className="text-green-400">MV:{pFpm.embed_mv.toFixed(0)}</span>}
+                                </span>
+                            )}
 
                             {perMin > 0 && (
                                 <span className="text-yellow-300 font-mono text-[10px]">

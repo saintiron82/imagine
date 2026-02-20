@@ -360,6 +360,7 @@
   "worker.current_file": "File",
   "worker.items_per_sec": "items/min",
   "worker.throughput": "Throughput",
+  "worker.phase_speed": "Phase speed",
   "setup.subtitle": "Select your mode",
   "setup.server_title": "Admin",
   "setup.server_desc": "Host a server on this PC to manage image data and job queues.",

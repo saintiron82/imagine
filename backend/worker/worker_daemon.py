@@ -565,6 +565,15 @@ class WorkerDaemon:
 
             fields = {}
             if vision_result:
+                # VLM returns 'caption' → map to 'mc_caption', 'tags' → 'ai_tags'
+                # (same mapping as ingest_engine.py local pipeline)
+                if isinstance(vision_result, dict):
+                    if "caption" in vision_result:
+                        fields["mc_caption"] = vision_result["caption"]
+                    if "tags" in vision_result:
+                        fields["ai_tags"] = vision_result["tags"]
+
+                # Copy remaining vision fields directly
                 for key in [
                     "mc_caption", "ai_tags", "ocr_text", "dominant_color",
                     "ai_style", "image_type", "art_style", "color_palette",
@@ -613,11 +622,14 @@ class WorkerDaemon:
 
         mc_caption = metadata.get("mc_caption", "")
         ai_tags = metadata.get("ai_tags", "")
+        # ai_tags may be a list from VLM — convert to string
+        if isinstance(ai_tags, list):
+            ai_tags = ", ".join(str(t) for t in ai_tags)
         if mc_caption or ai_tags:
             try:
-                from backend.vector.text_embedding import get_text_embedder
+                from backend.vector.text_embedding import get_text_embedding_provider
 
-                embedder = get_text_embedder()
+                embedder = get_text_embedding_provider()
                 mv_text = f"{mc_caption} {ai_tags}".strip()
                 if mv_text:
                     mv_vec = embedder.encode(mv_text)
@@ -653,19 +665,22 @@ class WorkerDaemon:
                 "file_size": getattr(meta, "file_size", 0),
             }
 
-    # ── Batch Processing (Phase-Level) ────────────────────────
+    # ── Batch Processing (Phase-Level with Sub-Batch Inference) ──
 
     def process_batch_phased(self, jobs: list, progress_callback=None) -> list:
-        """Process a batch of jobs using phase-level batching.
+        """Process a batch of jobs using phase-level sub-batch processing.
 
-        Instead of processing each file through all phases sequentially,
-        this processes ALL files through each phase before moving to the next.
-        This minimizes model loading/unloading and enables batch inference.
+        Mirrors the local pipeline (ingest_engine.py) approach:
+        - Parse: 1-by-1 (CPU-bound)
+        - Vision (VLM): 1-by-1 (MLX/transformers batch_size=1)
+        - VV (SigLIP2): real batch via encode_image_batch()
+        - MV (Qwen3-Embedding): real batch via encode_batch()
+
+        Each phase tracks elapsed time and reports files/min.
 
         Args:
             jobs: List of job dicts with job_id, file_id, file_path.
             progress_callback: Optional callback(event_type, data) for IPC progress.
-                event_type: "phase_start", "file_done", "phase_complete", "job_upload"
         Returns:
             List of (job_id, success) tuples.
         """
@@ -681,7 +696,8 @@ class WorkerDaemon:
 
         active = [c for c in contexts if not c.failed]
 
-        # ── Phase P: Parse all ──
+        # ── Phase P: Parse all (CPU, 1-by-1) ──
+        t_phase = time.perf_counter()
         _notify(progress_callback, "phase_start", {"phase": "parse", "count": len(active)})
         for i, ctx in enumerate(active):
             self._current_phase = "parse"
@@ -699,11 +715,17 @@ class WorkerDaemon:
                 "phase": "parse", "file_name": self._current_file,
                 "index": i + 1, "count": len(active), "success": not ctx.failed,
             })
-        _notify(progress_callback, "phase_complete", {"phase": "parse", "count": len(active)})
+        elapsed_parse = time.perf_counter() - t_phase
+        fpm_parse = (len(active) / elapsed_parse * 60) if elapsed_parse > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "parse", "count": len(active),
+            "elapsed_s": round(elapsed_parse, 2), "files_per_min": round(fpm_parse, 1),
+        })
 
         active = [c for c in contexts if not c.failed]
 
-        # ── Phase V: Vision all (VLM) ──
+        # ── Phase V: Vision (VLM, 1-by-1 — MLX batch_size=1) ──
+        t_phase = time.perf_counter()
         _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
         for i, ctx in enumerate(active):
             self._current_phase = "vision"
@@ -721,49 +743,154 @@ class WorkerDaemon:
                 "phase": "vision", "file_name": self._current_file,
                 "index": i + 1, "count": len(active), "success": True,
             })
-        _notify(progress_callback, "phase_complete", {"phase": "vision", "count": len(active)})
+        elapsed_vision = time.perf_counter() - t_phase
+        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "vision", "count": len(active),
+            "elapsed_s": round(elapsed_vision, 2), "files_per_min": round(fpm_vision, 1),
+        })
 
         # Unload VLM to free GPU memory for embedding phases
         self._unload_vlm()
 
-        # ── Phase VV: SigLIP2 all ──
+        # ── Phase VV: SigLIP2 (real batch via encode_image_batch) ──
+        t_phase = time.perf_counter()
+        vv_batch_size = 8  # SigLIP2 sub-batch size
         _notify(progress_callback, "phase_start", {"phase": "embed_vv", "count": len(active)})
-        for i, ctx in enumerate(active):
+
+        # Load SigLIP2 encoder once
+        from backend.vector.siglip2_encoder import SigLIP2Encoder
+        from PIL import Image as PILImage
+        if WorkerDaemon._vv_encoder is None:
+            WorkerDaemon._vv_encoder = SigLIP2Encoder()
+        encoder = WorkerDaemon._vv_encoder
+
+        processed_vv = 0
+        for chunk_start in range(0, len(active), vv_batch_size):
+            chunk = active[chunk_start:chunk_start + vv_batch_size]
+            images = []
+            chunk_valid = []
+
+            for ctx in chunk:
+                if ctx.thumb_path and Path(ctx.thumb_path).exists():
+                    try:
+                        img = PILImage.open(ctx.thumb_path).convert("RGB")
+                        images.append(img)
+                        chunk_valid.append(ctx)
+                    except Exception as e:
+                        logger.warning(f"VV load failed: {ctx.job['file_path']}: {e}")
+
+            if images:
+                try:
+                    vv_vectors = encoder.encode_image_batch(images)
+                    for j, vec in enumerate(vv_vectors):
+                        chunk_valid[j].vv_vec = vec
+                        # Structure vector (if available)
+                        if hasattr(encoder, 'encode_structure'):
+                            chunk_valid[j].structure_vec = encoder.encode_structure(images[j])
+                except Exception as e:
+                    logger.warning(f"VV batch encode failed: {e}")
+                    # Fallback: individual encoding
+                    for j, img in enumerate(images):
+                        try:
+                            chunk_valid[j].vv_vec = encoder.encode_image(img)
+                        except Exception:
+                            pass
+                del images
+
+            processed_vv += len(chunk)
             self._current_phase = "embed"
-            self._current_file = Path(ctx.job["file_path"]).name
-            self.uploader.report_progress(ctx.job["job_id"], "embed")
-
-            ctx.vv_vec, ctx.structure_vec = self._run_embed_vv(ctx.thumb_path)
-
+            last_name = Path(chunk[-1].job["file_path"]).name if chunk else ""
+            self._current_file = last_name
             _notify(progress_callback, "file_done", {
-                "phase": "embed_vv", "file_name": self._current_file,
-                "index": i + 1, "count": len(active),
-                "success": ctx.vv_vec is not None,
+                "phase": "embed_vv", "file_name": last_name,
+                "index": processed_vv, "count": len(active),
+                "success": True, "batch_size": len(chunk),
             })
-        _notify(progress_callback, "phase_complete", {"phase": "embed_vv", "count": len(active)})
+            gc.collect()
+
+        elapsed_vv = time.perf_counter() - t_phase
+        fpm_vv = (len(active) / elapsed_vv * 60) if elapsed_vv > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "embed_vv", "count": len(active),
+            "elapsed_s": round(elapsed_vv, 2), "files_per_min": round(fpm_vv, 1),
+        })
 
         # Unload SigLIP2 to free GPU memory for MV phase
         self._unload_vv()
 
-        # ── Phase MV: Qwen3-Embedding all ──
+        # ── Phase MV: Qwen3-Embedding (real batch via encode_batch) ──
+        t_phase = time.perf_counter()
+        mv_batch_size = 16  # Text embedding sub-batch size
         _notify(progress_callback, "phase_start", {"phase": "embed_mv", "count": len(active)})
+
+        from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
+        mv_provider = get_text_embedding_provider()
+
+        # Prepare texts for all active contexts
+        mv_items = []  # (ctx_index, text)
         for i, ctx in enumerate(active):
+            mc_caption = ctx.metadata.get("mc_caption", "")
+            ai_tags = ctx.metadata.get("ai_tags", "")
+            if isinstance(ai_tags, list):
+                ai_tags_str = ", ".join(str(t) for t in ai_tags)
+            else:
+                ai_tags_str = ai_tags or ""
+
+            facts = {
+                "image_type": ctx.metadata.get("image_type"),
+                "scene_type": ctx.metadata.get("scene_type"),
+                "art_style": ctx.metadata.get("art_style"),
+            }
+            doc_text = build_document_text(mc_caption, ai_tags, facts=facts)
+            if doc_text:
+                mv_items.append((i, doc_text))
+
+        processed_mv = 0
+        for chunk_start in range(0, len(mv_items), mv_batch_size):
+            chunk = mv_items[chunk_start:chunk_start + mv_batch_size]
+            texts = [text for _, text in chunk]
+
+            try:
+                if hasattr(mv_provider, 'encode_batch'):
+                    vecs = mv_provider.encode_batch(texts)
+                else:
+                    vecs = [mv_provider.encode(t) for t in texts]
+
+                for j, vec in enumerate(vecs):
+                    ctx_idx = chunk[j][0]
+                    active[ctx_idx].mv_vec = vec
+            except Exception as e:
+                logger.warning(f"MV batch encode failed: {e}, falling back to individual")
+                for j, (ctx_idx, text) in enumerate(chunk):
+                    try:
+                        active[ctx_idx].mv_vec = mv_provider.encode(text)
+                    except Exception:
+                        pass
+
+            processed_mv += len(chunk)
             self._current_phase = "embed"
-            self._current_file = Path(ctx.job["file_path"]).name
-
-            ctx.mv_vec = self._run_embed_mv(ctx.metadata)
-
+            last_name = Path(active[chunk[-1][0]].job["file_path"]).name if chunk else ""
+            self._current_file = last_name
             _notify(progress_callback, "file_done", {
-                "phase": "embed_mv", "file_name": self._current_file,
-                "index": i + 1, "count": len(active),
-                "success": ctx.mv_vec is not None,
+                "phase": "embed_mv", "file_name": last_name,
+                "index": processed_mv, "count": len(mv_items),
+                "success": True, "batch_size": len(chunk),
             })
-        _notify(progress_callback, "phase_complete", {"phase": "embed_mv", "count": len(active)})
+            gc.collect()
+
+        elapsed_mv = time.perf_counter() - t_phase
+        fpm_mv = (len(mv_items) / elapsed_mv * 60) if elapsed_mv > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "embed_mv", "count": len(mv_items),
+            "elapsed_s": round(elapsed_mv, 2), "files_per_min": round(fpm_mv, 1),
+        })
 
         # Unload MV model
         self._unload_mv()
 
         # ── Upload all results ──
+        t_phase = time.perf_counter()
         results = []
         for ctx in contexts:
             job_id = ctx.job["job_id"]
@@ -804,6 +931,30 @@ class WorkerDaemon:
                     Path(ctx.local_path).unlink(missing_ok=True)
                 except Exception:
                     pass
+
+        elapsed_upload = time.perf_counter() - t_phase
+
+        # Emit total batch timing
+        total_elapsed = elapsed_parse + elapsed_vision + elapsed_vv + elapsed_mv + elapsed_upload
+        total_fpm = (len(contexts) / total_elapsed * 60) if total_elapsed > 0 else 0
+        _notify(progress_callback, "batch_complete", {
+            "count": len(contexts),
+            "elapsed_s": round(total_elapsed, 2),
+            "files_per_min": round(total_fpm, 1),
+            "phase_times": {
+                "parse": round(elapsed_parse, 2),
+                "vision": round(elapsed_vision, 2),
+                "embed_vv": round(elapsed_vv, 2),
+                "embed_mv": round(elapsed_mv, 2),
+                "upload": round(elapsed_upload, 2),
+            },
+            "phase_fpm": {
+                "parse": round(fpm_parse, 1),
+                "vision": round(fpm_vision, 1),
+                "embed_vv": round(fpm_vv, 1),
+                "embed_mv": round(fpm_mv, 1),
+            },
+        })
 
         self._clear_current()
 
