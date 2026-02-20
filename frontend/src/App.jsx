@@ -13,7 +13,7 @@ import SetupPage from './pages/SetupPage';
 import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
-import { isElectron } from './api/client';
+import { isElectron, setServerUrl } from './api/client';
 import { registerPaths, scanFolder } from './api/admin';
 
 function App() {
@@ -67,7 +67,16 @@ function App() {
       try {
         const result = await window.electron?.pipeline?.getConfig();
         if (result?.success && result.config?.app?.mode) {
-          setAppMode(result.config.app.mode);
+          const mode = result.config.app.mode;
+          setAppMode(mode);
+
+          // Auto-set server URL for API calls
+          if (mode === 'server') {
+            const port = result.config?.server?.port || 8000;
+            setServerUrl(`http://localhost:${port}`);
+          } else if (mode === 'client' && result.config?.app?.server_url) {
+            setServerUrl(result.config.app.server_url);
+          }
         }
         // If no mode set, appMode stays null → show SetupPage
       } catch (e) {
@@ -377,8 +386,8 @@ function App() {
       type: 'info'
     });
 
-    // Server/Client mode: register files via API → queue for workers
-    if (appMode === 'server' || appMode === 'client') {
+    // Client mode (remote server): register files via API → queue for workers
+    if (appMode === 'client' && !isElectron) {
       try {
         const result = await registerPaths(fileArray);
         appendLog({
@@ -394,7 +403,7 @@ function App() {
       return;
     }
 
-    // Standalone mode: direct pipeline spawn
+    // Server mode / Electron client: direct pipeline spawn (local DB access)
     if (window.electron?.pipeline) {
       window.electron.pipeline.run(fileArray);
     }
@@ -423,8 +432,8 @@ function App() {
       type: 'info'
     });
 
-    // Server/Client mode: scan folder via API → queue for workers
-    if (appMode === 'server' || appMode === 'client') {
+    // Client mode (remote server, web): scan folder via API → queue for workers
+    if (appMode === 'client' && !isElectron) {
       try {
         const result = await scanFolder(folderPath);
         appendLog({
@@ -438,7 +447,7 @@ function App() {
       return;
     }
 
-    // Standalone mode: direct discover spawn
+    // Server mode / Electron client: direct discover spawn (local DB access)
     window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip });
   };
