@@ -691,16 +691,32 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 **결합**: RRF (Reciprocal Rank Fusion), 가중치는 `config.yaml` > `search.rrf.presets` 설정.
 **검색 엔진**: `backend/search/sqlite_search.py` (SqliteVectorSearch)
 
-### Tier 시스템 (config.yaml)
+### Tier 시스템 (config.yaml) — 2026-02-20 기준
+
+**VV/MV 크로스 티어 호환성 확보 완료.**
 
 | Tier | VRAM | VV 모델 (SigLIP2) | VLM (MC 생성) | MV 모델 (Qwen3-Embedding) |
 |------|------|-------------------|---------------|----------------------|
-| **standard** | ~6GB | `siglip2-base-patch16-224` (768d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (256d) |
-| **pro** | 8-16GB | `siglip2-so400m-patch14-384` (1152d) | `Qwen3-VL-4B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) |
-| **ultra** | 20GB+ | `siglip2-giant-opt-patch16-256` (1664d) | `Qwen3-VL-8B` (auto: ollama/vllm) | `Qwen3-Embedding-8B` (4096d) |
+| **standard** | ~6GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) |
+| **pro** | 8-16GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-4B` (auto: mlx/transformers) | `Qwen3-Embedding-0.6B` (1024d) |
+| **ultra** | 20GB+ | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-8B` (auto: mlx/ollama/vllm/transformers) | `Qwen3-Embedding-8B` (4096d) |
 
-**설정 파일**: `config.yaml` > `ai_mode.override` (현재: `standard`)
+**핵심 설계 결정 (2026-02-20):**
+- **VV 모델 통일**: 모든 Tier에서 동일한 `siglip2-so400m-patch16-naflex` (1152d) 사용. Tier 전환 시 VV 재생성 불필요.
+- **MV 모델 통일 (standard↔pro)**: 동일한 `qwen3-embedding:0.6b` (1024d). standard↔pro 전환이 **완전 무중단**.
+- **MV ultra 분리**: ultra는 `qwen3-embedding:8b` (4096d)로 모델 자체가 다름. 전환 시 MV만 재생성 (빠름, ~0.5s/file).
+- **SigLIP2 so400m NaFlex 선택 근거**: Meta PE-Core(2025.04)가 성능 최강이나 CC-BY-NC 라이선스 + transformers 미통합 + MPS 미검증. SigLIP2는 Apache 2.0, transformers 네이티브, MPS 검증됨. 동급 파라미터 대비 성능 차이 0.5% 미만.
+
+**Tier 전환 호환성 매트릭스:**
+
+| 전환 | VV | MV | MC | FTS | 판정 |
+|------|----|----|----|----|------|
+| standard ↔ pro | 호환 | 호환 | 호환 | 호환 | **완전 호환** |
+| standard/pro ↔ ultra | 호환 | MV만 재생성 | 호환 | 호환 | MV만 재생성 |
+
+**설정 파일**: `config.yaml` > `ai_mode.override` (현재: `pro`)
 **Tier 로더**: `backend/utils/tier_config.py` > `get_active_tier()`
+**호환성 매트릭스**: `backend/utils/tier_compatibility.py`
 
 ### 파이프라인 4단계 (process_batch_phased, ingest_engine.py)
 
@@ -934,90 +950,100 @@ const { t } = useLocale();
 
 ---
 
-## 플랫폼별 최적화 규칙 (v3.1.1)
+## 크로스 플랫폼 VLM 폴백 체인 (v8.1, 2026-02-20 기준)
 
-**모든 vision 처리는 플랫폼별로 최적화된 백엔드를 사용합니다.**
+**VLM 팩토리(`vision_factory.py`)는 명시적 폴백 체인을 사용합니다.**
 
-### 핵심 원칙
+### 폴백 체인 매트릭스
 
-1. **항상 AUTO 모드 사용**
-   ```yaml
-   # config.yaml
-   ai_mode:
-     tiers:
-       ultra:
-         vlm:
-           backend: auto  # 플랫폼 자동 감지
-   ```
+모든 플랫폼 × 티어 조합에서 `transformers`가 최종 안전망.
 
-2. **플랫폼별 권장 설정**
-   - **Windows**: Ollama (batch_size=1, 순차 처리)
-   - **Mac**: vLLM 우선 (batch_size=16, 병렬 처리)
-   - **Linux**: vLLM 우선 (batch_size=16, 병렬 처리)
+| 티어 | macOS | Windows | Linux |
+|------|-------|---------|-------|
+| **standard** | `[transformers]` | `[transformers]` | `[transformers]` |
+| **pro** | `[mlx → transformers]` | `[transformers]` | `[transformers]` |
+| **ultra** | `[mlx → transformers]` | `[ollama → transformers]` | `[vllm → ollama → transformers]` |
 
-3. **성능 특성 이해**
-   - Ollama Vision API: 배치 처리 시 성능 저하 (0.6x)
-   - vLLM: 배치 처리 시 8.5배 향상
-   - Transformers: 배치 처리 시 4-14배 향상
+### 동작 원리
 
-### 실측 벤치마크 데이터
+1. `_resolve_backend_chain()`: config.yaml의 `backend` + `fallback` 필드에서 체인 구성
+2. `_check_backend_available()`: 사전 가용성 검사 (is_mlx_vlm_available, is_vllm_available, is_ollama_available)
+3. `_instantiate_backend()`: 체인 순서대로 시도, 실패 시 다음으로
+4. `transformers`: 항상 마지막에 보장 (torch는 필수 의존성)
 
-**Ultra Tier (Qwen3-VL-8B):**
+### config.yaml 폴백 설정
 
-| 플랫폼 | 백엔드 | 1개 이미지 | 10개 이미지 | Speedup |
-|--------|--------|-----------|-------------|---------|
-| Windows | Ollama | 51초 | 510초 | 1.0x (기준) |
-| Mac/Linux | vLLM | ~6초 | ~60초 | 8.5x |
-| Mac/Linux | Ollama | 51초 | 510초 | 1.0x |
+```yaml
+# pro/ultra tier의 backends.{platform} 섹션에 fallback 필드 사용
+backends:
+  darwin:
+    backend: mlx
+    fallback: transformers    # MLX 불가 시 transformers로 폴백
+  windows:
+    backend: ollama
+    fallback: transformers    # Ollama 불가 시 transformers로 폴백
+  linux:
+    backend: vllm
+    fallback: ollama          # vLLM 불가 시 ollama, 그래도 불가 시 transformers (암묵적)
+```
 
-**Windows + Ollama 배치 처리 특성:**
-- batch_size=1: 평균 68.9초/파일 (일관적)
-- batch_size=3: 평균 127.8초/파일 (2배 느림)
-- **결론**: 순차 처리가 최적
+### 로그 패턴
+
+```
+INFO VLM backend chain (tier: pro): mlx → transformers
+INFO [SKIP] mlx: not available, trying next       # 또는
+INFO [OK] VLM backend: mlx (tier: pro)            # 또는
+WARNING [FAIL] mlx: <error>, trying next
+```
+
+### VV/MV는 폴백 불필요
+
+- **VV (SigLIP2)**: 모든 플랫폼에서 `transformers` 직접 사용 — 폴백 체인 없음
+- **MV (Qwen3-Embedding)**: `text_embedding.py`에 자체 `Transformers → Ollama` 폴백 구현됨
 
 ### 개발 가이드라인
 
-**새 기능 개발 시:**
 ```python
-# ✅ 올바른 방법 - Factory 사용 (플랫폼 자동 감지)
+# ✅ 올바른 방법 - Factory 사용 (폴백 체인 자동 작동)
 from backend.vision.vision_factory import get_vision_analyzer
-analyzer = get_vision_analyzer()  # AUTO 모드 작동
+analyzer = get_vision_analyzer()
 
 # ❌ 잘못된 방법 - 직접 adapter 초기화
 from backend.vision.ollama_adapter import OllamaVisionAdapter
-analyzer = OllamaVisionAdapter()  # 플랫폼 무시
+analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
 ```
 
-**배치 처리 구현 시:**
-```python
-# 플랫폼별 최적 batch_size 자동 감지
-from backend.utils.platform_detector import get_optimal_batch_size
+### 핵심 파일
 
-optimal_batch = get_optimal_batch_size(backend='auto', tier='ultra')
-# Windows: 1, Mac/Linux: 16
-```
+| 파일 | 역할 |
+|------|------|
+| `backend/vision/vision_factory.py` | VLM 폴백 체인 팩토리 (v8.0 리팩토링) |
+| `backend/utils/platform_detector.py` | 플랫폼 감지 + 가용성 검사 함수 |
+| `backend/utils/tier_config.py` | Tier 설정 로더 |
+| `config.yaml` > `ai_mode.tiers.{tier}.vlm.backends` | 플랫폼별 백엔드 + 폴백 설정 |
 
-### 문제 해결 체크리스트
+### 성능 참고 (2026-02-20 기준)
 
-**Vision 처리가 느린 경우:**
-1. [ ] 플랫폼 확인: `python -m backend.utils.platform_detector`
-2. [ ] Tier 확인: config.yaml의 `override` 설정
-3. [ ] Backend 확인: 로그에서 "Using ... backend" 검색
-4. [ ] Batch size 확인: Windows는 1이 최적
+| 백엔드 | 장점 | 단점 | 적합 플랫폼 |
+|--------|------|------|------------|
+| **MLX** | Apple Silicon 네이티브, 3-4x TTFT 향상 | macOS 전용, 배치 불가 (batch_size=1) | macOS |
+| **vLLM** | 8-16x 배치 처리, 최고 처리량 | CUDA 필수, Windows 미지원 | Linux (GPU) |
+| **Ollama** | 설치 간편, 모델 자동 관리 | 배치 성능 저하, batch_size=1 권장 | Windows, 범용 |
+| **Transformers** | 항상 사용 가능, MPS/CUDA/CPU 자동 | MLX/vLLM 대비 느릴 수 있음 | 최종 폴백 |
 
-**Windows에서 속도 개선 원하는 경우:**
-- **단기**: Tier 낮추기 (ultra → pro → standard)
-- **장기**: Mac/Linux 서버로 마이그레이션 (8.5배 향상)
-- **대안**: WSL2 + vLLM (고급 사용자)
+### 모델 선택 근거 (2026-02-20 조사 결과)
 
-### 관련 문서
+**조사 대상**: SigLIP2 (Google, 2025.02), Meta PE-Core (2025.04), OpenVision (UCSC, 2025.05), Jina-CLIP-v2 (2024.12), AIMv2 (Apple, 2024.11)
 
-- [플랫폼별 최적화 가이드](docs/platform_optimization.md) - 상세 설정
-- [빠른 시작 가이드](docs/quick_start_guide.md) - 플랫폼별 사용법
-- [Ollama 배치 분석](docs/ollama_batch_processing_analysis.md) - 벤치마크 데이터
+**SigLIP2 so400m-naflex 유지 결정 이유:**
+1. **라이선스**: Apache 2.0 (PE-Core는 CC-BY-NC 비상업)
+2. **생태계**: HuggingFace transformers 네이티브 (PE-Core는 자체 라이브러리/OpenCLIP)
+3. **MPS 호환**: macOS M5에서 검증됨 (PE-Core는 MPS 미검증, xformers 의존)
+4. **성능 차이**: PE-Core-L14 vs SigLIP2-so400m — ImageNet ZS 0.5% 차이 (83.5% vs ~83%)
+5. **NaFlex**: 종횡비 보존 (PSD/PNG 다양한 비율에 적합), HuggingFace 다운로드 1위 (1.31M+)
+6. **가성비**: So400m(400M) → giant-opt(1B): 파라미터 2.5배, 메모리 2배, 검색 성능 +0.3%
 
-**심각도**: ⚠️ HIGH - 성능에 직접적인 영향
-**적용 시기**: v3.1.1부터 필수
+**재평가 시점**: PE-Core가 transformers 통합 + 라이선스 변경 시, 또는 SigLIP3 출시 시
 
 ## 개발/테스트 환경 (macOS)
 
