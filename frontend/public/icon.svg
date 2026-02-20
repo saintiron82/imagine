@@ -1,30 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="100%" stop-color="#8b5cf6"/>
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e3a5f"/>
     </linearGradient>
-    <linearGradient id="lens" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#c4b5fd"/>
-      <stop offset="100%" stop-color="#818cf8"/>
+    <linearGradient id="acc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#6366f1"/>
     </linearGradient>
-    <linearGradient id="spark" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#fbbf24"/>
-      <stop offset="100%" stop-color="#f59e0b"/>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
     </linearGradient>
   </defs>
-  <!-- Rounded square background -->
+  <!-- Dark rounded square -->
   <rect width="512" height="512" rx="108" fill="url(#bg)"/>
-  <!-- Mountain/image silhouette -->
-  <path d="M100 360 L200 240 L260 300 L340 190 L420 360Z" fill="rgba(255,255,255,0.15)" stroke="none"/>
-  <!-- Lens circle -->
-  <circle cx="260" cy="240" r="100" fill="none" stroke="url(#lens)" stroke-width="18" opacity="0.9"/>
-  <!-- Inner lens reflection -->
-  <circle cx="260" cy="240" r="60" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="8"/>
-  <!-- Lens handle -->
-  <line x1="335" y1="315" x2="400" y2="380" stroke="url(#lens)" stroke-width="18" stroke-linecap="round" opacity="0.9"/>
-  <!-- AI spark dots -->
-  <circle cx="230" cy="200" r="8" fill="url(#spark)"/>
-  <circle cx="290" cy="220" r="6" fill="url(#spark)" opacity="0.8"/>
-  <circle cx="250" cy="265" r="5" fill="url(#spark)" opacity="0.6"/>
+  <!-- Subtle grid pattern -->
+  <line x1="170" y1="120" x2="170" y2="400" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="256" y1="120" x2="256" y2="400" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="342" y1="120" x2="342" y2="400" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="120" y1="200" x2="400" y2="200" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="120" y1="280" x2="400" y2="280" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="120" y1="360" x2="400" y2="360" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <!-- Eye shape (imagination / vision) -->
+  <path d="M110 256 Q256 140 402 256 Q256 372 110 256Z" fill="none" stroke="url(#acc)" stroke-width="14" opacity="0.9"/>
+  <!-- Iris -->
+  <circle cx="256" cy="256" r="58" fill="none" stroke="url(#glow)" stroke-width="10"/>
+  <!-- Pupil -->
+  <circle cx="256" cy="256" r="26" fill="url(#acc)"/>
+  <!-- Pupil highlight -->
+  <circle cx="244" cy="244" r="8" fill="rgba(255,255,255,0.7)"/>
+  <!-- AI neural nodes -->
+  <circle cx="160" cy="190" r="5" fill="#22d3ee" opacity="0.6"/>
+  <circle cx="352" cy="190" r="5" fill="#22d3ee" opacity="0.6"/>
+  <circle cx="160" cy="322" r="5" fill="#6366f1" opacity="0.6"/>
+  <circle cx="352" cy="322" r="5" fill="#6366f1" opacity="0.6"/>
+  <!-- Neural connections -->
+  <line x1="160" y1="190" x2="200" y2="230" stroke="#22d3ee" stroke-width="1.5" opacity="0.3"/>
+  <line x1="352" y1="190" x2="312" y2="230" stroke="#22d3ee" stroke-width="1.5" opacity="0.3"/>
+  <line x1="160" y1="322" x2="200" y2="282" stroke="#6366f1" stroke-width="1.5" opacity="0.3"/>
+  <line x1="352" y1="322" x2="312" y2="282" stroke="#6366f1" stroke-width="1.5" opacity="0.3"/>
 </svg>
