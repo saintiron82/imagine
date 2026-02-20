@@ -15,6 +15,7 @@ import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Downlo
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getAccessToken, clearTokens } from './api/client';
+import { setUseLocalBackend } from './services/bridge';
 import { registerPaths, scanFolder } from './api/admin';
 
 function App() {
@@ -72,6 +73,7 @@ function App() {
         if (result?.success && result.config?.app?.mode) {
           const mode = result.config.app.mode;
           setAppMode(mode);
+          setUseLocalBackend(mode === 'server');
 
           // Auto-set server URL for API calls
           if (mode === 'server') {
@@ -104,6 +106,7 @@ function App() {
     try {
       await window.electron?.pipeline?.updateConfig('app.mode', null);
       setAppMode(null); // Show SetupPage
+      setUseLocalBackend(false);
     } catch (e) {
       console.error('Failed to reset mode:', e);
     }

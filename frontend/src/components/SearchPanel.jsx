@@ -5,7 +5,7 @@ import SettingsModal from './SettingsModal';
 import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
-import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl } from '../services/bridge';
+import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode } from '../services/bridge';
 import { isElectron, getServerUrl } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
@@ -58,7 +58,7 @@ const MetadataModal = ({ metadata, onClose }) => {
         saveTimer.current = setTimeout(async () => {
             try {
                 await updateUserMeta(
-                    isElectron ? metadata.file_path : metadata.id, editedData
+                    isLocalMode() ? metadata.file_path : metadata.id, editedData
                 );
                 Object.assign(metadata, editedData);
             } catch (err) {
@@ -448,8 +448,9 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu }) => {
     };
 
     // Prefer DB thumbnail (always generated during Process), fallback to native preview
-    // Web mode: use server API for thumbnails (file:// URLs are blocked in browsers)
-    const thumbnailSrc = isElectron
+    // Local mode (Electron server): file:// URL from disk
+    // Remote mode (Electron client / Web): server API URL with JWT
+    const thumbnailSrc = isLocalMode()
         ? (result.thumbnail_path ? toFileUrl(result.thumbnail_path) : canPreviewNatively ? toFileUrl(localPath) : null)
         : getThumbnailUrl(result.thumbnail_path, result.id);
 
