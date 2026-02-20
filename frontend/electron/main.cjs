@@ -1597,28 +1597,8 @@ app.whenReady().then(async () => {
     // Kill any orphaned search daemons from previous crashed sessions
     cleanupOrphanDaemons();
 
-    // ── Auto-start embedded server in server mode ──
-    const config = loadAppConfig();
-    const appMode = config?.app?.mode;
-
-    if (appMode === 'server') {
-        const port = config?.server?.port || 8000;
-        console.log('[App] Server mode detected — auto-starting FastAPI...');
-        const result = startEmbeddedServer(port);
-        if (result.success) {
-            const ready = await waitForServerReady(port);
-            if (ready) {
-                console.log('[App] Embedded server is ready.');
-            } else {
-                console.warn('[App] Server started but health check timed out. Continuing anyway...');
-            }
-        } else {
-            console.error('[App] Failed to start embedded server:', result.error);
-        }
-    } else if (appMode === 'client') {
-        const serverUrl = config?.app?.server_url;
-        console.log(`[App] Client mode — server: ${serverUrl || '(not configured)'}`);
-    }
+    // Server is started by the React app via IPC (window.electron.server.start)
+    // when user selects "관리" mode on SetupPage. No config.yaml auto-start.
 
     // Do NOT start search daemon here — it starts lazily on first search
     createWindow();

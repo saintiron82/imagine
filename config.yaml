@@ -203,4 +203,4 @@ vision:
   require_local_models: true
   temperature: 0.1
 app:
-  mode: server
+  mode:   # determined at runtime by SetupPage
