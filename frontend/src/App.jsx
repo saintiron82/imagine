@@ -612,12 +612,12 @@ function App() {
           <button
             onClick={() => setCurrentTab('archive')}
             className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
-              ? (appMode === 'client' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-white')
+              ? (appMode !== 'server' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-white')
               : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
               }`}
           >
-            {appMode === 'client' ? <Zap size={16} /> : <Archive size={16} />}
-            <span>{appMode === 'client' ? t('tab.archive_worker') : t('tab.archive_server')}</span>
+            {appMode !== 'server' ? <Zap size={16} /> : <Archive size={16} />}
+            <span>{appMode !== 'server' ? t('tab.archive_worker') : t('tab.archive_server')}</span>
           </button>
 
           {/* Admin tab (admin users only, web mode) */}
@@ -634,7 +634,7 @@ function App() {
             </button>
           )}
 
-          {currentTab === 'archive' && appMode !== 'client' && (
+          {currentTab === 'archive' && appMode === 'server' && (
             <>
               <div className="w-px h-6 bg-gray-600 mx-1" />
               <div className="text-xs text-gray-500">
@@ -758,8 +758,8 @@ function App() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar - Folder Tree (only in archive server/web mode) */}
-        {currentTab === 'archive' && appMode !== 'client' && (
+        {/* Sidebar - Folder Tree (only in archive server mode) */}
+        {currentTab === 'archive' && appMode === 'server' && (
           <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
             <div className="p-4 border-b border-gray-700 flex items-center space-x-2">
               <FolderOpen className="text-blue-400" size={20} />
@@ -791,7 +791,7 @@ function App() {
                 onSearchConsumed={() => setPendingSearch(null)}
                 reloadSignal={folderStatsVersion}
               />
-            ) : currentTab === 'archive' && appMode === 'client' ? (
+            ) : currentTab === 'archive' && appMode !== 'server' ? (
               <ClientWorkerView appMode={appMode} />
             ) : (
               <ServerArchiveView
