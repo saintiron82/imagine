@@ -398,5 +398,15 @@
   "download.other_platforms": "Other platforms",
   "download.copy_url": "Copy server URL",
   "download.server_url_hint": "Use this server URL when setting up the app",
-  "download.no_builds": "Ask admin for the installer"
+  "download.no_builds": "Ask admin for the installer",
+  "download.no_builds_desc": "No installer files are available on this server yet.",
+  "download.page_title": "Download Imagine Desktop",
+  "download.page_desc": "Get the desktop app for full features: worker processing, file management, and local AI pipeline.",
+  "download.recommended": "Recommended",
+  "download.back": "Back",
+  "download.setup_title": "After installing",
+  "download.step_1": "Install and open the Imagine app",
+  "download.step_2": "Choose \"Client\" mode on the setup screen",
+  "download.step_3": "Enter the server URL above to connect",
+  "download.view_all": "View all downloads"
 }

@@ -18,7 +18,7 @@ function PlatformIcon({ platform, size = 14 }) {
 
 const PLATFORM_LABELS = { mac: 'macOS', win: 'Windows', linux: 'Linux', unknown: 'Desktop' };
 
-export default function AppDownloadBanner() {
+export default function AppDownloadBanner({ onShowDownload }) {
   const { t } = useLocale();
   const [downloads, setDownloads] = useState([]);
   const [dismissed, setDismissed] = useState(false);
@@ -117,6 +117,16 @@ export default function AppDownloadBanner() {
               {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
             </button>
           </div>
+
+          {/* View all downloads link */}
+          {onShowDownload && (
+            <button
+              onClick={onShowDownload}
+              className="text-[11px] text-emerald-500 hover:text-emerald-400 transition-colors whitespace-nowrap"
+            >
+              {t('download.view_all')}
+            </button>
+          )}
 
           {/* Dismiss */}
           <button

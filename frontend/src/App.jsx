@@ -9,6 +9,7 @@ import ClientWorkerView from './components/ClientWorkerView';
 import LoginPage from './pages/LoginPage';
 import AdminPage from './pages/AdminPage';
 import SetupPage from './pages/SetupPage';
+import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
 import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
@@ -52,6 +53,7 @@ function App() {
   const [showDbMenu, setShowDbMenu] = useState(false);
   const [folderStatsVersion, setFolderStatsVersion] = useState(0);
   const [queueReloadSignal, setQueueReloadSignal] = useState(0);
+  const [showDownloadPage, setShowDownloadPage] = useState(false);
 
   // App mode: 'server' | 'client' | null (not configured)
   const [appMode, setAppMode] = useState(isElectron ? null : 'web');
@@ -589,7 +591,15 @@ function App() {
   // Show login page when auth required but not authenticated
   // skipAuth: null=undetermined (still loading), true=bypass, false=JWT required
   if (skipAuth === false && !isAuthenticated) {
-    return <LoginPage />;
+    if (showDownloadPage) {
+      return <DownloadPage onBack={() => setShowDownloadPage(false)} />;
+    }
+    return <LoginPage onShowDownload={() => setShowDownloadPage(true)} />;
+  }
+
+  // Download page overlay (web mode, authenticated)
+  if (showDownloadPage && appMode === 'web') {
+    return <DownloadPage onBack={() => setShowDownloadPage(false)} />;
   }
 
   return (
@@ -782,7 +792,7 @@ function App() {
       </div>
 
       {/* Download Desktop App Banner (web mode only) */}
-      {appMode === 'web' && <AppDownloadBanner />}
+      {appMode === 'web' && <AppDownloadBanner onShowDownload={() => setShowDownloadPage(true)} />}
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar - Folder Tree (only in archive server mode) */}

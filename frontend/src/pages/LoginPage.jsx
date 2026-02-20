@@ -4,13 +4,13 @@
  * Dark theme matching the existing app design.
  */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocale } from '../i18n';
-import { setServerUrl as setClientServerUrl, getServerUrl } from '../api/client';
+import { setServerUrl as setClientServerUrl } from '../api/client';
 import { LogIn, UserPlus, Server, Eye, EyeOff, CheckCircle, XCircle, Download } from 'lucide-react';
 
-export default function LoginPage() {
+export default function LoginPage({ onShowDownload }) {
   const { login, register, error, checkServerHealth } = useAuth();
   const { t, locale, setLocale, availableLocales } = useLocale();
 
@@ -265,68 +265,25 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Desktop App Download */}
-        <AppDownloadLink />
+        {/* Desktop App Download — link to DownloadPage */}
+        {onShowDownload && (
+          <button
+            onClick={onShowDownload}
+            className="mt-4 w-full p-3 bg-gray-800/50 border border-emerald-700/30 rounded-lg hover:bg-emerald-900/20 transition-colors group"
+          >
+            <div className="flex items-center justify-center gap-2 text-emerald-400 text-sm group-hover:text-emerald-300">
+              <Download size={14} />
+              <span className="font-medium">{t('download.get_app')}</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1.5 text-center">{t('download.banner_desc')}</p>
+          </button>
+        )}
 
         {/* Footer */}
         <p className="text-center text-xs text-gray-600 mt-4">
           Imagine Server v4.0
         </p>
       </div>
-    </div>
-  );
-}
-
-/** Compact download link shown below the login card — always visible */
-function AppDownloadLink() {
-  const { t } = useLocale();
-  const [downloads, setDownloads] = useState([]);
-
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const base = getServerUrl() || '';
-        const resp = await fetch(`${base}/api/v1/app/downloads`);
-        if (resp.ok) {
-          const data = await resp.json();
-          setDownloads(data.files || []);
-        }
-      } catch { /* ignore */ }
-    };
-    check();
-  }, []);
-
-  // Detect user's platform
-  const ua = navigator.userAgent.toLowerCase();
-  const platform = ua.includes('mac') ? 'mac' : ua.includes('win') ? 'win' : ua.includes('linux') ? 'linux' : 'unknown';
-  const recommended = downloads.find(f => f.platform === platform) || downloads[0];
-
-  const handleDownload = () => {
-    if (!recommended) return;
-    const base = getServerUrl() || '';
-    window.open(`${base}/api/v1/app/downloads/${encodeURIComponent(recommended.name)}`, '_blank');
-  };
-
-  return (
-    <div className="mt-4 p-3 bg-gray-800/50 border border-emerald-700/30 rounded-lg">
-      {recommended ? (
-        <button
-          onClick={handleDownload}
-          className="w-full text-center hover:bg-emerald-900/20 rounded transition-colors py-1 group"
-        >
-          <div className="flex items-center justify-center gap-2 text-emerald-400 text-sm group-hover:text-emerald-300">
-            <Download size={14} />
-            <span className="font-medium">{t('download.get_app')}</span>
-            <span className="text-emerald-600 text-xs">({recommended.size_display})</span>
-          </div>
-        </button>
-      ) : (
-        <div className="flex items-center justify-center gap-2 text-emerald-400/60 text-sm">
-          <Download size={14} />
-          <span className="font-medium">{t('download.get_app')}</span>
-        </div>
-      )}
-      <p className="text-xs text-gray-500 mt-1.5 text-center">{t('download.banner_desc')}</p>
     </div>
   );
 }
