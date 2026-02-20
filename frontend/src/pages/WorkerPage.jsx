@@ -464,56 +464,66 @@ function WorkerPage({ appMode }) {
     <div className="h-full overflow-y-auto p-6 space-y-6">
       <div className="max-w-4xl mx-auto space-y-6">
 
-        {/* Header */}
+        {/* Header — mode-specific */}
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Server size={22} className="text-blue-400" />
-            {t('worker.title')}
+            {appMode === 'server' ? (
+              <><Server size={22} className="text-blue-400" />{t('worker.server_dashboard')}</>
+            ) : (
+              <><Zap size={22} className="text-emerald-400" />{t('worker.client_worker')}</>
+            )}
           </h2>
+          {appMode === 'client' && getServerUrl() && (
+            <p className="text-xs text-gray-500 mt-1">{t('worker.connected_to', { url: getServerUrl() })}</p>
+          )}
         </div>
 
-        {/* Worker Control */}
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className={`flex items-center gap-2 ${statusColor[workerStatus] || 'text-gray-400'}`}>
-                {statusIcon[workerStatus] || <Clock size={16} />}
-                {t(`worker.status_${workerStatus}`)}
-              </span>
-              {!isElectron && workerStatus === 'running' && jobsCompleted > 0 && (
-                <span className="text-xs text-green-400 font-mono">
-                  {t('worker.jobs_completed')}: {jobsCompleted}
+        {/* Worker Control (Electron only — web has no processing capability) */}
+        {isElectron && (
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className={`flex items-center gap-2 ${statusColor[workerStatus] || 'text-gray-400'}`}>
+                  {statusIcon[workerStatus] || <Clock size={16} />}
+                  {t(`worker.status_${workerStatus}`)}
                 </span>
-              )}
-              {isElectron && workerStatus !== 'running' && getServerUrl() && (
-                <span className="text-xs text-gray-500 truncate max-w-[200px]">
-                  {getServerUrl()}
-                </span>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleStart}
-                disabled={workerStatus === 'running' || workerStatus === 'stopping' || (isElectron && !getAccessToken())}
-                className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-green-700 hover:bg-green-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <Play size={14} fill="currentColor" />
-                {t('worker.start')}
-              </button>
-              <button
-                onClick={handleStop}
-                disabled={workerStatus !== 'running'}
-                className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-red-700 hover:bg-red-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <Square size={14} />
-                {t('worker.stop')}
-              </button>
+                {workerStatus !== 'running' && getServerUrl() && (
+                  <span className="text-xs text-gray-500 truncate max-w-[200px]">
+                    {getServerUrl()}
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleStart}
+                  disabled={workerStatus === 'running' || workerStatus === 'stopping' || !getAccessToken()}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-green-700 hover:bg-green-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Play size={14} fill="currentColor" />
+                  {t('worker.start')}
+                </button>
+                <button
+                  onClick={handleStop}
+                  disabled={workerStatus !== 'running'}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium bg-red-700 hover:bg-red-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Square size={14} />
+                  {t('worker.stop')}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Performance Limits */}
-        <PerformanceLimits t={t} />
+        {/* Web mode: no processing capability notice */}
+        {!isElectron && (
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 text-center">
+            <p className="text-sm text-gray-400">{t('worker.web_mode_notice')}</p>
+          </div>
+        )}
+
+        {/* Performance Limits (Electron only) */}
+        {isElectron && <PerformanceLimits t={t} />}
 
         {/* My Workers (server mode only) */}
         {appMode === 'server' && <MyWorkersSection />}
