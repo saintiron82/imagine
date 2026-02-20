@@ -53,7 +53,9 @@ export default function ClientWorkerView({ appMode }) {
     };
     const onLog = (data) => addLog(data.message, data.type);
     const onJobDone = (data) => {
-      addLog(`Completed: ${data.file_name || data.file_path}`, 'success');
+      if (data.success) {
+        addLog(`Completed: ${data.file_name || data.file_path}`, 'success');
+      }
     };
 
     w.onStatus?.(onStatus);

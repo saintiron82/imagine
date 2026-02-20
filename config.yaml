@@ -172,7 +172,7 @@ server:
     access_token_expire_minutes: 15
     refresh_token_expire_days: 7
   storage:
-    mode: server_upload
+    mode: shared_fs
     upload_dir: ./uploads
     thumbnail_dir: ./thumbnails
     max_file_size_mb: 500
@@ -202,4 +202,4 @@ vision:
   require_local_models: true
   temperature: 0.1
 app:
-  mode:
+  mode: server

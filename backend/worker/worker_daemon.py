@@ -531,6 +531,8 @@ class WorkerDaemon:
             logger.warning(f"Vision failed for {file_path.name}: {e}")
             return {}
 
+    _vv_encoder = None  # Cached SigLIP2 encoder (class-level singleton)
+
     def _run_embed(self, thumb_path: str, metadata: dict):
         """Phase E: Generate VV + MV vectors."""
         import numpy as np
@@ -544,7 +546,9 @@ class WorkerDaemon:
                 from backend.vector.siglip2_encoder import SigLIP2Encoder
                 from PIL import Image
 
-                encoder = SigLIP2Encoder.get_instance()
+                if WorkerDaemon._vv_encoder is None:
+                    WorkerDaemon._vv_encoder = SigLIP2Encoder()
+                encoder = WorkerDaemon._vv_encoder
                 img = Image.open(thumb_path).convert("RGB")
                 vv_vec = encoder.encode_image(img)
 
