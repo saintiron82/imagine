@@ -331,6 +331,25 @@ function App() {
     return () => window.electron.server.offStatusChange();
   }, []);
 
+  // Auto-start server when entering admin/server mode
+  useEffect(() => {
+    if (!isElectron || appMode !== 'server' || serverRunning) return;
+    if (!window.electron?.server) return;
+
+    const autoStart = async () => {
+      try {
+        const status = await window.electron.server.getStatus();
+        if (status.running) return; // already running
+        const result = await window.electron.server.start({ port: serverPort });
+        if (result.success) setServerRunning(true);
+      } catch (e) {
+        console.warn('Server auto-start failed:', e);
+      }
+    };
+
+    autoStart();
+  }, [appMode, serverPort, serverRunning]);
+
   // Auto-login to local server for API access (JWT) in server mode
   useEffect(() => {
     if (!isElectron || appMode !== 'server' || !serverRunning) return;
