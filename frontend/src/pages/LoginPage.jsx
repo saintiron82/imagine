@@ -231,7 +231,6 @@ export default function LoginPage({ onShowDownload }) {
                   placeholder="••••••••"
                   className="w-full px-3 py-2 pr-10 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
                   required
-                  minLength={6}
                 />
                 <button
                   type="button"
