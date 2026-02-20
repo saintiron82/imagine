@@ -19,7 +19,7 @@ import { registerPaths, scanFolder } from './api/admin';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
-  const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout } = useAuth();
+  const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout, login } = useAuth();
   const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archive' | 'worker' | 'admin'
   const [currentPath, setCurrentPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState(new Set());
