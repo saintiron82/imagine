@@ -1,8 +1,9 @@
 /**
- * AuthContext — manages authentication state for web mode.
+ * AuthContext — manages authentication state.
  *
- * In Electron mode (isElectron=true), auth is bypassed — the app works locally.
- * In web mode, users must authenticate via JWT before accessing features.
+ * - Electron server mode: auth bypassed (local admin)
+ * - Electron client mode: JWT auth required (remote server)
+ * - Web mode: JWT auth required
  */
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
@@ -16,33 +17,62 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // In Electron mode, skip auth entirely
-  const skipAuth = isElectron;
+  // null = undetermined, true = bypass, false = JWT required
+  const [skipAuth, setSkipAuth] = useState(null);
 
-  // Try to restore session from stored token
   useEffect(() => {
-    if (skipAuth) {
-      setUser({ id: 0, username: 'local', role: 'admin' });
-      setLoading(false);
+    // Web mode: always require JWT
+    if (!isElectron) {
+      setSkipAuth(false);
+      const token = getAccessToken();
+      if (!token || !getServerUrl()) {
+        setLoading(false);
+        return;
+      }
+      getMe()
+        .then((data) => setUser(data.user || data))
+        .catch(() => setUser(null))
+        .finally(() => setLoading(false));
       return;
     }
 
-    const token = getAccessToken();
-    if (!token || !getServerUrl()) {
-      setLoading(false);
-      return;
-    }
+    // Electron: determine auth mode from config.yaml
+    const determineAuth = async () => {
+      try {
+        const result = await window.electron?.pipeline?.getConfig();
+        const mode = result?.config?.app?.mode;
 
-    getMe()
-      .then((data) => {
-        setUser(data.user || data);
-      })
-      .catch(() => {
-        // Token expired or invalid — will need to re-login
-        setUser(null);
-      })
-      .finally(() => setLoading(false));
-  }, [skipAuth]);
+        if (mode === 'client') {
+          // Client mode: JWT auth required
+          setSkipAuth(false);
+          if (result?.config?.app?.server_url) {
+            setServerUrl(result.config.app.server_url);
+          }
+          // Try to restore existing session
+          const token = getAccessToken();
+          if (token && getServerUrl()) {
+            try {
+              const data = await getMe();
+              setUser(data.user || data);
+            } catch {
+              setUser(null);
+            }
+          }
+        } else {
+          // Server mode or unconfigured: local bypass
+          setSkipAuth(true);
+          setUser({ id: 0, username: 'local', role: 'admin' });
+        }
+      } catch {
+        // Fallback to local bypass on error
+        setSkipAuth(true);
+        setUser({ id: 0, username: 'local', role: 'admin' });
+      }
+      setLoading(false);
+    };
+
+    determineAuth();
+  }, []);
 
   const login = useCallback(async ({ username, password, serverUrl }) => {
     setError('');

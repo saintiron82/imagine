@@ -565,8 +565,9 @@ function App() {
     return <SetupPage onComplete={handleSetupComplete} />;
   }
 
-  // Show login page for web mode when not authenticated
-  if (!skipAuth && !isAuthenticated) {
+  // Show login page when auth required but not authenticated
+  // skipAuth: null=undetermined (still loading), true=bypass, false=JWT required
+  if (skipAuth === false && !isAuthenticated) {
     return <LoginPage />;
   }
 
