@@ -78,7 +78,7 @@ function WorkersPanel() {
   const load = useCallback(async () => {
     try {
       const data = await listWorkerSessions();
-      setWorkers(data.workers || []);
+      setWorkers((data.workers || []).filter(w => w.status === 'online'));
     } catch (e) {
       console.error('Failed to load workers:', e);
     }
