@@ -640,22 +640,20 @@ function App() {
             <Search size={16} />
             <span>{t('tab.search')}</span>
           </button>
-          {/* Archive/Worker tab (not shown in web mode — web is search-only) */}
-          {appMode !== 'web' && (
-            <button
-              onClick={() => setCurrentTab('archive')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
-                ? (appMode === 'client' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-white')
-                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-                }`}
-            >
-              {appMode === 'client' ? <Zap size={16} /> : <Archive size={16} />}
-              <span>{appMode === 'client' ? t('tab.archive_worker') : t('tab.archive_server')}</span>
-            </button>
-          )}
+          {/* Archive/Worker tab — role-based: admin=archive, user=worker */}
+          <button
+            onClick={() => setCurrentTab('archive')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
+              ? (isAdmin ? 'bg-gray-700 text-white' : 'bg-emerald-700 text-white')
+              : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+              }`}
+          >
+            {isAdmin ? <Archive size={16} /> : <Zap size={16} />}
+            <span>{isAdmin ? t('tab.archive_server') : t('tab.archive_worker')}</span>
+          </button>
 
-          {/* Admin tab (server mode always, web/client only when authenticated) */}
-          {isAdmin && (appMode === 'server' || !skipAuth) && (
+          {/* Admin tab — admin role only */}
+          {isAdmin && (
             <button
               onClick={() => setCurrentTab('admin')}
               className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'admin'
@@ -668,7 +666,7 @@ function App() {
             </button>
           )}
 
-          {currentTab === 'archive' && appMode === 'server' && (
+          {currentTab === 'archive' && isAdmin && (
             <>
               <div className="w-px h-6 bg-gray-600 mx-1" />
               <div className="text-xs text-gray-500">
@@ -686,10 +684,7 @@ function App() {
                 `}
               >
                 <Play size={14} fill="currentColor" />
-                <span>{appMode === 'server' || appMode === 'web'
-                  ? t('action.queue_files', { count: selectedFiles.size })
-                  : t('action.process', { count: selectedFiles.size })
-                }</span>
+                <span>{t('action.queue_files', { count: selectedFiles.size })}</span>
               </button>
             </>
           )}
@@ -792,11 +787,12 @@ function App() {
       </div>
 
       {/* Download Desktop App Banner (web mode only) */}
-      {appMode === 'web' && <AppDownloadBanner onShowDownload={() => setShowDownloadPage(true)} />}
+      {/* Download banner for browser users (not Electron) */}
+      {!isElectron && <AppDownloadBanner onShowDownload={() => setShowDownloadPage(true)} />}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar - Folder Tree (only in archive server mode) */}
-        {currentTab === 'archive' && appMode === 'server' && (
+        {/* Sidebar - Folder Tree (admin only) */}
+        {currentTab === 'archive' && isAdmin && (
           <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
             <div className="p-4 border-b border-gray-700 flex items-center space-x-2">
               <FolderOpen className="text-blue-400" size={20} />
@@ -828,9 +824,9 @@ function App() {
                 onSearchConsumed={() => setPendingSearch(null)}
                 reloadSignal={folderStatsVersion}
               />
-            ) : currentTab === 'archive' && appMode !== 'server' ? (
+            ) : currentTab === 'archive' && !isAdmin ? (
               <ClientWorkerView appMode={appMode} />
-            ) : (
+            ) : currentTab === 'archive' && isAdmin ? (
               <ServerArchiveView
                 currentPath={currentPath}
                 selectedFiles={selectedFiles}
@@ -843,7 +839,7 @@ function App() {
                 appMode={appMode}
                 queueReloadSignal={queueReloadSignal}
               />
-            )}
+            ) : null}
           </div>
 
           {/* Logs Overlay / Bottom Panel */}
