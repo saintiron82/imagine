@@ -48,6 +48,10 @@ export async function scanFolder(folderPath, priority = 0) {
   return apiClient.post('/api/v1/discover/scan', { folder_path: folderPath, priority });
 }
 
+export async function registerPaths(filePaths, priority = 0) {
+  return apiClient.post('/api/v1/upload/register-paths', { file_paths: filePaths, priority });
+}
+
 // ── Worker Tokens ────────────────────────────────────────
 
 export async function createWorkerToken({ name, expires_in_days = 30 } = {}) {

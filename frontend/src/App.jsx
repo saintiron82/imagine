@@ -14,6 +14,7 @@ import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, S
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron } from './api/client';
+import { registerPaths, scanFolder } from './api/admin';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
@@ -370,7 +371,24 @@ function App() {
       type: 'info'
     });
 
-    // Single batch call — backend handles smart skip + phase pipeline
+    // Server/Client mode: register files via API → queue for workers
+    if (appMode === 'server' || appMode === 'client') {
+      try {
+        const result = await registerPaths(fileArray);
+        appendLog({
+          message: `Queued ${result.jobs_created || 0} jobs (${result.registered || 0} files registered)`,
+          type: 'success'
+        });
+        setIsProcessing(false);
+        setProcessProgress(prev => ({ ...prev, processed: 0, total: 0 }));
+      } catch (e) {
+        appendLog({ message: `Queue registration failed: ${e.message}`, type: 'error' });
+        setIsProcessing(false);
+      }
+      return;
+    }
+
+    // Standalone mode: direct pipeline spawn
     if (window.electron?.pipeline) {
       window.electron.pipeline.run(fileArray);
     }
@@ -386,7 +404,7 @@ function App() {
   };
 
   // Process entire folder recursively (discover mode)
-  const handleProcessFolder = (folderPath, options = {}) => {
+  const handleProcessFolder = async (folderPath, options = {}) => {
     if (isProcessing || isDiscovering) return;
     const noSkip = !!options.noSkip;
     setIsDiscovering(true);
@@ -398,7 +416,23 @@ function App() {
         : `Processing folder: ${folderPath}`,
       type: 'info'
     });
-    // Save session target for resume on next startup
+
+    // Server/Client mode: scan folder via API → queue for workers
+    if (appMode === 'server' || appMode === 'client') {
+      try {
+        const result = await scanFolder(folderPath);
+        appendLog({
+          message: `Discovered ${result.discovered || 0} files, queued ${result.jobs_created || 0} jobs (${result.skipped || 0} skipped)`,
+          type: 'success'
+        });
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
+    // Standalone mode: direct discover spawn
     window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip });
   };
