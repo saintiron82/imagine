@@ -75,6 +75,7 @@ from backend.server.routers.pipeline import router as pipeline_router
 from backend.server.routers.upload import router as upload_router
 from backend.server.routers.worker_setup import router as worker_setup_router
 from backend.server.routers.workers import router as workers_router
+from backend.server.routers.app_download import router as app_download_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -85,6 +86,7 @@ app.include_router(pipeline_router)  # Already has /api/v1 prefix in routes
 app.include_router(upload_router, prefix="/api/v1")
 app.include_router(worker_setup_router, prefix="/api/v1")
 app.include_router(workers_router, prefix="/api/v1")
+app.include_router(app_download_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

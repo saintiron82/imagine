@@ -389,5 +389,12 @@
   "queue.showing": "{total}개 중 {from}-{to} 표시",
   "queue.no_jobs": "큐에 작업이 없습니다",
   "queue.retried_count": "{count}개 작업 재시도됨",
-  "queue.cleared_count": "{count}개 작업 삭제됨"
+  "queue.cleared_count": "{count}개 작업 삭제됨",
+  "download.get_app": "데스크톱 앱 받기",
+  "download.banner_title": "데스크톱 앱으로 전체 기능을 사용하세요",
+  "download.banner_desc": "Imagine을 다운로드하여 워커 실행, 파일 관리, 로컬 이미지 처리가 가능합니다.",
+  "download.download_for": "{platform}용 다운로드",
+  "download.other_platforms": "다른 플랫폼",
+  "download.server_url_hint": "앱 설치 후 이 서버 URL을 입력하세요",
+  "download.no_builds": "아직 설치 파일이 준비되지 않았습니다."
 }

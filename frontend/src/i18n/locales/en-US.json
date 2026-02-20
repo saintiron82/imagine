@@ -389,5 +389,12 @@
   "queue.showing": "Showing {from}-{to} of {total}",
   "queue.no_jobs": "No jobs in queue",
   "queue.retried_count": "{count} jobs retried",
-  "queue.cleared_count": "{count} jobs cleared"
+  "queue.cleared_count": "{count} jobs cleared",
+  "download.get_app": "Get Desktop App",
+  "download.banner_title": "Get the desktop app for full features",
+  "download.banner_desc": "Download Imagine to run workers, manage files, and process images locally.",
+  "download.download_for": "Download for {platform}",
+  "download.other_platforms": "Other platforms",
+  "download.server_url_hint": "Use this server URL when setting up the app",
+  "download.no_builds": "No installer builds available yet."
 }

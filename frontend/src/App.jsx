@@ -9,6 +9,7 @@ import ClientWorkerView from './components/ClientWorkerView';
 import LoginPage from './pages/LoginPage';
 import AdminPage from './pages/AdminPage';
 import SetupPage from './pages/SetupPage';
+import AppDownloadBanner from './components/AppDownloadBanner';
 import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
@@ -759,6 +760,9 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* Download Desktop App Banner (web mode only) */}
+      {appMode === 'web' && <AppDownloadBanner />}
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar - Folder Tree (only in archive server mode) */}

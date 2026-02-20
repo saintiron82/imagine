@@ -4,11 +4,11 @@
  * Dark theme matching the existing app design.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocale } from '../i18n';
-import { setServerUrl as setClientServerUrl } from '../api/client';
-import { LogIn, UserPlus, Server, Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react';
+import { setServerUrl as setClientServerUrl, getServerUrl } from '../api/client';
+import { LogIn, UserPlus, Server, Eye, EyeOff, CheckCircle, XCircle, Download } from 'lucide-react';
 
 export default function LoginPage() {
   const { login, register, error, checkServerHealth } = useAuth();
@@ -265,11 +265,60 @@ export default function LoginPage() {
           </form>
         </div>
 
+        {/* Desktop App Download */}
+        <AppDownloadLink />
+
         {/* Footer */}
         <p className="text-center text-xs text-gray-600 mt-4">
           Imagine Server v4.0
         </p>
       </div>
     </div>
+  );
+}
+
+/** Compact download link shown below the login card */
+function AppDownloadLink() {
+  const { t } = useLocale();
+  const [downloads, setDownloads] = useState([]);
+
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const base = getServerUrl() || '';
+        const resp = await fetch(`${base}/api/v1/app/downloads`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.available) setDownloads(data.files || []);
+        }
+      } catch { /* ignore */ }
+    };
+    check();
+  }, []);
+
+  if (downloads.length === 0) return null;
+
+  // Detect user's platform
+  const ua = navigator.userAgent.toLowerCase();
+  const platform = ua.includes('mac') ? 'mac' : ua.includes('win') ? 'win' : ua.includes('linux') ? 'linux' : 'unknown';
+  const recommended = downloads.find(f => f.platform === platform) || downloads[0];
+
+  const handleDownload = () => {
+    const base = getServerUrl() || '';
+    window.open(`${base}/api/v1/app/downloads/${encodeURIComponent(recommended.name)}`, '_blank');
+  };
+
+  return (
+    <button
+      onClick={handleDownload}
+      className="mt-4 w-full p-3 bg-gray-800/50 border border-emerald-700/30 rounded-lg text-center hover:bg-emerald-900/20 transition-colors group"
+    >
+      <div className="flex items-center justify-center gap-2 text-emerald-400 text-sm group-hover:text-emerald-300">
+        <Download size={14} />
+        <span className="font-medium">{t('download.get_app')}</span>
+        <span className="text-emerald-600 text-xs">({recommended.size_display})</span>
+      </div>
+      <p className="text-xs text-gray-500 mt-1">{t('download.banner_desc')}</p>
+    </button>
   );
 }
