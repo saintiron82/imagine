@@ -16,7 +16,7 @@ function formatEta(ms) {
     return `${hr}h ${remMin}m`;
 }
 
-export default function ClientWorkerView({ appMode, isWorkerRunning = false, workerProgress = {}, onWorkerStop }) {
+export default function ClientWorkerView({ appMode, isWorkerRunning = false, workerProgress = {}, onWorkerStart, onWorkerStop }) {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
   const [logs, setLogs] = useState([]);
@@ -69,34 +69,12 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
 
   const handleStart = async () => {
     if (isElectron) {
-      const serverUrl = getServerUrl();
-      const accessToken = getAccessToken();
-      const refreshToken = getRefreshToken();
-
-      if (!serverUrl || !accessToken) {
+      if (!getServerUrl() || !getAccessToken()) {
         addLog('Not logged in. Please login first.', 'error');
         return;
       }
-
-      try {
-        const result = await window.electron.worker.start({
-          serverUrl,
-          accessToken,
-          refreshToken: refreshToken || '',
-        });
-        if (result.success === false) {
-          // "Worker already running" is not a real error — just means auto-start beat us
-          if (result.error?.includes('already running')) {
-            addLog(t('worker.connecting'), 'info');
-            return;
-          }
-          addLog(result.error || 'Failed to start worker', 'error');
-          return;
-        }
-        addLog(t('worker.connecting'), 'info');
-      } catch (e) {
-        addLog(e.message, 'error');
-      }
+      addLog(t('worker.connecting'), 'info');
+      await onWorkerStart?.();
     } else {
       try {
         const result = await apiClient.post('/api/v1/admin/worker/start');

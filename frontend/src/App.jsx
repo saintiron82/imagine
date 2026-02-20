@@ -65,7 +65,6 @@ function App() {
     etaMs: null, throughput: 0,
   });
   const workerThroughputRef = useRef({ windowTimes: [] });
-  const workerAutoStarted = useRef(false);
 
   // App mode: 'server' | 'client' | null (show SetupPage) | 'web'
   // Electron: always starts null → SetupPage shown every launch
@@ -454,36 +453,29 @@ function App() {
     return () => clearInterval(interval);
   }, [appMode, isWorkerRunning]);
 
-  // Auto-start worker after login in client mode
-  useEffect(() => {
-    if (!isElectron || appMode !== 'client') return;
-    if (!user || workerAutoStarted.current || isWorkerRunning) return;
+  // Manual worker start handler (called from ClientWorkerView)
+  const handleWorkerStart = async () => {
+    if (!isElectron || isWorkerRunning) return;
     const w = window.electron?.worker;
     if (!w) return;
 
-    workerAutoStarted.current = true;
-    const timer = setTimeout(async () => {
-      try {
-        appendLog({ message: t('worker.auto_starting'), type: 'info' });
-        const result = await w.start({
-          serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
-          accessToken: getAccessToken() || '',
-          refreshToken: getRefreshToken() || '',
-        });
-        if (result?.success) {
-          setIsWorkerRunning(true);
-          appendLog({ message: t('worker.auto_started'), type: 'success' });
-        } else if (result?.error?.includes('already running')) {
-          // Worker process already alive from previous session — just sync state
-          setIsWorkerRunning(true);
-          appendLog({ message: t('worker.auto_started'), type: 'success' });
-        }
-      } catch (e) {
-        appendLog({ message: `Worker auto-start failed: ${e.message}`, type: 'error' });
+    try {
+      const result = await w.start({
+        serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
+        accessToken: getAccessToken() || '',
+        refreshToken: getRefreshToken() || '',
+      });
+      if (result?.success) {
+        setIsWorkerRunning(true);
+      } else if (result?.error?.includes('already running')) {
+        setIsWorkerRunning(true);
+      } else if (result?.success === false) {
+        appendLog({ message: result.error || 'Failed to start worker', type: 'error' });
       }
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [appMode, user]);
+    } catch (e) {
+      appendLog({ message: `Worker start failed: ${e.message}`, type: 'error' });
+    }
+  };
 
   const handleWorkerStop = async () => {
     if (!isElectron || !window.electron?.worker) return;
@@ -1003,6 +995,7 @@ function App() {
                 appMode={appMode}
                 isWorkerRunning={isWorkerRunning}
                 workerProgress={workerProgress}
+                onWorkerStart={handleWorkerStart}
                 onWorkerStop={handleWorkerStop}
               />
             ) : currentTab === 'archive' && isAdmin ? (
