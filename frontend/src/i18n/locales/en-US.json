@@ -358,7 +358,7 @@
   "worker.auto_starting": "Auto-starting worker...",
   "worker.progress_title": "Processing Progress",
   "worker.current_file": "File",
-  "worker.items_per_sec": "items/s",
+  "worker.items_per_sec": "items/min",
   "worker.throughput": "Throughput",
   "setup.subtitle": "Select your mode",
   "setup.server_title": "Admin",

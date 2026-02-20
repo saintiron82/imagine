@@ -358,7 +358,7 @@
   "worker.auto_starting": "워커 자동 시작 중...",
   "worker.progress_title": "처리 진행 상황",
   "worker.current_file": "파일",
-  "worker.items_per_sec": "항목/초",
+  "worker.items_per_sec": "항목/분",
   "worker.throughput": "처리량",
   "setup.subtitle": "사용 모드를 선택하세요",
   "setup.server_title": "관리",

@@ -247,55 +247,36 @@ const StatusBar = ({
                     );
                 })()}
 
-                {/* Worker progress — 4-phase pills (client mode) */}
+                {/* Worker progress — completed + current phase + throughput/min (client mode) */}
                 {isWorkerProcessing && !isProcessing && !isDiscovering && (() => {
                     const wp = workerProgress;
-                    const wPhases = [
-                        { label: t('status.phase.parse'), count: wp.cumParse || 0, color: 'bg-cyan-400' },
-                        { label: 'MC', count: wp.cumMC || 0, color: 'bg-blue-400' },
-                        { label: 'VV', count: wp.cumVV || 0, color: 'bg-purple-400' },
-                        { label: 'MV', count: wp.cumMV || 0, color: 'bg-green-400' },
-                    ];
                     const completed = wp.completed || 0;
                     const totalQ = wp.totalQueue || 0;
+                    const pending = wp.pending || 0;
+                    const phaseLabels = [t('status.phase.parse'), 'MC', 'VV', 'MV'];
+                    const phaseColors = ['text-cyan-400', 'text-blue-400', 'text-purple-400', 'text-green-400'];
+                    const activePhase = wp.activePhase || 0;
+                    const perMin = (wp.throughput || 0) * 60;
 
                     return (
                         <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
                             <Loader2 className="animate-spin text-emerald-400" size={14} />
 
-                            <div className="flex items-center space-x-0.5">
-                                {wPhases.map((p, i) => (
-                                    <PhasePill
-                                        key={p.label}
-                                        label={p.label}
-                                        count={p.count}
-                                        total={totalQ || (completed + (wp.pending || 0))}
-                                        isActive={i === (wp.activePhase || 0)}
-                                        color={p.color}
-                                    />
-                                ))}
-                            </div>
+                            <span className="text-emerald-300 font-mono font-bold text-[11px]">
+                                {completed}/{totalQ}
+                            </span>
 
-                            <div className="flex items-center space-x-1.5 border-l border-emerald-700 pl-2">
-                                <span className="text-emerald-300 font-mono font-bold text-[11px]">
-                                    {completed}/{totalQ}
-                                </span>
-                            </div>
+                            <span className={`font-mono font-bold text-[11px] ${phaseColors[activePhase]}`}>
+                                {phaseLabels[activePhase]}
+                            </span>
 
-                            {wp.throughput > 0 && (
+                            {perMin > 0 && (
                                 <span className="text-yellow-300 font-mono text-[10px]">
-                                    {wp.throughput.toFixed(2)}/s
+                                    {perMin.toFixed(1)}/min
                                 </span>
                             )}
 
-                            {wp.batchCapacity && (
-                                <div className="flex items-center gap-1 bg-yellow-900/40 border border-yellow-600/50 px-1.5 py-0.5 rounded" title={t('status.batch_size')}>
-                                    <Layers size={11} className="text-yellow-400 flex-shrink-0" />
-                                    <span className="text-yellow-300 font-mono font-bold text-[11px]">{wp.batchCapacity}</span>
-                                </div>
-                            )}
-
-                            <span className="text-gray-400 truncate max-w-[100px]">
+                            <span className="text-gray-400 truncate max-w-[120px] text-[10px]">
                                 {wp.currentFile?.split(/[/\\]/).pop()}
                             </span>
 

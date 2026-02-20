@@ -216,18 +216,16 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
         </div>
 
         {/* Detailed Progress Card (when running) */}
-        {(isWorkerRunning || workerStatus === 'running') && (() => {
+        {isWorkerRunning && (() => {
           const wp = workerProgress;
-          const phaseCards = [
-            { label: t('status.phase.parse'), count: wp.cumParse || 0, color: 'bg-cyan-400', text: 'text-cyan-300', active: 0 },
-            { label: 'MC', count: wp.cumMC || 0, color: 'bg-blue-400', text: 'text-blue-300', active: 1 },
-            { label: 'VV', count: wp.cumVV || 0, color: 'bg-purple-400', text: 'text-purple-300', active: 2 },
-            { label: 'MV', count: wp.cumMV || 0, color: 'bg-green-400', text: 'text-green-300', active: 3 },
-          ];
           const completed = wp.completed || 0;
           const totalQ = wp.totalQueue || 0;
           const pending = wp.pending || 0;
-          const progressTarget = totalQ || (completed + pending) || 1;
+          const progressPct = totalQ > 0 ? Math.min(100, (completed / totalQ) * 100) : 0;
+          const phaseLabels = [t('status.phase.parse'), 'MC', 'VV', 'MV'];
+          const phaseColors = ['text-cyan-400', 'text-blue-400', 'text-purple-400', 'text-green-400'];
+          const activePhase = wp.activePhase || 0;
+          const perMin = (wp.throughput || 0) * 60;
 
           return (
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
@@ -236,48 +234,49 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                 {t('worker.progress_title')}
               </h3>
 
-              {/* 4-Phase Cards */}
-              <div className="grid grid-cols-4 gap-2 mb-4">
-                {phaseCards.map((p) => (
-                  <div key={p.label} className={`bg-gray-900 rounded-lg p-3 ${
-                    p.active === (wp.activePhase || 0) ? 'ring-1 ring-blue-500/50' : ''
-                  }`}>
-                    <div className="text-[10px] text-gray-500 mb-1">{p.label}</div>
-                    <div className={`text-lg font-bold font-mono ${p.text}`}>{p.count}</div>
-                    <div className="w-full h-1 bg-gray-700 rounded-full mt-1.5">
-                      <div className={`h-full rounded-full ${p.color} transition-all duration-300`}
-                        style={{ width: `${Math.min(100, (p.count / progressTarget) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
+              {/* Progress bar */}
+              <div className="w-full h-2 bg-gray-700 rounded-full mb-4">
+                <div className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+                  style={{ width: `${progressPct}%` }}
+                />
               </div>
 
-              {/* Stats Row */}
-              <div className="flex items-center gap-4 text-xs flex-wrap">
-                <span className="text-gray-400">
-                  {t('worker.current_file')}: <span className="text-white font-mono">{wp.currentFile?.split(/[/\\]/).pop() || '-'}</span>
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                <div className="bg-gray-900 rounded-lg p-3 text-center">
+                  <div className="text-[10px] text-gray-500 mb-1">{t('admin.queue_completed')}</div>
+                  <div className="text-xl font-bold font-mono text-emerald-300">{completed}</div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 text-center">
+                  <div className="text-[10px] text-gray-500 mb-1">{t('admin.queue_pending')}</div>
+                  <div className="text-xl font-bold font-mono text-yellow-300">{pending}</div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 text-center">
+                  <div className="text-[10px] text-gray-500 mb-1">{t('worker.throughput')}</div>
+                  <div className="text-xl font-bold font-mono text-yellow-300">{perMin > 0 ? `${perMin.toFixed(1)}` : '-'}</div>
+                  <div className="text-[9px] text-gray-600">/min</div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 text-center">
+                  <div className="text-[10px] text-gray-500 mb-1">ETA</div>
+                  <div className="text-xl font-bold font-mono text-emerald-300">{wp.etaMs > 0 ? formatEta(wp.etaMs) : '-'}</div>
+                </div>
+              </div>
+
+              {/* Current file + phase */}
+              <div className="flex items-center gap-3 text-xs">
+                <span className={`font-mono font-bold ${phaseColors[activePhase]}`}>
+                  {phaseLabels[activePhase]}
                 </span>
-                <span className="text-emerald-300 font-mono font-bold">
-                  {completed}/{totalQ}
+                <span className="text-gray-400 truncate">
+                  {wp.currentFile?.split(/[/\\]/).pop() || t('worker.no_jobs')}
                 </span>
-                {wp.throughput > 0 && (
-                  <span className="text-yellow-300 font-mono">
-                    {wp.throughput.toFixed(2)} {t('worker.items_per_sec')}
-                  </span>
-                )}
-                {wp.etaMs > 0 && (
-                  <span className="text-emerald-300 font-mono">
-                    ETA: {formatEta(wp.etaMs)}
-                  </span>
-                )}
               </div>
             </div>
           );
         })()}
 
         {/* Waiting for jobs */}
-        {(isWorkerRunning || workerStatus === 'running') && !workerProgress.currentFile && (
+        {isWorkerRunning && !workerProgress.currentFile && (
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 text-center text-gray-500 text-sm">
             {t('worker.no_jobs')}
           </div>
