@@ -277,7 +277,7 @@ export default function LoginPage() {
   );
 }
 
-/** Compact download link shown below the login card */
+/** Compact download link shown below the login card — always visible */
 function AppDownloadLink() {
   const { t } = useLocale();
   const [downloads, setDownloads] = useState([]);
@@ -289,14 +289,12 @@ function AppDownloadLink() {
         const resp = await fetch(`${base}/api/v1/app/downloads`);
         if (resp.ok) {
           const data = await resp.json();
-          if (data.available) setDownloads(data.files || []);
+          setDownloads(data.files || []);
         }
       } catch { /* ignore */ }
     };
     check();
   }, []);
-
-  if (downloads.length === 0) return null;
 
   // Detect user's platform
   const ua = navigator.userAgent.toLowerCase();
@@ -304,21 +302,31 @@ function AppDownloadLink() {
   const recommended = downloads.find(f => f.platform === platform) || downloads[0];
 
   const handleDownload = () => {
+    if (!recommended) return;
     const base = getServerUrl() || '';
     window.open(`${base}/api/v1/app/downloads/${encodeURIComponent(recommended.name)}`, '_blank');
   };
 
   return (
-    <button
-      onClick={handleDownload}
-      className="mt-4 w-full p-3 bg-gray-800/50 border border-emerald-700/30 rounded-lg text-center hover:bg-emerald-900/20 transition-colors group"
-    >
-      <div className="flex items-center justify-center gap-2 text-emerald-400 text-sm group-hover:text-emerald-300">
-        <Download size={14} />
-        <span className="font-medium">{t('download.get_app')}</span>
-        <span className="text-emerald-600 text-xs">({recommended.size_display})</span>
-      </div>
-      <p className="text-xs text-gray-500 mt-1">{t('download.banner_desc')}</p>
-    </button>
+    <div className="mt-4 p-3 bg-gray-800/50 border border-emerald-700/30 rounded-lg">
+      {recommended ? (
+        <button
+          onClick={handleDownload}
+          className="w-full text-center hover:bg-emerald-900/20 rounded transition-colors py-1 group"
+        >
+          <div className="flex items-center justify-center gap-2 text-emerald-400 text-sm group-hover:text-emerald-300">
+            <Download size={14} />
+            <span className="font-medium">{t('download.get_app')}</span>
+            <span className="text-emerald-600 text-xs">({recommended.size_display})</span>
+          </div>
+        </button>
+      ) : (
+        <div className="flex items-center justify-center gap-2 text-emerald-400/60 text-sm">
+          <Download size={14} />
+          <span className="font-medium">{t('download.get_app')}</span>
+        </div>
+      )}
+      <p className="text-xs text-gray-500 mt-1.5 text-center">{t('download.banner_desc')}</p>
+    </div>
   );
 }
