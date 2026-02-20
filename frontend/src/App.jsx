@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
-import FileGrid from './components/FileGrid';
 import StatusBar from './components/StatusBar';
 import SearchPanel from './components/SearchPanel';
-import FolderInfoBar from './components/FolderInfoBar';
 import ResumeDialog from './components/ResumeDialog';
 import ImportDbDialog from './components/ImportDbDialog';
+import ServerArchiveView from './components/ServerArchiveView';
+import ClientWorkerView from './components/ClientWorkerView';
 import LoginPage from './pages/LoginPage';
 import AdminPage from './pages/AdminPage';
-import WorkerPage from './pages/WorkerPage';
 import SetupPage from './pages/SetupPage';
-import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl } from './api/client';
@@ -577,27 +576,13 @@ function App() {
           <button
             onClick={() => setCurrentTab('archive')}
             className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
-              ? 'bg-gray-700 text-white'
+              ? (appMode === 'client' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-white')
               : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
               }`}
           >
-            <Archive size={16} />
-            <span>{t('tab.archive')}</span>
+            {appMode === 'client' ? <Zap size={16} /> : <Archive size={16} />}
+            <span>{appMode === 'client' ? t('tab.archive_worker') : t('tab.archive_server')}</span>
           </button>
-
-          {/* Worker tab (authenticated users) */}
-          {!skipAuth && isAuthenticated && (
-            <button
-              onClick={() => setCurrentTab('worker')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'worker'
-                ? 'bg-emerald-700 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-                }`}
-            >
-              <Server size={16} />
-              <span>{t('tab.worker')}</span>
-            </button>
-          )}
 
           {/* Admin tab (admin users only, web mode) */}
           {isAdmin && !skipAuth && (
@@ -613,7 +598,7 @@ function App() {
             </button>
           )}
 
-          {currentTab === 'archive' && (
+          {currentTab === 'archive' && appMode !== 'client' && (
             <>
               <div className="w-px h-6 bg-gray-600 mx-1" />
               <div className="text-xs text-gray-500">
@@ -734,8 +719,8 @@ function App() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar - Folder Tree (only in archive mode) */}
-        {currentTab === 'archive' && (
+        {/* Sidebar - Folder Tree (only in archive server/web mode) */}
+        {currentTab === 'archive' && appMode !== 'client' && (
           <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
             <div className="p-4 border-b border-gray-700 flex items-center space-x-2">
               <FolderOpen className="text-blue-400" size={20} />
@@ -759,8 +744,6 @@ function App() {
           <div className="flex-1 overflow-hidden">
             {currentTab === 'admin' && isAdmin ? (
               <AdminPage />
-            ) : currentTab === 'worker' ? (
-              <WorkerPage appMode={appMode} />
             ) : currentTab === 'search' ? (
               <SearchPanel
                 onScanFolder={handleScanFolders}
@@ -769,24 +752,20 @@ function App() {
                 onSearchConsumed={() => setPendingSearch(null)}
                 reloadSignal={folderStatsVersion}
               />
+            ) : currentTab === 'archive' && appMode === 'client' ? (
+              <ClientWorkerView appMode={appMode} />
             ) : (
-              <div className="h-full flex flex-col">
-                <FolderInfoBar
-                  currentPath={currentPath}
-                  onProcessFolder={handleProcessFolder}
-                  isProcessing={isProcessing || isDiscovering}
-                  reloadSignal={folderStatsVersion}
-                />
-                <div className="flex-1 overflow-y-auto p-4 pb-16">
-                  <FileGrid
-                    currentPath={currentPath}
-                    selectedFiles={selectedFiles}
-                    setSelectedFiles={setSelectedFiles}
-                    selectedPaths={selectedPaths}
-                    onFindSimilar={handleFindSimilar}
-                  />
-                </div>
-              </div>
+              <ServerArchiveView
+                currentPath={currentPath}
+                selectedFiles={selectedFiles}
+                setSelectedFiles={setSelectedFiles}
+                selectedPaths={selectedPaths}
+                onProcessFolder={handleProcessFolder}
+                onFindSimilar={handleFindSimilar}
+                isProcessing={isProcessing || isDiscovering}
+                reloadSignal={folderStatsVersion}
+                appMode={appMode}
+              />
             )}
           </div>
 

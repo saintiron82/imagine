@@ -5,7 +5,7 @@ import { apiClient, isElectron, getServerUrl, getAccessToken, getRefreshToken } 
 import { getJobStats } from '../api/worker';
 import { registerWorker, listMyWorkers, stopMyWorker } from '../api/admin';
 
-function MyWorkersSection() {
+export function MyWorkersSection() {
   const { t } = useLocale();
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -91,7 +91,7 @@ function MyWorkersSection() {
 }
 
 
-function ConnectMyPC() {
+export function ConnectMyPC() {
   const { t } = useLocale();
   const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
@@ -172,7 +172,7 @@ function ConnectMyPC() {
 }
 
 
-function PerformanceLimits({ t }) {
+export function PerformanceLimits({ t }) {
   const maxCpuCores = navigator.hardwareConcurrency || 8;
   const [batchSize, setBatchSize] = useState(5);
   const [gpuLimit, setGpuLimit] = useState(100);
