@@ -84,7 +84,8 @@ M.m.p.YYYYMMDD_NN
 
 **기술 스택**:
 - **Backend**: Python 3.x + `psd-tools`, `Pillow`, `transformers`, `sqlite-vec`
-- **Frontend**: React 19 + Electron 40 + Vite + Tailwind CSS
+- **Server**: FastAPI (JWT 인증, 분산 워커 지원, REST API)
+- **Frontend**: React 19 + Electron 40 + Vite + Tailwind CSS (데스크탑 + 웹 듀얼 모드)
 - **Database**: SQLite + sqlite-vec (통합 메타데이터 + 벡터 저장소, Docker 불필요)
 - **AI 모델**: SigLIP2 (VV), Qwen3-VL (VLM/MC), Qwen3-Embedding (MV)
 
@@ -193,6 +194,21 @@ npm run build
 npm run electron:build
 ```
 
+### Server (FastAPI)
+
+```bash
+# 서버 시작 (개발 모드, 핫 리로드)
+python -m backend.server.app
+# 또는
+uvicorn backend.server.app:app --host 0.0.0.0 --port 8000 --reload
+
+# 워커 데몬 시작 (서버에 접속하여 작업 처리)
+python -m backend.worker.worker_daemon --server http://서버IP:8000 --username USER --password PASS
+
+# 헬스 체크
+curl http://localhost:8000/api/v1/health
+```
+
 ### 진단 스크립트
 
 ```powershell
@@ -205,6 +221,152 @@ python scripts/diagnose_image.py "path/to/image.psd"
 # CLI에서 이미지 검색
 python scripts/search_images.py "검색어"
 ```
+
+## 클라이언트-서버 아키텍처 (v4.x)
+
+**하나의 React 프론트엔드가 두 가지 모드로 동작합니다.**
+
+### 듀얼 모드 구조
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   동일한 React 프론트엔드                       │
+│                                                             │
+│  ┌───────────────────────┐   ┌────────────────────────────┐ │
+│  │   Electron 모드 (앱)    │   │   Web 모드 (브라우저)       │ │
+│  │                       │   │                            │ │
+│  │ • Auth 바이패스         │   │ • JWT 로그인 필수           │ │
+│  │ • 자동 admin 권한       │   │ • 역할 기반 (admin/user)   │ │
+│  │ • IPC → Python 직접    │   │ • HTTP API → FastAPI       │ │
+│  │ • 로컬 DB 직접 접근     │   │ • 서버 DB 간접 접근         │ │
+│  │                       │   │                            │ │
+│  │ [Server] 버튼으로      │   │  서버에 접속하여 사용        │ │
+│  │  FastAPI 서버 내장 시작  │   │                            │ │
+│  └───────────────────────┘   └────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 모드 판별
+
+- **`isElectron`** (`api/client.js:14`): `window.electron` 존재 여부로 판별
+- **`skipAuth`** (`AuthContext.jsx:20`): Electron이면 `true` → 인증 생략, `{ username: 'local', role: 'admin' }` 자동 부여
+- **`bridge.js`**: `isElectron`이면 IPC, 아니면 HTTP API 호출 (검색, 메타데이터 등)
+
+### 서버 모드 (Electron → FastAPI)
+
+- **위치**: Electron 앱 헤더 바 우측 `[Server]` 토글 버튼
+- **동작**: `window.electron.server.start({ port })` → FastAPI 프로세스 기동
+- **SPA 서빙**: `app.py:122-137`에서 `frontend/dist` 빌드 결과를 정적 파일로 서빙
+- 서버가 켜지면 다른 사용자가 `http://서버IP:포트`로 브라우저 접속 가능
+
+### 인증 시스템 (JWT)
+
+| 구성요소 | 파일 | 설명 |
+|---------|------|------|
+| 라우터 | `backend/server/auth/router.py` | 로그인/회원가입/토큰 갱신 API |
+| 스키마 | `backend/server/auth/schemas.py` | Pydantic 모델 (LoginRequest 등) |
+| JWT | `backend/server/auth/jwt.py` | 토큰 발급/검증 |
+| 의존성 | `backend/server/deps.py` | `get_current_user`, `require_admin` |
+| DB | `backend/db/sqlite_schema_auth.sql` | `users`, `invite_codes`, `worker_tokens`, `worker_sessions` 테이블 |
+| 프론트 | `frontend/src/contexts/AuthContext.jsx` | React 인증 Context |
+| API | `frontend/src/api/client.js` | JWT 자동 첨부 + 401 시 refresh |
+
+### 역할 기반 접근
+
+| 역할 | 접근 가능 탭 | 서버 API 접근 |
+|------|------------|--------------|
+| **admin** | Search, Archive, Worker, Admin | 전체 API + 사용자/워커/초대 관리 |
+| **user** | Search, Archive, Worker | 파이프라인 실행, 검색, 내 워커 관리 |
+| **Electron (local)** | 전체 (auth 바이패스) | IPC 직접 호출 (서버 불필요) |
+
+---
+
+## 워커 시스템 (v4.10)
+
+**분산 이미지 처리를 위한 워커 풀 시스템.**
+
+### 개요
+
+서버가 작업(Job) 큐를 관리하고, 워커가 서버에 접속하여 작업을 가져가 처리하는 구조.
+
+```
+Server (FastAPI)                    Worker (Python daemon)
+┌──────────────┐                   ┌──────────────────────┐
+│ Job Queue    │◄── claim(N) ────  │ Prefetch Pool        │
+│ (SQLite)     │── jobs[] ───────► │ (deque, capacity×2)  │
+│              │                   │                      │
+│ worker_      │◄── heartbeat ──── │ 30초마다 하트비트      │
+│ sessions     │── command ──────► │ stop/block 명령 수신   │
+└──────────────┘                   └──────────────────────┘
+```
+
+### 스마트 Prefetch 풀
+
+- **풀 크기**: `batch_capacity × 2` (예: capacity=8 → 풀에 16개 유지)
+- **동작**: 현재 배치 처리 중 백그라운드 스레드가 부족분만큼 claim
+- **설정**: `config.yaml > worker.batch_capacity` (기본값: 5)
+
+```
+기존: claim(5) → process(5) → claim(5) → ...
+변경: fill_pool(16) → take_batch(8) + refill_thread → process(8) → ...
+```
+
+### 하트비트 + 명령 피기백
+
+- 워커가 30초마다 서버에 하트비트 전송 (메트릭 보고)
+- 서버는 응답에 `pending_command`를 포함 (stop/pause/block)
+- 명령은 **일회성 소비**: 한 번 전달되면 DB에서 NULL로 리셋
+- `pool_hint`: 서버가 권장하는 풀 크기 (batch_capacity × 2)
+
+### 워커 세션 관리 API
+
+| 엔드포인트 | 역할 | 권한 |
+|-----------|------|------|
+| `POST /api/v1/workers/connect` | 워커 세션 시작 | 인증된 사용자 |
+| `POST /api/v1/workers/heartbeat` | 하트비트 + 명령 수신 | 인증된 사용자 |
+| `POST /api/v1/workers/disconnect` | 정상 종료 알림 | 인증된 사용자 |
+| `GET /api/v1/workers/my` | 내 워커 목록 | 인증된 사용자 |
+| `POST /api/v1/workers/{id}/stop` | 내 워커 정지 | 본인 소유만 |
+| `GET /api/v1/admin/workers` | 전체 워커 목록 | Admin |
+| `POST /api/v1/admin/workers/{id}/stop` | 워커 정지 명령 | Admin |
+| `POST /api/v1/admin/workers/{id}/block` | 워커 차단 (재접속 불가) | Admin |
+
+### 워커 토큰 (원클릭 셋업)
+
+- Admin이 워커 토큰 생성 → 토큰 포함 셋업 스크립트 제공
+- 외부 PC에서 스크립트 실행 → 자동 환경 설정 + 워커 데몬 시작
+- `backend/server/routers/worker_setup.py`: 토큰 생성/관리 API
+
+### 프론트엔드 UI
+
+| 위치 | 컴포넌트 | 설명 |
+|------|---------|------|
+| Admin 탭 → Workers | `WorkersPanel` | 전체 워커 목록 (이름, 상태, 배치용량, 작업수, 현재태스크, 정지/차단) |
+| Worker 탭 상단 | `MyWorkersSection` | 내 워커 현황 (이름, 하트비트, 작업수, 정지) |
+| Worker 탭 | `ConnectMyPC` | 워커 토큰 기반 원클릭 셋업 스크립트 다운로드 |
+| Admin 탭 → Worker Tokens | 토큰 관리 | 토큰 생성/폐기/목록 |
+
+### DB 테이블 (`sqlite_schema_auth.sql`)
+
+```sql
+worker_sessions (id, user_id, worker_name, hostname, status, batch_capacity,
+                 jobs_completed, jobs_failed, current_job_id, current_file,
+                 current_phase, pending_command, connected_at, last_heartbeat,
+                 disconnected_at)
+-- status: 'online' | 'offline' | 'blocked'
+-- pending_command: NULL | 'stop' | 'pause' | 'block'
+```
+
+### 워커 설정 (`config.yaml`)
+
+```yaml
+worker:
+  batch_capacity: 5        # 배치 처리 능력 (파일 수)
+  heartbeat_interval: 30   # 하트비트 주기 (초)
+  poll_interval: 10        # 작업 없을 때 대기 (초)
+```
+
+---
 
 ## 아키텍처 & 데이터 흐름
 
@@ -385,6 +547,20 @@ for layer in psd.descendants():
 | `backend/vector/siglip2_encoder.py` | SigLIP2 VV 인코더 |
 | `backend/vector/text_embedding.py` | Qwen3-Embedding MV 인코더 (Transformers/Ollama) |
 | `backend/api_search.py` | 프론트엔드 검색 API 브리지 |
+| `backend/server/app.py` | **FastAPI 서버** (라우터 등록, SPA 서빙) |
+| `backend/server/deps.py` | 서버 의존성 (`get_current_user`, `require_admin`) |
+| `backend/server/auth/router.py` | JWT 인증 API (로그인/회원가입/갱신) |
+| `backend/server/routers/workers.py` | **워커 세션 API** (connect/heartbeat/admin) |
+| `backend/server/routers/pipeline.py` | 파이프라인 API (업로드/claim/완료) |
+| `backend/server/routers/worker_setup.py` | 워커 토큰 + 원클릭 셋업 API |
+| `backend/server/queue/manager.py` | **작업 큐 관리자** (Job 생성/claim/완료) |
+| `backend/worker/worker_daemon.py` | **워커 데몬** (prefetch 풀 + 하트비트) |
+| `backend/worker/config.py` | 워커 설정 (batch_capacity, heartbeat 등) |
+| `backend/db/sqlite_schema_auth.sql` | 인증 DB 스키마 (users, worker_sessions 등) |
+| `frontend/src/api/client.js` | API 클라이언트 (JWT 자동 첨부, isElectron 판별) |
+| `frontend/src/api/admin.js` | Admin/Worker API 함수 |
+| `frontend/src/contexts/AuthContext.jsx` | React 인증 Context |
+| `frontend/src/services/bridge.js` | Electron/Web 모드 브리지 (IPC ↔ HTTP) |
 | `backend/setup/installer.py` | **통합 설치 프로그램** |
 | `config.yaml` | **Tier/검색/배치 설정** (단일 소스) |
 | `output/thumbnails/` | 썸네일 이미지 (gitignore됨) |
@@ -576,7 +752,9 @@ _check_phase_skip(parsed_files)  # 파일별로 이미 완료된 Phase 확인
 - **세션 추적**: `config.yaml > last_session.folders`에 작업 대상 기록, 완료 시 초기화
 - **앱 재시작 시 Resume Dialog**: 미완료 작업이 있으면 팝업으로 이어하기 제안
 
-### Windows 배포 구조
+### 배포 구조
+
+**A) 로컬 데스크탑 모드 (Electron)**
 
 | 구성요소 | 기술 |
 |---------|------|
@@ -585,7 +763,19 @@ _check_phase_skip(parsed_files)  # 파일별로 이미 완료된 Phase 확인
 | **DB** | SQLite (로컬 파일, Docker 불필요) |
 | **VLM** | transformers (standard/pro) 또는 Ollama (ultra) |
 | **VV 인코더** | SigLIP2 (HuggingFace, 로컬 캐시) |
-| **API 서버** | 없음 (subprocess 직접 호출) |
+| **서버** | 선택적 — [Server] 버튼으로 FastAPI 내장 시작 가능 |
+
+**B) 서버 모드 (FastAPI + 분산 워커)**
+
+| 구성요소 | 기술 |
+|---------|------|
+| **서버** | FastAPI (uvicorn, 단일 워커 — SQLite 제약) |
+| **프론트엔드** | `frontend/dist` SPA 정적 서빙 |
+| **인증** | JWT (access + refresh 토큰) |
+| **DB** | SQLite (`imageparser_server.db`) |
+| **작업 큐** | SQLite `job_queue` 테이블 |
+| **워커** | Python 데몬 (`worker_daemon.py`), 여러 대 연결 가능 |
+| **워커 통신** | REST API (claim → process → complete) + 하트비트 |
 
 ### 필수 설치 요소 (standard tier 기준)
 
@@ -625,6 +815,12 @@ python backend/setup/installer.py --check
 | `backend/vector/siglip2_encoder.py` | SigLIP2 VV 인코더 | ❌ |
 | `backend/utils/tier_config.py` | Tier 설정 로더 | ❌ |
 | `backend/setup/installer.py` | 통합 설치 프로그램 | ❌ |
+| `backend/server/app.py` | FastAPI 서버 진입점 | ❌ |
+| `backend/server/routers/workers.py` | 워커 세션 관리 API | ❌ |
+| `backend/server/queue/manager.py` | 작업 큐 관리자 | ❌ |
+| `backend/worker/worker_daemon.py` | 워커 데몬 (prefetch 풀) | ❌ |
+| `backend/worker/config.py` | 워커 설정 | ✅ |
+| `backend/db/sqlite_schema_auth.sql` | 인증 DB 스키마 | ❌ |
 | `tools/setup_models.py` | Ollama 모델 설치 스크립트 | ❌ |
 
 ### 금지 사항
