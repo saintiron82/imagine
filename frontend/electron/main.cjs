@@ -7,25 +7,57 @@ const isDev = process.env.NODE_ENV === 'development';
 // Suppress EPIPE errors from console.log when parent pipe is closed (background launch)
 process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 process.stderr?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
-const projectRoot = isDev
-    ? path.resolve(__dirname, '../../')
-    : process.resourcesPath;
+// Resolve project root where backend/ and config.yaml live.
+// In dev mode: two levels up from electron/ directory.
+// In built mode: first check resourcesPath (bundled production), then traverse
+// up from the app location to find the source project tree (local testing).
+const projectRoot = (() => {
+    if (isDev) return path.resolve(__dirname, '../../');
+
+    // Bundled production: backend/ included via extraResources
+    if (fs.existsSync(path.join(process.resourcesPath, 'backend'))) {
+        return process.resourcesPath;
+    }
+
+    // Local testing: traverse up from app to find project root
+    let dir = process.resourcesPath;
+    for (let i = 0; i < 10; i++) {
+        dir = path.dirname(dir);
+        if (dir === path.dirname(dir)) break; // filesystem root
+        if (fs.existsSync(path.join(dir, 'backend')) &&
+            fs.existsSync(path.join(dir, 'config.yaml'))) {
+            return dir;
+        }
+    }
+
+    return process.resourcesPath;
+})();
+
+// Config root: where config.yaml is stored per-instance.
+// In dev mode: same as projectRoot.
+// In built mode: process.resourcesPath (allows separate config per app instance).
+const configRoot = isDev ? projectRoot : process.resourcesPath;
 
 // Cross-platform Python path resolution
 function getPythonPath() {
     const isWin = process.platform === 'win32';
-    if (isDev) {
-        const venvDir = isWin ? 'Scripts' : 'bin';
-        const pyExe = isWin ? 'python.exe' : 'python3';
-        return path.resolve(__dirname, `../../.venv/${venvDir}/${pyExe}`);
-    }
+    const venvDir = isWin ? 'Scripts' : 'bin';
     const pyExe = isWin ? 'python.exe' : 'python3';
-    return path.join(process.resourcesPath, 'python', pyExe);
+
+    // 1. Check venv in project root
+    const venvPath = path.join(projectRoot, '.venv', venvDir, pyExe);
+    if (fs.existsSync(venvPath)) return venvPath;
+
+    // 2. Check bundled Python (production)
+    const bundledPath = path.join(process.resourcesPath, 'python', pyExe);
+    if (fs.existsSync(bundledPath)) return bundledPath;
+
+    return null;
 }
 
 function resolvePython() {
     const pythonPath = getPythonPath();
-    return fs.existsSync(pythonPath) ? pythonPath : 'python3';
+    return (pythonPath && fs.existsSync(pythonPath)) ? pythonPath : 'python3';
 }
 
 // ── Search Daemon (lazy-start, idle-kill) ────────────────────────
@@ -41,7 +73,7 @@ let idleTimer = null;
 function getSearchScriptPath() {
     return isDev
         ? path.resolve(__dirname, '../../backend/api_search.py')
-        : path.join(process.resourcesPath, 'backend/api_search.py');
+        : path.join(projectRoot, 'backend/api_search.py');
 }
 
 /** Kill any orphaned Imagine-Search processes from previous runs. */
@@ -208,7 +240,7 @@ ipcMain.handle('read-metadata', async (_, filePath) => {
         const baseName = path.basename(filePath, path.extname(filePath));
         const outputDir = isDev
             ? path.join(projectRoot, 'output/json')
-            : path.join(process.resourcesPath, 'output/json');
+            : path.join(projectRoot, 'output/json');
         const jsonPath = path.join(outputDir, `${baseName}.json`);
 
         if (fs.existsSync(jsonPath)) {
@@ -226,7 +258,7 @@ ipcMain.handle('read-metadata', async (_, filePath) => {
 ipcMain.handle('check-metadata-exists', async (_, filePaths) => {
     const outputDir = isDev
         ? path.join(projectRoot, 'output/json')
-        : path.join(process.resourcesPath, 'output/json');
+        : path.join(projectRoot, 'output/json');
 
     const results = {};
     for (const fp of filePaths) {
@@ -243,7 +275,7 @@ ipcMain.handle('generate-thumbnail', async (_, filePath) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
-        : path.join(process.resourcesPath, 'backend/thumbnail_generator.py');
+        : path.join(projectRoot, 'backend/thumbnail_generator.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, filePath, '--size', '256'], { cwd: projectRoot });
@@ -280,7 +312,7 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
-        : path.join(process.resourcesPath, 'backend/thumbnail_generator.py');
+        : path.join(projectRoot, 'backend/thumbnail_generator.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, '--batch', JSON.stringify(filePaths), '--size', '256', '--return-paths'], { cwd: projectRoot });
@@ -315,7 +347,7 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
 ipcMain.handle('check-thumbnails-exist', async (_, filePaths) => {
     const thumbDir = isDev
         ? path.join(projectRoot, 'output', 'thumbnails')
-        : path.join(process.resourcesPath, 'output', 'thumbnails');
+        : path.join(projectRoot, 'output', 'thumbnails');
 
     const results = {};
     for (const fp of filePaths) {
@@ -345,7 +377,7 @@ ipcMain.handle('export-database', async (_, { outputPath }) => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_export.py')
-        : path.join(process.resourcesPath, 'backend/api_export.py');
+        : path.join(projectRoot, 'backend/api_export.py');
 
     // If no outputPath, open save dialog
     if (!outputPath) {
@@ -381,7 +413,7 @@ ipcMain.handle('relink-preview', async (_, { packagePath, targetFolder }) => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_relink.py')
-        : path.join(process.resourcesPath, 'backend/api_relink.py');
+        : path.join(projectRoot, 'backend/api_relink.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [
@@ -408,7 +440,7 @@ ipcMain.handle('relink-apply', async (_, { packagePath, targetFolder, deleteMiss
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_relink.py')
-        : path.join(process.resourcesPath, 'backend/api_relink.py');
+        : path.join(projectRoot, 'backend/api_relink.py');
 
     const args = [scriptPath, '--package', packagePath, '--folder', targetFolder];
     if (deleteMissing) args.push('--delete-missing');
@@ -481,7 +513,7 @@ ipcMain.handle('get-db-stats', async () => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_stats.py')
-        : path.join(process.resourcesPath, 'backend/api_stats.py');
+        : path.join(projectRoot, 'backend/api_stats.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath], {
@@ -511,7 +543,7 @@ function spawnQueueCmd(cmd, data) {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_queue.py')
-        : path.join(process.resourcesPath, 'backend/api_queue.py');
+        : path.join(projectRoot, 'backend/api_queue.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, cmd, JSON.stringify(data || {})], {
@@ -570,7 +602,7 @@ ipcMain.handle('get-incomplete-stats', async () => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_incomplete_stats.py')
-        : path.join(process.resourcesPath, 'backend/api_incomplete_stats.py');
+        : path.join(projectRoot, 'backend/api_incomplete_stats.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath], {
@@ -599,7 +631,7 @@ ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_folder_stats.py')
-        : path.join(process.resourcesPath, 'backend/api_folder_stats.py');
+        : path.join(projectRoot, 'backend/api_folder_stats.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, storageRoot], {
@@ -626,7 +658,7 @@ ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
 // IPC Handler: Environment Check
 ipcMain.handle('check-env', async () => {
     const finalPython = resolvePython();
-    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
+    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(projectRoot, 'backend/setup/installer.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, '--check'], { cwd: projectRoot });
@@ -646,7 +678,7 @@ ipcMain.handle('check-env', async () => {
 // IPC Handler: Install Environment
 ipcMain.on('install-env', (event) => {
     const finalPython = resolvePython();
-    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
+    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(projectRoot, 'backend/setup/installer.py');
 
     event.reply('install-log', { message: '🚀 Starting installation...', type: 'info' });
 
@@ -675,7 +707,7 @@ ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_metadata_update.py')
-        : path.join(process.resourcesPath, 'backend/api_metadata_update.py');
+        : path.join(projectRoot, 'backend/api_metadata_update.py');
 
     return new Promise((resolve, reject) => {
         const proc = spawn(finalPython, [scriptPath], { cwd: projectRoot });
@@ -732,7 +764,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
-        : path.join(process.resourcesPath, 'backend/ingest_engine.py');
+        : path.join(projectRoot, 'backend/ingest_engine.py');
 
     console.log('[run-pipeline] Script:', scriptPath);
     event.reply('pipeline-log', { message: `Starting batch processing: ${filePaths.length} files...`, type: 'info' });
@@ -949,7 +981,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
-        : path.join(process.resourcesPath, 'backend/ingest_engine.py');
+        : path.join(projectRoot, 'backend/ingest_engine.py');
 
     const args = [scriptPath, '--discover', folderPath];
     if (noSkip) args.push('--no-skip');
@@ -1097,7 +1129,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
 ipcMain.handle('get-config', async () => {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
 
         if (!fs.existsSync(configPath)) {
             return { success: false, error: 'config.yaml not found' };
@@ -1117,7 +1149,7 @@ ipcMain.handle('get-config', async () => {
 ipcMain.handle('get-registered-folders', async () => {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
         if (!fs.existsSync(configPath)) {
             return { success: true, folders: [], autoScan: true };
         }
@@ -1146,7 +1178,7 @@ ipcMain.handle('add-registered-folder', async () => {
         }
 
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
         const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
         if (!config.registered_folders) config.registered_folders = { folders: [], auto_scan: true };
         if (!config.registered_folders.folders) config.registered_folders.folders = [];
@@ -1172,7 +1204,7 @@ ipcMain.handle('add-registered-folder', async () => {
 ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
         const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
         if (!config.registered_folders || !config.registered_folders.folders) {
             return { success: true, folders: [] };
@@ -1195,7 +1227,7 @@ ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
 ipcMain.handle('update-config', async (_, key, value) => {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
 
         if (!fs.existsSync(configPath)) {
             return { success: false, error: 'config.yaml not found' };
@@ -1232,7 +1264,7 @@ let workerStartCmd = null;    // Queued start command (sent after 'ready' event)
 function getWorkerScriptPath() {
     return isDev
         ? path.resolve(__dirname, '../../backend/worker/worker_ipc.py')
-        : path.join(process.resourcesPath, 'backend/worker/worker_ipc.py');
+        : path.join(projectRoot, 'backend/worker/worker_ipc.py');
 }
 
 function sendWorkerEvent(channel, data) {
@@ -1391,7 +1423,7 @@ let serverMainWindow = null;
 function loadAppConfig() {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
         if (!fs.existsSync(configPath)) return null;
         return yaml.load(fs.readFileSync(configPath, 'utf8'));
     } catch (e) {
