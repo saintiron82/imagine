@@ -609,18 +609,21 @@ function App() {
             <Search size={16} />
             <span>{t('tab.search')}</span>
           </button>
-          <button
-            onClick={() => setCurrentTab('archive')}
-            className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
-              ? (appMode !== 'server' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-white')
-              : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-              }`}
-          >
-            {appMode !== 'server' ? <Zap size={16} /> : <Archive size={16} />}
-            <span>{appMode !== 'server' ? t('tab.archive_worker') : t('tab.archive_server')}</span>
-          </button>
+          {/* Archive/Worker tab (not shown in web mode — web is search-only) */}
+          {appMode !== 'web' && (
+            <button
+              onClick={() => setCurrentTab('archive')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
+                ? (appMode === 'client' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-white')
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+            >
+              {appMode === 'client' ? <Zap size={16} /> : <Archive size={16} />}
+              <span>{appMode === 'client' ? t('tab.archive_worker') : t('tab.archive_server')}</span>
+            </button>
+          )}
 
-          {/* Admin tab (admin users only, web mode) */}
+          {/* Admin tab (admin users only, non-skipAuth modes) */}
           {isAdmin && !skipAuth && (
             <button
               onClick={() => setCurrentTab('admin')}
