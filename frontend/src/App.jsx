@@ -473,6 +473,10 @@ function App() {
         if (result?.success) {
           setIsWorkerRunning(true);
           appendLog({ message: t('worker.auto_started'), type: 'success' });
+        } else if (result?.error?.includes('already running')) {
+          // Worker process already alive from previous session — just sync state
+          setIsWorkerRunning(true);
+          appendLog({ message: t('worker.auto_started'), type: 'success' });
         }
       } catch (e) {
         appendLog({ message: `Worker auto-start failed: ${e.message}`, type: 'error' });

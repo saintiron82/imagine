@@ -19,11 +19,12 @@ function formatEta(ms) {
 export default function ClientWorkerView({ appMode, isWorkerRunning = false, workerProgress = {}, onWorkerStop }) {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
-  const [workerStatus, setWorkerStatus] = useState('idle');
   const [logs, setLogs] = useState([]);
-  const [currentJobs, setCurrentJobs] = useState([]);
   const logEndRef = useRef(null);
   const pollRef = useRef(null);
+
+  // Derive workerStatus from isWorkerRunning prop (App.jsx is the single source of truth)
+  const workerStatus = isWorkerRunning ? 'running' : 'idle';
 
   const addLog = useCallback((message, type = 'info') => {
     const entry = { message, type, timestamp: new Date().toLocaleTimeString() };
@@ -52,31 +53,17 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  // Worker IPC listeners (Electron only)
+  // Worker log IPC listener only (status/jobDone handled by App.jsx)
   useEffect(() => {
     if (!isElectron) return;
     const w = window.electron?.worker;
     if (!w) return;
 
-    const onStatus = (data) => {
-      setWorkerStatus(data.status);
-      if (data.jobs) setCurrentJobs(data.jobs);
-    };
     const onLog = (data) => addLog(data.message, data.type);
-    const onJobDone = (data) => {
-      if (data.success) {
-        addLog(`Completed: ${data.file_name || data.file_path}`, 'success');
-      }
-    };
-
-    w.onStatus?.(onStatus);
     w.onLog?.(onLog);
-    w.onJobDone?.(onJobDone);
 
     return () => {
-      w.offStatus?.();
       w.offLog?.();
-      w.offJobDone?.();
     };
   }, [addLog]);
 
@@ -98,14 +85,17 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
           refreshToken: refreshToken || '',
         });
         if (result.success === false) {
+          // "Worker already running" is not a real error — just means auto-start beat us
+          if (result.error?.includes('already running')) {
+            addLog(t('worker.connecting'), 'info');
+            return;
+          }
           addLog(result.error || 'Failed to start worker', 'error');
           return;
         }
-        setWorkerStatus('running');
         addLog(t('worker.connecting'), 'info');
       } catch (e) {
         addLog(e.message, 'error');
-        setWorkerStatus('error');
       }
     } else {
       try {
@@ -114,11 +104,9 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
           addLog(result.error || 'Failed to start worker', 'error');
           return;
         }
-        setWorkerStatus('running');
         addLog(t('worker.connecting'), 'info');
       } catch (e) {
         addLog(e.detail || e.message, 'error');
-        setWorkerStatus('error');
       }
     }
   };
@@ -126,27 +114,20 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
   const handleStop = async () => {
     if (isElectron) {
       try {
-        await window.electron.worker.stop();
-        setWorkerStatus('idle');
-        setCurrentJobs([]);
         addLog(t('worker.stop'), 'info');
-        onWorkerStop?.();
+        await onWorkerStop?.(); // App.jsx handles stop + state reset
       } catch (e) {
         addLog(e.message, 'error');
       }
     } else {
-      setWorkerStatus('stopping');
       try {
         const result = await apiClient.post('/api/v1/admin/worker/stop');
-        setWorkerStatus('idle');
-        setCurrentJobs([]);
         addLog(t('worker.stop'), 'info');
         if (result.jobs_completed) {
           addLog(`${t('worker.jobs_completed')}: ${result.jobs_completed}`, 'success');
         }
       } catch (e) {
         addLog(e.detail || e.message, 'error');
-        setWorkerStatus('error');
       }
     }
   };
