@@ -5,8 +5,9 @@ import { useLocale } from '../i18n';
 const SetupPage = ({ onComplete }) => {
     const { t } = useLocale();
     const [selectedMode, setSelectedMode] = useState(null); // 'server' | 'client'
-    const [serverUrl, setServerUrl] = useState('http://');
-    const [saving, setSaving] = useState(false);
+    const [serverUrl, setServerUrl] = useState(
+        localStorage.getItem('imagine-server-url') || 'http://'
+    );
     const [error, setError] = useState('');
 
     const handleConfirm = async () => {
@@ -23,22 +24,9 @@ const SetupPage = ({ onComplete }) => {
             }
         }
 
-        setSaving(true);
-        setError('');
-
-        try {
-            // Save mode to config.yaml
-            await window.electron.pipeline.updateConfig('app.mode', selectedMode);
-
-            if (selectedMode === 'client') {
-                await window.electron.pipeline.updateConfig('app.server_url', serverUrl);
-            }
-
-            onComplete(selectedMode, selectedMode === 'client' ? serverUrl : null);
-        } catch (err) {
-            setError(err.message || 'Failed to save config');
-            setSaving(false);
-        }
+        // No config.yaml persistence — mode is session-only.
+        // Each app launch shows this page fresh.
+        onComplete(selectedMode, selectedMode === 'client' ? serverUrl : null);
     };
 
     return (
@@ -154,15 +142,15 @@ const SetupPage = ({ onComplete }) => {
                     <p className="text-xs text-gray-600">{t('setup.changeable_later')}</p>
                     <button
                         onClick={handleConfirm}
-                        disabled={!selectedMode || saving}
+                        disabled={!selectedMode}
                         className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
-                            selectedMode && !saving
+                            selectedMode
                                 ? 'bg-blue-600 hover:bg-blue-500 text-white'
                                 : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                         }`}
                     >
-                        {saving ? t('status.saving') : t('setup.start')}
-                        {!saving && <ArrowRight size={16} />}
+                        {t('setup.start')}
+                        <ArrowRight size={16} />
                     </button>
                 </div>
             </div>

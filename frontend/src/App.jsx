@@ -20,7 +20,7 @@ import { registerPaths, scanFolder } from './api/admin';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
-  const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout, login } = useAuth();
+  const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout, login, configureAuth } = useAuth();
   const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archive' | 'worker' | 'admin'
   const [currentPath, setCurrentPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState(new Set());
@@ -56,60 +56,49 @@ function App() {
   const [queueReloadSignal, setQueueReloadSignal] = useState(0);
   const [showDownloadPage, setShowDownloadPage] = useState(false);
 
-  // App mode: 'server' | 'client' | null (not configured)
+  // App mode: 'server' | 'client' | null (show SetupPage) | 'web'
+  // Electron: always starts null → SetupPage shown every launch
   const [appMode, setAppMode] = useState(isElectron ? null : 'web');
-  const [appModeLoading, setAppModeLoading] = useState(isElectron);
 
   // Server mode state (Electron only)
   const [serverRunning, setServerRunning] = useState(false);
   const [serverPort, setServerPort] = useState(8000);
 
-  // Load app mode from config.yaml (Electron only)
+  // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
   useEffect(() => {
     if (!isElectron) return;
-    const loadMode = async () => {
+    const loadConfig = async () => {
       try {
         const result = await window.electron?.pipeline?.getConfig();
-        if (result?.success && result.config?.app?.mode) {
-          const mode = result.config.app.mode;
-          setAppMode(mode);
-          setUseLocalBackend(mode === 'server');
-
-          // Auto-set server URL for API calls
-          if (mode === 'server') {
-            const port = result.config?.server?.port || 8000;
-            setServerUrl(`http://localhost:${port}`);
-          } else if (mode === 'client' && result.config?.app?.server_url) {
-            setServerUrl(result.config.app.server_url);
-          }
+        if (result?.success) {
+          const port = result.config?.server?.port || 8000;
+          setServerPort(port);
         }
-        // If no mode set, appMode stays null → show SetupPage
       } catch (e) {
-        console.error('Failed to load app mode:', e);
+        console.error('Failed to load config:', e);
       }
-      setAppModeLoading(false);
     };
-    loadMode();
+    loadConfig();
   }, []);
 
   const handleSetupComplete = (mode, serverUrl) => {
     setAppMode(mode);
-    // Reload the app to apply the new mode (server needs to start, etc.)
-    if (window.electron?.app?.relaunch) {
-      window.electron.app.relaunch();
-    } else {
-      window.location.reload();
+    setUseLocalBackend(mode === 'server');
+
+    if (mode === 'server') {
+      setServerUrl(`http://localhost:${serverPort}`);
+    } else if (mode === 'client' && serverUrl) {
+      setServerUrl(serverUrl);
     }
+
+    // Switch auth: server → local bypass, client → JWT required
+    configureAuth(mode);
   };
 
-  const handleModeReset = async () => {
-    try {
-      await window.electron?.pipeline?.updateConfig('app.mode', null);
-      setAppMode(null); // Show SetupPage
-      setUseLocalBackend(false);
-    } catch (e) {
-      console.error('Failed to reset mode:', e);
-    }
+  const handleModeReset = () => {
+    setAppMode(null); // Show SetupPage
+    setUseLocalBackend(false);
+    configureAuth(null); // Reset to local bypass
   };
 
   const MAX_LOGS = 200;
@@ -605,8 +594,8 @@ function App() {
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
 
-  // App mode loading state (Electron only)
-  if (appModeLoading || authLoading) {
+  // Auth loading state
+  if (authLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-900">
         <div className="text-gray-400 text-sm">{t('status.loading')}</div>

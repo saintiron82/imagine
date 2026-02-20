@@ -4,6 +4,9 @@
  * - Electron server mode: auth bypassed (local admin)
  * - Electron client mode: JWT auth required (remote server)
  * - Web mode: JWT auth required
+ *
+ * Mode is determined at runtime by SetupPage selection (not config.yaml).
+ * App.jsx calls configureAuth(mode) after user picks a mode.
  */
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
@@ -36,42 +39,35 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // Electron: determine auth mode from config.yaml
-    const determineAuth = async () => {
-      try {
-        const result = await window.electron?.pipeline?.getConfig();
-        const mode = result?.config?.app?.mode;
+    // Electron: start with local bypass (SetupPage will determine actual mode)
+    setSkipAuth(true);
+    setUser({ id: 0, username: 'local', role: 'admin' });
+    setLoading(false);
+  }, []);
 
-        if (mode === 'client') {
-          // Client mode: JWT auth required
-          setSkipAuth(false);
-          if (result?.config?.app?.server_url) {
-            setServerUrl(result.config.app.server_url);
-          }
-          // Try to restore existing session
-          const token = getAccessToken();
-          if (token && getServerUrl()) {
-            try {
-              const data = await getMe();
-              setUser(data.user || data);
-            } catch {
-              setUser(null);
-            }
-          }
-        } else {
-          // Server mode or unconfigured: local bypass
-          setSkipAuth(true);
-          setUser({ id: 0, username: 'local', role: 'admin' });
+  /**
+   * Switch auth mode after SetupPage selection.
+   * Called by App.jsx when user picks server or client mode.
+   */
+  const configureAuth = useCallback(async (mode) => {
+    if (mode === 'client') {
+      setSkipAuth(false);
+      setUser(null);
+      // Try to restore existing session
+      const token = getAccessToken();
+      if (token && getServerUrl()) {
+        try {
+          const data = await getMe();
+          setUser(data.user || data);
+        } catch {
+          setUser(null);
         }
-      } catch {
-        // Fallback to local bypass on error
-        setSkipAuth(true);
-        setUser({ id: 0, username: 'local', role: 'admin' });
       }
-      setLoading(false);
-    };
-
-    determineAuth();
+    } else {
+      // Server mode or reset: local admin bypass
+      setSkipAuth(true);
+      setUser({ id: 0, username: 'local', role: 'admin' });
+    }
   }, []);
 
   const login = useCallback(async ({ username, password, serverUrl }) => {
@@ -118,6 +114,7 @@ export function AuthProvider({ children }) {
     register,
     logout,
     checkServerHealth,
+    configureAuth,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
