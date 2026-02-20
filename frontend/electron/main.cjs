@@ -505,6 +505,50 @@ ipcMain.handle('get-db-stats', async () => {
     });
 });
 
+// ── Job Queue IPC (server mode — direct DB, bypassing HTTP auth) ──
+
+function spawnQueueCmd(cmd, data) {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_queue.py')
+        : path.join(process.resourcesPath, 'backend/api_queue.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath, cmd, JSON.stringify(data || {})], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+        });
+        let output = '';
+        let errOutput = '';
+        proc.stdout.on('data', (d) => output += d.toString());
+        proc.stderr.on('data', (d) => errOutput += d.toString());
+        proc.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(output.trim()));
+                } catch {
+                    resolve({ success: false, error: 'Failed to parse output' });
+                }
+            } else {
+                resolve({ success: false, error: errOutput || `Exit code ${code}` });
+            }
+        });
+        proc.on('error', (e) => resolve({ success: false, error: e.message }));
+    });
+}
+
+ipcMain.handle('queue-register-paths', async (_, { filePaths, priority }) => {
+    return spawnQueueCmd('register-paths', { file_paths: filePaths, priority: priority || 0 });
+});
+
+ipcMain.handle('queue-scan-folder', async (_, { folderPath, priority }) => {
+    return spawnQueueCmd('scan-folder', { folder_path: folderPath, priority: priority || 0 });
+});
+
+ipcMain.handle('queue-stats', async () => {
+    return spawnQueueCmd('stats');
+});
+
 // IPC Handler: Incomplete Stats (for resume dialog on startup)
 ipcMain.handle('get-incomplete-stats', async () => {
     const finalPython = resolvePython();

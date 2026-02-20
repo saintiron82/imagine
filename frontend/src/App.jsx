@@ -50,6 +50,7 @@ function App() {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showDbMenu, setShowDbMenu] = useState(false);
   const [folderStatsVersion, setFolderStatsVersion] = useState(0);
+  const [queueReloadSignal, setQueueReloadSignal] = useState(0);
 
   // App mode: 'server' | 'client' | null (not configured)
   const [appMode, setAppMode] = useState(isElectron ? null : 'web');
@@ -385,24 +386,41 @@ function App() {
       type: 'info'
     });
 
-    // Client mode (remote server): register files via API → queue for workers
-    if (appMode === 'client' && !isElectron) {
+    // Server mode Electron: register files into job queue via IPC (direct DB)
+    if (appMode === 'server' && isElectron && window.electron?.queue) {
       try {
-        const result = await registerPaths(fileArray);
+        const result = await window.electron.queue.registerPaths(fileArray);
         appendLog({
-          message: `Queued ${result.jobs_created || 0} jobs (${result.registered || 0} files registered)`,
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
           type: 'success'
         });
-        setIsProcessing(false);
-        setProcessProgress(prev => ({ ...prev, processed: 0, total: 0 }));
+        setQueueReloadSignal(prev => prev + 1);
       } catch (e) {
         appendLog({ message: `Queue registration failed: ${e.message}`, type: 'error' });
-        setIsProcessing(false);
       }
+      setIsProcessing(false);
+      setProcessProgress(prev => ({ ...prev, processed: 0, total: 0 }));
       return;
     }
 
-    // Server mode / Electron client: direct pipeline spawn (local DB access)
+    // Web client mode: register files via server API → queue for workers
+    if (!isElectron) {
+      try {
+        const result = await registerPaths(fileArray);
+        appendLog({
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Queue registration failed: ${e.message}`, type: 'error' });
+      }
+      setIsProcessing(false);
+      setProcessProgress(prev => ({ ...prev, processed: 0, total: 0 }));
+      return;
+    }
+
+    // Electron client mode: direct pipeline spawn (local processing)
     if (window.electron?.pipeline) {
       window.electron.pipeline.run(fileArray);
     }
@@ -431,14 +449,15 @@ function App() {
       type: 'info'
     });
 
-    // Client mode (remote server, web): scan folder via API → queue for workers
-    if (appMode === 'client' && !isElectron) {
+    // Server mode Electron: scan folder → create jobs in queue via IPC (direct DB)
+    if (appMode === 'server' && isElectron && window.electron?.queue) {
       try {
-        const result = await scanFolder(folderPath);
+        const result = await window.electron.queue.scanFolder(folderPath);
         appendLog({
-          message: `Discovered ${result.discovered || 0} files, queued ${result.jobs_created || 0} jobs (${result.skipped || 0} skipped)`,
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
           type: 'success'
         });
+        setQueueReloadSignal(prev => prev + 1);
       } catch (e) {
         appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
       }
@@ -446,7 +465,23 @@ function App() {
       return;
     }
 
-    // Server mode / Electron client: direct discover spawn (local DB access)
+    // Web client mode: scan folder via server API → queue for workers
+    if (!isElectron) {
+      try {
+        const result = await scanFolder(folderPath);
+        appendLog({
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
+    // Electron client mode: direct discover spawn (local processing)
     window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip });
   };
@@ -616,7 +651,10 @@ function App() {
                 `}
               >
                 <Play size={14} fill="currentColor" />
-                <span>{t('action.process', { count: selectedFiles.size })}</span>
+                <span>{appMode === 'server' || appMode === 'web'
+                  ? t('action.queue_files', { count: selectedFiles.size })
+                  : t('action.process', { count: selectedFiles.size })
+                }</span>
               </button>
             </>
           )}
@@ -765,6 +803,7 @@ function App() {
                 isProcessing={isProcessing || isDiscovering}
                 reloadSignal={folderStatsVersion}
                 appMode={appMode}
+                queueReloadSignal={queueReloadSignal}
               />
             )}
           </div>

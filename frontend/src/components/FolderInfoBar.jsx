@@ -22,7 +22,7 @@ function PhaseBar({ label, count, total, color }) {
     );
 }
 
-const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSignal = 0 }) => {
+const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSignal = 0, appMode }) => {
     const { t } = useLocale();
     const [stats, setStats] = useState(null);
     const [menuOpen, setMenuOpen] = useState(false);
@@ -118,7 +118,7 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSigna
                                 }`}
                             >
                                 <Play size={12} fill="currentColor" />
-                                {t('action.process_folder')}
+                                {appMode === 'server' || appMode === 'web' ? t('action.queue_folder') : t('action.process_folder')}
                             </button>
                             <button
                                 onClick={() => {
@@ -133,7 +133,7 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSigna
                                 }`}
                             >
                                 <RotateCcw size={12} />
-                                {t('action.process_folder_noskip')}
+                                {appMode === 'server' || appMode === 'web' ? t('action.queue_folder_noskip') : t('action.process_folder_noskip')}
                             </button>
                         </div>
                     </>

@@ -106,6 +106,15 @@ contextBridge.exposeInMainWorld('electron', {
         offDiscoverFileDone: () => ipcRenderer.removeAllListeners('discover-file-done'),
     },
 
+    // Job Queue (server mode — direct DB, bypassing HTTP auth)
+    queue: {
+        registerPaths: (filePaths, priority) =>
+            ipcRenderer.invoke('queue-register-paths', { filePaths, priority }),
+        scanFolder: (folderPath, priority) =>
+            ipcRenderer.invoke('queue-scan-folder', { folderPath, priority }),
+        getStats: () => ipcRenderer.invoke('queue-stats'),
+    },
+
     // DB Import/Export
     db: {
         selectArchive: () => ipcRenderer.invoke('select-archive-file'),
