@@ -41,7 +41,11 @@ def get_refresh_token_days() -> int:
 
 def get_cors_origins() -> List[str]:
     cfg = get_server_config()
-    return cfg.get("cors_origins", ["http://localhost:9274", "http://localhost:8000"])
+    origins = cfg.get("cors_origins", ["http://localhost:9274", "http://localhost:8000"])
+    # Electron built apps use file:// protocol which sends Origin: null
+    if "null" not in origins:
+        origins.append("null")
+    return origins
 
 
 def get_storage_config() -> dict:
