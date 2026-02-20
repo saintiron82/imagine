@@ -922,7 +922,6 @@ function QueuePanel() {
   const [cleanupMsg, setCleanupMsg] = useState('');
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const data = await getJobStats();
       setStats(data);
@@ -932,7 +931,11 @@ function QueuePanel() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [load]);
 
   const handleCleanup = async () => {
     try {
@@ -955,6 +958,10 @@ function QueuePanel() {
     { key: 'failed', label: t('admin.queue_failed'), color: 'bg-red-500' },
   ];
 
+  const throughput = stats?.throughput ?? 0;
+  const remaining = (stats?.pending ?? 0) + (stats?.assigned ?? 0) + (stats?.processing ?? 0);
+  const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -976,6 +983,37 @@ function QueuePanel() {
           </button>
         </div>
       </div>
+
+      {/* Throughput banner */}
+      {throughput > 0 && (
+        <div className="bg-emerald-900/30 border border-emerald-700/50 rounded-lg p-4 mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div>
+              <div className="text-xs text-emerald-400/70 mb-0.5">{t('admin.queue_throughput')}</div>
+              <div className="text-2xl font-bold text-emerald-400 font-mono">
+                {throughput.toFixed(1)}<span className="text-sm font-normal text-emerald-400/60 ml-1">{t('admin.queue_files_per_min')}</span>
+              </div>
+            </div>
+            {etaMin !== null && remaining > 0 && (
+              <div className="border-l border-emerald-700/50 pl-4">
+                <div className="text-xs text-emerald-400/70 mb-0.5">{t('admin.queue_eta')}</div>
+                <div className="text-lg font-bold text-emerald-300 font-mono">
+                  {etaMin < 60 ? `${etaMin}m` : `${Math.floor(etaMin / 60)}h ${etaMin % 60}m`}
+                </div>
+              </div>
+            )}
+            {remaining > 0 && (
+              <div className="border-l border-emerald-700/50 pl-4">
+                <div className="text-xs text-emerald-400/70 mb-0.5">{t('admin.queue_remaining')}</div>
+                <div className="text-lg font-bold text-gray-300 font-mono">{remaining}</div>
+              </div>
+            )}
+          </div>
+          <div className="text-xs text-gray-500">
+            {t('admin.queue_recent_window', { count_1m: stats?.recent_1min ?? 0, count_5m: stats?.recent_5min ?? 0 })}
+          </div>
+        </div>
+      )}
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
@@ -1012,8 +1050,8 @@ function QueuePanel() {
             })}
           </div>
           <div className="flex justify-between mt-2 text-xs text-gray-500">
-            <span>{((stats.completed / stats.total) * 100).toFixed(1)}% complete</span>
-            <span>{stats.total} total</span>
+            <span>{((stats.completed / stats.total) * 100).toFixed(1)}% {t('admin.queue_completed').toLowerCase()}</span>
+            <span>{stats.total} {t('admin.queue_total').toLowerCase()}</span>
           </div>
         </div>
       )}

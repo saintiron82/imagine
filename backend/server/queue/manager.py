@@ -183,7 +183,7 @@ class JobQueueManager:
         return cursor.rowcount
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get job queue statistics."""
+        """Get job queue statistics including throughput."""
         cursor = self.db.conn.cursor()
         cursor.execute("""
             SELECT
@@ -197,6 +197,31 @@ class JobQueueManager:
         cursor.execute("SELECT COUNT(*) FROM job_queue")
         total = cursor.fetchone()[0]
 
+        # Throughput: completed jobs in sliding windows
+        cursor.execute("""
+            SELECT COUNT(*) FROM job_queue
+            WHERE status = 'completed'
+              AND completed_at IS NOT NULL
+              AND datetime(completed_at) > datetime('now', '-5 minutes')
+        """)
+        recent_5min = cursor.fetchone()[0]
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM job_queue
+            WHERE status = 'completed'
+              AND completed_at IS NOT NULL
+              AND datetime(completed_at) > datetime('now', '-1 minute')
+        """)
+        recent_1min = cursor.fetchone()[0]
+
+        # Use 1-min window if active, otherwise 5-min average
+        if recent_1min > 0:
+            throughput = float(recent_1min)
+        elif recent_5min > 0:
+            throughput = round(recent_5min / 5.0, 1)
+        else:
+            throughput = 0.0
+
         return {
             "total": total,
             "pending": status_counts.get("pending", 0),
@@ -204,6 +229,9 @@ class JobQueueManager:
             "processing": status_counts.get("processing", 0),
             "completed": status_counts.get("completed", 0),
             "failed": status_counts.get("failed", 0),
+            "throughput": throughput,
+            "recent_1min": recent_1min,
+            "recent_5min": recent_5min,
         }
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0) -> Dict[str, Any]:

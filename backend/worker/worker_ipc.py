@@ -103,6 +103,7 @@ class WorkerIPCController:
         """Main worker loop — claim → batch process by phase → repeat."""
         try:
             from backend.worker.worker_daemon import WorkerDaemon
+            from backend.worker.config import get_heartbeat_interval
 
             daemon = WorkerDaemon()
             self._daemon = daemon
@@ -122,9 +123,27 @@ class WorkerIPCController:
                 return
 
             _emit_log("Authenticated successfully", "success")
+
+            # Register worker session with server
+            daemon._connect_session()
+            if daemon.session_id:
+                _emit_log(f"Session registered (id={daemon.session_id})", "info")
+
             poll_interval = 5
+            heartbeat_interval = get_heartbeat_interval()
+            last_heartbeat = time.time()
 
             while self._running:
+                # Periodic heartbeat
+                if time.time() - last_heartbeat >= heartbeat_interval:
+                    hb = daemon._heartbeat()
+                    last_heartbeat = time.time()
+                    cmd = hb.get("command")
+                    if cmd in ("stop", "block"):
+                        _emit_log(f"Server command: {cmd}", "warning")
+                        self._running = False
+                        break
+
                 # Claim jobs
                 jobs = daemon.claim_jobs()
 
@@ -183,6 +202,9 @@ class WorkerIPCController:
             _emit_log(f"Worker error: {e}", "error")
             _emit_status("error")
         finally:
+            # Disconnect session from server
+            if self._daemon:
+                self._daemon._disconnect_session()
             self._running = False
             _emit_status("idle")
 
