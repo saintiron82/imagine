@@ -115,3 +115,56 @@ export async function updateUserMeta(filePathOrId, updates) {
   // Remote mode: filePathOrId is file_id (number)
   return apiClient.patch(`/api/v1/files/${filePathOrId}/user-meta`, updates);
 }
+
+
+// ── Folder Sync ──────────────────────────────────────────────
+
+/**
+ * Scan a folder and compare disk state with DB records.
+ * Returns: { matched, moved, missing, new_files, moved_list, missing_list }
+ */
+export async function syncFolder(folderPath) {
+  if (_useLocalBackend) {
+    return window.electron.sync.scanFolder(folderPath);
+  }
+  return apiClient.post('/api/v1/sync/scan', { folder_path: folderPath });
+}
+
+/**
+ * Apply path updates for moved files.
+ */
+export async function syncApplyMoves(moves) {
+  if (_useLocalBackend) {
+    return window.electron.sync.applyMoves(moves);
+  }
+  return apiClient.post('/api/v1/sync/apply-moves', { moves });
+}
+
+/**
+ * Delete DB records for files no longer on disk.
+ */
+export async function syncDeleteMissing(fileIds) {
+  if (_useLocalBackend) {
+    return window.electron.sync.deleteMissing(fileIds);
+  }
+  return apiClient.post('/api/v1/sync/delete-missing', { file_ids: fileIds });
+}
+
+
+// ── File Download ────────────────────────────────────────────
+
+/**
+ * Get download URL for original image file.
+ * Local mode: returns null (use openFile instead).
+ * Remote mode: returns server API URL with JWT token.
+ */
+export function getOriginalDownloadUrl(fileId) {
+  if (_useLocalBackend) {
+    return null; // Electron uses openFile / showInFolder
+  }
+  if (!fileId) return null;
+  const base = getServerUrl();
+  const token = getAccessToken();
+  const url = `${base}/api/v1/files/${fileId}/download`;
+  return token ? `${url}?token=${token}` : url;
+}

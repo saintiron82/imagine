@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { CheckCircle, File, Loader2, Info, X, FolderOpen, ExternalLink } from 'lucide-react';
+import { CheckCircle, File, Loader2, Info, X, FolderOpen, ExternalLink, Download } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
+import { isElectron } from '../api/client';
+import { getOriginalDownloadUrl } from '../services/bridge';
 
 const SUPPORTED_EXTS = ['.psd', '.png', '.jpg', '.jpeg'];
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
@@ -228,14 +230,23 @@ const MetadataModal = ({ metadata, onClose }) => {
                                     )}
                                 </div>
                                 <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
-                                    <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
-                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
-                                        <FolderOpen size={12} /> {t('action.show_in_folder')}
-                                    </button>
-                                    <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
-                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
-                                        <ExternalLink size={12} /> {t('action.open_file')}
-                                    </button>
+                                    {isElectron ? (
+                                        <>
+                                            <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
+                                                className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                                <FolderOpen size={12} /> {t('action.show_in_folder')}
+                                            </button>
+                                            <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
+                                                className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                                <ExternalLink size={12} /> {t('action.open_file')}
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <a href={getOriginalDownloadUrl(metadata.id)} download
+                                            className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors no-underline">
+                                            <Download size={12} /> {t('action.download')}
+                                        </a>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -925,12 +936,23 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                                 <div className="px-3 py-2 border-b border-gray-700 bg-gray-900/50">
                                     <div className="text-xs font-bold text-white truncate max-w-[180px]">{contextMenu.file.name}</div>
                                 </div>
-                                <button
-                                    onClick={() => { window.electron?.fs?.showInFolder(contextMenu.file.path); setContextMenu(null); }}
-                                    className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
-                                >
-                                    <FolderOpen size={14} /> {t('action.show_in_folder')}
-                                </button>
+                                {isElectron ? (
+                                    <button
+                                        onClick={() => { window.electron?.fs?.showInFolder(contextMenu.file.path); setContextMenu(null); }}
+                                        className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                                    >
+                                        <FolderOpen size={14} /> {t('action.show_in_folder')}
+                                    </button>
+                                ) : (
+                                    <a
+                                        href={getOriginalDownloadUrl(contextMenu.file.id)}
+                                        download
+                                        onClick={() => setContextMenu(null)}
+                                        className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2 no-underline"
+                                    >
+                                        <Download size={14} /> {t('action.download')}
+                                    </a>
+                                )}
                                 <div className="h-px bg-gray-700 my-1" />
                                 <button
                                     onClick={() => { onFindSimilar?.({ queryFileId: contextMenu.file.id, mode: 'vector' }); setContextMenu(null); }}

@@ -433,5 +433,19 @@
   "download.step_1": "Imagine 앱을 설치하고 실행합니다",
   "download.step_2": "설정 화면에서 \"클라이언트\" 모드를 선택합니다",
   "download.step_3": "위의 서버 URL을 입력하여 연결합니다",
-  "download.view_all": "모든 다운로드 보기"
+  "download.view_all": "모든 다운로드 보기",
+  "action.download": "다운로드",
+  "action.sync_folder": "DB와 동기화",
+  "sync.result_title": "동기화 결과",
+  "sync.matched": "일치",
+  "sync.moved": "이동됨",
+  "sync.missing": "누락",
+  "sync.new_files": "새 파일",
+  "sync.apply_moves": "경로 업데이트",
+  "sync.delete_missing": "DB에서 삭제",
+  "sync.process_new": "새 파일 처리",
+  "sync.all_synced": "모든 파일 동기화 완료",
+  "sync.moved_details": "{count}개 이동된 파일",
+  "sync.missing_details": "{count}개 누락된 파일",
+  "sync.error": "동기화 실패"
 }

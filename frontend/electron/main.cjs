@@ -463,6 +463,92 @@ ipcMain.handle('relink-apply', async (_, { packagePath, targetFolder, deleteMiss
     });
 });
 
+// IPC Handler: Sync folder — scan and compare disk vs DB
+ipcMain.handle('sync-folder', async (_, { folderPath }) => {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_sync.py')
+        : path.join(projectRoot, 'backend/api_sync.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath, '--folder', folderPath], { cwd: projectRoot });
+        let output = '';
+        let error = '';
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+        proc.on('close', (code) => {
+            try {
+                const result = JSON.parse(output.trim().split('\n').pop());
+                resolve(result);
+            } catch {
+                resolve({ success: false, error: error || 'Sync scan failed' });
+            }
+        });
+        proc.on('error', (err) => resolve({ success: false, error: err.message }));
+    });
+});
+
+// IPC Handler: Sync apply moves — update paths for moved files
+ipcMain.handle('sync-apply-moves', async (_, { moves }) => {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_sync.py')
+        : path.join(projectRoot, 'backend/api_sync.py');
+
+    // Pass first move's folder to get DB path, then apply all moves
+    const folderPath = moves.length > 0 ? path.dirname(moves[0].new_path) : '.';
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [
+            scriptPath, '--folder', folderPath, '--apply-moves'
+        ], { cwd: projectRoot });
+        let output = '';
+        let error = '';
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+        proc.on('close', (code) => {
+            try {
+                const lines = output.trim().split('\n');
+                // Get the last JSON line (apply_moves result)
+                const result = JSON.parse(lines[lines.length - 1]);
+                resolve(result);
+            } catch {
+                resolve({ success: false, error: error || 'Apply moves failed' });
+            }
+        });
+        proc.on('error', (err) => resolve({ success: false, error: err.message }));
+    });
+});
+
+// IPC Handler: Sync delete missing — remove DB records for deleted files
+ipcMain.handle('sync-delete-missing', async (_, { fileIds }) => {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_sync.py')
+        : path.join(projectRoot, 'backend/api_sync.py');
+
+    const idsStr = fileIds.join(',');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [
+            scriptPath, '--folder', '.', '--delete-missing', idsStr
+        ], { cwd: projectRoot });
+        let output = '';
+        let error = '';
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+        proc.on('close', (code) => {
+            try {
+                const result = JSON.parse(output.trim().split('\n').pop());
+                resolve(result);
+            } catch {
+                resolve({ success: false, error: error || 'Delete missing failed' });
+            }
+        });
+        proc.on('error', (err) => resolve({ success: false, error: err.message }));
+    });
+});
+
 // IPC Handler: Fetch image from URL (bypasses CORS via Node.js)
 ipcMain.handle('fetch-image-url', async (_, url) => {
     try {

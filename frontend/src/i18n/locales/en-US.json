@@ -433,5 +433,19 @@
   "download.step_1": "Install and open the Imagine app",
   "download.step_2": "Choose \"Client\" mode on the setup screen",
   "download.step_3": "Enter the server URL above to connect",
-  "download.view_all": "View all downloads"
+  "download.view_all": "View all downloads",
+  "action.download": "Download",
+  "action.sync_folder": "Sync with DB",
+  "sync.result_title": "Sync Result",
+  "sync.matched": "Matched",
+  "sync.moved": "Moved",
+  "sync.missing": "Missing",
+  "sync.new_files": "New",
+  "sync.apply_moves": "Update Paths",
+  "sync.delete_missing": "Delete from DB",
+  "sync.process_new": "Process New",
+  "sync.all_synced": "All files synced",
+  "sync.moved_details": "{count} moved files",
+  "sync.missing_details": "{count} missing files",
+  "sync.error": "Sync failed"
 }

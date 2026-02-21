@@ -206,6 +206,8 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 ## 6. Remaining Phases
 
 ### Phase 5: UI/UX Enhancement (Priority 1)
+- [x] Local folder sync (DB ↔ disk reconciliation — detect moved/deleted/new files)
+- [x] Original image download (server mode — download from browser)
 - [ ] Lightbox image viewer (zoom/pan/navigation)
 - [ ] Search history and autocomplete
 - [ ] Result sorting (relevance/date/filename/rating)
@@ -239,7 +241,10 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 - [ ] First-run guide (model download wizard)
 - [ ] Portable mode (USB execution)
 
-### Phase 9: Collaboration (Priority 5)
+### Phase 9: Data Management + Collaboration (Priority 5)
+- [ ] Automatic DB backup (schedule + retention policy)
+- [ ] Manual DB backup/restore UI
+- [ ] File matching/relink UI improvements (match visualization, selective apply)
 - [ ] DB export/import (metadata + vector packaging)
 - [ ] Collection/folder partial export
 - [ ] Per-image comment history

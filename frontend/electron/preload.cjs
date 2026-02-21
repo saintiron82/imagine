@@ -129,6 +129,13 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('relink-apply', { packagePath, targetFolder, deleteMissing }),
     },
 
+    // Folder Sync (DB ↔ disk reconciliation)
+    sync: {
+        scanFolder: (folderPath) => ipcRenderer.invoke('sync-folder', { folderPath }),
+        applyMoves: (moves) => ipcRenderer.invoke('sync-apply-moves', { moves }),
+        deleteMissing: (fileIds) => ipcRenderer.invoke('sync-delete-missing', { fileIds }),
+    },
+
     // User Metadata API
     metadata: {
         updateUserData: (filePath, updates) =>
