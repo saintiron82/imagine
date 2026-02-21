@@ -5,6 +5,9 @@ Defines compatibility rules between different AI tiers and
 determines required actions for tier transitions.
 
 v3.1.1 - Strict tier compatibility enforcement
+v6.7   - Unified VV model (so400m-naflex) + MV unification (standard/pro)
+         standard↔pro: fully compatible (same VV + MV models)
+         ultra: MV-only reprocess (different text embedding model)
 """
 
 from typing import Dict, Any, Optional, Tuple
@@ -16,32 +19,37 @@ class TierAction(Enum):
     NONE = "none"                           # No action needed (same tier)
     REPROCESS_OPTIONAL = "reprocess_optional"  # Optional reprocess for quality
     REPROCESS_REQUIRED = "reprocess_required"  # Mandatory reprocess
+    MV_ONLY = "mv_only"                     # Only MV reprocess (VV compatible)
     BLOCK = "block"                         # Block operation, user decision needed
 
 
 class CompatibilityReason(Enum):
     """Reasons for compatibility status."""
     SAME_TIER = "same_tier"
+    SAME_MODELS = "same_models"                 # VV+MV models identical across tiers
     DIMENSION_UPGRADE = "dimension_upgrade"      # 768 → 1152 → 1664
     DIMENSION_DOWNGRADE = "dimension_downgrade"  # 1664 → 1152 → 768
     MODEL_CHANGE = "model_change"               # Different model family
+    MV_MODEL_CHANGE = "mv_model_change"         # Only MV model differs (VV same)
     QUALITY_UPGRADE = "quality_upgrade"         # Better quality available
     QUALITY_DOWNGRADE = "quality_downgrade"     # Losing quality
 
 
 # Tier specifications (from config.yaml)
+# v6.7: VV unified to so400m-naflex (1152d) across all tiers
+# v6.7: MV unified to 0.6b/1024d for standard+pro, ultra uses 8b/4096d
 TIER_SPECS = {
     'standard': {
-        'visual_model': 'google/siglip2-base-patch16-224',
-        'visual_dim': 768,
-        'text_model': 'google/gemma-2b-instruct',
-        'text_dim': 256,
+        'visual_model': 'google/siglip2-so400m-patch16-naflex',
+        'visual_dim': 1152,
+        'text_model': 'qwen3-embedding:0.6b',
+        'text_dim': 1024,
         'vlm_model': 'Qwen/Qwen3-VL-2B-Instruct',
         'vram_req': '~6GB',
         'quality_tier': 1  # 1=basic, 2=medium, 3=high
     },
     'pro': {
-        'visual_model': 'google/siglip2-so400m-patch14-384',
+        'visual_model': 'google/siglip2-so400m-patch16-naflex',
         'visual_dim': 1152,
         'text_model': 'qwen3-embedding:0.6b',
         'text_dim': 1024,
@@ -50,8 +58,8 @@ TIER_SPECS = {
         'quality_tier': 2
     },
     'ultra': {
-        'visual_model': 'google/siglip2-giant-opt-patch16-256',
-        'visual_dim': 1664,
+        'visual_model': 'google/siglip2-so400m-patch16-naflex',
+        'visual_dim': 1152,
         'text_model': 'qwen3-embedding:8b',
         'text_dim': 4096,
         'vlm_model': 'qwen3-vl:8b',
@@ -89,94 +97,86 @@ TIER_COMPATIBILITY_MATRIX = {
         'auto_allow': True
     },
 
-    # ===== UPGRADES (Standard → Pro → Ultra) =====
+    # ===== STANDARD ↔ PRO (Fully compatible — same VV + MV models) =====
     ('standard', 'pro'): {
-        'compatible': False,
-        'action': TierAction.REPROCESS_OPTIONAL,
-        'reason': CompatibilityReason.QUALITY_UPGRADE,
-        'message': 'Upgrading from Standard to Pro tier',
-        'user_prompt': (
-            'Upgrade to Pro tier detected:\n'
-            '  • Better quality models (Qwen3-VL-4B, SigLIP-so400m)\n'
-            '  • Dimension: 768 → 1152\n'
-            '  • VRAM: ~6GB → 8-16GB\n\n'
-            'Reprocess all files for improved quality?'
-        ),
-        'auto_allow': False  # Ask user
+        'compatible': True,
+        'action': TierAction.NONE,
+        'reason': CompatibilityReason.SAME_MODELS,
+        'message': 'Standard ↔ Pro: fully compatible (same VV/MV models)',
+        'user_prompt': None,
+        'auto_allow': True
     },
+    ('pro', 'standard'): {
+        'compatible': True,
+        'action': TierAction.NONE,
+        'reason': CompatibilityReason.SAME_MODELS,
+        'message': 'Pro ↔ Standard: fully compatible (same VV/MV models)',
+        'user_prompt': None,
+        'auto_allow': True
+    },
+
+    # ===== STANDARD/PRO ↔ ULTRA (MV-only reprocess — VV compatible) =====
     ('standard', 'ultra'): {
         'compatible': False,
-        'action': TierAction.REPROCESS_OPTIONAL,
-        'reason': CompatibilityReason.QUALITY_UPGRADE,
-        'message': 'Upgrading from Standard to Ultra tier',
+        'action': TierAction.MV_ONLY,
+        'reason': CompatibilityReason.MV_MODEL_CHANGE,
+        'message': 'Upgrading to Ultra tier (MV reprocess only)',
         'user_prompt': (
             'Upgrade to Ultra tier detected:\n'
-            '  • Highest quality models (Qwen3-VL-8B, SigLIP-giant)\n'
-            '  • Dimension: 768 → 1664\n'
-            '  • VRAM: ~6GB → 20GB+\n\n'
-            'Reprocess all files for maximum quality?'
+            '  • VV (visual): compatible (same SigLIP2 model)\n'
+            '  • MV (text): reprocess needed (0.6B → 8B model)\n'
+            '  • VLM: Qwen3-VL-2B → Qwen3-VL-8B\n\n'
+            'Only MV embeddings need reprocessing (fast, ~0.5s/file).\n'
+            'VV embeddings and MC captions are preserved.\n\n'
+            'Reprocess MV for Ultra tier?'
         ),
         'auto_allow': False
     },
     ('pro', 'ultra'): {
         'compatible': False,
-        'action': TierAction.REPROCESS_OPTIONAL,
-        'reason': CompatibilityReason.QUALITY_UPGRADE,
-        'message': 'Upgrading from Pro to Ultra tier',
+        'action': TierAction.MV_ONLY,
+        'reason': CompatibilityReason.MV_MODEL_CHANGE,
+        'message': 'Upgrading to Ultra tier (MV reprocess only)',
         'user_prompt': (
             'Upgrade to Ultra tier detected:\n'
-            '  • Highest quality models (Qwen3-VL-8B, SigLIP-giant)\n'
-            '  • Dimension: 1152 → 1664\n'
-            '  • VRAM: 8-16GB → 20GB+\n\n'
-            'Reprocess all files for maximum quality?'
+            '  • VV (visual): compatible (same SigLIP2 model)\n'
+            '  • MV (text): reprocess needed (0.6B → 8B model)\n'
+            '  • VLM: Qwen3-VL-4B → Qwen3-VL-8B\n\n'
+            'Only MV embeddings need reprocessing (fast, ~0.5s/file).\n'
+            'VV embeddings and MC captions are preserved.\n\n'
+            'Reprocess MV for Ultra tier?'
         ),
         'auto_allow': False
-    },
-
-    # ===== DOWNGRADES (Ultra → Pro → Standard) =====
-    ('ultra', 'standard'): {
-        'compatible': False,
-        'action': TierAction.REPROCESS_REQUIRED,
-        'reason': CompatibilityReason.DIMENSION_DOWNGRADE,
-        'message': 'Downgrading from Ultra to Standard tier (MANDATORY REPROCESS)',
-        'user_prompt': (
-            '⚠️  Downgrade to Standard tier detected:\n'
-            '  • Quality loss (Qwen3-VL-8B → Qwen3-VL-2B)\n'
-            '  • Dimension: 1664 → 768 (cannot search existing data)\n'
-            '  • VRAM: 20GB+ → ~6GB\n\n'
-            'All files MUST be reprocessed.\n'
-            'Existing embeddings will be deleted.\n\n'
-            'Continue with downgrade?'
-        ),
-        'auto_allow': False  # Block and require confirmation
     },
     ('ultra', 'pro'): {
         'compatible': False,
-        'action': TierAction.REPROCESS_REQUIRED,
-        'reason': CompatibilityReason.DIMENSION_DOWNGRADE,
-        'message': 'Downgrading from Ultra to Pro tier (MANDATORY REPROCESS)',
+        'action': TierAction.MV_ONLY,
+        'reason': CompatibilityReason.MV_MODEL_CHANGE,
+        'message': 'Downgrading from Ultra to Pro (MV reprocess only)',
         'user_prompt': (
-            '⚠️  Downgrade to Pro tier detected:\n'
-            '  • Quality loss (Qwen3-VL-8B → Qwen3-VL-4B)\n'
-            '  • Dimension: 1664 → 1152 (cannot search existing data)\n'
-            '  • VRAM: 20GB+ → 8-16GB\n\n'
-            'All files MUST be reprocessed.\n\n'
-            'Continue with downgrade?'
+            'Downgrade to Pro tier detected:\n'
+            '  • VV (visual): compatible (same SigLIP2 model)\n'
+            '  • MV (text): reprocess needed (8B → 0.6B model)\n'
+            '  • VLM: Qwen3-VL-8B → Qwen3-VL-4B\n\n'
+            'Only MV embeddings need reprocessing (fast, ~0.5s/file).\n'
+            'VV embeddings and MC captions are preserved.\n\n'
+            'Reprocess MV for Pro tier?'
         ),
         'auto_allow': False
     },
-    ('pro', 'standard'): {
+    ('ultra', 'standard'): {
         'compatible': False,
-        'action': TierAction.REPROCESS_REQUIRED,
-        'reason': CompatibilityReason.DIMENSION_DOWNGRADE,
-        'message': 'Downgrading from Pro to Standard tier (MANDATORY REPROCESS)',
+        'action': TierAction.MV_ONLY,
+        'reason': CompatibilityReason.MV_MODEL_CHANGE,
+        'message': 'Downgrading from Ultra to Standard (MV reprocess only)',
         'user_prompt': (
-            '⚠️  Downgrade to Standard tier detected:\n'
-            '  • Quality loss (Qwen3-VL-4B → Qwen3-VL-2B)\n'
-            '  • Dimension: 1152 → 768 (cannot search existing data)\n'
-            '  • VRAM: 8-16GB → ~6GB\n\n'
-            'All files MUST be reprocessed.\n\n'
-            'Continue with downgrade?'
+            'Downgrade to Standard tier detected:\n'
+            '  • VV (visual): compatible (same SigLIP2 model)\n'
+            '  • MV (text): reprocess needed (8B → 0.6B model)\n'
+            '  • VLM: Qwen3-VL-8B → Qwen3-VL-2B\n\n'
+            'Only MV embeddings need reprocessing (fast, ~0.5s/file).\n'
+            'VV embeddings and MC captions are preserved.\n\n'
+            'Reprocess MV for Standard tier?'
         ),
         'auto_allow': False
     },
@@ -313,6 +313,8 @@ def get_migration_steps(from_tier: str, to_tier: str) -> list:
 
     if compat['action'] == TierAction.REPROCESS_REQUIRED:
         steps.insert(0, "⚠️  MANDATORY REPROCESS - Existing embeddings are incompatible")
+    elif compat['action'] == TierAction.MV_ONLY:
+        steps.insert(0, "📝 MV-ONLY REPROCESS - VV embeddings and MC captions are preserved")
     elif compat['action'] == TierAction.REPROCESS_OPTIONAL:
         steps.insert(0, "💡 OPTIONAL REPROCESS - Recommended for quality improvement")
 

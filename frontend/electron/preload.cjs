@@ -106,6 +106,19 @@ contextBridge.exposeInMainWorld('electron', {
         offDiscoverFileDone: () => ipcRenderer.removeAllListeners('discover-file-done'),
     },
 
+    // Job Queue (server mode — direct DB, bypassing HTTP auth)
+    queue: {
+        registerPaths: (filePaths, priority) =>
+            ipcRenderer.invoke('queue-register-paths', { filePaths, priority }),
+        scanFolder: (folderPath, priority) =>
+            ipcRenderer.invoke('queue-scan-folder', { folderPath, priority }),
+        getStats: () => ipcRenderer.invoke('queue-stats'),
+        listJobs: (opts) => ipcRenderer.invoke('queue-list-jobs', opts || {}),
+        cancelJob: (jobId) => ipcRenderer.invoke('queue-cancel-job', { jobId }),
+        retryFailed: () => ipcRenderer.invoke('queue-retry-failed'),
+        clearCompleted: () => ipcRenderer.invoke('queue-clear-completed'),
+    },
+
     // DB Import/Export
     db: {
         selectArchive: () => ipcRenderer.invoke('select-archive-file'),
@@ -120,5 +133,39 @@ contextBridge.exposeInMainWorld('electron', {
     metadata: {
         updateUserData: (filePath, updates) =>
             ipcRenderer.invoke('metadata:updateUserData', filePath, updates)
+    },
+
+    // Server Mode (embedded FastAPI)
+    server: {
+        start: (opts) => ipcRenderer.invoke('server-start', opts),
+        stop: () => ipcRenderer.invoke('server-stop'),
+        getStatus: () => ipcRenderer.invoke('server-status'),
+        onLog: (cb) => ipcRenderer.on('server-log', (_, data) => cb(data)),
+        offLog: () => ipcRenderer.removeAllListeners('server-log'),
+        onStatusChange: (cb) => ipcRenderer.on('server-status-change', (_, data) => cb(data)),
+        offStatusChange: () => ipcRenderer.removeAllListeners('server-status-change'),
+    },
+
+    // Worker Daemon (server-mode job processing)
+    worker: {
+        start: (opts) => ipcRenderer.invoke('worker-start', opts),
+        stop: () => ipcRenderer.invoke('worker-stop'),
+        getStatus: () => ipcRenderer.invoke('worker-status'),
+        onStatus: (cb) => ipcRenderer.on('worker-status', (_, data) => cb(data)),
+        offStatus: () => ipcRenderer.removeAllListeners('worker-status'),
+        onLog: (cb) => ipcRenderer.on('worker-log', (_, data) => cb(data)),
+        offLog: () => ipcRenderer.removeAllListeners('worker-log'),
+        onJobDone: (cb) => ipcRenderer.on('worker-job-done', (_, data) => cb(data)),
+        offJobDone: () => ipcRenderer.removeAllListeners('worker-job-done'),
+        onBatchStart: (cb) => ipcRenderer.on('worker-batch-start', (_, data) => cb(data)),
+        offBatchStart: () => ipcRenderer.removeAllListeners('worker-batch-start'),
+        onBatchPhaseStart: (cb) => ipcRenderer.on('worker-batch-phase-start', (_, data) => cb(data)),
+        offBatchPhaseStart: () => ipcRenderer.removeAllListeners('worker-batch-phase-start'),
+        onBatchFileDone: (cb) => ipcRenderer.on('worker-batch-file-done', (_, data) => cb(data)),
+        offBatchFileDone: () => ipcRenderer.removeAllListeners('worker-batch-file-done'),
+        onBatchPhaseComplete: (cb) => ipcRenderer.on('worker-batch-phase-complete', (_, data) => cb(data)),
+        offBatchPhaseComplete: () => ipcRenderer.removeAllListeners('worker-batch-phase-complete'),
+        onBatchComplete: (cb) => ipcRenderer.on('worker-batch-complete', (_, data) => cb(data)),
+        offBatchComplete: () => ipcRenderer.removeAllListeners('worker-batch-complete'),
     }
 });

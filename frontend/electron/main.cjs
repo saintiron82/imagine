@@ -7,25 +7,57 @@ const isDev = process.env.NODE_ENV === 'development';
 // Suppress EPIPE errors from console.log when parent pipe is closed (background launch)
 process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 process.stderr?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
-const projectRoot = isDev
-    ? path.resolve(__dirname, '../../')
-    : process.resourcesPath;
+// Resolve project root where backend/ and config.yaml live.
+// In dev mode: two levels up from electron/ directory.
+// In built mode: first check resourcesPath (bundled production), then traverse
+// up from the app location to find the source project tree (local testing).
+const projectRoot = (() => {
+    if (isDev) return path.resolve(__dirname, '../../');
+
+    // Bundled production: backend/ included via extraResources
+    if (fs.existsSync(path.join(process.resourcesPath, 'backend'))) {
+        return process.resourcesPath;
+    }
+
+    // Local testing: traverse up from app to find project root
+    let dir = process.resourcesPath;
+    for (let i = 0; i < 10; i++) {
+        dir = path.dirname(dir);
+        if (dir === path.dirname(dir)) break; // filesystem root
+        if (fs.existsSync(path.join(dir, 'backend')) &&
+            fs.existsSync(path.join(dir, 'config.yaml'))) {
+            return dir;
+        }
+    }
+
+    return process.resourcesPath;
+})();
+
+// Config root: where config.yaml is stored per-instance.
+// In dev mode: same as projectRoot.
+// In built mode: process.resourcesPath (allows separate config per app instance).
+const configRoot = isDev ? projectRoot : process.resourcesPath;
 
 // Cross-platform Python path resolution
 function getPythonPath() {
     const isWin = process.platform === 'win32';
-    if (isDev) {
-        const venvDir = isWin ? 'Scripts' : 'bin';
-        const pyExe = isWin ? 'python.exe' : 'python3';
-        return path.resolve(__dirname, `../../.venv/${venvDir}/${pyExe}`);
-    }
+    const venvDir = isWin ? 'Scripts' : 'bin';
     const pyExe = isWin ? 'python.exe' : 'python3';
-    return path.join(process.resourcesPath, 'python', pyExe);
+
+    // 1. Check venv in project root
+    const venvPath = path.join(projectRoot, '.venv', venvDir, pyExe);
+    if (fs.existsSync(venvPath)) return venvPath;
+
+    // 2. Check bundled Python (production)
+    const bundledPath = path.join(process.resourcesPath, 'python', pyExe);
+    if (fs.existsSync(bundledPath)) return bundledPath;
+
+    return null;
 }
 
 function resolvePython() {
     const pythonPath = getPythonPath();
-    return fs.existsSync(pythonPath) ? pythonPath : 'python3';
+    return (pythonPath && fs.existsSync(pythonPath)) ? pythonPath : 'python3';
 }
 
 // ── Search Daemon (lazy-start, idle-kill) ────────────────────────
@@ -41,7 +73,7 @@ let idleTimer = null;
 function getSearchScriptPath() {
     return isDev
         ? path.resolve(__dirname, '../../backend/api_search.py')
-        : path.join(process.resourcesPath, 'backend/api_search.py');
+        : path.join(projectRoot, 'backend/api_search.py');
 }
 
 /** Kill any orphaned Imagine-Search processes from previous runs. */
@@ -208,7 +240,7 @@ ipcMain.handle('read-metadata', async (_, filePath) => {
         const baseName = path.basename(filePath, path.extname(filePath));
         const outputDir = isDev
             ? path.join(projectRoot, 'output/json')
-            : path.join(process.resourcesPath, 'output/json');
+            : path.join(projectRoot, 'output/json');
         const jsonPath = path.join(outputDir, `${baseName}.json`);
 
         if (fs.existsSync(jsonPath)) {
@@ -226,7 +258,7 @@ ipcMain.handle('read-metadata', async (_, filePath) => {
 ipcMain.handle('check-metadata-exists', async (_, filePaths) => {
     const outputDir = isDev
         ? path.join(projectRoot, 'output/json')
-        : path.join(process.resourcesPath, 'output/json');
+        : path.join(projectRoot, 'output/json');
 
     const results = {};
     for (const fp of filePaths) {
@@ -243,7 +275,7 @@ ipcMain.handle('generate-thumbnail', async (_, filePath) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
-        : path.join(process.resourcesPath, 'backend/thumbnail_generator.py');
+        : path.join(projectRoot, 'backend/thumbnail_generator.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, filePath, '--size', '256'], { cwd: projectRoot });
@@ -280,7 +312,7 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
-        : path.join(process.resourcesPath, 'backend/thumbnail_generator.py');
+        : path.join(projectRoot, 'backend/thumbnail_generator.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, '--batch', JSON.stringify(filePaths), '--size', '256', '--return-paths'], { cwd: projectRoot });
@@ -315,7 +347,7 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
 ipcMain.handle('check-thumbnails-exist', async (_, filePaths) => {
     const thumbDir = isDev
         ? path.join(projectRoot, 'output', 'thumbnails')
-        : path.join(process.resourcesPath, 'output', 'thumbnails');
+        : path.join(projectRoot, 'output', 'thumbnails');
 
     const results = {};
     for (const fp of filePaths) {
@@ -345,7 +377,7 @@ ipcMain.handle('export-database', async (_, { outputPath }) => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_export.py')
-        : path.join(process.resourcesPath, 'backend/api_export.py');
+        : path.join(projectRoot, 'backend/api_export.py');
 
     // If no outputPath, open save dialog
     if (!outputPath) {
@@ -381,7 +413,7 @@ ipcMain.handle('relink-preview', async (_, { packagePath, targetFolder }) => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_relink.py')
-        : path.join(process.resourcesPath, 'backend/api_relink.py');
+        : path.join(projectRoot, 'backend/api_relink.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [
@@ -408,7 +440,7 @@ ipcMain.handle('relink-apply', async (_, { packagePath, targetFolder, deleteMiss
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_relink.py')
-        : path.join(process.resourcesPath, 'backend/api_relink.py');
+        : path.join(projectRoot, 'backend/api_relink.py');
 
     const args = [scriptPath, '--package', packagePath, '--folder', targetFolder];
     if (deleteMissing) args.push('--delete-missing');
@@ -481,7 +513,7 @@ ipcMain.handle('get-db-stats', async () => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_stats.py')
-        : path.join(process.resourcesPath, 'backend/api_stats.py');
+        : path.join(projectRoot, 'backend/api_stats.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath], {
@@ -505,12 +537,72 @@ ipcMain.handle('get-db-stats', async () => {
     });
 });
 
+// ── Job Queue IPC (server mode — direct DB, bypassing HTTP auth) ──
+
+function spawnQueueCmd(cmd, data) {
+    const finalPython = resolvePython();
+    const scriptPath = isDev
+        ? path.resolve(__dirname, '../../backend/api_queue.py')
+        : path.join(projectRoot, 'backend/api_queue.py');
+
+    return new Promise((resolve) => {
+        const proc = spawn(finalPython, [scriptPath, cmd, JSON.stringify(data || {})], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+        });
+        let output = '';
+        let errOutput = '';
+        proc.stdout.on('data', (d) => output += d.toString());
+        proc.stderr.on('data', (d) => errOutput += d.toString());
+        proc.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(output.trim()));
+                } catch {
+                    resolve({ success: false, error: 'Failed to parse output' });
+                }
+            } else {
+                resolve({ success: false, error: errOutput || `Exit code ${code}` });
+            }
+        });
+        proc.on('error', (e) => resolve({ success: false, error: e.message }));
+    });
+}
+
+ipcMain.handle('queue-register-paths', async (_, { filePaths, priority }) => {
+    return spawnQueueCmd('register-paths', { file_paths: filePaths, priority: priority || 0 });
+});
+
+ipcMain.handle('queue-scan-folder', async (_, { folderPath, priority }) => {
+    return spawnQueueCmd('scan-folder', { folder_path: folderPath, priority: priority || 0 });
+});
+
+ipcMain.handle('queue-stats', async () => {
+    return spawnQueueCmd('stats');
+});
+
+ipcMain.handle('queue-list-jobs', async (_, { status, limit, offset }) => {
+    return spawnQueueCmd('list-jobs', { status: status || null, limit: limit || 50, offset: offset || 0 });
+});
+
+ipcMain.handle('queue-cancel-job', async (_, { jobId }) => {
+    return spawnQueueCmd('cancel-job', { job_id: jobId });
+});
+
+ipcMain.handle('queue-retry-failed', async () => {
+    return spawnQueueCmd('retry-failed');
+});
+
+ipcMain.handle('queue-clear-completed', async () => {
+    return spawnQueueCmd('clear-completed');
+});
+
 // IPC Handler: Incomplete Stats (for resume dialog on startup)
 ipcMain.handle('get-incomplete-stats', async () => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_incomplete_stats.py')
-        : path.join(process.resourcesPath, 'backend/api_incomplete_stats.py');
+        : path.join(projectRoot, 'backend/api_incomplete_stats.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath], {
@@ -539,7 +631,7 @@ ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
     const finalPython = resolvePython();
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_folder_stats.py')
-        : path.join(process.resourcesPath, 'backend/api_folder_stats.py');
+        : path.join(projectRoot, 'backend/api_folder_stats.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, storageRoot], {
@@ -566,7 +658,7 @@ ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
 // IPC Handler: Environment Check
 ipcMain.handle('check-env', async () => {
     const finalPython = resolvePython();
-    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
+    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(projectRoot, 'backend/setup/installer.py');
 
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, '--check'], { cwd: projectRoot });
@@ -586,7 +678,7 @@ ipcMain.handle('check-env', async () => {
 // IPC Handler: Install Environment
 ipcMain.on('install-env', (event) => {
     const finalPython = resolvePython();
-    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(process.resourcesPath, 'backend/setup/installer.py');
+    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(projectRoot, 'backend/setup/installer.py');
 
     event.reply('install-log', { message: '🚀 Starting installation...', type: 'info' });
 
@@ -615,7 +707,7 @@ ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/api_metadata_update.py')
-        : path.join(process.resourcesPath, 'backend/api_metadata_update.py');
+        : path.join(projectRoot, 'backend/api_metadata_update.py');
 
     return new Promise((resolve, reject) => {
         const proc = spawn(finalPython, [scriptPath], { cwd: projectRoot });
@@ -672,7 +764,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
-        : path.join(process.resourcesPath, 'backend/ingest_engine.py');
+        : path.join(projectRoot, 'backend/ingest_engine.py');
 
     console.log('[run-pipeline] Script:', scriptPath);
     event.reply('pipeline-log', { message: `Starting batch processing: ${filePaths.length} files...`, type: 'info' });
@@ -889,7 +981,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
 
     const scriptPath = isDev
         ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
-        : path.join(process.resourcesPath, 'backend/ingest_engine.py');
+        : path.join(projectRoot, 'backend/ingest_engine.py');
 
     const args = [scriptPath, '--discover', folderPath];
     if (noSkip) args.push('--no-skip');
@@ -1037,7 +1129,7 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
 ipcMain.handle('get-config', async () => {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
 
         if (!fs.existsSync(configPath)) {
             return { success: false, error: 'config.yaml not found' };
@@ -1057,7 +1149,7 @@ ipcMain.handle('get-config', async () => {
 ipcMain.handle('get-registered-folders', async () => {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
         if (!fs.existsSync(configPath)) {
             return { success: true, folders: [], autoScan: true };
         }
@@ -1086,7 +1178,7 @@ ipcMain.handle('add-registered-folder', async () => {
         }
 
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
         const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
         if (!config.registered_folders) config.registered_folders = { folders: [], auto_scan: true };
         if (!config.registered_folders.folders) config.registered_folders.folders = [];
@@ -1112,7 +1204,7 @@ ipcMain.handle('add-registered-folder', async () => {
 ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
         const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
         if (!config.registered_folders || !config.registered_folders.folders) {
             return { success: true, folders: [] };
@@ -1135,7 +1227,7 @@ ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
 ipcMain.handle('update-config', async (_, key, value) => {
     try {
         const yaml = require('js-yaml');
-        const configPath = path.join(projectRoot, 'config.yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
 
         if (!fs.existsSync(configPath)) {
             return { success: false, error: 'config.yaml not found' };
@@ -1161,6 +1253,319 @@ ipcMain.handle('update-config', async (_, key, value) => {
         return { success: false, error: err.message };
     }
 });
+
+// ── Worker Daemon (controlled via WorkerPage) ────────────────────
+// Spawns backend/worker/worker_ipc.py and relays JSON events to renderer.
+let workerProc = null;
+let workerBuffer = '';
+let workerMainWindow = null;  // BrowserWindow reference for sending events
+let workerStartCmd = null;    // Queued start command (sent after 'ready' event)
+
+function getWorkerScriptPath() {
+    return isDev
+        ? path.resolve(__dirname, '../../backend/worker/worker_ipc.py')
+        : path.join(projectRoot, 'backend/worker/worker_ipc.py');
+}
+
+function sendWorkerEvent(channel, data) {
+    try {
+        if (workerMainWindow && !workerMainWindow.isDestroyed()) {
+            workerMainWindow.webContents.send(channel, data);
+        }
+    } catch (e) { /* window may be closed */ }
+}
+
+function processWorkerOutput() {
+    let newlineIdx;
+    while ((newlineIdx = workerBuffer.indexOf('\n')) !== -1) {
+        const line = workerBuffer.slice(0, newlineIdx).trim();
+        workerBuffer = workerBuffer.slice(newlineIdx + 1);
+        if (!line) continue;
+
+        try {
+            const parsed = JSON.parse(line);
+            const evt = parsed.event;
+
+            // 'ready' signal — send queued start command
+            if (evt === 'ready') {
+                console.log('[Worker] IPC ready');
+                if (workerStartCmd && workerProc) {
+                    workerProc.stdin.write(JSON.stringify(workerStartCmd) + '\n');
+                    workerStartCmd = null;
+                }
+                continue;
+            }
+
+            // Relay events to renderer
+            if (evt === 'status') {
+                sendWorkerEvent('worker-status', parsed);
+            } else if (evt === 'log') {
+                sendWorkerEvent('worker-log', parsed);
+            } else if (evt === 'job_done') {
+                sendWorkerEvent('worker-job-done', parsed);
+            } else if (evt === 'stats') {
+                sendWorkerEvent('worker-stats', parsed);
+            } else if (evt === 'batch_start') {
+                console.log('[Worker:batch] START size=', parsed.batch_size);
+                sendWorkerEvent('worker-batch-start', parsed);
+            } else if (evt === 'batch_phase_start') {
+                console.log('[Worker:batch] PHASE_START', parsed.phase, 'count=', parsed.count);
+                sendWorkerEvent('worker-batch-phase-start', parsed);
+            } else if (evt === 'batch_file_done') {
+                console.log('[Worker:batch] FILE_DONE', parsed.phase, parsed.index, '/', parsed.count, parsed.file_name);
+                sendWorkerEvent('worker-batch-file-done', parsed);
+            } else if (evt === 'batch_phase_complete') {
+                console.log('[Worker:batch] PHASE_COMPLETE', parsed.phase);
+                sendWorkerEvent('worker-batch-phase-complete', parsed);
+            } else if (evt === 'batch_job_upload') {
+                console.log('[Worker:batch] JOB_UPLOAD', parsed.job_id, parsed.success);
+                sendWorkerEvent('worker-batch-job-upload', parsed);
+            } else if (evt === 'batch_complete') {
+                console.log('[Worker:batch] COMPLETE', parsed.count, 'files in', parsed.elapsed_s, 's', parsed.files_per_min, '/min');
+                sendWorkerEvent('worker-batch-complete', parsed);
+            }
+        } catch (e) {
+            console.error('[Worker] JSON parse error:', e, line);
+        }
+    }
+}
+
+function killWorkerProc() {
+    if (!workerProc) return;
+    const proc = workerProc;
+    workerProc = null;
+    workerBuffer = '';
+    workerStartCmd = null;
+
+    try {
+        proc.stdin.write(JSON.stringify({ cmd: 'exit' }) + '\n');
+    } catch (e) { /* ignore */ }
+    setTimeout(() => {
+        try { proc.kill('SIGTERM'); } catch (e) { /* already dead */ }
+    }, 3000);
+}
+
+// IPC Handler: Start worker daemon
+ipcMain.handle('worker-start', async (event, opts) => {
+    if (workerProc) {
+        return { success: false, error: 'Worker already running' };
+    }
+
+    const finalPython = resolvePython();
+    const scriptPath = getWorkerScriptPath();
+
+    // Store window reference for relaying events
+    workerMainWindow = BrowserWindow.fromWebContents(event.sender);
+
+    console.log('[Worker] Starting worker_ipc.py...');
+
+    workerProc = spawn(finalPython, ['-m', 'backend.worker.worker_ipc'], {
+        cwd: projectRoot,
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    // Queue the start command — will be sent after 'ready' event
+    // Supports token mode (from existing session) or credential mode
+    workerStartCmd = {
+        cmd: 'start',
+        server_url: opts.serverUrl || 'http://localhost:8000',
+        access_token: opts.accessToken || '',
+        refresh_token: opts.refreshToken || '',
+        username: opts.username || '',
+        password: opts.password || '',
+    };
+
+    workerProc.stdout.on('data', (chunk) => {
+        workerBuffer += chunk.toString();
+        processWorkerOutput();
+    });
+
+    workerProc.stderr.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg) {
+            console.error('[Worker:stderr]', msg);
+            // Forward errors as log events
+            if (/\bERROR\b|Traceback|Exception:|FAIL/i.test(msg)) {
+                sendWorkerEvent('worker-log', { message: msg, type: 'error' });
+            }
+        }
+    });
+
+    workerProc.on('close', (code) => {
+        console.log(`[Worker] Process exited (code: ${code})`);
+        workerProc = null;
+        workerBuffer = '';
+        workerStartCmd = null;
+        sendWorkerEvent('worker-status', { status: 'idle', jobs: [] });
+        sendWorkerEvent('worker-log', {
+            message: code === 0 ? 'Worker stopped' : `Worker exited (code: ${code})`,
+            type: code === 0 ? 'info' : 'error',
+        });
+    });
+
+    workerProc.on('error', (err) => {
+        console.error('[Worker] Spawn error:', err);
+        workerProc = null;
+        sendWorkerEvent('worker-status', { status: 'error', jobs: [] });
+        sendWorkerEvent('worker-log', { message: `Spawn error: ${err.message}`, type: 'error' });
+    });
+
+    return { success: true };
+});
+
+// IPC Handler: Stop worker daemon
+ipcMain.handle('worker-stop', async () => {
+    if (!workerProc) return { success: true };
+    try {
+        workerProc.stdin.write(JSON.stringify({ cmd: 'stop' }) + '\n');
+    } catch (e) { /* ignore */ }
+    return { success: true };
+});
+
+// IPC Handler: Query worker status
+ipcMain.handle('worker-status', async () => {
+    if (!workerProc) return { status: 'idle' };
+    try {
+        workerProc.stdin.write(JSON.stringify({ cmd: 'status' }) + '\n');
+    } catch (e) { /* ignore */ }
+    return { status: 'running' };
+});
+
+// ── Server Mode (embedded FastAPI) ────────────────────────────────
+// Allows Electron app to run a local FastAPI server so other clients can connect.
+let serverProc = null;
+let serverMainWindow = null;
+
+/** Load config.yaml and return parsed config object (or null on error). */
+function loadAppConfig() {
+    try {
+        const yaml = require('js-yaml');
+        const configPath = path.join(configRoot, 'config.yaml');
+        if (!fs.existsSync(configPath)) return null;
+        return yaml.load(fs.readFileSync(configPath, 'utf8'));
+    } catch (e) {
+        console.error('[Config] Failed to load config.yaml:', e.message);
+        return null;
+    }
+}
+
+/** Start embedded FastAPI server. Returns { success, port } or { success: false, error }. */
+function startEmbeddedServer(port = 8000) {
+    if (serverProc) return { success: false, error: 'Server already running' };
+
+    const finalPython = resolvePython();
+    console.log(`[Server] Starting FastAPI on port ${port}...`);
+
+    serverProc = spawn(finalPython, [
+        '-m', 'uvicorn', 'backend.server.app:app',
+        '--host', '0.0.0.0', '--port', String(port),
+    ], {
+        cwd: projectRoot,
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    serverProc.stdout.on('data', (chunk) => {
+        const msg = chunk.toString().trim();
+        if (msg) {
+            console.log('[Server:stdout]', msg);
+            try {
+                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                    serverMainWindow.webContents.send('server-log', { message: msg, type: 'info' });
+                }
+            } catch (e) { /* window may be closed */ }
+        }
+    });
+
+    serverProc.stderr.on('data', (chunk) => {
+        const msg = chunk.toString().trim();
+        if (msg) {
+            console.log('[Server:stderr]', msg);
+            try {
+                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                    // uvicorn logs to stderr by default
+                    const type = /\bERROR\b|Traceback|Exception:/i.test(msg) ? 'error' : 'info';
+                    serverMainWindow.webContents.send('server-log', { message: msg, type });
+                }
+            } catch (e) { /* window may be closed */ }
+        }
+    });
+
+    serverProc.on('close', (code) => {
+        console.log(`[Server] Process exited (code: ${code})`);
+        serverProc = null;
+        try {
+            if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                serverMainWindow.webContents.send('server-status-change', { running: false });
+            }
+        } catch (e) { /* ignore */ }
+    });
+
+    serverProc.on('error', (err) => {
+        console.error('[Server] Spawn error:', err);
+        serverProc = null;
+    });
+
+    return { success: true, port };
+}
+
+/** Poll /api/v1/health until server responds or timeout. */
+async function waitForServerReady(port = 8000, timeoutMs = 30000) {
+    const http = require('http');
+    const start = Date.now();
+    const interval = 500;
+
+    while (Date.now() - start < timeoutMs) {
+        try {
+            await new Promise((resolve, reject) => {
+                const req = http.get(`http://127.0.0.1:${port}/api/v1/health`, (res) => {
+                    if (res.statusCode === 200) resolve();
+                    else reject(new Error(`Status ${res.statusCode}`));
+                    res.resume();
+                });
+                req.on('error', reject);
+                req.setTimeout(2000, () => { req.destroy(); reject(new Error('timeout')); });
+            });
+            console.log(`[Server] Ready on port ${port}`);
+            return true;
+        } catch {
+            await new Promise(r => setTimeout(r, interval));
+        }
+    }
+    console.warn(`[Server] Timed out waiting for server on port ${port}`);
+    return false;
+}
+
+ipcMain.handle('server-start', async (event, opts) => {
+    const port = opts?.port || 8000;
+    serverMainWindow = BrowserWindow.fromWebContents(event.sender);
+    return startEmbeddedServer(port);
+});
+
+ipcMain.handle('server-stop', async () => {
+    if (!serverProc) return { success: true };
+    try {
+        serverProc.kill('SIGTERM');
+    } catch (e) { /* ignore */ }
+    // Force kill after 5s if still alive
+    const proc = serverProc;
+    setTimeout(() => {
+        try { proc?.kill('SIGKILL'); } catch (e) { /* already dead */ }
+    }, 5000);
+    serverProc = null;
+    return { success: true };
+});
+
+ipcMain.handle('server-status', async () => {
+    return { running: !!serverProc };
+});
+
+function killServerProc() {
+    if (!serverProc) return;
+    try { serverProc.kill('SIGTERM'); } catch (e) { /* ignore */ }
+    serverProc = null;
+}
 
 // ── Window creation (pure UI — no IPC registration) ──────────────
 
@@ -1195,7 +1600,7 @@ function createWindow() {
 
 app.setName('Imagine');
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     // Set macOS dock icon
     if (process.platform === 'darwin' && app.dock) {
         const { nativeImage } = require('electron');
@@ -1209,6 +1614,9 @@ app.whenReady().then(() => {
 
     // Kill any orphaned search daemons from previous crashed sessions
     cleanupOrphanDaemons();
+
+    // Server is started by the React app via IPC (window.electron.server.start)
+    // when user selects "관리" mode on SetupPage. No config.yaml auto-start.
 
     // Do NOT start search daemon here — it starts lazily on first search
     createWindow();
@@ -1258,17 +1666,23 @@ function killActivePipeline() {
 app.on('before-quit', () => {
     killActivePipeline();
     killSearchDaemon();
+    killWorkerProc();
+    killServerProc();
 });
 
 // Ensure daemon cleanup on unexpected termination signals
 process.on('SIGINT', () => {
     killActivePipeline();
     killSearchDaemon();
+    killWorkerProc();
+    killServerProc();
     app.quit();
 });
 
 process.on('SIGTERM', () => {
     killActivePipeline();
     killSearchDaemon();
+    killWorkerProc();
+    killServerProc();
     app.quit();
 });

@@ -83,12 +83,19 @@ class SQLiteDB:
                 self._migrate_v3_columns()
                 self._migrate_content_hash()
                 self._migrate_structure_table()
+                self._migrate_uploaded_by()
                 self._ensure_system_meta()
                 self._ensure_fts()
+                self._migrate_auth_tables()
+                self._migrate_worker_tokens()
+                self._migrate_worker_sessions()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
                 self._ensure_system_meta()
+                self._migrate_auth_tables()
+                self._migrate_worker_tokens()
+                self._migrate_worker_sessions()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -122,6 +129,73 @@ class SQLiteDB:
             )
         """)
         self.conn.commit()
+
+    def _migrate_auth_tables(self):
+        """Create auth & job queue tables for client-server mode if missing."""
+        if self._table_exists('users'):
+            return  # Already migrated
+
+        logger.info("Migrating: creating auth & job queue tables...")
+        auth_schema_path = Path(__file__).parent / "sqlite_schema_auth.sql"
+        if auth_schema_path.exists():
+            with open(auth_schema_path, encoding='utf-8') as f:
+                self.conn.executescript(f.read())
+            self.conn.commit()
+            logger.info("✅ Auth & job queue tables created")
+        else:
+            logger.warning(f"⚠️ Auth schema file not found: {auth_schema_path}")
+
+    def _migrate_worker_tokens(self):
+        """Create worker_tokens table if missing (added in v4.7)."""
+        if self._table_exists('worker_tokens'):
+            return
+        logger.info("Migrating: creating worker_tokens table...")
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS worker_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_hash TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                is_active INTEGER DEFAULT 1,
+                expires_at TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                last_used_at TEXT
+            )
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_tokens_hash ON worker_tokens(token_hash)")
+        self.conn.commit()
+        logger.info("✅ worker_tokens table created")
+
+    def _migrate_worker_sessions(self):
+        """Create worker_sessions table if missing (added in v4.10)."""
+        if self._table_exists('worker_sessions'):
+            return
+        logger.info("Migrating: creating worker_sessions table...")
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS worker_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                worker_name TEXT NOT NULL,
+                hostname TEXT,
+                status TEXT DEFAULT 'online'
+                    CHECK (status IN ('online', 'offline', 'blocked')),
+                batch_capacity INTEGER DEFAULT 5,
+                jobs_completed INTEGER DEFAULT 0,
+                jobs_failed INTEGER DEFAULT 0,
+                current_job_id INTEGER,
+                current_file TEXT,
+                current_phase TEXT,
+                pending_command TEXT DEFAULT NULL
+                    CHECK (pending_command IN (NULL, 'stop', 'pause', 'block')),
+                connected_at TEXT DEFAULT (datetime('now')),
+                last_heartbeat TEXT DEFAULT (datetime('now')),
+                disconnected_at TEXT
+            )
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_sessions_user ON worker_sessions(user_id, status)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status)")
+        self.conn.commit()
+        logger.info("✅ worker_sessions table created")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""
@@ -316,6 +390,17 @@ class SQLiteDB:
             except sqlite3.OperationalError as e:
                 logger.warning(f"Skipping vec_structure creation: {e}")
 
+
+    def _migrate_uploaded_by(self):
+        """Add uploaded_by column for server-mode file ownership tracking."""
+        try:
+            self.conn.execute("SELECT uploaded_by FROM files LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.info("Migrating: adding uploaded_by column to files table...")
+            self.conn.execute("ALTER TABLE files ADD COLUMN uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_files_uploaded_by ON files(uploaded_by)")
+            self.conn.commit()
+            logger.info("✅ uploaded_by migration complete")
 
     # ── FTS5 columns: 2-column BM25-weighted architecture ──
     #

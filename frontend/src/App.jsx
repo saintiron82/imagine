@@ -1,17 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
-import FileGrid from './components/FileGrid';
 import StatusBar from './components/StatusBar';
 import SearchPanel from './components/SearchPanel';
-import FolderInfoBar from './components/FolderInfoBar';
 import ResumeDialog from './components/ResumeDialog';
 import ImportDbDialog from './components/ImportDbDialog';
-import { FolderOpen, Play, Search, Archive, Globe, Database, Upload, Download } from 'lucide-react'; // Added Terminal
+import ServerArchiveView from './components/ServerArchiveView';
+import ClientWorkerView from './components/ClientWorkerView';
+import LoginPage from './pages/LoginPage';
+import AdminPage from './pages/AdminPage';
+import SetupPage from './pages/SetupPage';
+import DownloadPage from './pages/DownloadPage';
+import AppDownloadBanner from './components/AppDownloadBanner';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
 import { useLocale } from './i18n';
+import { useAuth } from './contexts/AuthContext';
+import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
+import { setUseLocalBackend } from './services/bridge';
+import { registerPaths, scanFolder, getJobStats } from './api/admin';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
-  const [currentTab, setCurrentTab] = useState('search'); // 'search' or 'archive'
+  const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout, login, configureAuth } = useAuth();
+  const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archive' | 'worker' | 'admin'
   const [currentPath, setCurrentPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [logs, setLogs] = useState([]);
@@ -43,6 +53,71 @@ function App() {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showDbMenu, setShowDbMenu] = useState(false);
   const [folderStatsVersion, setFolderStatsVersion] = useState(0);
+  const [queueReloadSignal, setQueueReloadSignal] = useState(0);
+  const [showDownloadPage, setShowDownloadPage] = useState(false);
+
+  // Worker progress state (client mode)
+  const [isWorkerRunning, setIsWorkerRunning] = useState(false);
+  const [workerProgress, setWorkerProgress] = useState({
+    batchSize: 0,
+    currentPhase: '',       // "parse" | "vision" | "embed_vv" | "embed_mv" | "uploading"
+    phaseIndex: 0,          // 1-based progress within current phase
+    phaseCount: 0,          // total files in current phase
+    currentFile: '',
+    completed: 0,
+    totalQueue: 0, pending: 0,
+    etaMs: null, throughput: 0,  // overall items/min
+    // Per-phase speed (files/min) — updated on phase_complete
+    phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+    // Per-phase elapsed (seconds) — updated on phase_complete
+    phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+  });
+  const workerThroughputRef = useRef({ windowTimes: [] });
+
+  // App mode: 'server' | 'client' | null (show SetupPage) | 'web'
+  // Electron: always starts null → SetupPage shown every launch
+  const [appMode, setAppMode] = useState(isElectron ? null : 'web');
+
+  // Server mode state (Electron only)
+  const [serverRunning, setServerRunning] = useState(false);
+  const [serverPort, setServerPort] = useState(8000);
+
+  // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
+  useEffect(() => {
+    if (!isElectron) return;
+    const loadConfig = async () => {
+      try {
+        const result = await window.electron?.pipeline?.getConfig();
+        if (result?.success) {
+          const port = result.config?.server?.port || 8000;
+          setServerPort(port);
+        }
+      } catch (e) {
+        console.error('Failed to load config:', e);
+      }
+    };
+    loadConfig();
+  }, []);
+
+  const handleSetupComplete = (mode, serverUrl) => {
+    setAppMode(mode);
+    setUseLocalBackend(mode === 'server');
+
+    if (mode === 'server') {
+      setServerUrl(`http://localhost:${serverPort}`);
+    } else if (mode === 'client' && serverUrl) {
+      setServerUrl(serverUrl);
+    }
+
+    // Switch auth: server → local bypass, client → JWT required
+    configureAuth(mode);
+  };
+
+  const handleModeReset = () => {
+    setAppMode(null); // Show SetupPage
+    setUseLocalBackend(false);
+    configureAuth(null); // Reset to local bypass
+  };
 
   const MAX_LOGS = 200;
 
@@ -60,6 +135,12 @@ function App() {
       if (window.electron.fs) {
         setCurrentPath(window.electron.fs.getHomeDir());
       }
+    } else {
+      // Web mode: start at server root
+      setCurrentPath('/');
+    }
+
+    if (window.electron) {
 
       if (window.electron.pipeline) {
         // Stable log listener - feeds StatusBar (never removed mid-session)
@@ -250,6 +331,235 @@ function App() {
     };
   }, []);
 
+  // Server mode IPC listeners (Electron only)
+  useEffect(() => {
+    if (!isElectron || !window.electron?.server) return;
+    // Check initial status
+    window.electron.server.getStatus().then(s => setServerRunning(s.running));
+    // Listen for status changes (e.g. server process exit)
+    window.electron.server.onStatusChange((data) => setServerRunning(data.running));
+    return () => window.electron.server.offStatusChange();
+  }, []);
+
+  // Auto-start server when entering admin/server mode
+  useEffect(() => {
+    if (!isElectron || appMode !== 'server' || serverRunning) return;
+    if (!window.electron?.server) return;
+
+    const autoStart = async () => {
+      try {
+        const status = await window.electron.server.getStatus();
+        if (status.running) return; // already running
+        const result = await window.electron.server.start({ port: serverPort });
+        if (result.success) setServerRunning(true);
+      } catch (e) {
+        console.warn('Server auto-start failed:', e);
+      }
+    };
+
+    autoStart();
+  }, [appMode, serverPort, serverRunning]);
+
+  // Auto-login to local server for API access (JWT) in server mode
+  useEffect(() => {
+    if (!isElectron || appMode !== 'server' || !serverRunning) return;
+
+    const autoLogin = async () => {
+      try {
+        const url = `http://localhost:${serverPort}`;
+        setServerUrl(url);
+        if (getAccessToken()) return; // already have token
+        await login({ username: 'admin', password: 'admin', serverUrl: url });
+      } catch (e) {
+        console.warn('Server auto-login failed:', e);
+      }
+    };
+
+    const timer = setTimeout(autoLogin, 1000);
+    return () => clearTimeout(timer);
+  }, [serverRunning, appMode, serverPort, login]);
+
+  // Worker IPC event listeners (Electron client mode)
+  useEffect(() => {
+    if (!isElectron || appMode !== 'client') return;
+    const w = window.electron?.worker;
+    if (!w) return;
+
+    const onStatus = (data) => {
+      setIsWorkerRunning(data.status === 'running');
+    };
+
+    const onBatchStart = (data) => {
+      setWorkerProgress(prev => ({
+        ...prev,
+        batchSize: data.batch_size,
+        currentPhase: 'starting',
+        phaseIndex: 0,
+      }));
+    };
+
+    const onBatchPhaseStart = (data) => {
+      setWorkerProgress(prev => ({
+        ...prev,
+        currentPhase: data.phase,
+        phaseIndex: 0,
+        phaseCount: data.count,
+      }));
+    };
+
+    const onBatchFileDone = (data) => {
+      setWorkerProgress(prev => ({
+        ...prev,
+        currentPhase: data.phase,
+        phaseIndex: data.index,
+        phaseCount: data.count,
+        currentFile: data.file_name || prev.currentFile,
+      }));
+    };
+
+    const onBatchPhaseComplete = (data) => {
+      // Update per-phase speed when a phase finishes
+      setWorkerProgress(prev => ({
+        ...prev,
+        phaseFpm: { ...prev.phaseFpm, [data.phase]: data.files_per_min || 0 },
+        phaseElapsed: { ...prev.phaseElapsed, [data.phase]: data.elapsed_s || 0 },
+      }));
+    };
+
+    const onBatchComplete = (data) => {
+      // Batch complete — update overall throughput from backend timing
+      if (data.phase_fpm) {
+        setWorkerProgress(prev => ({
+          ...prev,
+          phaseFpm: { ...prev.phaseFpm, ...data.phase_fpm },
+        }));
+      }
+    };
+
+    const onJobDone = (data) => {
+      if (!data.success) return;
+      const now = Date.now();
+      const ref = workerThroughputRef.current;
+      ref.windowTimes.push(now);
+      // Keep 60-second sliding window for items/min calculation
+      ref.windowTimes = ref.windowTimes.filter(t => now - t < 60000);
+      const elapsedSec = ref.windowTimes.length > 1
+        ? (now - ref.windowTimes[0]) / 1000
+        : 0;
+      // Throughput in items/min
+      const throughput = elapsedSec > 0
+        ? (ref.windowTimes.length / elapsedSec) * 60
+        : 0;
+
+      setWorkerProgress(prev => {
+        const newCompleted = prev.completed + 1;
+        const remaining = Math.max(0, prev.pending - 1);
+        const perSec = throughput / 60;
+        const etaMs = perSec > 0 && remaining > 0 ? (remaining / perSec) * 1000 : null;
+        return { ...prev, completed: newCompleted, pending: remaining, throughput, etaMs };
+      });
+    };
+
+    w.onStatus(onStatus);
+    w.onBatchStart?.(onBatchStart);
+    w.onBatchPhaseStart?.(onBatchPhaseStart);
+    w.onBatchFileDone?.(onBatchFileDone);
+    w.onBatchPhaseComplete?.(onBatchPhaseComplete);
+    w.onBatchComplete?.(onBatchComplete);
+    w.onJobDone(onJobDone);
+
+    return () => {
+      w.offStatus();
+      w.offBatchStart?.();
+      w.offBatchPhaseStart?.();
+      w.offBatchFileDone?.();
+      w.offBatchPhaseComplete?.();
+      w.offBatchComplete?.();
+      w.offJobDone();
+    };
+  }, [appMode]);
+
+  // Worker queue stats polling (client mode, 5s interval)
+  useEffect(() => {
+    if (appMode !== 'client' || !isWorkerRunning) return;
+    const fetchStats = async () => {
+      try {
+        const data = await getJobStats();
+        if (data && data.success !== false) {
+          setWorkerProgress(prev => ({
+            ...prev,
+            totalQueue: data.total || 0,
+            pending: (data.pending || 0) + (data.assigned || 0) + (data.processing || 0),
+          }));
+        }
+      } catch { /* ignore */ }
+    };
+    fetchStats();
+    const interval = setInterval(fetchStats, 5000);
+    return () => clearInterval(interval);
+  }, [appMode, isWorkerRunning]);
+
+  // Manual worker start handler (called from ClientWorkerView)
+  const handleWorkerStart = async () => {
+    if (!isElectron || isWorkerRunning) return;
+    const w = window.electron?.worker;
+    if (!w) return;
+
+    try {
+      const result = await w.start({
+        serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
+        accessToken: getAccessToken() || '',
+        refreshToken: getRefreshToken() || '',
+      });
+      if (result?.success) {
+        setIsWorkerRunning(true);
+      } else if (result?.error?.includes('already running')) {
+        setIsWorkerRunning(true);
+      } else if (result?.success === false) {
+        appendLog({ message: result.error || 'Failed to start worker', type: 'error' });
+      }
+    } catch (e) {
+      appendLog({ message: `Worker start failed: ${e.message}`, type: 'error' });
+    }
+  };
+
+  const handleWorkerStop = async () => {
+    if (!isElectron || !window.electron?.worker) return;
+    try {
+      await window.electron.worker.stop();
+      setIsWorkerRunning(false);
+      setWorkerProgress({
+        batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
+        currentFile: '', completed: 0, totalQueue: 0, pending: 0,
+        etaMs: null, throughput: 0,
+        phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+        phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+      });
+      workerThroughputRef.current = { windowTimes: [] };
+    } catch (e) {
+      appendLog({ message: `Worker stop failed: ${e.message}`, type: 'error' });
+    }
+  };
+
+  const handleServerToggle = async () => {
+    if (!isElectron) return;
+    if (serverRunning) {
+      await window.electron.server.stop();
+      setServerRunning(false);
+      clearTokens(); // clean up JWT when server stops
+    } else {
+      const result = await window.electron.server.start({ port: serverPort });
+      if (result.success) {
+        setServerRunning(true);
+      }
+    }
+  };
+
+  const getLocalIp = () => {
+    // Simple heuristic — return hostname for display
+    return `${window.location.hostname || 'localhost'}:${serverPort}`;
+  };
+
   const handleFolderSelect = (path) => {
     setCurrentPath(path);
     setSelectedPaths(new Set()); // Clear Ctrl-selection on normal click
@@ -299,7 +609,41 @@ function App() {
       type: 'info'
     });
 
-    // Single batch call — backend handles smart skip + phase pipeline
+    // Server mode Electron: register files into job queue via IPC (direct DB)
+    if (appMode === 'server' && isElectron && window.electron?.queue) {
+      try {
+        const result = await window.electron.queue.registerPaths(fileArray);
+        appendLog({
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Queue registration failed: ${e.message}`, type: 'error' });
+      }
+      setIsProcessing(false);
+      setProcessProgress(prev => ({ ...prev, processed: 0, total: 0 }));
+      return;
+    }
+
+    // Web client mode: register files via server API → queue for workers
+    if (!isElectron) {
+      try {
+        const result = await registerPaths(fileArray);
+        appendLog({
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Queue registration failed: ${e.message}`, type: 'error' });
+      }
+      setIsProcessing(false);
+      setProcessProgress(prev => ({ ...prev, processed: 0, total: 0 }));
+      return;
+    }
+
+    // Electron client mode: direct pipeline spawn (local processing)
     if (window.electron?.pipeline) {
       window.electron.pipeline.run(fileArray);
     }
@@ -315,7 +659,7 @@ function App() {
   };
 
   // Process entire folder recursively (discover mode)
-  const handleProcessFolder = (folderPath, options = {}) => {
+  const handleProcessFolder = async (folderPath, options = {}) => {
     if (isProcessing || isDiscovering) return;
     const noSkip = !!options.noSkip;
     setIsDiscovering(true);
@@ -327,7 +671,40 @@ function App() {
         : `Processing folder: ${folderPath}`,
       type: 'info'
     });
-    // Save session target for resume on next startup
+
+    // Server mode Electron: scan folder → create jobs in queue via IPC (direct DB)
+    if (appMode === 'server' && isElectron && window.electron?.queue) {
+      try {
+        const result = await window.electron.queue.scanFolder(folderPath);
+        appendLog({
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
+    // Web client mode: scan folder via server API → queue for workers
+    if (!isElectron) {
+      try {
+        const result = await scanFolder(folderPath);
+        appendLog({
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
+    // Electron client mode: direct discover spawn (local processing)
     window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip });
   };
@@ -397,6 +774,34 @@ function App() {
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
 
+  // Auth loading state
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-900">
+        <div className="text-gray-400 text-sm">{t('status.loading')}</div>
+      </div>
+    );
+  }
+
+  // First-run setup: no mode selected yet (Electron only)
+  if (isElectron && !appMode) {
+    return <SetupPage onComplete={handleSetupComplete} />;
+  }
+
+  // Show login page when auth required but not authenticated
+  // skipAuth: null=undetermined (still loading), true=bypass, false=JWT required
+  if (skipAuth === false && !isAuthenticated) {
+    if (showDownloadPage) {
+      return <DownloadPage onBack={() => setShowDownloadPage(false)} />;
+    }
+    return <LoginPage onShowDownload={() => setShowDownloadPage(true)} />;
+  }
+
+  // Download page overlay (web mode, authenticated)
+  if (showDownloadPage && appMode === 'web') {
+    return <DownloadPage onBack={() => setShowDownloadPage(false)} />;
+  }
+
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden flex-col">
       {/* Resume Dialog */}
@@ -417,10 +822,23 @@ function App() {
 
       {/* Header Bar */}
       <div className="h-14 border-b border-gray-700 flex items-center px-4 justify-between bg-gray-800 shadow-sm z-10 shrink-0">
-        {/* Left: App Name */}
+        {/* Left: App Name + Mode Badge */}
         <div className="flex items-center space-x-2">
           <Search className="text-blue-400" size={20} />
           <h1 className="font-bold text-lg">{t('app.title')}</h1>
+          {isElectron && appMode && (
+            <button
+              onClick={handleModeReset}
+              className={`text-[10px] font-medium px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                appMode === 'server'
+                  ? 'bg-blue-900/50 text-blue-300 hover:bg-blue-800/60'
+                  : 'bg-emerald-900/50 text-emerald-300 hover:bg-emerald-800/60'
+              }`}
+              title={t('setup.changeable_later')}
+            >
+              {appMode === 'server' ? t('setup.server_title') : t('setup.client_title')}
+            </button>
+          )}
         </div>
 
         {/* Right: Tab Buttons + Process (in archive mode) + Language */}
@@ -435,18 +853,33 @@ function App() {
             <Search size={16} />
             <span>{t('tab.search')}</span>
           </button>
+          {/* Archive/Worker tab — role-based: admin=archive, user=worker */}
           <button
             onClick={() => setCurrentTab('archive')}
             className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
-              ? 'bg-gray-700 text-white'
+              ? (isAdmin ? 'bg-gray-700 text-white' : 'bg-emerald-700 text-white')
               : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
               }`}
           >
-            <Archive size={16} />
-            <span>{t('tab.archive')}</span>
+            {isAdmin ? <Archive size={16} /> : <Zap size={16} />}
+            <span>{isAdmin ? t('tab.archive_server') : t('tab.archive_worker')}</span>
           </button>
 
-          {currentTab === 'archive' && (
+          {/* Admin tab — admin role only */}
+          {isAdmin && (
+            <button
+              onClick={() => setCurrentTab('admin')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'admin'
+                ? 'bg-purple-700 text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+            >
+              <Settings size={16} />
+              <span>{t('tab.admin')}</span>
+            </button>
+          )}
+
+          {currentTab === 'archive' && isAdmin && (
             <>
               <div className="w-px h-6 bg-gray-600 mx-1" />
               <div className="text-xs text-gray-500">
@@ -464,7 +897,7 @@ function App() {
                 `}
               >
                 <Play size={14} fill="currentColor" />
-                <span>{t('action.process', { count: selectedFiles.size })}</span>
+                <span>{t('action.queue_files', { count: selectedFiles.size })}</span>
               </button>
             </>
           )}
@@ -503,6 +936,38 @@ function App() {
             )}
           </div>
 
+          {/* Server Mode Toggle (Electron only) */}
+          {isElectron && (
+            <>
+              <div className="w-px h-6 bg-gray-600 mx-1" />
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleServerToggle}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                    serverRunning
+                      ? 'bg-green-700/60 text-green-300 hover:bg-green-600/60'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  }`}
+                  title={serverRunning ? t('server.stop') : t('server.start')}
+                >
+                  <Monitor size={14} />
+                  <span>{t('server.mode')}</span>
+                  <Power size={12} className={serverRunning ? 'text-green-400' : 'text-gray-500'} />
+                </button>
+                {serverRunning && (
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(`http://localhost:${serverPort}`)}
+                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] text-green-400 hover:bg-green-900/30 transition-colors"
+                    title={t('server.copy_url')}
+                  >
+                    <span className="font-mono">:{serverPort}</span>
+                    <Copy size={10} />
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+
           {/* Language Switcher */}
           <div className="w-px h-6 bg-gray-600 mx-1" />
           <button
@@ -513,12 +978,34 @@ function App() {
             <Globe size={14} />
             <span>{localeLabel}</span>
           </button>
+
+          {/* User info + Logout (web mode only) */}
+          {!skipAuth && user && (
+            <>
+              <div className="w-px h-6 bg-gray-600 mx-1" />
+              <div className="flex items-center gap-2 text-xs text-gray-400">
+                <User size={14} />
+                <span>{user.username}</span>
+              </div>
+              <button
+                onClick={logout}
+                className="flex items-center space-x-1 px-2 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-red-400 hover:bg-gray-700/50 transition-colors"
+                title={t('auth.logout')}
+              >
+                <LogOut size={14} />
+              </button>
+            </>
+          )}
         </div>
       </div>
 
+      {/* Download Desktop App Banner (web mode only) */}
+      {/* Download banner for browser users (not Electron) */}
+      {!isElectron && <AppDownloadBanner onShowDownload={() => setShowDownloadPage(true)} />}
+
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar - Folder Tree (only in archive mode) */}
-        {currentTab === 'archive' && (
+        {/* Sidebar - Folder Tree (admin only) */}
+        {currentTab === 'archive' && isAdmin && (
           <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
             <div className="p-4 border-b border-gray-700 flex items-center space-x-2">
               <FolderOpen className="text-blue-400" size={20} />
@@ -540,7 +1027,9 @@ function App() {
         <div className="flex-1 flex flex-col bg-gray-900 relative">
           {/* Content Area */}
           <div className="flex-1 overflow-hidden">
-            {currentTab === 'search' ? (
+            {currentTab === 'admin' && isAdmin ? (
+              <AdminPage />
+            ) : currentTab === 'search' ? (
               <SearchPanel
                 onScanFolder={handleScanFolders}
                 isBusy={isProcessing || isDiscovering}
@@ -548,25 +1037,28 @@ function App() {
                 onSearchConsumed={() => setPendingSearch(null)}
                 reloadSignal={folderStatsVersion}
               />
-            ) : (
-              <div className="h-full flex flex-col">
-                <FolderInfoBar
-                  currentPath={currentPath}
-                  onProcessFolder={handleProcessFolder}
-                  isProcessing={isProcessing || isDiscovering}
-                  reloadSignal={folderStatsVersion}
-                />
-                <div className="flex-1 overflow-y-auto p-4 pb-16">
-                  <FileGrid
-                    currentPath={currentPath}
-                    selectedFiles={selectedFiles}
-                    setSelectedFiles={setSelectedFiles}
-                    selectedPaths={selectedPaths}
-                    onFindSimilar={handleFindSimilar}
-                  />
-                </div>
-              </div>
-            )}
+            ) : currentTab === 'archive' && !isAdmin ? (
+              <ClientWorkerView
+                appMode={appMode}
+                isWorkerRunning={isWorkerRunning}
+                workerProgress={workerProgress}
+                onWorkerStart={handleWorkerStart}
+                onWorkerStop={handleWorkerStop}
+              />
+            ) : currentTab === 'archive' && isAdmin ? (
+              <ServerArchiveView
+                currentPath={currentPath}
+                selectedFiles={selectedFiles}
+                setSelectedFiles={setSelectedFiles}
+                selectedPaths={selectedPaths}
+                onProcessFolder={handleProcessFolder}
+                onFindSimilar={handleFindSimilar}
+                isProcessing={isProcessing || isDiscovering}
+                reloadSignal={folderStatsVersion}
+                appMode={appMode}
+                queueReloadSignal={queueReloadSignal}
+              />
+            ) : null}
           </div>
 
           {/* Logs Overlay / Bottom Panel */}
@@ -591,6 +1083,9 @@ function App() {
             batchInfo={processProgress.batchInfo}
             fileStep={fileStep}
             onStop={handleStopProcess}
+            isWorkerProcessing={isWorkerRunning && appMode === 'client'}
+            workerProgress={workerProgress}
+            onWorkerStop={handleWorkerStop}
           />
         </div>
       </div>

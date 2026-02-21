@@ -84,9 +84,142 @@ M.m.p.YYYYMMDD_NN
 
 **기술 스택**:
 - **Backend**: Python 3.x + `psd-tools`, `Pillow`, `transformers`, `sqlite-vec`
-- **Frontend**: React 19 + Electron 40 + Vite + Tailwind CSS
+- **Server**: FastAPI (JWT 인증, 분산 워커 지원, REST API)
+- **Frontend**: React 19 + Electron 40 + Vite + Tailwind CSS (데스크탑 + 웹 듀얼 모드)
 - **Database**: SQLite + sqlite-vec (통합 메타데이터 + 벡터 저장소, Docker 불필요)
 - **AI 모델**: SigLIP2 (VV), Qwen3-VL (VLM/MC), Qwen3-Embedding (MV)
+
+## 설계 근거 (Design Rationale)
+
+**이 프로젝트의 핵심 아키텍처 결정과 그 이유를 기록합니다.**
+
+### 플랫폼 구조: 왜 Electron + 웹 듀얼 모드인가?
+
+**대상 사용자**: 게임/일러스트 스튜디오의 아티스트.
+**핵심 제약**: 아티스트에게 Docker, PostgreSQL, CLI 설치를 요구할 수 없다.
+
+| 시나리오 | 필요한 것 | 해결 |
+|---------|----------|------|
+| 개인 아티스트 1명 | 내 PC에서 바로 실행, 설치 간편 | **Electron 앱** — 더블클릭으로 실행, 로컬 DB, 로컬 GPU |
+| 스튜디오 팀 (5-20명) | 공유 에셋 검색, 한 명이 처리하면 전원이 검색 | **서버 모드** — Electron 앱에서 [Server] 토글, 나머지는 브라우저 접속 |
+| 처리량 확장 | GPU 머신 여러 대로 분산 처리 | **워커 시스템** — 별도 머신에서 워커 데몬 연결 |
+
+**같은 React 코드베이스**가 Electron(IPC) / 브라우저(HTTP API) 양쪽 모드로 동작 → 유지보수 비용 1x.
+**Python 백엔드**는 Electron에서 subprocess로 직접 호출하거나, FastAPI 서버로 독립 실행 가능.
+
+### Triaxis 검색: 왜 3축인가?
+
+이미지 에셋 검색에서 단일 벡터는 한계가 있다:
+
+| 축 | 검색 의도 | 예시 쿼리 | 단독으로 부족한 이유 |
+|----|---------|---------|-----------------|
+| **VV** (시각) | "이것과 비슷하게 생긴 이미지" | 참조 이미지 업로드 | 의미("검 든 기사") 검색 불가 |
+| **MV** (의미) | "검 든 판타지 기사" | 텍스트 쿼리 | 시각적 유사성 무시 (같은 설명이라도 스타일 다름) |
+| **FTS** (키워드) | "character_hero_v2.psd" | 파일명/태그 직접 검색 | AI 이해 없이 정확한 키워드 매칭만 |
+
+**RRF (Reciprocal Rank Fusion)** 으로 3축 결과를 결합하면, 텍스트 쿼리 하나로 의미+시각+키워드를 동시에 검색 가능.
+각 축의 가중치는 쿼리 유형(visual/semantic/keyword)에 따라 자동 조절 (`search.rrf.presets`).
+
+### SQLite: 왜 PostgreSQL이 아닌가?
+
+| 기준 | SQLite | PostgreSQL |
+|------|--------|------------|
+| **설치** | 없음 (Python 내장) | Docker 또는 시스템 설치 필요 |
+| **배포** | `.db` 파일 1개 복사 = 전체 백업 | 덤프/복원 절차 필요 |
+| **벡터 검색** | sqlite-vec (vec0 가상 테이블) | pgvector |
+| **전문 검색** | FTS5 (내장) | pg_trgm / tsquery |
+| **동시성** | 단일 writer (서버 모드 uvicorn 1 worker) | 다중 writer |
+| **대상 규모** | ~100만 파일 (충분) | 수천만+ |
+
+**결정**: 대상 사용자(아티스트)에게 Docker 설치를 요구하는 것은 채택 장벽.
+**트레이드오프**: 서버 모드에서 동시 쓰기 제한 → uvicorn 단일 워커로 해결. 아티스트 스튜디오 규모(수만~수십만 파일)에서 SQLite 성능은 충분.
+
+### 3-Tier 시스템: 왜 standard / pro / ultra인가?
+
+**현실의 GPU 다양성**에 대응:
+
+| Tier | 타겟 하드웨어 | VRAM | VLM | 품질 |
+|------|-------------|------|-----|------|
+| **standard** | 통합 GPU 노트북, 저사양 | ~6GB | Qwen3-VL-**2B** | 기본 캡션/태그 |
+| **pro** | Mac M-시리즈, RTX 3060+ | 8-16GB | Qwen3-VL-**4B** | 상세 캡션, 정확한 분류 |
+| **ultra** | RTX 4090, A100 서버 | 20GB+ | Qwen3-VL-**8B** | 최고 품질 |
+
+**핵심 설계**: VV(SigLIP2)와 MV(0.6B)를 standard↔pro에서 **동일 모델**로 통일 → Tier 전환 시 벡터 재생성 불필요.
+VLM만 Tier에 따라 교체되므로, Tier 업그레이드 = MC만 재생성 (VV/MV 유지).
+
+**왜 3단계인가**: 2단계(light/full)로는 8GB Mac과 24GB RTX를 같은 설정으로 쓸 수 없고, 4단계 이상은 관리 복잡도 대비 이점이 없음.
+
+### VLM 선택: 왜 Qwen3-VL인가?
+
+| 모델 | 크기 범위 | 구조화 출력 | 다국어(한/영) | 라이선스 | 크로스 플랫폼 |
+|------|----------|-----------|-------------|---------|------------|
+| **Qwen3-VL** | 2B/4B/8B | ✅ JSON | ✅ | Apache 2.0 | transformers + MLX + Ollama |
+| LLaVA-Next | 7B/13B | 제한적 | △ | 혼합 | transformers만 |
+| InternVL2 | 2B/8B/26B | ✅ | △ 영어 중심 | 혼합 | transformers만 |
+| Phi-4-Vision | 14B | ✅ | △ | MIT | transformers만 |
+
+**결정 근거**:
+1. **2B/4B/8B 3단 라인업** — Tier 시스템과 1:1 매핑 가능 (다른 모델은 크기 간격이 큼)
+2. **한국어+영어 캡션 품질** — 한국 아티스트 대상, 한국어 MC가 MV 검색 품질에 직접 영향
+3. **크로스 플랫폼** — transformers(범용) + MLX(macOS) + Ollama(Windows) 모두 지원
+4. **Apache 2.0** — 상업적 제약 없음
+
+### MV 선택: 왜 Qwen3-Embedding인가?
+
+| 모델 | 크기 | 차원 | MRL | 다국어 | 라이선스 |
+|------|------|------|-----|--------|---------|
+| **Qwen3-Embedding** | 0.6B / 8B | 1024 / 4096 | ✅ | ✅ 한/영 | Apache 2.0 |
+| BGE-M3 | 0.6B | 1024 | ❌ | ✅ | MIT |
+| Jina-Embeddings-v3 | 0.6B | 1024 | ✅ | ✅ | CC-BY-NC |
+| E5-Mistral | 7B | 4096 | ❌ | △ | MIT |
+
+**결정 근거**:
+1. **MRL 지원** — 차원 truncation으로 저장 공간/속도 최적화 가능 (미래 활용)
+2. **0.6B + 8B 이중 라인업** — standard/pro는 0.6B(가벼움), ultra는 8B(고품질)
+3. **한국어 임베딩 품질** — MC가 한국어일 때 MV 검색 정확도에 직접 영향
+4. **Qwen3-VL과 같은 패밀리** — 토크나이저/언어 모델 기반이 유사하여 MC→MV 변환 시 의미 손실 최소화 기대
+
+### FTS5: 왜 Elasticsearch가 아닌가?
+
+| 기준 | FTS5 (SQLite 내장) | Elasticsearch |
+|------|-------------------|---------------|
+| **설치** | 없음 (SQLite에 포함) | JVM + 별도 서비스 |
+| **메모리** | ~0 (인덱스만) | 최소 1GB+ |
+| **역할** | Triaxis 3축 중 보조축 (RRF 결합) | 단독 검색 엔진 |
+| **기능** | BM25 + prefix match | 형태소 분석, 퍼지 매칭 |
+
+**결정**: FTS는 Triaxis에서 **보조축**. VV+MV가 AI 검색의 핵심이고, FTS는 파일명/태그 **정확 키워드 매칭** 전담.
+이 역할에 Elasticsearch의 복잡도는 과잉. FTS5 BM25 + RRF 결합으로 충분.
+
+### 워커 배치: 왜 서버 Phase 큐 분리가 아닌 워커 내부 배치인가?
+
+**검토한 대안**:
+- (A) 서버가 Phase별 큐를 관리: Job을 P큐 → V큐 → VV큐 → MV큐로 이동
+- (B) 워커 내부에서 Claim한 N개를 Phase별로 묶어 처리
+
+**사용자 피드백**: *"로컬에 있지도 않는 파일을 처리하려고 모델 스위칭 비용이 더 들 것 같다"*
+
+| 기준 | (A) 서버 Phase 큐 | (B) 워커 내부 배치 ✅ |
+|------|------------------|-------------------|
+| **서버 복잡도** | 큐 4개 + Phase 간 상태 전이 관리 | 기존 1 Job = 1 파일 구조 유지 |
+| **네트워크** | Phase마다 중간 결과 서버↔워커 전송 | 최초 다운로드 1회, 최종 업로드 1회 |
+| **모델 언로드** | 워커가 Phase 전담이면 모델 상주 가능하나, 1워커=1Phase → 워커 4배 필요 | 워커 내부에서 Phase 순서대로 로드/언로드 |
+| **장애 복구** | Phase 간 중간 상태가 서버 DB에 → 복잡 | Job 단위 실패 = 단순 재시도 |
+
+**결정**: 서버 변경 없이 워커 내부에서 `process_batch_phased()`로 Phase별 배치 처리.
+서버는 "Job 할당/완료" 만 관리하므로 단순하고 안정적.
+
+### SigLIP2 so400m-naflex: 왜 이 VV 모델인가?
+
+> 이 항목은 **모델 선택 근거 (2026-02-20 조사 결과)** 섹션에 상세 기록됨.
+
+요약:
+1. **Apache 2.0** — PE-Core(최강 성능)는 CC-BY-NC 비상업
+2. **transformers 네이티브** — PE-Core는 자체 라이브러리/OpenCLIP 필요
+3. **MPS 검증** — macOS M5에서 동작 확인 (PE-Core는 미검증)
+4. **NaFlex** — 다양한 종횡비 PSD/PNG에 유리 (고정 크기 리사이즈 불필요)
+5. **성능 차이 0.5% 미만** — 라이선스+생태계 이점이 크게 상회
+6. **재평가 시점**: PE-Core transformers 통합 + 라이선스 변경 시, 또는 SigLIP3 출시 시
 
 ## 용어 사전 (MANDATORY)
 
@@ -193,6 +326,21 @@ npm run build
 npm run electron:build
 ```
 
+### Server (FastAPI)
+
+```bash
+# 서버 시작 (개발 모드, 핫 리로드)
+python -m backend.server.app
+# 또는
+uvicorn backend.server.app:app --host 0.0.0.0 --port 8000 --reload
+
+# 워커 데몬 시작 (서버에 접속하여 작업 처리)
+python -m backend.worker.worker_daemon --server http://서버IP:8000 --username USER --password PASS
+
+# 헬스 체크
+curl http://localhost:8000/api/v1/health
+```
+
 ### 진단 스크립트
 
 ```powershell
@@ -205,6 +353,226 @@ python scripts/diagnose_image.py "path/to/image.psd"
 # CLI에서 이미지 검색
 python scripts/search_images.py "검색어"
 ```
+
+## 클라이언트-서버 아키텍처 (v4.x)
+
+**하나의 React 프론트엔드가 두 가지 모드로 동작합니다.**
+
+### 듀얼 모드 구조
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   동일한 React 프론트엔드                       │
+│                                                             │
+│  ┌───────────────────────┐   ┌────────────────────────────┐ │
+│  │   Electron 모드 (앱)    │   │   Web 모드 (브라우저)       │ │
+│  │                       │   │                            │ │
+│  │ • Auth 바이패스         │   │ • JWT 로그인 필수           │ │
+│  │ • 자동 admin 권한       │   │ • 역할 기반 (admin/user)   │ │
+│  │ • IPC → Python 직접    │   │ • HTTP API → FastAPI       │ │
+│  │ • 로컬 DB 직접 접근     │   │ • 서버 DB 간접 접근         │ │
+│  │                       │   │                            │ │
+│  │ [Server] 버튼으로      │   │  서버에 접속하여 사용        │ │
+│  │  FastAPI 서버 내장 시작  │   │                            │ │
+│  └───────────────────────┘   └────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 모드 판별
+
+- **`isElectron`** (`api/client.js:14`): `window.electron` 존재 여부로 판별
+- **`skipAuth`** (`AuthContext.jsx:20`): Electron이면 `true` → 인증 생략, `{ username: 'local', role: 'admin' }` 자동 부여
+- **`bridge.js`**: `isElectron`이면 IPC, 아니면 HTTP API 호출 (검색, 메타데이터 등)
+
+### 서버 모드 (Electron → FastAPI)
+
+- **위치**: Electron 앱 헤더 바 우측 `[Server]` 토글 버튼
+- **동작**: `window.electron.server.start({ port })` → FastAPI 프로세스 기동
+- **SPA 서빙**: `app.py:122-137`에서 `frontend/dist` 빌드 결과를 정적 파일로 서빙
+- 서버가 켜지면 다른 사용자가 `http://서버IP:포트`로 브라우저 접속 가능
+
+### 인증 시스템 (JWT)
+
+| 구성요소 | 파일 | 설명 |
+|---------|------|------|
+| 라우터 | `backend/server/auth/router.py` | 로그인/회원가입/토큰 갱신 API |
+| 스키마 | `backend/server/auth/schemas.py` | Pydantic 모델 (LoginRequest 등) |
+| JWT | `backend/server/auth/jwt.py` | 토큰 발급/검증 |
+| 의존성 | `backend/server/deps.py` | `get_current_user`, `require_admin` |
+| DB | `backend/db/sqlite_schema_auth.sql` | `users`, `invite_codes`, `worker_tokens`, `worker_sessions` 테이블 |
+| 프론트 | `frontend/src/contexts/AuthContext.jsx` | React 인증 Context |
+| API | `frontend/src/api/client.js` | JWT 자동 첨부 + 401 시 refresh |
+
+### 역할 기반 접근
+
+| 역할 | 접근 가능 탭 | 서버 API 접근 |
+|------|------------|--------------|
+| **admin** | Search, Archive, Worker, Admin | 전체 API + 사용자/워커/초대 관리 |
+| **user** | Search, Archive, Worker | 파이프라인 실행, 검색, 내 워커 관리 |
+| **Electron (local)** | 전체 (auth 바이패스) | IPC 직접 호출 (서버 불필요) |
+
+---
+
+## 워커 시스템 (v10.x)
+
+**분산 이미지 처리를 위한 워커 풀 시스템. Phase별 배치 처리 + 모델 언로드로 GPU 메모리 최적화.**
+
+### 개요
+
+서버가 작업(Job) 큐를 관리하고, 워커가 서버에 접속하여 작업을 가져가 처리하는 구조.
+
+```
+Server (FastAPI)                    Worker (Python daemon / Electron IPC)
+┌──────────────┐                   ┌──────────────────────┐
+│ Job Queue    │◄── claim(N) ────  │ Prefetch Pool        │
+│ (SQLite)     │── jobs[] ───────► │ (deque, capacity×2)  │
+│              │                   │                      │
+│ worker_      │◄── heartbeat ──── │ 30초마다 하트비트      │
+│ sessions     │── command ──────► │ stop/block 명령 수신   │
+│              │                   │                      │
+│ job_queue    │◄── complete ────  │ Phase별 배치 처리     │
+│ (throughput) │                   │ (P→V→VV→MV→Upload)   │
+└──────────────┘                   └──────────────────────┘
+```
+
+### Phase별 배치 처리 (v10.0, process_batch_phased)
+
+**기존**: 파일 1개씩 4 Phase 순차 처리 → 3개 모델 동시 메모리 상주
+**변경**: N개 파일을 Phase별로 묶어 배치 처리 → Phase당 모델 1개만 메모리
+
+```
+Claim 5 jobs → Download/resolve all →
+  Phase P:  Parse(1,2,3,4,5)       → report progress
+  Phase V:  Vision(1,2,3,4,5)      → report progress    [VLM only in memory]
+  ── unload VLM ──
+  Phase VV: embed_vv(1,2,3,4,5)    → report progress    [SigLIP2 only in memory]
+  ── unload SigLIP2 ──
+  Phase MV: embed_mv(1,2,3,4,5)    → report progress    [Qwen3-Embed only in memory]
+  ── unload Qwen3-Embed ──
+  Upload: complete_job(1), complete_job(2), ...
+```
+
+**이점**:
+- Phase당 모델 1개만 메모리 → GPU 메모리 효율 극대화
+- 서브배치 추론 활용: VV `encode_image_batch(batch=8)`, MV `encode_batch(batch=16)`
+- MC(VLM)는 MLX/transformers 제약으로 batch_size=1 (순차 처리)
+
+### 모델 언로드
+
+| 메서드 | 대상 | 시점 |
+|--------|------|------|
+| `_unload_vlm()` | VLM (Qwen3-VL) | Phase V 완료 후 |
+| `_unload_vv()` | SigLIP2 인코더 | Phase VV 완료 후 |
+| `_unload_mv()` | Qwen3-Embedding | Phase MV 완료 후 |
+
+각 언로드 후 `gc.collect()` + `torch.cuda.empty_cache()` / `torch.mps.empty_cache()` 호출.
+
+### IPC 이벤트 프로토콜 (Electron ↔ Python)
+
+**배치 이벤트** (worker_ipc.py → main.cjs → preload.cjs → App.jsx):
+
+| 이벤트 | 데이터 | 설명 |
+|--------|--------|------|
+| `batch_start` | `{batch_size: N}` | 배치 처리 시작 |
+| `batch_phase_start` | `{phase, count}` | Phase 시작 ("parse"/"vision"/"embed_vv"/"embed_mv") |
+| `batch_file_done` | `{phase, file_name, index, count, success}` | Phase 내 파일 1개 완료 |
+| `batch_phase_complete` | `{phase, count}` | Phase 완료 |
+| `batch_complete` | `{batch_size, completed, failed}` | 배치 전체 완료 |
+| `job_done` | `{job_id, file_path, file_name, success}` | Job 최종 완료 (기존 호환) |
+
+**데이터 흐름**:
+```
+worker_daemon.py::process_batch_phased(5 jobs)
+  ↓ progress_callback("file_done", {...})
+worker_ipc.py::_batch_progress_cb()
+  ↓ stdout: {"event":"batch_file_done","phase":"vision","file_name":"hero.psd","index":3,"count":5}
+main.cjs::processWorkerOutput()
+  ↓ sendWorkerEvent('worker-batch-file-done', parsed)
+preload.cjs → App.jsx::onBatchFileDone
+  ↓ setWorkerProgress({currentPhase: "vision", phaseIndex: 3, phaseCount: 5})
+StatusBar: "MC 3/5 | 15/741 | 4.2/min | ~12m"
+```
+
+### 스마트 Prefetch 풀
+
+- **풀 크기**: `batch_capacity × 2` (예: capacity=8 → 풀에 16개 유지)
+- **동작**: 현재 배치 처리 중 백그라운드 스레드가 부족분만큼 claim
+- **설정**: `config.yaml > worker.batch_capacity` (기본값: 5)
+
+```
+기존: claim(5) → process(5) → claim(5) → ...
+변경: fill_pool(16) → take_batch(8) + refill_thread → process(8) → ...
+```
+
+### 하트비트 + 명령 피기백
+
+- 워커가 30초마다 서버에 하트비트 전송 (메트릭 보고)
+- 서버는 응답에 `pending_command`를 포함 (stop/pause/block)
+- 명령은 **일회성 소비**: 한 번 전달되면 DB에서 NULL로 리셋
+- `pool_hint`: 서버가 권장하는 풀 크기 (batch_capacity × 2)
+- **중요**: IPC 모드(Electron)에서도 `_connect_session()` / `_heartbeat()` / `_disconnect_session()` 호출 필수
+
+### Admin 모니터링 API (v10.2+)
+
+**큐 통계 + 처리속도** (`GET /api/v1/admin/queue/stats`):
+- `throughput`: 슬라이딩 윈도우 처리속도 (files/min) — 1분 우선, 5분 폴백
+- `recent_1min`, `recent_5min`: 각 윈도우 내 완료 파일 수
+- `pending`, `assigned`, `processing`, `completed`, `failed`: 상태별 카운트
+
+**워커별 처리속도** (`GET /api/v1/admin/workers`):
+- 각 워커에 `throughput` 필드 추가 (개별 files/min)
+- `job_queue.assigned_to` 기준으로 per-user 집계
+- 프론트엔드: WorkersPanel에 종합 속도 + 워커별 속도 컬럼 표시
+
+### 워커 세션 관리 API
+
+| 엔드포인트 | 역할 | 권한 |
+|-----------|------|------|
+| `POST /api/v1/workers/connect` | 워커 세션 시작 | 인증된 사용자 |
+| `POST /api/v1/workers/heartbeat` | 하트비트 + 명령 수신 | 인증된 사용자 |
+| `POST /api/v1/workers/disconnect` | 정상 종료 알림 | 인증된 사용자 |
+| `GET /api/v1/workers/my` | 내 워커 목록 | 인증된 사용자 |
+| `POST /api/v1/workers/{id}/stop` | 내 워커 정지 | 본인 소유만 |
+| `GET /api/v1/admin/workers` | 전체 워커 목록 | Admin |
+| `POST /api/v1/admin/workers/{id}/stop` | 워커 정지 명령 | Admin |
+| `POST /api/v1/admin/workers/{id}/block` | 워커 차단 (재접속 불가) | Admin |
+
+### 워커 토큰 (원클릭 셋업)
+
+- Admin이 워커 토큰 생성 → 토큰 포함 셋업 스크립트 제공
+- 외부 PC에서 스크립트 실행 → 자동 환경 설정 + 워커 데몬 시작
+- `backend/server/routers/worker_setup.py`: 토큰 생성/관리 API
+
+### 프론트엔드 UI
+
+| 위치 | 컴포넌트 | 설명 |
+|------|---------|------|
+| Admin 탭 → Workers | `WorkersPanel` | 전체 워커 목록 (이름, 상태, 배치용량, 작업수, 현재태스크, 정지/차단) |
+| Worker 탭 상단 | `MyWorkersSection` | 내 워커 현황 (이름, 하트비트, 작업수, 정지) |
+| Worker 탭 | `ConnectMyPC` | 워커 토큰 기반 원클릭 셋업 스크립트 다운로드 |
+| Admin 탭 → Worker Tokens | 토큰 관리 | 토큰 생성/폐기/목록 |
+
+### DB 테이블 (`sqlite_schema_auth.sql`)
+
+```sql
+worker_sessions (id, user_id, worker_name, hostname, status, batch_capacity,
+                 jobs_completed, jobs_failed, current_job_id, current_file,
+                 current_phase, pending_command, connected_at, last_heartbeat,
+                 disconnected_at)
+-- status: 'online' | 'offline' | 'blocked'
+-- pending_command: NULL | 'stop' | 'pause' | 'block'
+```
+
+### 워커 설정 (`config.yaml`)
+
+```yaml
+worker:
+  batch_capacity: 5        # 배치 처리 능력 (파일 수)
+  heartbeat_interval: 30   # 하트비트 주기 (초)
+  poll_interval: 10        # 작업 없을 때 대기 (초)
+```
+
+---
 
 ## 아키텍처 & 데이터 흐름
 
@@ -385,6 +753,21 @@ for layer in psd.descendants():
 | `backend/vector/siglip2_encoder.py` | SigLIP2 VV 인코더 |
 | `backend/vector/text_embedding.py` | Qwen3-Embedding MV 인코더 (Transformers/Ollama) |
 | `backend/api_search.py` | 프론트엔드 검색 API 브리지 |
+| `backend/server/app.py` | **FastAPI 서버** (라우터 등록, SPA 서빙) |
+| `backend/server/deps.py` | 서버 의존성 (`get_current_user`, `require_admin`) |
+| `backend/server/auth/router.py` | JWT 인증 API (로그인/회원가입/갱신) |
+| `backend/server/routers/workers.py` | **워커 세션 API** (connect/heartbeat/admin) |
+| `backend/server/routers/pipeline.py` | 파이프라인 API (업로드/claim/완료) |
+| `backend/server/routers/worker_setup.py` | 워커 토큰 + 원클릭 셋업 API |
+| `backend/server/queue/manager.py` | **작업 큐 관리자** (Job 생성/claim/완료) |
+| `backend/worker/worker_daemon.py` | **워커 데몬** (prefetch 풀 + 배치 처리 + 하트비트) |
+| `backend/worker/worker_ipc.py` | **워커 IPC 브리지** (Electron ↔ Python JSON 프로토콜) |
+| `backend/worker/config.py` | 워커 설정 (batch_capacity, heartbeat 등) |
+| `backend/db/sqlite_schema_auth.sql` | 인증 DB 스키마 (users, worker_sessions 등) |
+| `frontend/src/api/client.js` | API 클라이언트 (JWT 자동 첨부, isElectron 판별) |
+| `frontend/src/api/admin.js` | Admin/Worker API 함수 |
+| `frontend/src/contexts/AuthContext.jsx` | React 인증 Context |
+| `frontend/src/services/bridge.js` | Electron/Web 모드 브리지 (IPC ↔ HTTP) |
 | `backend/setup/installer.py` | **통합 설치 프로그램** |
 | `config.yaml` | **Tier/검색/배치 설정** (단일 소스) |
 | `output/thumbnails/` | 썸네일 이미지 (gitignore됨) |
@@ -515,16 +898,32 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 **결합**: RRF (Reciprocal Rank Fusion), 가중치는 `config.yaml` > `search.rrf.presets` 설정.
 **검색 엔진**: `backend/search/sqlite_search.py` (SqliteVectorSearch)
 
-### Tier 시스템 (config.yaml)
+### Tier 시스템 (config.yaml) — 2026-02-20 기준
+
+**VV/MV 크로스 티어 호환성 확보 완료.**
 
 | Tier | VRAM | VV 모델 (SigLIP2) | VLM (MC 생성) | MV 모델 (Qwen3-Embedding) |
 |------|------|-------------------|---------------|----------------------|
-| **standard** | ~6GB | `siglip2-base-patch16-224` (768d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (256d) |
-| **pro** | 8-16GB | `siglip2-so400m-patch14-384` (1152d) | `Qwen3-VL-4B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) |
-| **ultra** | 20GB+ | `siglip2-giant-opt-patch16-256` (1664d) | `Qwen3-VL-8B` (auto: ollama/vllm) | `Qwen3-Embedding-8B` (4096d) |
+| **standard** | ~6GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) |
+| **pro** | 8-16GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-4B` (auto: mlx/transformers) | `Qwen3-Embedding-0.6B` (1024d) |
+| **ultra** | 20GB+ | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-8B` (auto: mlx/ollama/vllm/transformers) | `Qwen3-Embedding-8B` (4096d) |
 
-**설정 파일**: `config.yaml` > `ai_mode.override` (현재: `standard`)
+**핵심 설계 결정 (2026-02-20):**
+- **VV 모델 통일**: 모든 Tier에서 동일한 `siglip2-so400m-patch16-naflex` (1152d) 사용. Tier 전환 시 VV 재생성 불필요.
+- **MV 모델 통일 (standard↔pro)**: 동일한 `qwen3-embedding:0.6b` (1024d). standard↔pro 전환이 **완전 무중단**.
+- **MV ultra 분리**: ultra는 `qwen3-embedding:8b` (4096d)로 모델 자체가 다름. 전환 시 MV만 재생성 (빠름, ~0.5s/file).
+- **SigLIP2 so400m NaFlex 선택 근거**: Meta PE-Core(2025.04)가 성능 최강이나 CC-BY-NC 라이선스 + transformers 미통합 + MPS 미검증. SigLIP2는 Apache 2.0, transformers 네이티브, MPS 검증됨. 동급 파라미터 대비 성능 차이 0.5% 미만.
+
+**Tier 전환 호환성 매트릭스:**
+
+| 전환 | VV | MV | MC | FTS | 판정 |
+|------|----|----|----|----|------|
+| standard ↔ pro | 호환 | 호환 | 호환 | 호환 | **완전 호환** |
+| standard/pro ↔ ultra | 호환 | MV만 재생성 | 호환 | 호환 | MV만 재생성 |
+
+**설정 파일**: `config.yaml` > `ai_mode.override` (현재: `pro`)
 **Tier 로더**: `backend/utils/tier_config.py` > `get_active_tier()`
+**호환성 매트릭스**: `backend/utils/tier_compatibility.py`
 
 ### 파이프라인 4단계 (process_batch_phased, ingest_engine.py)
 
@@ -576,7 +975,9 @@ _check_phase_skip(parsed_files)  # 파일별로 이미 완료된 Phase 확인
 - **세션 추적**: `config.yaml > last_session.folders`에 작업 대상 기록, 완료 시 초기화
 - **앱 재시작 시 Resume Dialog**: 미완료 작업이 있으면 팝업으로 이어하기 제안
 
-### Windows 배포 구조
+### 배포 구조
+
+**A) 로컬 데스크탑 모드 (Electron)**
 
 | 구성요소 | 기술 |
 |---------|------|
@@ -585,7 +986,19 @@ _check_phase_skip(parsed_files)  # 파일별로 이미 완료된 Phase 확인
 | **DB** | SQLite (로컬 파일, Docker 불필요) |
 | **VLM** | transformers (standard/pro) 또는 Ollama (ultra) |
 | **VV 인코더** | SigLIP2 (HuggingFace, 로컬 캐시) |
-| **API 서버** | 없음 (subprocess 직접 호출) |
+| **서버** | 선택적 — [Server] 버튼으로 FastAPI 내장 시작 가능 |
+
+**B) 서버 모드 (FastAPI + 분산 워커)**
+
+| 구성요소 | 기술 |
+|---------|------|
+| **서버** | FastAPI (uvicorn, 단일 워커 — SQLite 제약) |
+| **프론트엔드** | `frontend/dist` SPA 정적 서빙 |
+| **인증** | JWT (access + refresh 토큰) |
+| **DB** | SQLite (`imageparser_server.db`) |
+| **작업 큐** | SQLite `job_queue` 테이블 |
+| **워커** | Python 데몬 (`worker_daemon.py`), 여러 대 연결 가능 |
+| **워커 통신** | REST API (claim → process → complete) + 하트비트 |
 
 ### 필수 설치 요소 (standard tier 기준)
 
@@ -625,6 +1038,13 @@ python backend/setup/installer.py --check
 | `backend/vector/siglip2_encoder.py` | SigLIP2 VV 인코더 | ❌ |
 | `backend/utils/tier_config.py` | Tier 설정 로더 | ❌ |
 | `backend/setup/installer.py` | 통합 설치 프로그램 | ❌ |
+| `backend/server/app.py` | FastAPI 서버 진입점 | ❌ |
+| `backend/server/routers/workers.py` | 워커 세션 관리 API | ❌ |
+| `backend/server/queue/manager.py` | 작업 큐 관리자 | ❌ |
+| `backend/worker/worker_daemon.py` | 워커 데몬 (배치 처리 + prefetch 풀) | ❌ |
+| `backend/worker/worker_ipc.py` | 워커 IPC 브리지 (Electron ↔ Python) | ❌ |
+| `backend/worker/config.py` | 워커 설정 | ✅ |
+| `backend/db/sqlite_schema_auth.sql` | 인증 DB 스키마 | ❌ |
 | `tools/setup_models.py` | Ollama 모델 설치 스크립트 | ❌ |
 
 ### 금지 사항
@@ -738,90 +1158,100 @@ const { t } = useLocale();
 
 ---
 
-## 플랫폼별 최적화 규칙 (v3.1.1)
+## 크로스 플랫폼 VLM 폴백 체인 (v8.1, 2026-02-20 기준)
 
-**모든 vision 처리는 플랫폼별로 최적화된 백엔드를 사용합니다.**
+**VLM 팩토리(`vision_factory.py`)는 명시적 폴백 체인을 사용합니다.**
 
-### 핵심 원칙
+### 폴백 체인 매트릭스
 
-1. **항상 AUTO 모드 사용**
-   ```yaml
-   # config.yaml
-   ai_mode:
-     tiers:
-       ultra:
-         vlm:
-           backend: auto  # 플랫폼 자동 감지
-   ```
+모든 플랫폼 × 티어 조합에서 `transformers`가 최종 안전망.
 
-2. **플랫폼별 권장 설정**
-   - **Windows**: Ollama (batch_size=1, 순차 처리)
-   - **Mac**: vLLM 우선 (batch_size=16, 병렬 처리)
-   - **Linux**: vLLM 우선 (batch_size=16, 병렬 처리)
+| 티어 | macOS | Windows | Linux |
+|------|-------|---------|-------|
+| **standard** | `[transformers]` | `[transformers]` | `[transformers]` |
+| **pro** | `[mlx → transformers]` | `[transformers]` | `[transformers]` |
+| **ultra** | `[mlx → transformers]` | `[ollama → transformers]` | `[vllm → ollama → transformers]` |
 
-3. **성능 특성 이해**
-   - Ollama Vision API: 배치 처리 시 성능 저하 (0.6x)
-   - vLLM: 배치 처리 시 8.5배 향상
-   - Transformers: 배치 처리 시 4-14배 향상
+### 동작 원리
 
-### 실측 벤치마크 데이터
+1. `_resolve_backend_chain()`: config.yaml의 `backend` + `fallback` 필드에서 체인 구성
+2. `_check_backend_available()`: 사전 가용성 검사 (is_mlx_vlm_available, is_vllm_available, is_ollama_available)
+3. `_instantiate_backend()`: 체인 순서대로 시도, 실패 시 다음으로
+4. `transformers`: 항상 마지막에 보장 (torch는 필수 의존성)
 
-**Ultra Tier (Qwen3-VL-8B):**
+### config.yaml 폴백 설정
 
-| 플랫폼 | 백엔드 | 1개 이미지 | 10개 이미지 | Speedup |
-|--------|--------|-----------|-------------|---------|
-| Windows | Ollama | 51초 | 510초 | 1.0x (기준) |
-| Mac/Linux | vLLM | ~6초 | ~60초 | 8.5x |
-| Mac/Linux | Ollama | 51초 | 510초 | 1.0x |
+```yaml
+# pro/ultra tier의 backends.{platform} 섹션에 fallback 필드 사용
+backends:
+  darwin:
+    backend: mlx
+    fallback: transformers    # MLX 불가 시 transformers로 폴백
+  windows:
+    backend: ollama
+    fallback: transformers    # Ollama 불가 시 transformers로 폴백
+  linux:
+    backend: vllm
+    fallback: ollama          # vLLM 불가 시 ollama, 그래도 불가 시 transformers (암묵적)
+```
 
-**Windows + Ollama 배치 처리 특성:**
-- batch_size=1: 평균 68.9초/파일 (일관적)
-- batch_size=3: 평균 127.8초/파일 (2배 느림)
-- **결론**: 순차 처리가 최적
+### 로그 패턴
+
+```
+INFO VLM backend chain (tier: pro): mlx → transformers
+INFO [SKIP] mlx: not available, trying next       # 또는
+INFO [OK] VLM backend: mlx (tier: pro)            # 또는
+WARNING [FAIL] mlx: <error>, trying next
+```
+
+### VV/MV는 폴백 불필요
+
+- **VV (SigLIP2)**: 모든 플랫폼에서 `transformers` 직접 사용 — 폴백 체인 없음
+- **MV (Qwen3-Embedding)**: `text_embedding.py`에 자체 `Transformers → Ollama` 폴백 구현됨
 
 ### 개발 가이드라인
 
-**새 기능 개발 시:**
 ```python
-# ✅ 올바른 방법 - Factory 사용 (플랫폼 자동 감지)
+# ✅ 올바른 방법 - Factory 사용 (폴백 체인 자동 작동)
 from backend.vision.vision_factory import get_vision_analyzer
-analyzer = get_vision_analyzer()  # AUTO 모드 작동
+analyzer = get_vision_analyzer()
 
 # ❌ 잘못된 방법 - 직접 adapter 초기화
 from backend.vision.ollama_adapter import OllamaVisionAdapter
-analyzer = OllamaVisionAdapter()  # 플랫폼 무시
+analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
 ```
 
-**배치 처리 구현 시:**
-```python
-# 플랫폼별 최적 batch_size 자동 감지
-from backend.utils.platform_detector import get_optimal_batch_size
+### 핵심 파일
 
-optimal_batch = get_optimal_batch_size(backend='auto', tier='ultra')
-# Windows: 1, Mac/Linux: 16
-```
+| 파일 | 역할 |
+|------|------|
+| `backend/vision/vision_factory.py` | VLM 폴백 체인 팩토리 (v8.0 리팩토링) |
+| `backend/utils/platform_detector.py` | 플랫폼 감지 + 가용성 검사 함수 |
+| `backend/utils/tier_config.py` | Tier 설정 로더 |
+| `config.yaml` > `ai_mode.tiers.{tier}.vlm.backends` | 플랫폼별 백엔드 + 폴백 설정 |
 
-### 문제 해결 체크리스트
+### 성능 참고 (2026-02-20 기준)
 
-**Vision 처리가 느린 경우:**
-1. [ ] 플랫폼 확인: `python -m backend.utils.platform_detector`
-2. [ ] Tier 확인: config.yaml의 `override` 설정
-3. [ ] Backend 확인: 로그에서 "Using ... backend" 검색
-4. [ ] Batch size 확인: Windows는 1이 최적
+| 백엔드 | 장점 | 단점 | 적합 플랫폼 |
+|--------|------|------|------------|
+| **MLX** | Apple Silicon 네이티브, 3-4x TTFT 향상 | macOS 전용, 배치 불가 (batch_size=1) | macOS |
+| **vLLM** | 8-16x 배치 처리, 최고 처리량 | CUDA 필수, Windows 미지원 | Linux (GPU) |
+| **Ollama** | 설치 간편, 모델 자동 관리 | 배치 성능 저하, batch_size=1 권장 | Windows, 범용 |
+| **Transformers** | 항상 사용 가능, MPS/CUDA/CPU 자동 | MLX/vLLM 대비 느릴 수 있음 | 최종 폴백 |
 
-**Windows에서 속도 개선 원하는 경우:**
-- **단기**: Tier 낮추기 (ultra → pro → standard)
-- **장기**: Mac/Linux 서버로 마이그레이션 (8.5배 향상)
-- **대안**: WSL2 + vLLM (고급 사용자)
+### 모델 선택 근거 (2026-02-20 조사 결과)
 
-### 관련 문서
+**조사 대상**: SigLIP2 (Google, 2025.02), Meta PE-Core (2025.04), OpenVision (UCSC, 2025.05), Jina-CLIP-v2 (2024.12), AIMv2 (Apple, 2024.11)
 
-- [플랫폼별 최적화 가이드](docs/platform_optimization.md) - 상세 설정
-- [빠른 시작 가이드](docs/quick_start_guide.md) - 플랫폼별 사용법
-- [Ollama 배치 분석](docs/ollama_batch_processing_analysis.md) - 벤치마크 데이터
+**SigLIP2 so400m-naflex 유지 결정 이유:**
+1. **라이선스**: Apache 2.0 (PE-Core는 CC-BY-NC 비상업)
+2. **생태계**: HuggingFace transformers 네이티브 (PE-Core는 자체 라이브러리/OpenCLIP)
+3. **MPS 호환**: macOS M5에서 검증됨 (PE-Core는 MPS 미검증, xformers 의존)
+4. **성능 차이**: PE-Core-L14 vs SigLIP2-so400m — ImageNet ZS 0.5% 차이 (83.5% vs ~83%)
+5. **NaFlex**: 종횡비 보존 (PSD/PNG 다양한 비율에 적합), HuggingFace 다운로드 1위 (1.31M+)
+6. **가성비**: So400m(400M) → giant-opt(1B): 파라미터 2.5배, 메모리 2배, 검색 성능 +0.3%
 
-**심각도**: ⚠️ HIGH - 성능에 직접적인 영향
-**적용 시기**: v3.1.1부터 필수
+**재평가 시점**: PE-Core가 transformers 통합 + 라이선스 변경 시, 또는 SigLIP3 출시 시
 
 ## 개발/테스트 환경 (macOS)
 
@@ -845,6 +1275,9 @@ optimal_batch = get_optimal_batch_size(backend='auto', tier='ultra')
   - Ollama는 현재 MV 생성에 사용하지 않음
 - **VLM (Qwen3-VL-4B)**: transformers 5.1.0의 video_processing_auto.py TypeError 가능성
   - 모델 파일은 캐시됨, 런타임 로딩 시 확인 필요
+- **멀티워커 동일 GPU 경합**: 같은 머신에서 워커 N개 실행 시 각 워커 속도 1/N (총 처리량 이득 없음)
+  - 원인: GPU 시분할로 인한 경합
+  - 멀티워커는 **별도 GPU 머신에 분산 배치할 때만 효과적**
 
 ### 양자화 옵션 (조사 완료, 미적용)
 

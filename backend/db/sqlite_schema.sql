@@ -78,7 +78,10 @@ CREATE TABLE IF NOT EXISTS files (
     preprocess_params TEXT,                          -- JSON: {max_edge, aspect_ratio_mode, padding_color}
 
     -- Content hash for path-independent file identification
-    content_hash TEXT                                -- SHA256(file_size + first_8KB + last_8KB)
+    content_hash TEXT,                               -- SHA256(file_size + first_8KB + last_8KB)
+
+    -- Ownership (server mode)
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- Layers table: Layer-level metadata (optional)

@@ -5,6 +5,8 @@ import SettingsModal from './SettingsModal';
 import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
+import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode } from '../services/bridge';
+import { isElectron, getServerUrl } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
@@ -55,8 +57,8 @@ const MetadataModal = ({ metadata, onClose }) => {
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(async () => {
             try {
-                await window.electron.metadata.updateUserData(
-                    metadata.file_path, editedData
+                await updateUserMeta(
+                    isLocalMode() ? metadata.file_path : metadata.id, editedData
                 );
                 Object.assign(metadata, editedData);
             } catch (err) {
@@ -188,17 +190,19 @@ const MetadataModal = ({ metadata, onClose }) => {
                                         </div>
                                     )}
                                 </div>
-                                {/* File Actions */}
-                                <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
-                                    <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
-                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
-                                        <FolderOpen size={12} /> {t('action.show_in_folder')}
-                                    </button>
-                                    <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
-                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
-                                        <ExternalLink size={12} /> {t('action.open_file')}
-                                    </button>
-                                </div>
+                                {/* File Actions (Electron only) */}
+                                {isElectron && (
+                                    <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
+                                        <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                            <FolderOpen size={12} /> {t('action.show_in_folder')}
+                                        </button>
+                                        <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                            <ExternalLink size={12} /> {t('action.open_file')}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -444,11 +448,11 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu }) => {
     };
 
     // Prefer DB thumbnail (always generated during Process), fallback to native preview
-    const thumbnailSrc = result.thumbnail_path
-        ? toFileUrl(result.thumbnail_path)
-        : canPreviewNatively
-            ? toFileUrl(localPath)
-            : null;
+    // Local mode (Electron server): file:// URL from disk
+    // Remote mode (Electron client / Web): server API URL with JWT
+    const thumbnailSrc = isLocalMode()
+        ? (result.thumbnail_path ? toFileUrl(result.thumbnail_path) : canPreviewNatively ? toFileUrl(localPath) : null)
+        : getThumbnailUrl(result.thumbnail_path, result.id);
 
     return (
         <div
@@ -514,22 +518,24 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu }) => {
             <div className="p-3 flex-1 min-h-0 overflow-hidden flex flex-col">
                 <div className="flex items-center gap-1">
                     <div className="text-sm font-medium text-white truncate flex-1">{fileName}</div>
-                    <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(localPath); }}
-                            className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
-                            title={t('action.show_in_folder')}
-                        >
-                            <FolderOpen size={14} />
-                        </button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(localPath); }}
-                            className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
-                            title={t('action.open_file')}
-                        >
-                            <ExternalLink size={14} />
-                        </button>
-                    </div>
+                    {isElectron && (
+                        <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(localPath); }}
+                                className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                                title={t('action.show_in_folder')}
+                            >
+                                <FolderOpen size={14} />
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(localPath); }}
+                                className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                                title={t('action.open_file')}
+                            >
+                                <ExternalLink size={14} />
+                            </button>
+                        </div>
+                    )}
                 </div>
                 {result.folder_path && (
                     <div className="text-[10px] text-gray-500 truncate mt-0.5" title={localPath || dbPath}>
@@ -831,11 +837,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     // Load DB stats on mount and when pipeline/discover refresh signal changes.
     useEffect(() => {
-        if (window.electron?.pipeline?.getDbStats) {
-            window.electron.pipeline.getDbStats()
-                .then(stats => { if (stats.success) setDbStats(stats); })
-                .catch(() => { });
-        }
+        bridgeGetDbStats()
+            .then(stats => { if (stats.success !== false) setDbStats(stats); })
+            .catch(() => { });
     }, [reloadSignal]);
 
     // Handle initial search trigger (e.g. from FileGrid context menu)
@@ -863,7 +867,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                         queryFileId,
                         mode
                     };
-                    const response = await window.electron.pipeline.searchVector(searchOptions);
+                    const response = await searchImages(searchOptions);
                     if (response.success) {
                         setResults(response.results);
                         setCurrentLimit(20);
@@ -909,7 +913,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     queryFileId: fileId,
                     mode
                 };
-                const response = await window.electron.pipeline.searchVector(searchOptions);
+                const response = await searchImages(searchOptions);
                 if (response.success) {
                     setResults(response.results);
                     setCurrentLimit(20);
@@ -977,7 +981,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 searchOptions.mode = 'triaxis';
             }
 
-            const response = await window.electron.pipeline.searchVector(searchOptions);
+            const response = await searchImages(searchOptions);
 
             if (response.success) {
                 setResults(response.results);
@@ -1042,7 +1046,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 }
             }
 
-            const response = await window.electron.pipeline.searchVector(searchOptions);
+            const response = await searchImages(searchOptions);
 
             if (response.success) {
                 setCurrentLimit(nextLimit);
@@ -1078,11 +1082,12 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setShowSettings(true);
     }, []);
 
-    const handleShowMeta = useCallback(async (filePath) => {
-        const meta = await window.electron?.pipeline?.readMetadata(filePath);
-        if (meta) {
-            setMetadata(meta);
-        }
+    const handleShowMeta = useCallback(async (filePathOrId) => {
+        try {
+            const result = await getFileDetail(filePathOrId);
+            const meta = result?.file || result;
+            if (meta) setMetadata(meta);
+        } catch { /* ignore */ }
     }, []);
 
     const hasActiveFilters = Object.values(activeFilters).some(v => v);
