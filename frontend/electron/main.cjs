@@ -1449,12 +1449,14 @@ function killWorkerProc() {
     workerBuffer = '';
     workerStartCmd = null;
 
+    // Try graceful exit first
     try {
         proc.stdin.write(JSON.stringify({ cmd: 'exit' }) + '\n');
     } catch (e) { /* ignore */ }
+    // Force kill after 2 seconds (SIGKILL works on Windows, SIGTERM doesn't)
     setTimeout(() => {
-        try { proc.kill('SIGTERM'); } catch (e) { /* already dead */ }
-    }, 3000);
+        try { proc.kill('SIGKILL'); } catch (e) { /* already dead */ }
+    }, 2000);
 }
 
 // IPC Handler: Start worker daemon
