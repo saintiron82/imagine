@@ -252,6 +252,8 @@ class WorkerIPCController:
                         fpm = data.get('files_per_min', 0)
                         elapsed = data.get('elapsed_s', 0)
                         _emit_log(f"Phase {data.get('phase', '?')} done — {elapsed}s ({fpm:.1f}/min)", "success")
+                    elif event_type == "file_error":
+                        _emit_log(f"[ERROR] {data.get('file_name', '?')}: {data.get('error', 'unknown')}", "error")
                     elif event_type == "batch_complete":
                         fpm = data.get('files_per_min', 0)
                         elapsed = data.get('elapsed_s', 0)
@@ -305,6 +307,34 @@ def main():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stderr,  # Logs go to stderr, events go to stdout
     )
+
+    # Pre-import heavy modules in main thread to avoid DLL loading deadlock
+    # on Windows when background threads try to import numpy/torch/etc.
+    # (Windows LoadLibrary + Python import lock = hang in background threads)
+    sys.stderr.write("[IPC] Pre-loading heavy modules in main thread...\n")
+    sys.stderr.flush()
+    try:
+        import numpy
+        sys.stderr.write(f"[IPC] numpy {numpy.__version__} OK\n")
+    except Exception as e:
+        sys.stderr.write(f"[IPC] numpy failed: {e}\n")
+    try:
+        import psd_tools
+        sys.stderr.write(f"[IPC] psd_tools OK\n")
+    except Exception as e:
+        sys.stderr.write(f"[IPC] psd_tools failed: {e}\n")
+    try:
+        from PIL import Image
+        sys.stderr.write(f"[IPC] PIL OK\n")
+    except Exception as e:
+        sys.stderr.write(f"[IPC] PIL failed: {e}\n")
+    try:
+        import torch
+        sys.stderr.write(f"[IPC] torch {torch.__version__} (CUDA={torch.cuda.is_available()}) OK\n")
+    except Exception as e:
+        sys.stderr.write(f"[IPC] torch failed: {e}\n")
+    sys.stderr.write("[IPC] Pre-loading done\n")
+    sys.stderr.flush()
 
     controller = WorkerIPCController()
     _emit({"event": "ready"})

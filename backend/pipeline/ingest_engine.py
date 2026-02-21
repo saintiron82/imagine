@@ -32,8 +32,11 @@ from typing import List, Optional, Tuple
 # Force UTF-8 for stdout/stderr to handle generic unicode characters
 # line_buffering=True ensures each log line is flushed immediately
 # (critical for subprocess → Electron IPC stdout parsing)
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
+# SKIP when imported by worker_ipc — replacing stdout breaks the JSON IPC protocol
+# and causes deadlock (two TextIOWrappers sharing the same buffer across threads)
+if __name__ == "__main__" or "ingest_engine" in sys.argv[0:1]:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
 
 # Set process title for Activity Monitor visibility
 try:

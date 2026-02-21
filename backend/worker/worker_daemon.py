@@ -480,7 +480,7 @@ class WorkerDaemon:
     def _resolve_file(self, job: dict) -> str:
         """Get local file path — either shared FS path or download from server."""
         file_path = job["file_path"]
-        file_id = job["file_id"]
+        file_id = job.get("file_id")
 
         if self.storage_mode == "shared_fs":
             # Direct access via shared filesystem
@@ -490,7 +490,13 @@ class WorkerDaemon:
             return None
         else:
             # Download from server
-            return self.uploader.download_file(file_id, self.tmp_dir)
+            logger.info(f"[DOWNLOAD] Downloading file_id={file_id} from {self.server_url}...")
+            result = self.uploader.download_file(file_id, self.tmp_dir)
+            if result:
+                logger.info(f"[DOWNLOAD] OK -> {result}")
+            else:
+                logger.error(f"[DOWNLOAD] FAILED for file_id={file_id} ({file_path})")
+            return result
 
     # ── Pipeline Phases (reusing existing backend code) ────────
 
@@ -700,7 +706,12 @@ class WorkerDaemon:
             ctx.local_path = self._resolve_file(job)
             if not ctx.local_path or not Path(ctx.local_path).exists():
                 ctx.failed = True
-                ctx.error = f"Cannot access file: {job['file_path']}"
+                ctx.error = f"Cannot access file: {job['file_path']} (file_id={job.get('file_id')})"
+                logger.error(f"[RESOLVE] {ctx.error}")
+                _notify(progress_callback, "file_error", {
+                    "file_name": Path(job["file_path"]).name,
+                    "error": ctx.error,
+                })
             contexts.append(ctx)
 
         active = [c for c in contexts if not c.failed]
