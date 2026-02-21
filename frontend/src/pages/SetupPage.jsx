@@ -1,20 +1,53 @@
-import React, { useState } from 'react';
-import { Shield, Cpu, ArrowRight, Wifi } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, Cpu, ArrowRight, Wifi, Radio, Clock, X } from 'lucide-react';
 import { useLocale } from '../i18n';
+import { useMdnsDiscovery } from '../hooks/useMdnsDiscovery';
+import {
+  getServerHistory,
+  removeServerFromHistory,
+  formatRelativeTime,
+} from '../utils/serverHistory';
 
 const SetupPage = ({ onComplete }) => {
     const { t } = useLocale();
-    const [selectedMode, setSelectedMode] = useState(null); // 'server' | 'client'
+    const [selectedMode, setSelectedMode] = useState(null);
     const [serverUrl, setServerUrl] = useState(
         localStorage.getItem('imagine-server-url') || 'http://'
     );
     const [error, setError] = useState('');
 
+    // mDNS discovery (active only when client mode selected)
+    const { servers: mdnsServers, browsing } = useMdnsDiscovery(selectedMode === 'client');
+
+    // Recent server history
+    const [history, setHistory] = useState([]);
+    useEffect(() => {
+        if (selectedMode === 'client') {
+            setHistory(getServerHistory());
+        }
+    }, [selectedMode]);
+
+    const handleSelectMdns = (server) => {
+        const addr = server.addresses?.[0] || server.host;
+        setServerUrl(`http://${addr}:${server.port}`);
+        setError('');
+    };
+
+    const handleSelectHistory = (url) => {
+        setServerUrl(url);
+        setError('');
+    };
+
+    const handleRemoveHistory = (e, url) => {
+        e.stopPropagation();
+        removeServerFromHistory(url);
+        setHistory(getServerHistory());
+    };
+
     const handleConfirm = async () => {
         if (!selectedMode) return;
 
         if (selectedMode === 'client') {
-            // Validate server URL
             try {
                 const url = new URL(serverUrl);
                 if (!url.hostname) throw new Error('Invalid hostname');
@@ -24,10 +57,14 @@ const SetupPage = ({ onComplete }) => {
             }
         }
 
-        // No config.yaml persistence — mode is session-only.
-        // Each app launch shows this page fresh.
         onComplete(selectedMode, selectedMode === 'client' ? serverUrl : null);
     };
+
+    // Filter history to exclude mDNS-discovered URLs
+    const mdnsUrls = new Set(
+        mdnsServers.map((s) => `http://${s.addresses?.[0]}:${s.port}`)
+    );
+    const filteredHistory = history.filter((h) => !mdnsUrls.has(h.url));
 
     return (
         <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
@@ -113,20 +150,107 @@ const SetupPage = ({ onComplete }) => {
                     </button>
                 </div>
 
-                {/* Server URL input (only for client mode) */}
+                {/* Server URL section (only for client mode) */}
                 {selectedMode === 'client' && (
-                    <div className="mb-6">
-                        <label className="block text-sm text-gray-400 mb-2">
-                            <Wifi size={14} className="inline mr-1.5" />
-                            {t('setup.server_url')}
-                        </label>
-                        <input
-                            type="text"
-                            value={serverUrl}
-                            onChange={(e) => setServerUrl(e.target.value)}
-                            placeholder="http://192.168.1.10:8000"
-                            className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none font-mono text-sm"
-                        />
+                    <div className="mb-6 space-y-3">
+                        {/* mDNS Discovered Servers */}
+                        {(mdnsServers.length > 0 || browsing) && (
+                            <div>
+                                <div className="flex items-center gap-1.5 mb-2">
+                                    <Radio size={12} className={browsing ? 'text-green-400 animate-pulse' : 'text-gray-500'} />
+                                    <span className="text-xs text-gray-400">
+                                        {t('auth.discovered_servers')}
+                                    </span>
+                                </div>
+                                {mdnsServers.length > 0 ? (
+                                    <div className="space-y-1">
+                                        {mdnsServers.map((s) => {
+                                            const addr = s.addresses?.[0] || s.host;
+                                            const sUrl = `http://${addr}:${s.port}`;
+                                            return (
+                                                <button
+                                                    key={s.name}
+                                                    onClick={() => handleSelectMdns(s)}
+                                                    className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-left transition-colors ${
+                                                        serverUrl === sUrl
+                                                            ? 'bg-emerald-900/30 border border-emerald-600'
+                                                            : 'bg-gray-800 border border-gray-700 hover:border-gray-500'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-2 h-2 rounded-full bg-green-400" />
+                                                        <span className="text-white font-medium text-sm">
+                                                            {s.serverName || s.name}
+                                                        </span>
+                                                    </div>
+                                                    <span className="text-xs text-gray-500 font-mono">
+                                                        {addr}:{s.port}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-gray-600 italic pl-5">{t('auth.discovering')}</p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Recent Servers */}
+                        {filteredHistory.length > 0 && (
+                            <div>
+                                <div className="flex items-center gap-1.5 mb-2">
+                                    <Clock size={12} className="text-gray-500" />
+                                    <span className="text-xs text-gray-400">
+                                        {t('auth.recent_servers')}
+                                    </span>
+                                </div>
+                                <div className="space-y-1">
+                                    {filteredHistory.slice(0, 3).map((h) => (
+                                        <button
+                                            key={h.url}
+                                            onClick={() => handleSelectHistory(h.url)}
+                                            className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-left transition-colors group ${
+                                                serverUrl === h.url
+                                                    ? 'bg-emerald-900/30 border border-emerald-600'
+                                                    : 'bg-gray-800 border border-gray-700 hover:border-gray-500'
+                                            }`}
+                                        >
+                                            <div className="min-w-0 flex-1">
+                                                <span className="text-white text-sm truncate block">
+                                                    {h.name || h.url.replace(/^https?:\/\//, '')}
+                                                </span>
+                                                <span className="text-[10px] text-gray-500">
+                                                    {h.lastUsername && `${h.lastUsername} · `}
+                                                    {formatRelativeTime(h.lastConnected, t)}
+                                                </span>
+                                            </div>
+                                            <button
+                                                onClick={(e) => handleRemoveHistory(e, h.url)}
+                                                className="p-1 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                            >
+                                                <X size={12} />
+                                            </button>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Manual URL Input */}
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-2">
+                                <Wifi size={14} className="inline mr-1.5" />
+                                {t('setup.server_url')}
+                            </label>
+                            <input
+                                type="text"
+                                value={serverUrl}
+                                onChange={(e) => setServerUrl(e.target.value)}
+                                placeholder="http://192.168.1.10:8000"
+                                className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none font-mono text-sm"
+                            />
+                        </div>
                     </div>
                 )}
 

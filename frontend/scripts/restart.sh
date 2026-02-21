@@ -60,8 +60,11 @@ else
     NEXT_PADDED=$(printf "%02d" "$NEXT")
 fi
 
-# Base version (v3.6.0)
-BASE_VER="v3.6.0"
+# Extract base version (vX.Y.Z) from current version string in StatusBar
+BASE_VER=$(sed -n 's/.*\(v[0-9]*\.[0-9]*\.[0-9]*\)\.[0-9]*_[0-9]*.*/\1/p' "$STATUSBAR" 2>/dev/null | head -1)
+if [ -z "$BASE_VER" ]; then
+    BASE_VER="v0.6.0"
+fi
 NEW_VERSION="${BASE_VER}.${TODAY}_${NEXT_PADDED}"
 
 # Replace version string in file

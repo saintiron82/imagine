@@ -271,3 +271,48 @@ def _resolve_thumbnail(thumb_path: Optional[str], file_name: Optional[str]) -> O
             return inferred
 
     return None
+
+
+@router.get("/{file_id}/download")
+def download_original(
+    file_id: int,
+    token: Optional[str] = Query(None, description="JWT token for download auth"),
+    _user: dict = Depends(_get_user_or_query_token),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Download original image file.
+
+    Supports both Authorization header and ?token= query param.
+    Returns the original file as an attachment for browser download.
+    """
+    cursor = db.conn.cursor()
+    cursor.execute("SELECT file_path, file_name FROM files WHERE id = ?", (file_id,))
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_path = row[0]
+    file_name = row[1]
+
+    # Resolve file path
+    p = Path(file_path)
+    if not p.is_absolute():
+        p = _PROJECT_ROOT / file_path
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+
+    # Determine media type
+    suffix = p.suffix.lower()
+    media_types = {
+        '.psd': 'application/octet-stream',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+    }
+    media_type = media_types.get(suffix, 'application/octet-stream')
+
+    return FileResponse(
+        str(p),
+        media_type=media_type,
+        filename=file_name or p.name,
+    )
