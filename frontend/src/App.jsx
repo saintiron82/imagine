@@ -934,16 +934,16 @@ function App() {
             <Search size={16} />
             <span>{t('tab.search')}</span>
           </button>
-          {/* Archive/Worker tab — client mode always shows Worker, server mode shows role-based */}
+          {/* Archive/Worker tab — role-based: admin=archive, user=worker */}
           <button
             onClick={() => setCurrentTab('archive')}
             className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
-              ? (isAdmin && appMode === 'server' ? 'bg-gray-700 text-white' : 'bg-emerald-700 text-white')
+              ? (isAdmin ? 'bg-gray-700 text-white' : 'bg-emerald-700 text-white')
               : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
               }`}
           >
-            {isAdmin && appMode === 'server' ? <Archive size={16} /> : <Zap size={16} />}
-            <span>{isAdmin && appMode === 'server' ? t('tab.archive_server') : t('tab.archive_worker')}</span>
+            {isAdmin ? <Archive size={16} /> : <Zap size={16} />}
+            <span>{isAdmin ? t('tab.archive_server') : t('tab.archive_worker')}</span>
           </button>
 
           {/* Admin tab — admin role only */}
@@ -1108,7 +1108,7 @@ function App() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar - Folder Tree (admin only) */}
-        {currentTab === 'archive' && isAdmin && appMode === 'server' && (
+        {currentTab === 'archive' && isAdmin && (
           <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
             <div className="p-4 border-b border-gray-700 flex items-center space-x-2">
               <FolderOpen className="text-blue-400" size={20} />
@@ -1140,7 +1140,7 @@ function App() {
                 onSearchConsumed={() => setPendingSearch(null)}
                 reloadSignal={folderStatsVersion}
               />
-            ) : currentTab === 'archive' && (appMode === 'client' || !isAdmin) ? (
+            ) : currentTab === 'archive' && !isAdmin ? (
               <ClientWorkerView
                 appMode={appMode}
                 isWorkerRunning={isWorkerRunning}
@@ -1148,7 +1148,7 @@ function App() {
                 onWorkerStart={handleWorkerStart}
                 onWorkerStop={handleWorkerStop}
               />
-            ) : currentTab === 'archive' && isAdmin && appMode === 'server' ? (
+            ) : currentTab === 'archive' && isAdmin ? (
               <ServerArchiveView
                 currentPath={currentPath}
                 selectedFiles={selectedFiles}
