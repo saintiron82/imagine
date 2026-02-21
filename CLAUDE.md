@@ -1285,6 +1285,11 @@ analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
 - **멀티워커 동일 GPU 경합**: 같은 머신에서 워커 N개 실행 시 각 워커 속도 1/N (총 처리량 이득 없음)
   - 원인: GPU 시분할로 인한 경합
   - 멀티워커는 **별도 GPU 머신에 분산 배치할 때만 효과적**
+- **Windows 워커 stdin 파이프 데드락**: Electron에서 spawn한 Python 워커가 Parse Phase에서 무한 행
+  - 원인: Windows CRT I/O 락 — piped stdin 블로킹 읽기가 백그라운드 스레드의 C-extension(numpy, psd-tools) 작업을 차단
+  - 해결: Win32 `PeekNamedPipe` 논블로킹 폴링으로 stdin 읽기 교체 (`worker_ipc.py`)
+  - macOS/Linux에서는 발생하지 않음 (POSIX I/O 모델 차이)
+  - 상세: `docs/troubleshooting.md` 참조
 
 ### 양자화 옵션 (조사 완료, 미적용)
 
