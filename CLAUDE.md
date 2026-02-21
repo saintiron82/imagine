@@ -281,23 +281,84 @@ python scripts/search_images.py "검색어"
 
 ---
 
-## 워커 시스템 (v4.10)
+## 워커 시스템 (v10.x)
 
-**분산 이미지 처리를 위한 워커 풀 시스템.**
+**분산 이미지 처리를 위한 워커 풀 시스템. Phase별 배치 처리 + 모델 언로드로 GPU 메모리 최적화.**
 
 ### 개요
 
 서버가 작업(Job) 큐를 관리하고, 워커가 서버에 접속하여 작업을 가져가 처리하는 구조.
 
 ```
-Server (FastAPI)                    Worker (Python daemon)
+Server (FastAPI)                    Worker (Python daemon / Electron IPC)
 ┌──────────────┐                   ┌──────────────────────┐
 │ Job Queue    │◄── claim(N) ────  │ Prefetch Pool        │
 │ (SQLite)     │── jobs[] ───────► │ (deque, capacity×2)  │
 │              │                   │                      │
 │ worker_      │◄── heartbeat ──── │ 30초마다 하트비트      │
 │ sessions     │── command ──────► │ stop/block 명령 수신   │
+│              │                   │                      │
+│ job_queue    │◄── complete ────  │ Phase별 배치 처리     │
+│ (throughput) │                   │ (P→V→VV→MV→Upload)   │
 └──────────────┘                   └──────────────────────┘
+```
+
+### Phase별 배치 처리 (v10.0, process_batch_phased)
+
+**기존**: 파일 1개씩 4 Phase 순차 처리 → 3개 모델 동시 메모리 상주
+**변경**: N개 파일을 Phase별로 묶어 배치 처리 → Phase당 모델 1개만 메모리
+
+```
+Claim 5 jobs → Download/resolve all →
+  Phase P:  Parse(1,2,3,4,5)       → report progress
+  Phase V:  Vision(1,2,3,4,5)      → report progress    [VLM only in memory]
+  ── unload VLM ──
+  Phase VV: embed_vv(1,2,3,4,5)    → report progress    [SigLIP2 only in memory]
+  ── unload SigLIP2 ──
+  Phase MV: embed_mv(1,2,3,4,5)    → report progress    [Qwen3-Embed only in memory]
+  ── unload Qwen3-Embed ──
+  Upload: complete_job(1), complete_job(2), ...
+```
+
+**이점**:
+- Phase당 모델 1개만 메모리 → GPU 메모리 효율 극대화
+- 서브배치 추론 활용: VV `encode_image_batch(batch=8)`, MV `encode_batch(batch=16)`
+- MC(VLM)는 MLX/transformers 제약으로 batch_size=1 (순차 처리)
+
+### 모델 언로드
+
+| 메서드 | 대상 | 시점 |
+|--------|------|------|
+| `_unload_vlm()` | VLM (Qwen3-VL) | Phase V 완료 후 |
+| `_unload_vv()` | SigLIP2 인코더 | Phase VV 완료 후 |
+| `_unload_mv()` | Qwen3-Embedding | Phase MV 완료 후 |
+
+각 언로드 후 `gc.collect()` + `torch.cuda.empty_cache()` / `torch.mps.empty_cache()` 호출.
+
+### IPC 이벤트 프로토콜 (Electron ↔ Python)
+
+**배치 이벤트** (worker_ipc.py → main.cjs → preload.cjs → App.jsx):
+
+| 이벤트 | 데이터 | 설명 |
+|--------|--------|------|
+| `batch_start` | `{batch_size: N}` | 배치 처리 시작 |
+| `batch_phase_start` | `{phase, count}` | Phase 시작 ("parse"/"vision"/"embed_vv"/"embed_mv") |
+| `batch_file_done` | `{phase, file_name, index, count, success}` | Phase 내 파일 1개 완료 |
+| `batch_phase_complete` | `{phase, count}` | Phase 완료 |
+| `batch_complete` | `{batch_size, completed, failed}` | 배치 전체 완료 |
+| `job_done` | `{job_id, file_path, file_name, success}` | Job 최종 완료 (기존 호환) |
+
+**데이터 흐름**:
+```
+worker_daemon.py::process_batch_phased(5 jobs)
+  ↓ progress_callback("file_done", {...})
+worker_ipc.py::_batch_progress_cb()
+  ↓ stdout: {"event":"batch_file_done","phase":"vision","file_name":"hero.psd","index":3,"count":5}
+main.cjs::processWorkerOutput()
+  ↓ sendWorkerEvent('worker-batch-file-done', parsed)
+preload.cjs → App.jsx::onBatchFileDone
+  ↓ setWorkerProgress({currentPhase: "vision", phaseIndex: 3, phaseCount: 5})
+StatusBar: "MC 3/5 | 15/741 | 4.2/min | ~12m"
 ```
 
 ### 스마트 Prefetch 풀
@@ -317,6 +378,19 @@ Server (FastAPI)                    Worker (Python daemon)
 - 서버는 응답에 `pending_command`를 포함 (stop/pause/block)
 - 명령은 **일회성 소비**: 한 번 전달되면 DB에서 NULL로 리셋
 - `pool_hint`: 서버가 권장하는 풀 크기 (batch_capacity × 2)
+- **중요**: IPC 모드(Electron)에서도 `_connect_session()` / `_heartbeat()` / `_disconnect_session()` 호출 필수
+
+### Admin 모니터링 API (v10.2+)
+
+**큐 통계 + 처리속도** (`GET /api/v1/admin/queue/stats`):
+- `throughput`: 슬라이딩 윈도우 처리속도 (files/min) — 1분 우선, 5분 폴백
+- `recent_1min`, `recent_5min`: 각 윈도우 내 완료 파일 수
+- `pending`, `assigned`, `processing`, `completed`, `failed`: 상태별 카운트
+
+**워커별 처리속도** (`GET /api/v1/admin/workers`):
+- 각 워커에 `throughput` 필드 추가 (개별 files/min)
+- `job_queue.assigned_to` 기준으로 per-user 집계
+- 프론트엔드: WorkersPanel에 종합 속도 + 워커별 속도 컬럼 표시
 
 ### 워커 세션 관리 API
 
@@ -554,7 +628,8 @@ for layer in psd.descendants():
 | `backend/server/routers/pipeline.py` | 파이프라인 API (업로드/claim/완료) |
 | `backend/server/routers/worker_setup.py` | 워커 토큰 + 원클릭 셋업 API |
 | `backend/server/queue/manager.py` | **작업 큐 관리자** (Job 생성/claim/완료) |
-| `backend/worker/worker_daemon.py` | **워커 데몬** (prefetch 풀 + 하트비트) |
+| `backend/worker/worker_daemon.py` | **워커 데몬** (prefetch 풀 + 배치 처리 + 하트비트) |
+| `backend/worker/worker_ipc.py` | **워커 IPC 브리지** (Electron ↔ Python JSON 프로토콜) |
 | `backend/worker/config.py` | 워커 설정 (batch_capacity, heartbeat 등) |
 | `backend/db/sqlite_schema_auth.sql` | 인증 DB 스키마 (users, worker_sessions 등) |
 | `frontend/src/api/client.js` | API 클라이언트 (JWT 자동 첨부, isElectron 판별) |
@@ -834,7 +909,8 @@ python backend/setup/installer.py --check
 | `backend/server/app.py` | FastAPI 서버 진입점 | ❌ |
 | `backend/server/routers/workers.py` | 워커 세션 관리 API | ❌ |
 | `backend/server/queue/manager.py` | 작업 큐 관리자 | ❌ |
-| `backend/worker/worker_daemon.py` | 워커 데몬 (prefetch 풀) | ❌ |
+| `backend/worker/worker_daemon.py` | 워커 데몬 (배치 처리 + prefetch 풀) | ❌ |
+| `backend/worker/worker_ipc.py` | 워커 IPC 브리지 (Electron ↔ Python) | ❌ |
 | `backend/worker/config.py` | 워커 설정 | ✅ |
 | `backend/db/sqlite_schema_auth.sql` | 인증 DB 스키마 | ❌ |
 | `tools/setup_models.py` | Ollama 모델 설치 스크립트 | ❌ |
@@ -1067,6 +1143,9 @@ analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
   - Ollama는 현재 MV 생성에 사용하지 않음
 - **VLM (Qwen3-VL-4B)**: transformers 5.1.0의 video_processing_auto.py TypeError 가능성
   - 모델 파일은 캐시됨, 런타임 로딩 시 확인 필요
+- **멀티워커 동일 GPU 경합**: 같은 머신에서 워커 N개 실행 시 각 워커 속도 1/N (총 처리량 이득 없음)
+  - 원인: GPU 시분할로 인한 경합
+  - 멀티워커는 **별도 GPU 머신에 분산 배치할 때만 효과적**
 
 ### 양자화 옵션 (조사 완료, 미적용)
 
