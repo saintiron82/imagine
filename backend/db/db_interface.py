@@ -1,8 +1,7 @@
 """
 Database interface (abstract protocol) for Imagine.
 
-Both SQLiteDB and PostgresDB implement this protocol,
-allowing transparent backend switching via db_factory.
+SQLiteDB implements this protocol.
 """
 
 from abc import ABC, abstractmethod
@@ -12,8 +11,7 @@ from typing import Optional, Dict, Any, List
 class DBInterface(ABC):
     """Abstract database interface for Imagine storage layer.
 
-    All concrete DB clients (SQLiteDB, PostgresDB) must implement
-    these methods with identical signatures and semantics.
+    Concrete DB clients (SQLiteDB) must implement these methods.
     """
 
     # ── Phase 1: Parse ──────────────────────────────────────────

@@ -9,6 +9,7 @@ __pycache__/
 
 # Build output
 dist/
+dist-electron/
 build/
 *.egg-info/
 
@@ -35,7 +36,11 @@ output/
 *.db
 *.db-shm
 *.db-wal
+# Legacy (deprecated)
 chroma_db/
+
+# AutoMata state (recursive-refactor)
+.automata/
 
 # Test artifacts
 _test_*.py

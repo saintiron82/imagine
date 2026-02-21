@@ -777,10 +777,10 @@ for layer in psd.descendants():
 | `frontend/src/i18n/locales/en-US.json` | 영어 번역 파일 |
 | `frontend/src/i18n/locales/ko-KR.json` | 한국어 번역 파일 |
 
-**Legacy (Deprecated)**:
-- `backend/db/pg_client.py` - PostgreSQL 클라이언트 (deprecated, SQLite로 교체)
-- `backend/search/pg_search.py` - pgvector 검색 (deprecated, Triaxis로 교체)
-- `backend/vector/chroma_indexer.py` - ChromaDB 모듈 (deprecated)
+**삭제된 Legacy 파일** (v10.4, 2026-02-21):
+- PostgreSQL: `pg_client.py`, `pg_search.py`, `pg_schema_v2.sql`, `cli_search_pg.py`
+- ChromaDB: `vector/indexer.py`, `vector/searcher.py`, `cli_search.py`
+- 기타: `vision/ollama_parallel_adapter.py` (효과 없음으로 판정)
 
 ## 테스트 전략
 
