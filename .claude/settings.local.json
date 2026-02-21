@@ -116,7 +116,8 @@
       "WebFetch(domain:python-zeroconf.readthedocs.io)",
       "Bash(# Check Electron console output for errors tail -100 /private/tmp/claude-501/-Users-saintiron-Projects-Imagine/tasks/b7e19c9.output)",
       "Bash(# Check recent server logs for worker activity tail -100 /private/tmp/claude-501/-Users-saintiron-Projects-Imagine/tasks/bc04e5c.output)",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "Bash(/Users/saintiron/Projects/Imagine/stop-all.sh:*)"
     ]
   }
 }
