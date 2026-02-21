@@ -299,6 +299,7 @@
   "server.running": "Running on {url}",
   "server.stopped": "Stopped",
   "server.copy_url": "Copy URL",
+  "server.copy_lan_url": "Copy LAN URL",
   "server.port": "Port",
   "admin.tab_worker_tokens": "Worker Tokens",
   "admin.worker_tokens_title": "Worker Tokens",

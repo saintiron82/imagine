@@ -11,7 +11,7 @@ import AdminPage from './pages/AdminPage';
 import SetupPage from './pages/SetupPage';
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
-import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor, Wifi } from 'lucide-react';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
@@ -81,6 +81,8 @@ function App() {
   // Server mode state (Electron only)
   const [serverRunning, setServerRunning] = useState(false);
   const [serverPort, setServerPort] = useState(8000);
+  const [serverLanUrl, setServerLanUrl] = useState(null);
+  const [serverLanAddresses, setServerLanAddresses] = useState([]);
 
   // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
   useEffect(() => {
@@ -334,10 +336,22 @@ function App() {
   // Server mode IPC listeners (Electron only)
   useEffect(() => {
     if (!isElectron || !window.electron?.server) return;
-    // Check initial status
-    window.electron.server.getStatus().then(s => setServerRunning(s.running));
+    // Check initial status (includes LAN addresses)
+    window.electron.server.getStatus().then(s => {
+      setServerRunning(s.running);
+      if (s.running) {
+        setServerLanUrl(s.primaryLanUrl || null);
+        setServerLanAddresses(s.lanAddresses || []);
+      }
+    });
     // Listen for status changes (e.g. server process exit)
-    window.electron.server.onStatusChange((data) => setServerRunning(data.running));
+    window.electron.server.onStatusChange((data) => {
+      setServerRunning(data.running);
+      if (!data.running) {
+        setServerLanUrl(null);
+        setServerLanAddresses([]);
+      }
+    });
     return () => window.electron.server.offStatusChange();
   }, []);
 
@@ -351,7 +365,11 @@ function App() {
         const status = await window.electron.server.getStatus();
         if (status.running) return; // already running
         const result = await window.electron.server.start({ port: serverPort });
-        if (result.success) setServerRunning(true);
+        if (result.success) {
+          setServerRunning(true);
+          setServerLanUrl(result.primaryLanUrl || null);
+          setServerLanAddresses(result.lanAddresses || []);
+        }
       } catch (e) {
         console.warn('Server auto-start failed:', e);
       }
@@ -546,19 +564,19 @@ function App() {
     if (serverRunning) {
       await window.electron.server.stop();
       setServerRunning(false);
+      setServerLanUrl(null);
+      setServerLanAddresses([]);
       clearTokens(); // clean up JWT when server stops
     } else {
       const result = await window.electron.server.start({ port: serverPort });
       if (result.success) {
         setServerRunning(true);
+        setServerLanUrl(result.primaryLanUrl || null);
+        setServerLanAddresses(result.lanAddresses || []);
       }
     }
   };
 
-  const getLocalIp = () => {
-    // Simple heuristic — return hostname for display
-    return `${window.location.hostname || 'localhost'}:${serverPort}`;
-  };
 
   const handleFolderSelect = (path) => {
     setCurrentPath(path);
@@ -956,11 +974,21 @@ function App() {
                 </button>
                 {serverRunning && (
                   <button
-                    onClick={() => navigator.clipboard?.writeText(`http://localhost:${serverPort}`)}
+                    onClick={() => {
+                      const url = serverLanUrl || `http://localhost:${serverPort}`;
+                      navigator.clipboard?.writeText(url);
+                    }}
                     className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] text-green-400 hover:bg-green-900/30 transition-colors"
-                    title={t('server.copy_url')}
+                    title={serverLanUrl ? t('server.copy_lan_url') : t('server.copy_url')}
                   >
-                    <span className="font-mono">:{serverPort}</span>
+                    {serverLanUrl ? (
+                      <>
+                        <Wifi size={10} />
+                        <span className="font-mono">{serverLanUrl.replace('http://', '')}</span>
+                      </>
+                    ) : (
+                      <span className="font-mono">:{serverPort}</span>
+                    )}
                     <Copy size={10} />
                   </button>
                 )}

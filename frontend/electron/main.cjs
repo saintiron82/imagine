@@ -1436,6 +1436,22 @@ ipcMain.handle('worker-status', async () => {
 // Allows Electron app to run a local FastAPI server so other clients can connect.
 let serverProc = null;
 let serverMainWindow = null;
+let serverPortCache = 8000;
+
+/** Get all LAN IPv4 addresses (non-internal, non-VPN). */
+function getLocalNetworkAddresses() {
+    const os = require('os');
+    const interfaces = os.networkInterfaces();
+    const addresses = [];
+    for (const [name, nets] of Object.entries(interfaces)) {
+        for (const net of nets) {
+            if (net.internal || net.family !== 'IPv4') continue;
+            if (/^(utun|tun|tap)/.test(name)) continue;
+            addresses.push({ name, address: net.address });
+        }
+    }
+    return addresses;
+}
 
 /** Load config.yaml and return parsed config object (or null on error). */
 function loadAppConfig() {
@@ -1507,7 +1523,14 @@ function startEmbeddedServer(port = 8000) {
         serverProc = null;
     });
 
-    return { success: true, port };
+    serverPortCache = port;
+    const lanAddresses = getLocalNetworkAddresses();
+    const primaryLan = lanAddresses[0]?.address || null;
+    return {
+        success: true, port,
+        lanAddresses,
+        primaryLanUrl: primaryLan ? `http://${primaryLan}:${port}` : null,
+    };
 }
 
 /** Poll /api/v1/health until server responds or timeout. */
@@ -1558,7 +1581,14 @@ ipcMain.handle('server-stop', async () => {
 });
 
 ipcMain.handle('server-status', async () => {
-    return { running: !!serverProc };
+    if (!serverProc) return { running: false };
+    const lanAddresses = getLocalNetworkAddresses();
+    const primaryLan = lanAddresses[0]?.address || null;
+    return {
+        running: true,
+        lanAddresses,
+        primaryLanUrl: primaryLan ? `http://${primaryLan}:${serverPortCache}` : null,
+    };
 });
 
 function killServerProc() {
