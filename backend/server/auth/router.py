@@ -194,27 +194,14 @@ def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db)):
     if exp < datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Refresh token has expired")
 
-    # Revoke old refresh token (rotation)
-    cursor.execute(
-        "UPDATE refresh_tokens SET revoked = 1 WHERE id = ?",
-        (rt_id,)
-    )
-
-    # Issue new tokens
+    # Reuse existing refresh token (no rotation) — avoids conflict when
+    # browser and embedded worker share the same refresh token.
     access_token = create_access_token(user_id, username, role)
-    new_refresh_token = create_refresh_token()
-
-    cursor.execute(
-        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-           VALUES (?, ?, ?)""",
-        (user_id, hash_refresh_token(new_refresh_token),
-         get_refresh_token_expiry().isoformat())
-    )
 
     db.conn.commit()
     return TokenResponse(
         access_token=access_token,
-        refresh_token=new_refresh_token,
+        refresh_token=req.refresh_token,  # Return same refresh token
     )
 
 

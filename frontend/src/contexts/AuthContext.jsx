@@ -11,7 +11,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { isElectron, getAccessToken, setServerUrl, getServerUrl } from '../api/client';
-import { login as apiLogin, register as apiRegister, getMe, logout as apiLogout, checkServerHealth } from '../api/auth';
+import { login as apiLogin, register as apiRegister, getMe, logout as apiLogout, checkServerHealth, storeWorkerCredentials, clearWorkerCredentials } from '../api/auth';
 
 const AuthContext = createContext(null);
 
@@ -75,6 +75,8 @@ export function AuthProvider({ children }) {
     try {
       if (serverUrl) setServerUrl(serverUrl);
       const data = await apiLogin({ username, password });
+      // Store credentials in memory so worker can do independent login
+      storeWorkerCredentials(username, password);
       const me = await getMe();
       setUser(me.user || me);
       return true;
@@ -100,6 +102,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     apiLogout();
+    clearWorkerCredentials();
     setUser(null);
   }, []);
 

@@ -33,6 +33,27 @@ export function logout() {
   clearTokens();
 }
 
+/** In-memory credential store for worker auth (not persisted to disk). */
+let _workerCredentials = null;
+
+/**
+ * Store login credentials in memory (for worker to do independent login).
+ * Called after successful login. Never persisted to localStorage.
+ */
+export function storeWorkerCredentials(username, password) {
+  _workerCredentials = { username, password };
+}
+
+/** Retrieve stored worker credentials (one-time read, still kept in memory). */
+export function getWorkerCredentials() {
+  return _workerCredentials;
+}
+
+/** Clear stored worker credentials (on logout). */
+export function clearWorkerCredentials() {
+  _workerCredentials = null;
+}
+
 /**
  * Test server connection (unauthenticated health check).
  */

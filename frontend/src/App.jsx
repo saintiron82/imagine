@@ -16,6 +16,7 @@ import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
+import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend } from './services/bridge';
 import { registerPaths, scanFolder, getJobStats } from './api/admin';
 
@@ -569,10 +570,13 @@ function App() {
     if (!w) return;
 
     try {
+      const creds = getWorkerCredentials();
       const result = await w.start({
         serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
         accessToken: getAccessToken() || '',
         refreshToken: getRefreshToken() || '',
+        username: creds?.username || '',
+        password: creds?.password || '',
       });
       if (result?.success) {
         setIsWorkerRunning(true);

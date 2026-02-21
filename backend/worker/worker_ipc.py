@@ -78,8 +78,10 @@ class WorkerIPCController:
         self._access_token = access_token
         self._refresh_token = refresh_token
 
-        if not access_token:
+        # Always set credentials if provided (fallback for token refresh failure)
+        if username:
             os.environ["IMAGINE_WORKER_USERNAME"] = username
+        if password:
             os.environ["IMAGINE_WORKER_PASSWORD"] = password
 
         self._running = True
@@ -114,18 +116,29 @@ class WorkerIPCController:
             daemon = WorkerDaemon()
             self._daemon = daemon
 
-            # Authenticate — token mode (from Electron session) or credentials mode
-            at_preview = (self._access_token[:20] + "...") if self._access_token else "(none)"
-            rt_preview = (self._refresh_token[:16] + "...") if self._refresh_token else "(none)"
-            _emit_log(f"Auth mode: {self._auth_mode}, access={at_preview}, refresh={rt_preview}", "info")
-            if self._auth_mode == "token":
+            # Authenticate — prefer independent login (avoids refresh token rotation conflict)
+            import os
+            has_creds = bool(os.getenv("IMAGINE_WORKER_USERNAME") and os.getenv("IMAGINE_WORKER_PASSWORD"))
+            if has_creds:
+                _emit_log("Auth: independent login (credentials available)", "info")
+                if not daemon.login():
+                    # Fallback to shared tokens if login fails
+                    _emit_log("Login failed, trying shared tokens...", "warning")
+                    if self._access_token and not daemon.set_tokens(self._access_token, self._refresh_token):
+                        _emit_log("Token injection also failed", "error")
+                        _emit_status("error")
+                        self._running = False
+                        return
+            elif self._access_token:
+                at_preview = (self._access_token[:20] + "...") if self._access_token else "(none)"
+                _emit_log(f"Auth: shared token mode (access={at_preview})", "info")
                 if not daemon.set_tokens(self._access_token, self._refresh_token):
                     _emit_log("Token injection failed", "error")
                     _emit_status("error")
                     self._running = False
                     return
-            elif not daemon.login():
-                _emit_log("Authentication failed", "error")
+            else:
+                _emit_log("Auth: no tokens or credentials available", "error")
                 _emit_status("error")
                 self._running = False
                 return
