@@ -78,8 +78,11 @@ class WorkerIPCController:
         self._access_token = access_token
         self._refresh_token = refresh_token
 
-        if not access_token:
+        # Always set credentials as fallback (even in token mode)
+        # so WorkerDaemon._refresh_auth() can re-login if tokens expire
+        if username:
             os.environ["IMAGINE_WORKER_USERNAME"] = username
+        if password:
             os.environ["IMAGINE_WORKER_PASSWORD"] = password
 
         self._running = True
