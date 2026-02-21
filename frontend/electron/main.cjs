@@ -1567,6 +1567,7 @@ ipcMain.handle('server-start', async (event, opts) => {
 });
 
 ipcMain.handle('server-stop', async () => {
+    stopTunnel(); // stop tunnel when server stops
     if (!serverProc) return { success: true };
     try {
         serverProc.kill('SIGTERM');
@@ -1593,9 +1594,211 @@ ipcMain.handle('server-status', async () => {
 
 function killServerProc() {
     if (!serverProc) return;
+    stopTunnel(); // also stop tunnel when server stops
     try { serverProc.kill('SIGTERM'); } catch (e) { /* ignore */ }
     serverProc = null;
 }
+
+// ── Cloudflare Quick Tunnel ──────────────────────────────────────
+// Exposes the local server to the internet via cloudflared (no account needed).
+let tunnelProc = null;
+let tunnelUrl = null;
+
+const CLOUDFLARED_DIR = path.join(app.getPath('userData'), 'bin');
+
+function getCloudflaredPath() {
+    const bin = process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
+    return path.join(CLOUDFLARED_DIR, bin);
+}
+
+function isCloudflaredInstalled() {
+    return fs.existsSync(getCloudflaredPath());
+}
+
+/** Download cloudflared binary for the current platform from GitHub Releases. */
+async function downloadCloudflared() {
+    const https = require('https');
+    const { execSync } = require('child_process');
+
+    const platform = process.platform;
+    const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+
+    const urls = {
+        'darwin-arm64': 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz',
+        'darwin-amd64': 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz',
+        'win32-amd64': 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe',
+        'win32-arm64': 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe',
+        'linux-amd64': 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64',
+        'linux-arm64': 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64',
+    };
+
+    const key = `${platform}-${arch}`;
+    const url = urls[key];
+    if (!url) throw new Error(`Unsupported platform: ${key}`);
+
+    if (!fs.existsSync(CLOUDFLARED_DIR)) {
+        fs.mkdirSync(CLOUDFLARED_DIR, { recursive: true });
+    }
+
+    console.log(`[Tunnel] Downloading cloudflared for ${key}...`);
+
+    // Helper: follow redirects and download to file
+    const downloadFile = (downloadUrl, destPath) => new Promise((resolve, reject) => {
+        const follow = (url, redirectCount = 0) => {
+            if (redirectCount > 5) return reject(new Error('Too many redirects'));
+            const proto = url.startsWith('https') ? https : require('http');
+            proto.get(url, { headers: { 'User-Agent': 'Imagine-App' } }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    return follow(res.headers.location, redirectCount + 1);
+                }
+                if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
+                const fileStream = fs.createWriteStream(destPath);
+                res.pipe(fileStream);
+                fileStream.on('finish', () => { fileStream.close(); resolve(); });
+                fileStream.on('error', reject);
+            }).on('error', reject);
+        };
+        follow(downloadUrl);
+    });
+
+    if (url.endsWith('.tgz')) {
+        // macOS: download .tgz then extract
+        const tgzPath = path.join(CLOUDFLARED_DIR, 'cloudflared.tgz');
+        await downloadFile(url, tgzPath);
+        execSync(`tar -xzf "${tgzPath}" -C "${CLOUDFLARED_DIR}"`, { stdio: 'ignore' });
+        try { fs.unlinkSync(tgzPath); } catch (e) { /* ignore */ }
+        fs.chmodSync(getCloudflaredPath(), 0o755);
+    } else if (url.endsWith('.exe')) {
+        // Windows: download .exe directly
+        await downloadFile(url, getCloudflaredPath());
+    } else {
+        // Linux: download binary directly
+        await downloadFile(url, getCloudflaredPath());
+        fs.chmodSync(getCloudflaredPath(), 0o755);
+    }
+
+    console.log('[Tunnel] cloudflared downloaded successfully');
+}
+
+/** Start Cloudflare Quick Tunnel. Returns { success, url } or error. */
+function startTunnel(port) {
+    if (tunnelProc) return Promise.resolve({ success: false, error: 'Tunnel already running' });
+
+    const bin = getCloudflaredPath();
+    if (!fs.existsSync(bin)) {
+        return Promise.resolve({ success: false, error: 'cloudflared not installed', needsInstall: true });
+    }
+
+    console.log(`[Tunnel] Starting cloudflared tunnel for port ${port}...`);
+
+    tunnelProc = spawn(bin, [
+        'tunnel', '--url', `http://localhost:${port}`, '--no-autoupdate',
+    ], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    return new Promise((resolve) => {
+        let resolved = false;
+        const timeout = setTimeout(() => {
+            if (!resolved) {
+                resolved = true;
+                resolve({ success: false, error: 'Tunnel start timeout (30s)' });
+            }
+        }, 30000);
+
+        const handleData = (chunk) => {
+            const msg = chunk.toString();
+            // cloudflared outputs URL to stderr
+            const match = msg.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+            if (match && !resolved) {
+                resolved = true;
+                clearTimeout(timeout);
+                tunnelUrl = match[0];
+                console.log(`[Tunnel] URL: ${tunnelUrl}`);
+                resolve({ success: true, url: tunnelUrl });
+                try {
+                    if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                        serverMainWindow.webContents.send('tunnel-status-change', {
+                            running: true, url: tunnelUrl
+                        });
+                    }
+                } catch (e) { /* ignore */ }
+            }
+        };
+
+        tunnelProc.stdout.on('data', handleData);
+        tunnelProc.stderr.on('data', handleData);
+
+        tunnelProc.on('close', (code) => {
+            console.log(`[Tunnel] Process exited (code: ${code})`);
+            tunnelProc = null;
+            tunnelUrl = null;
+            if (!resolved) {
+                resolved = true;
+                clearTimeout(timeout);
+                resolve({ success: false, error: `Tunnel exited with code ${code}` });
+            }
+            try {
+                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                    serverMainWindow.webContents.send('tunnel-status-change', { running: false });
+                }
+            } catch (e) { /* ignore */ }
+        });
+
+        tunnelProc.on('error', (err) => {
+            console.error('[Tunnel] Spawn error:', err);
+            if (!resolved) {
+                resolved = true;
+                clearTimeout(timeout);
+                resolve({ success: false, error: err.message });
+            }
+        });
+    });
+}
+
+function stopTunnel() {
+    if (!tunnelProc) return { success: true };
+    console.log('[Tunnel] Stopping...');
+    try { tunnelProc.kill('SIGTERM'); } catch (e) { /* ignore */ }
+    const proc = tunnelProc;
+    setTimeout(() => {
+        try { proc?.kill('SIGKILL'); } catch (e) { /* already dead */ }
+    }, 5000);
+    tunnelProc = null;
+    tunnelUrl = null;
+    return { success: true };
+}
+
+ipcMain.handle('tunnel-start', async (event, opts) => {
+    serverMainWindow = BrowserWindow.fromWebContents(event.sender);
+
+    // Auto-download if not installed
+    if (!isCloudflaredInstalled()) {
+        try {
+            if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                serverMainWindow.webContents.send('tunnel-status-change', { downloading: true });
+            }
+            await downloadCloudflared();
+        } catch (e) {
+            console.error('[Tunnel] Download failed:', e);
+            return { success: false, error: `Failed to download cloudflared: ${e.message}` };
+        }
+    }
+
+    return startTunnel(opts?.port || serverPortCache);
+});
+
+ipcMain.handle('tunnel-stop', async () => {
+    return stopTunnel();
+});
+
+ipcMain.handle('tunnel-status', async () => {
+    return {
+        running: !!tunnelProc,
+        url: tunnelUrl,
+        installed: isCloudflaredInstalled(),
+    };
+});
 
 // ── Window creation (pure UI — no IPC registration) ──────────────
 

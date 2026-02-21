@@ -85,6 +85,9 @@ function App() {
   const [serverLanUrl, setServerLanUrl] = useState(null);
   const [serverLanAddresses, setServerLanAddresses] = useState([]);
   const [showServerInfo, setShowServerInfo] = useState(false);
+  const [tunnelRunning, setTunnelRunning] = useState(false);
+  const [tunnelUrl, setTunnelUrl] = useState(null);
+  const [tunnelDownloading, setTunnelDownloading] = useState(false);
 
   // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
   useEffect(() => {
@@ -352,9 +355,32 @@ function App() {
       if (!data.running) {
         setServerLanUrl(null);
         setServerLanAddresses([]);
+        setTunnelRunning(false);
+        setTunnelUrl(null);
       }
     });
-    return () => window.electron.server.offStatusChange();
+
+    // Tunnel status
+    if (window.electron?.tunnel) {
+      window.electron.tunnel.getStatus().then(s => {
+        setTunnelRunning(s.running);
+        setTunnelUrl(s.url || null);
+      });
+      window.electron.tunnel.onStatusChange((data) => {
+        if (data.downloading) {
+          setTunnelDownloading(true);
+        } else {
+          setTunnelDownloading(false);
+          setTunnelRunning(data.running);
+          setTunnelUrl(data.url || null);
+        }
+      });
+    }
+
+    return () => {
+      window.electron.server.offStatusChange();
+      window.electron?.tunnel?.offStatusChange();
+    };
   }, []);
 
   // Auto-start server when entering admin/server mode
@@ -541,6 +567,24 @@ function App() {
     } catch (e) {
       appendLog({ message: `Worker start failed: ${e.message}`, type: 'error' });
     }
+  };
+
+  const handleTunnelStart = async () => {
+    if (!window.electron?.tunnel) return;
+    setTunnelDownloading(true);
+    const result = await window.electron.tunnel.start({ port: serverPort });
+    setTunnelDownloading(false);
+    if (result?.success) {
+      setTunnelRunning(true);
+      setTunnelUrl(result.url);
+    }
+  };
+
+  const handleTunnelStop = async () => {
+    if (!window.electron?.tunnel) return;
+    await window.electron.tunnel.stop();
+    setTunnelRunning(false);
+    setTunnelUrl(null);
   };
 
   const handleWorkerStop = async () => {
@@ -996,11 +1040,11 @@ function App() {
                         serverPort={serverPort}
                         serverLanUrl={serverLanUrl}
                         serverLanAddresses={serverLanAddresses}
-                        tunnelUrl={null}
-                        tunnelRunning={false}
-                        tunnelDownloading={false}
-                        onTunnelStart={() => {}}
-                        onTunnelStop={() => {}}
+                        tunnelUrl={tunnelUrl}
+                        tunnelRunning={tunnelRunning}
+                        tunnelDownloading={tunnelDownloading}
+                        onTunnelStart={handleTunnelStart}
+                        onTunnelStop={handleTunnelStop}
                         onClose={() => setShowServerInfo(false)}
                       />
                     )}

@@ -146,6 +146,15 @@ contextBridge.exposeInMainWorld('electron', {
         offStatusChange: () => ipcRenderer.removeAllListeners('server-status-change'),
     },
 
+    // Cloudflare Quick Tunnel (internet access)
+    tunnel: {
+        start: (opts) => ipcRenderer.invoke('tunnel-start', opts),
+        stop: () => ipcRenderer.invoke('tunnel-stop'),
+        getStatus: () => ipcRenderer.invoke('tunnel-status'),
+        onStatusChange: (cb) => ipcRenderer.on('tunnel-status-change', (_, data) => cb(data)),
+        offStatusChange: () => ipcRenderer.removeAllListeners('tunnel-status-change'),
+    },
+
     // Worker Daemon (server-mode job processing)
     worker: {
         start: (opts) => ipcRenderer.invoke('worker-start', opts),
