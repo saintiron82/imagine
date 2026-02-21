@@ -777,10 +777,17 @@ for layer in psd.descendants():
 | `frontend/src/i18n/locales/en-US.json` | 영어 번역 파일 |
 | `frontend/src/i18n/locales/ko-KR.json` | 한국어 번역 파일 |
 
-**삭제된 Legacy 파일** (v10.4, 2026-02-21):
-- PostgreSQL: `pg_client.py`, `pg_search.py`, `pg_schema_v2.sql`, `cli_search_pg.py`
-- ChromaDB: `vector/indexer.py`, `vector/searcher.py`, `cli_search.py`
-- 기타: `vision/ollama_parallel_adapter.py` (효과 없음으로 판정)
+**핵심 문서** (작업 시 반드시 참조):
+
+| 문서 | 용도 | 참조 시점 |
+|------|------|----------|
+| `phase.md` | **개발 로드맵** — Phase 1~9 체크리스트, 완료/미완료 현황 | 새 기능 개발 전, 진행 상황 파악 시 |
+| `docs/project_report.md` | **프로젝트 종합 보고서** — 아키텍처, 기술 스택, 완료 Phase 상세, 코드 통계 | 프로젝트 전체 구조 파악 시 |
+| `docs/V3.1.md` | **핵심 설계 명세** — VV/MC/MV/FTS 파이프라인, MC 2-Stage, MV 입력 포맷, 검색 로직 | 파이프라인/검색 로직 수정 시 |
+| `docs/triaxis_search_architecture.md` | **검색 시스템 해설** — 3축(VV/MV/FTS) 동작 원리, RRF 공식, 점수 범위, DB 스키마 | 검색 관련 작업 시 |
+| `docs/future_roadmap.md` | **미래 계획 통합** — 클라우드 확장, DB 최적화, 벤치마크, ECM 설계 | 아키텍처 확장/최적화 논의 시 |
+| `docs/platform_optimization.md` | **플랫폼별 VLM 최적화** — MLX/vLLM/Ollama/Transformers 폴백 체인 | VLM 백엔드 관련 작업 시 |
+| `docs/troubleshooting.md` | **트러블슈팅 기록** — 알려진 문제와 해결책 | 에러 발생 시 |
 
 ## 테스트 전략
 
