@@ -299,6 +299,7 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 |----------|---------|--------|
 | `CLAUDE.md` | Development guide (terminology, rules, architecture) | Active |
 | `phase.md` | Development roadmap (Phase 1-9) | Active |
+| `docs/project_report.md` | Comprehensive project report | Active |
 | `docs/V3.1.md` | Core design spec (VV/MC/MV/FTS pipeline) | Reference |
 | `docs/triaxis_search_architecture.md` | 3-axis search system explanation | Reference |
 | `docs/quick_start_guide.md` | 5-minute getting started guide | Active |
@@ -306,12 +307,7 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 | `docs/platform_optimization.md` | Platform-specific VLM optimization | Reference |
 | `docs/retrospective_v3.1_tier_system.md` | Tier system implementation retrospective | Historical |
 | `docs/troubleshooting.md` | Known issues and solutions | Active |
-| `docs/master_plan_local_cloud_unified_2026-02-16.md` | Cloud expansion architecture design | Future |
-| `docs/data_build_search_optimization_plan_2026-02-16.md` | Performance optimization roadmap | Future |
-| `docs/image_search_auto_benchmark_master_plan_2026-02-18.md` | Search quality auto-benchmark plan | Future |
-| `docs/h100_checklist_comparison_report_2026-02-16.md` | Cloud GPU optimization analysis | Future |
-| `docs/evaluation_plan_accuracy_ab_2026-02-16.md` | A/B search quality evaluation plan | Future |
-| `docs/new_model_quality_first_2026-02-16.md` | ECM quality-first design philosophy | Future |
+| `docs/future_roadmap.md` | Consolidated future plans (cloud, optimization, benchmark, ECM) | Future |
 
 ---
 
