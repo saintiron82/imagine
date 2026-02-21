@@ -176,6 +176,7 @@ contextBridge.exposeInMainWorld('electron', {
         start: (opts) => ipcRenderer.invoke('worker-start', opts),
         stop: () => ipcRenderer.invoke('worker-stop'),
         getStatus: () => ipcRenderer.invoke('worker-status'),
+        updateTokens: (opts) => ipcRenderer.invoke('worker-update-tokens', opts),
         onStatus: (cb) => ipcRenderer.on('worker-status', (_, data) => cb(data)),
         offStatus: () => ipcRenderer.removeAllListeners('worker-status'),
         onLog: (cb) => ipcRenderer.on('worker-log', (_, data) => cb(data)),

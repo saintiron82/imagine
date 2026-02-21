@@ -44,6 +44,15 @@ export function clearTokens() {
   localStorage.removeItem(REFRESH_KEY);
 }
 
+/** Forward refreshed tokens to the embedded worker process (Electron only). */
+function _syncTokensToWorker(accessToken, refreshToken) {
+  try {
+    if (typeof window !== 'undefined' && window.electron?.worker?.updateTokens) {
+      window.electron.worker.updateTokens({ accessToken, refreshToken });
+    }
+  } catch { /* ignore — worker may not be running */ }
+}
+
 /** Pending refresh promise to avoid concurrent refresh calls */
 let _refreshPromise = null;
 
@@ -68,6 +77,8 @@ async function refreshAccessToken() {
       if (resp.ok) {
         const data = await resp.json();
         setTokens(data.access_token, data.refresh_token);
+        // Forward new tokens to embedded worker (if running in Electron)
+        _syncTokensToWorker(data.access_token, data.refresh_token);
         return data.access_token;
       } else {
         clearTokens();

@@ -78,11 +78,8 @@ class WorkerIPCController:
         self._access_token = access_token
         self._refresh_token = refresh_token
 
-        # Always set credentials as fallback (even in token mode)
-        # so WorkerDaemon._refresh_auth() can re-login if tokens expire
-        if username:
+        if not access_token:
             os.environ["IMAGINE_WORKER_USERNAME"] = username
-        if password:
             os.environ["IMAGINE_WORKER_PASSWORD"] = password
 
         self._running = True
@@ -90,6 +87,12 @@ class WorkerIPCController:
         self._thread.start()
         _emit_status("running")
         _emit_log("Worker started", "success")
+
+    def update_tokens(self, access_token: str, refresh_token: str):
+        """Update JWT tokens mid-session (forwarded from browser refresh)."""
+        if self._daemon:
+            self._daemon.set_tokens(access_token, refresh_token)
+            _emit_log("Tokens refreshed from app session", "info")
 
     def stop(self):
         """Stop the worker loop."""
@@ -241,6 +244,11 @@ def main():
                 server_url=cmd.get("server_url", "http://localhost:8000"),
                 username=cmd.get("username", ""),
                 password=cmd.get("password", ""),
+                access_token=cmd.get("access_token", ""),
+                refresh_token=cmd.get("refresh_token", ""),
+            )
+        elif action == "update_tokens":
+            controller.update_tokens(
                 access_token=cmd.get("access_token", ""),
                 refresh_token=cmd.get("refresh_token", ""),
             )

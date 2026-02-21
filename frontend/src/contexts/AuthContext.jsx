@@ -9,7 +9,7 @@
  * App.jsx calls configureAuth(mode) after user picks a mode.
  */
 
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { isElectron, getAccessToken, setServerUrl, getServerUrl } from '../api/client';
 import { login as apiLogin, register as apiRegister, getMe, logout as apiLogout, checkServerHealth } from '../api/auth';
 
@@ -22,7 +22,6 @@ export function AuthProvider({ children }) {
 
   // null = undetermined, true = bypass, false = JWT required
   const [skipAuth, setSkipAuth] = useState(null);
-  const _passwordRef = useRef(null);
 
   useEffect(() => {
     // Web mode: always require JWT
@@ -76,7 +75,6 @@ export function AuthProvider({ children }) {
     try {
       if (serverUrl) setServerUrl(serverUrl);
       const data = await apiLogin({ username, password });
-      _passwordRef.current = password; // keep for embedded worker fallback
       const me = await getMe();
       setUser(me.user || me);
       return true;
@@ -102,14 +100,8 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     apiLogout();
-    _passwordRef.current = null;
     setUser(null);
   }, []);
-
-  const getWorkerCredentials = useCallback(() => ({
-    username: user?.username || '',
-    password: _passwordRef.current || '',
-  }), [user]);
 
   const value = {
     user,
@@ -123,7 +115,6 @@ export function AuthProvider({ children }) {
     logout,
     checkServerHealth,
     configureAuth,
-    getWorkerCredentials,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

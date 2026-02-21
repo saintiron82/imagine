@@ -1535,6 +1535,21 @@ ipcMain.handle('worker-stop', async () => {
     return { success: true };
 });
 
+// IPC Handler: Forward refreshed tokens to the worker process
+ipcMain.handle('worker-update-tokens', async (event, opts) => {
+    if (!workerProc) return { success: false, error: 'Worker not running' };
+    try {
+        workerProc.stdin.write(JSON.stringify({
+            cmd: 'update_tokens',
+            access_token: opts.accessToken || '',
+            refresh_token: opts.refreshToken || '',
+        }) + '\n');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
 // IPC Handler: Query worker status
 ipcMain.handle('worker-status', async () => {
     if (!workerProc) return { status: 'idle' };

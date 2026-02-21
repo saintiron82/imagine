@@ -21,7 +21,7 @@ import { registerPaths, scanFolder, getJobStats } from './api/admin';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
-  const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout, login, configureAuth, getWorkerCredentials } = useAuth();
+  const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout, login, configureAuth } = useAuth();
   const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archive' | 'worker' | 'admin'
   const [currentPath, setCurrentPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState(new Set());
@@ -569,13 +569,10 @@ function App() {
     if (!w) return;
 
     try {
-      const creds = getWorkerCredentials();
       const result = await w.start({
         serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
         accessToken: getAccessToken() || '',
         refreshToken: getRefreshToken() || '',
-        username: creds.username,
-        password: creds.password,
       });
       if (result?.success) {
         setIsWorkerRunning(true);
