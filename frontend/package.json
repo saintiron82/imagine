@@ -59,7 +59,8 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "public/icon-256.png"
+      "icon": "public/icon-256.png",
+      "signAndEditExecutable": false
     },
     "linux": {
       "target": "AppImage",

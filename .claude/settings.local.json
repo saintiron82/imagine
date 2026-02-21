@@ -108,7 +108,11 @@
       "Bash(chmod:*)",
       "Bash(bash:*)",
       "Bash(PYTHONPATH=/Users/saintiron/Projects/Imagine PYTHONIOENCODING=utf-8 .venv/bin/python3:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(cd C:/Users/saint/ImageParser/frontend && npm run electron:build 2>&1)",
+      "WebFetch(domain:about.signpath.io)",
+      "WebFetch(domain:ossign.org)",
+      "WebFetch(domain:signpath.org)"
     ]
   }
 }
