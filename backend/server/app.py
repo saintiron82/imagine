@@ -57,6 +57,7 @@ async def startup():
     logger.info("Imagine Server starting up...")
     # DB will be lazily initialized on first request via get_db()
     _create_default_admin()
+    _cleanup_stale_jobs()
 
     # mDNS service registration (optional — requires zeroconf)
     try:
@@ -139,6 +140,32 @@ def _create_default_admin():
             logger.info("Created default admin account (admin / admin)")
     except Exception as e:
         logger.warning(f"Could not create default admin: {e}")
+
+
+def _cleanup_stale_jobs():
+    """Reset stale assigned/processing jobs and offline worker sessions on startup."""
+    try:
+        from backend.server.deps import get_db
+        from backend.server.queue.manager import JobQueueManager
+        db = get_db()
+        queue = JobQueueManager(db)
+        cfg = get_server_config()
+        timeout = cfg.get("queue", {}).get("assignment_timeout_minutes", 30)
+        count = queue.reassign_stale_jobs(timeout)
+        if count > 0:
+            logger.info(f"Startup cleanup: reset {count} stale jobs to pending")
+
+        # Mark all online worker sessions as offline (stale from previous run)
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """UPDATE worker_sessions SET status = 'offline'
+               WHERE status = 'online'"""
+        )
+        if cursor.rowcount > 0:
+            logger.info(f"Startup cleanup: marked {cursor.rowcount} stale worker sessions offline")
+        db.conn.commit()
+    except Exception as e:
+        logger.warning(f"Startup job cleanup failed: {e}")
 
 
 # ── SPA Static Serving (React frontend) ─────────────────────
