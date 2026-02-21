@@ -728,6 +728,7 @@ class WorkerDaemon:
             if result is None:
                 ctx.failed = True
                 ctx.error = f"Parse failed: {ctx.job['file_path']}"
+                logger.warning(f"Parse failed: {self._current_file}")
             else:
                 ctx.metadata, ctx.thumb_path, ctx.meta_obj = result
 
