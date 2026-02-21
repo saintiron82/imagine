@@ -13,7 +13,8 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-import numpy as np
+# numpy is imported lazily — only when vectors are actually encoded
+# This avoids blocking the worker IPC startup (numpy DLL loading can hang on Windows)
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,9 @@ class ResultUploader:
         self,
         job_id: int,
         metadata: Dict[str, Any],
-        vv_vec: Optional[np.ndarray] = None,
-        mv_vec: Optional[np.ndarray] = None,
-        structure_vec: Optional[np.ndarray] = None,
+        vv_vec=None,
+        mv_vec=None,
+        structure_vec=None,
     ) -> bool:
         """Upload final results and mark job complete."""
         vectors = {}
@@ -138,6 +139,7 @@ class ResultUploader:
             return None
 
 
-def _encode_vector(vec: np.ndarray) -> str:
+def _encode_vector(vec) -> str:
     """Encode numpy float32 vector to base64 string."""
+    import numpy as np
     return base64.b64encode(vec.astype(np.float32).tobytes()).decode("ascii")

@@ -1471,7 +1471,7 @@ ipcMain.handle('worker-start', async (event, opts) => {
 
     console.log('[Worker] Starting worker_ipc.py...');
 
-    workerProc = spawn(finalPython, ['-m', 'backend.worker.worker_ipc'], {
+    workerProc = spawn(finalPython, ['-u', '-m', 'backend.worker.worker_ipc'], {
         cwd: projectRoot,
         env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -1500,10 +1500,12 @@ ipcMain.handle('worker-start', async (event, opts) => {
         const msg = data.toString().trim();
         if (msg) {
             console.error('[Worker:stderr]', msg);
-            // Forward errors as log events
-            if (/\bERROR\b|Traceback|Exception:|FAIL/i.test(msg)) {
-                sendWorkerEvent('worker-log', { message: msg, type: 'error' });
-            }
+            // Forward ALL stderr to UI for debugging (not just errors)
+            const isError = /\bERROR\b|Traceback|Exception:|FAIL/i.test(msg);
+            sendWorkerEvent('worker-log', {
+                message: `[stderr] ${msg}`,
+                type: isError ? 'error' : 'warning',
+            });
         }
     });
 

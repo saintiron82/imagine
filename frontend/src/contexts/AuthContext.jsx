@@ -52,17 +52,10 @@ export function AuthProvider({ children }) {
   const configureAuth = useCallback(async (mode) => {
     if (mode === 'client') {
       setSkipAuth(false);
+      // Always require fresh login in client mode so that
+      // credentials are captured in memory for the worker.
+      clearWorkerCredentials();
       setUser(null);
-      // Try to restore existing session
-      const token = getAccessToken();
-      if (token && getServerUrl()) {
-        try {
-          const data = await getMe();
-          setUser(data.user || data);
-        } catch {
-          setUser(null);
-        }
-      }
     } else {
       // Server mode or reset: local admin bypass
       setSkipAuth(true);

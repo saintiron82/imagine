@@ -255,14 +255,16 @@ export default function LoginPage({ onShowDownload }) {
                             </span>
                           </div>
                         </div>
-                        <button
-                          type="button"
+                        <span
+                          role="button"
+                          tabIndex={0}
                           onClick={(e) => handleRemoveHistory(e, h.url)}
-                          className="p-1 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleRemoveHistory(e, h.url); }}
+                          className="p-1 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 cursor-pointer"
                           title={t('auth.remove_history')}
                         >
                           <X size={12} />
-                        </button>
+                        </span>
                       </button>
                     );
                   })}
