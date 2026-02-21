@@ -195,13 +195,15 @@ class WorkerDaemon:
     def _refresh_auth(self) -> bool:
         """Refresh the access token using the refresh token or worker token."""
         if not self.refresh_token:
-            # Try worker token re-exchange if available
+            logger.warning("[REFRESH] No refresh token — trying fallback login")
             wt = getattr(self, '_worker_token_secret', None)
             if wt:
                 return self.exchange_worker_token(wt)
             return self.login()
 
         try:
+            rt_preview = self.refresh_token[:16] + "..." if self.refresh_token else "(none)"
+            logger.info(f"[REFRESH] Attempting token refresh (refresh={rt_preview})")
             resp = self.session.post(
                 f"{self.server_url}/api/v1/auth/refresh",
                 json={"refresh_token": self.refresh_token},
@@ -211,10 +213,10 @@ class WorkerDaemon:
                 self.access_token = data["access_token"]
                 self.refresh_token = data.get("refresh_token", self.refresh_token)
                 self.session.headers["Authorization"] = f"Bearer {self.access_token}"
-                logger.info("Token refreshed")
+                logger.info("[REFRESH] Token refreshed OK")
                 return True
             else:
-                logger.warning("Token refresh failed, re-authenticating...")
+                logger.warning(f"[REFRESH] Failed: {resp.status_code} {resp.text[:200]}")
                 wt = getattr(self, '_worker_token_secret', None)
                 if wt:
                     return self.exchange_worker_token(wt)
@@ -230,8 +232,15 @@ class WorkerDaemon:
         import requests
         resp = getattr(self.session, method)(url, **kwargs)
         if resp.status_code == 401:
+            logger.warning(f"[WORKER-AUTH] 401 on {method.upper()} {url} — attempting refresh")
+            at_preview = (self.access_token[:20] + "...") if self.access_token else "(none)"
+            rt_preview = (self.refresh_token[:16] + "...") if self.refresh_token else "(none)"
+            logger.info(f"[WORKER-AUTH] Current tokens: access={at_preview}, refresh={rt_preview}")
             if self._refresh_auth():
+                logger.info("[WORKER-AUTH] Refresh succeeded, retrying request")
                 resp = getattr(self.session, method)(url, **kwargs)
+            else:
+                logger.error("[WORKER-AUTH] Refresh FAILED — giving up")
         return resp
 
     # ── Session Management ─────────────────────────────────────

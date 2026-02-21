@@ -166,6 +166,7 @@ def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db)):
     """Refresh access token using a valid refresh token."""
     cursor = db.conn.cursor()
     token_hash = hash_refresh_token(req.refresh_token)
+    token_preview = req.refresh_token[:16] + "..." if len(req.refresh_token) > 16 else req.refresh_token
 
     cursor.execute(
         """SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked,
@@ -177,11 +178,13 @@ def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db)):
     )
     row = cursor.fetchone()
     if row is None:
+        logger.warning(f"[REFRESH] 401 — Token not found in DB (token={token_preview})")
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     rt_id, user_id, expires_at, revoked, username, role, is_active = row
 
     if revoked:
+        logger.warning(f"[REFRESH] 401 — Token REVOKED (user={username}, rt_id={rt_id}, token={token_preview})")
         raise HTTPException(status_code=401, detail="Refresh token has been revoked")
 
     if not is_active:

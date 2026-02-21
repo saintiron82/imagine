@@ -1479,11 +1479,14 @@ ipcMain.handle('worker-start', async (event, opts) => {
 
     // Queue the start command — will be sent after 'ready' event
     // Supports token mode (from existing session) or credential mode
+    const accessToken = opts.accessToken || '';
+    const refreshToken = opts.refreshToken || '';
+    console.log(`[Worker] Auth: access=${accessToken ? accessToken.substring(0, 20) + '...' : '(none)'}, refresh=${refreshToken ? refreshToken.substring(0, 16) + '...' : '(none)'}`);
     workerStartCmd = {
         cmd: 'start',
         server_url: opts.serverUrl || 'http://localhost:8000',
-        access_token: opts.accessToken || '',
-        refresh_token: opts.refreshToken || '',
+        access_token: accessToken,
+        refresh_token: refreshToken,
         username: opts.username || '',
         password: opts.password || '',
     };

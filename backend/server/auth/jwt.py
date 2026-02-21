@@ -49,12 +49,17 @@ def get_refresh_token_expiry() -> datetime:
 
 def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     """Decode and verify an access token. Returns payload or None."""
+    import logging
+    _logger = logging.getLogger(__name__)
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
         if payload.get("type") != "access":
+            _logger.warning(f"[JWT] Token type mismatch: expected 'access', got '{payload.get('type')}'")
             return None
         return payload
     except jwt.ExpiredSignatureError:
+        _logger.warning(f"[JWT] Token EXPIRED (token={token[:20]}...)")
         return None
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        _logger.warning(f"[JWT] Token INVALID: {e} (token={token[:20]}...)")
         return None

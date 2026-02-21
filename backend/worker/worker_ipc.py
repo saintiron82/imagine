@@ -115,7 +115,9 @@ class WorkerIPCController:
             self._daemon = daemon
 
             # Authenticate — token mode (from Electron session) or credentials mode
-            _emit_log("Authenticating with server...", "info")
+            at_preview = (self._access_token[:20] + "...") if self._access_token else "(none)"
+            rt_preview = (self._refresh_token[:16] + "...") if self._refresh_token else "(none)"
+            _emit_log(f"Auth mode: {self._auth_mode}, access={at_preview}, refresh={rt_preview}", "info")
             if self._auth_mode == "token":
                 if not daemon.set_tokens(self._access_token, self._refresh_token):
                     _emit_log("Token injection failed", "error")

@@ -48,14 +48,17 @@ def get_current_user(
     Returns user dict with id, username, role, etc.
     """
     if credentials is None:
+        logger.warning("[AUTH] 401 — No Bearer token in request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    token_preview = credentials.credentials[:20] + "..." if len(credentials.credentials) > 20 else credentials.credentials
     payload = decode_access_token(credentials.credentials)
     if payload is None:
+        logger.warning(f"[AUTH] 401 — Token decode failed (token={token_preview})")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -64,6 +67,7 @@ def get_current_user(
 
     user_id_raw = payload.get("sub")
     if user_id_raw is None:
+        logger.warning(f"[AUTH] 401 — No 'sub' in payload (token={token_preview})")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
