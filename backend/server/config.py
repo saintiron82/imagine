@@ -41,6 +41,9 @@ def get_refresh_token_days() -> int:
 
 def get_cors_origins() -> List[str]:
     cfg = get_server_config()
+    # Allow all origins when cors_allow_all is true (server mode, JWT-protected)
+    if cfg.get("cors_allow_all", False):
+        return ["*"]
     origins = cfg.get("cors_origins", ["http://localhost:9274", "http://localhost:8000"])
     # Electron built apps use file:// protocol which sends Origin: null
     if "null" not in origins:

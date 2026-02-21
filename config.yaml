@@ -164,10 +164,11 @@ server:
   host: 0.0.0.0
   port: 8000
   workers: 4
+  cors_allow_all: true
   cors_origins:
     - http://localhost:9274
     - http://localhost:3000
-    - "null"
+    - 'null'
   auth:
     jwt_secret: change-this-secret-in-production
     access_token_expire_minutes: 15
@@ -185,7 +186,7 @@ worker:
   server_url: http://localhost:8000
   email: ''
   password: ''
-  claim_batch_size: 5
+  claim_batch_size: 20
   poll_interval_seconds: 30
 storage:
   path_style: posix
@@ -203,4 +204,4 @@ vision:
   require_local_models: true
   temperature: 0.1
 app:
-  mode:   # determined at runtime by SetupPage
+  mode: null
