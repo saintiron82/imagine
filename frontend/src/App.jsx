@@ -11,7 +11,8 @@ import AdminPage from './pages/AdminPage';
 import SetupPage from './pages/SetupPage';
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
-import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor, Wifi } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor, Wifi, Info } from 'lucide-react';
+import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
@@ -83,6 +84,7 @@ function App() {
   const [serverPort, setServerPort] = useState(8000);
   const [serverLanUrl, setServerLanUrl] = useState(null);
   const [serverLanAddresses, setServerLanAddresses] = useState([]);
+  const [showServerInfo, setShowServerInfo] = useState(false);
 
   // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
   useEffect(() => {
@@ -973,24 +975,36 @@ function App() {
                   <Power size={12} className={serverRunning ? 'text-green-400' : 'text-gray-500'} />
                 </button>
                 {serverRunning && (
-                  <button
-                    onClick={() => {
-                      const url = serverLanUrl || `http://localhost:${serverPort}`;
-                      navigator.clipboard?.writeText(url);
-                    }}
-                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] text-green-400 hover:bg-green-900/30 transition-colors"
-                    title={serverLanUrl ? t('server.copy_lan_url') : t('server.copy_url')}
-                  >
-                    {serverLanUrl ? (
-                      <>
-                        <Wifi size={10} />
-                        <span className="font-mono">{serverLanUrl.replace('http://', '')}</span>
-                      </>
-                    ) : (
-                      <span className="font-mono">:{serverPort}</span>
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowServerInfo(!showServerInfo)}
+                      className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] text-green-400 hover:bg-green-900/30 transition-colors"
+                      title={t('server.info_title')}
+                    >
+                      {serverLanUrl ? (
+                        <>
+                          <Wifi size={10} />
+                          <span className="font-mono">{serverLanUrl.replace('http://', '')}</span>
+                        </>
+                      ) : (
+                        <span className="font-mono">:{serverPort}</span>
+                      )}
+                      <Info size={10} />
+                    </button>
+                    {showServerInfo && (
+                      <ServerInfoPanel
+                        serverPort={serverPort}
+                        serverLanUrl={serverLanUrl}
+                        serverLanAddresses={serverLanAddresses}
+                        tunnelUrl={null}
+                        tunnelRunning={false}
+                        tunnelDownloading={false}
+                        onTunnelStart={() => {}}
+                        onTunnelStop={() => {}}
+                        onClose={() => setShowServerInfo(false)}
+                      />
                     )}
-                    <Copy size={10} />
-                  </button>
+                  </div>
                 )}
               </div>
             </>
