@@ -463,6 +463,32 @@ ipcMain.handle('relink-apply', async (_, { packagePath, targetFolder, deleteMiss
     });
 });
 
+// ── mDNS Server Discovery ──────────────────────────────────────────────
+const mdnsBrowser = require('./mdns-browser.cjs');
+
+ipcMain.handle('mdns-start-browse', async (event) => {
+    if (!mdnsBrowser.isAvailable()) return { success: false, error: 'bonjour-service not available' };
+
+    const win = BrowserWindow.fromWebContents(event.sender);
+    mdnsBrowser.startBrowsing((eventType, data) => {
+        try {
+            if (win && !win.isDestroyed()) {
+                win.webContents.send('mdns-server-event', { type: eventType, ...data });
+            }
+        } catch { /* window closed */ }
+    });
+    return { success: true };
+});
+
+ipcMain.handle('mdns-stop-browse', async () => {
+    mdnsBrowser.stopBrowsing();
+    return { success: true };
+});
+
+ipcMain.handle('mdns-get-servers', async () => {
+    return mdnsBrowser.getDiscoveredServers();
+});
+
 // IPC Handler: Sync folder — scan and compare disk vs DB
 ipcMain.handle('sync-folder', async (_, { folderPath }) => {
     const finalPython = resolvePython();

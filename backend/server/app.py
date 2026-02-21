@@ -58,10 +58,24 @@ async def startup():
     # DB will be lazily initialized on first request via get_db()
     _create_default_admin()
 
+    # mDNS service registration (optional — requires zeroconf)
+    try:
+        from backend.server.mdns import ImagineServiceAnnouncer
+        cfg = get_server_config()
+        port = cfg.get("port", 8000)
+        app.state.mdns = ImagineServiceAnnouncer(port)
+        app.state.mdns.start()
+    except ImportError:
+        logger.info("zeroconf not installed, mDNS discovery disabled")
+    except Exception as e:
+        logger.warning(f"mDNS registration failed: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Imagine Server shutting down...")
+    if hasattr(app.state, "mdns") and app.state.mdns:
+        app.state.mdns.stop()
     close_db()
 
 
@@ -95,7 +109,12 @@ app.include_router(sync_router, prefix="/api/v1")
 @app.get("/api/v1/health")
 def health():
     """Health check endpoint."""
-    return {"status": "ok", "version": "4.0.0"}
+    import socket
+    return {
+        "status": "ok",
+        "version": "4.0.0",
+        "server_name": socket.gethostname(),
+    }
 
 
 # ── Default admin account ────────────────────────────────────

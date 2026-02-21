@@ -129,6 +129,15 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('relink-apply', { packagePath, targetFolder, deleteMissing }),
     },
 
+    // mDNS Server Discovery (LAN auto-discovery)
+    mdns: {
+        startBrowse: () => ipcRenderer.invoke('mdns-start-browse'),
+        stopBrowse: () => ipcRenderer.invoke('mdns-stop-browse'),
+        getServers: () => ipcRenderer.invoke('mdns-get-servers'),
+        onServerEvent: (cb) => ipcRenderer.on('mdns-server-event', (_, data) => cb(data)),
+        offServerEvent: () => ipcRenderer.removeAllListeners('mdns-server-event'),
+    },
+
     // Folder Sync (DB ↔ disk reconciliation)
     sync: {
         scanFolder: (folderPath) => ipcRenderer.invoke('sync-folder', { folderPath }),

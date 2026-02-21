@@ -41,10 +41,13 @@ export async function checkServerHealth() {
     const base = getServerUrl();
     if (!base) return { ok: false, error: 'No server URL configured' };
 
-    const resp = await fetch(`${base}/api/v1/health`, { method: 'GET' });
+    const resp = await fetch(`${base}/api/v1/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000),
+    });
     if (resp.ok) {
       const data = await resp.json();
-      return { ok: true, version: data.version };
+      return { ok: true, version: data.version, serverName: data.server_name || null };
     }
     return { ok: false, error: `HTTP ${resp.status}` };
   } catch (e) {
