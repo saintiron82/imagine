@@ -207,8 +207,12 @@ class WorkerIPCController:
                 time.sleep(1)
 
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             _emit_log(f"Worker error: {e}", "error")
+            _emit_log(f"Traceback: {tb}", "error")
             _emit_status("error")
+            logger.error(f"Worker loop crashed: {e}\n{tb}")
         finally:
             # Disconnect session from server
             if self._daemon:
