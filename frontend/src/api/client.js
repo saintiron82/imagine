@@ -46,11 +46,10 @@ export function clearTokens() {
 
 /** Forward refreshed tokens to the embedded worker process (Electron only). */
 function _syncTokensToWorker(accessToken, refreshToken) {
-  try {
-    if (typeof window !== 'undefined' && window.electron?.worker?.updateTokens) {
-      window.electron.worker.updateTokens({ accessToken, refreshToken });
-    }
-  } catch { /* ignore — worker may not be running */ }
+  if (typeof window !== 'undefined' && window.electron?.worker?.updateTokens) {
+    window.electron.worker.updateTokens({ accessToken, refreshToken })
+      .catch(() => { /* ignore — worker may not be running */ });
+  }
 }
 
 /** Pending refresh promise to avoid concurrent refresh calls */
