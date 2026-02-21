@@ -352,7 +352,9 @@ function App() {
     // Listen for status changes (e.g. server process exit)
     window.electron.server.onStatusChange((data) => {
       setServerRunning(data.running);
-      if (!data.running) {
+      if (data.running) {
+        serverStartAttemptRef.current = 0; // Reset cooldown on success
+      } else {
         setServerLanUrl(null);
         setServerLanAddresses([]);
         setTunnelRunning(false);
@@ -383,27 +385,42 @@ function App() {
     };
   }, []);
 
-  // Auto-start server when entering admin/server mode
+  // Auto-start server when entering server mode (with cooldown to prevent restart loops)
+  const serverStartAttemptRef = useRef(0);
   useEffect(() => {
     if (!isElectron || appMode !== 'server' || serverRunning) return;
     if (!window.electron?.server) return;
 
+    // Cooldown: max 3 attempts within 30 seconds
+    const now = Date.now();
+    const MAX_ATTEMPTS = 3;
+    const COOLDOWN_MS = 30000;
+    if (serverStartAttemptRef.current >= MAX_ATTEMPTS) return;
+
     const autoStart = async () => {
+      serverStartAttemptRef.current++;
       try {
         const status = await window.electron.server.getStatus();
-        if (status.running) return; // already running
+        if (status.running) {
+          setServerRunning(true);
+          return;
+        }
         const result = await window.electron.server.start({ port: serverPort });
         if (result.success) {
           setServerRunning(true);
           setServerLanUrl(result.primaryLanUrl || null);
           setServerLanAddresses(result.lanAddresses || []);
+          serverStartAttemptRef.current = 0; // Reset on success
         }
       } catch (e) {
         console.warn('Server auto-start failed:', e);
       }
     };
 
-    autoStart();
+    // Delay restart to avoid tight loops
+    const delay = serverStartAttemptRef.current > 1 ? 3000 : 500;
+    const timer = setTimeout(autoStart, delay);
+    return () => clearTimeout(timer);
   }, [appMode, serverPort, serverRunning]);
 
   // Auto-login to local server for API access (JWT) in server mode

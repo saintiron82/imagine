@@ -1578,9 +1578,27 @@ function loadAppConfig() {
     }
 }
 
+/** Check if a TCP port is available. */
+function isPortAvailable(port) {
+    return new Promise((resolve) => {
+        const net = require('net');
+        const tester = net.createServer()
+            .once('error', () => resolve(false))
+            .once('listening', () => { tester.close(); resolve(true); })
+            .listen(port, '0.0.0.0');
+    });
+}
+
 /** Start embedded FastAPI server. Returns { success, port } or { success: false, error }. */
-function startEmbeddedServer(port = 8000) {
+async function startEmbeddedServer(port = 8000) {
     if (serverProc) return { success: false, error: 'Server already running' };
+
+    // Check port availability before spawning to prevent restart loops
+    const portFree = await isPortAvailable(port);
+    if (!portFree) {
+        console.warn(`[Server] Port ${port} is already in use`);
+        return { success: false, error: `Port ${port} is already in use` };
+    }
 
     const finalPython = resolvePython();
     console.log(`[Server] Starting FastAPI on port ${port}...`);
