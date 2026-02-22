@@ -129,6 +129,9 @@ class WorkerDaemon:
         self._current_file = None
         self._current_phase = None
 
+        # Stop signal — set by IPC controller to interrupt batch mid-flight
+        self._stop_requested = False
+
         # Throttle state
         self._throttle_level = "normal"
         self._original_batch_capacity = self.batch_capacity  # preserved for restore
@@ -756,6 +759,11 @@ class WorkerDaemon:
         _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
 
         for i, ctx in enumerate(active):
+            # Check stop signal between files within Vision phase
+            if self._stop_requested:
+                logger.info(f"Stop requested during Vision phase ({i}/{len(active)})")
+                break
+
             self._current_phase = "vision"
             self._current_file = Path(ctx.job["file_path"]).name
             self.uploader.report_progress(ctx.job["job_id"], "vision")
@@ -807,6 +815,8 @@ class WorkerDaemon:
         """
         if self.processing_mode == "mc_only":
             return self._process_batch_mc_only(jobs, progress_callback)
+
+        t_batch = time.perf_counter()
 
         # Build job contexts and resolve file access
         contexts = []
@@ -879,12 +889,22 @@ class WorkerDaemon:
 
         active = [c for c in contexts if not c.failed]
 
+        # Check stop signal between phases
+        if self._stop_requested:
+            logger.info("Stop requested after Parse phase — aborting batch")
+            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
+
         # ── Phase V: Vision (VLM, 1-by-1 — MLX batch_size=1) ──
         elapsed_vision = self._run_vision_phase(active, progress_callback)
         fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
 
         # Unload VLM to free GPU memory for embedding phases
         self._unload_vlm()
+
+        # Check stop signal between phases
+        if self._stop_requested:
+            logger.info("Stop requested after Vision phase — aborting batch")
+            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
 
         # ── Phase VV: SigLIP2 (real batch via encode_image_batch) ──
         t_phase = time.perf_counter()
@@ -951,6 +971,11 @@ class WorkerDaemon:
 
         # Unload SigLIP2 to free GPU memory for MV phase
         self._unload_vv()
+
+        # Check stop signal between phases
+        if self._stop_requested:
+            logger.info("Stop requested after VV phase — aborting batch")
+            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
 
         # ── Phase MV: Qwen3-Embedding (real batch via encode_batch) ──
         t_phase = time.perf_counter()
@@ -1094,6 +1119,51 @@ class WorkerDaemon:
         # GPU memory cleanup
         gc.collect()
         self._try_empty_gpu_cache()
+
+        return results
+
+    def _finalize_batch(
+        self, contexts, progress_callback, t_batch, interrupted=False
+    ) -> list:
+        """Finalize a batch — upload completed results, fail the rest.
+
+        Called on normal completion or when stop is requested mid-batch.
+        Already-completed phase results are uploaded; incomplete jobs are
+        released back to the queue so other workers can pick them up.
+        """
+        results = []
+        for ctx in contexts:
+            job_id = ctx.job["job_id"]
+            if ctx.failed or (interrupted and not ctx.metadata):
+                # No useful work done — fail the job so it returns to queue
+                self.uploader.fail_job(
+                    job_id, ctx.error or "Interrupted by stop request"
+                )
+                self._total_failed += 1
+                results.append((job_id, False))
+            elif interrupted:
+                # Partial work done — fail to return to queue for re-processing
+                self.uploader.fail_job(job_id, "Interrupted by stop request")
+                self._total_failed += 1
+                results.append((job_id, False))
+            else:
+                results.append((job_id, True))
+
+        _notify(progress_callback, "batch_complete", {
+            "count": len(contexts),
+            "elapsed_s": round(time.perf_counter() - t_batch, 2),
+            "files_per_min": 0,
+            "interrupted": interrupted,
+        })
+
+        self._clear_current()
+        gc.collect()
+        self._try_empty_gpu_cache()
+
+        if interrupted:
+            logger.info(
+                f"Batch interrupted: {len(results)} jobs returned to queue"
+            )
 
         return results
 

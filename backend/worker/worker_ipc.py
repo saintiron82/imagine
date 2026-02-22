@@ -100,6 +100,9 @@ class WorkerIPCController:
         _emit_log(f"[START] Auth mode: {self._auth_mode}", "info")
 
         self._running = True
+        # Reset stop signal from previous session
+        if self._daemon:
+            self._daemon._stop_requested = False
         self._thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._thread.start()
         _emit_status("running")
@@ -112,8 +115,10 @@ class WorkerIPCController:
             _emit_log("Tokens refreshed from app session", "info")
 
     def stop(self):
-        """Stop the worker loop."""
+        """Stop the worker loop — also signals daemon to abort current batch."""
         self._running = False
+        if self._daemon:
+            self._daemon._stop_requested = True
         _emit_status("idle")
         _emit_log("Worker stopped", "info")
 
