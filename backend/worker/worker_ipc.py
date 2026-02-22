@@ -333,6 +333,10 @@ class WorkerIPCController:
             _emit_status("error")
             logger.error(f"Worker loop crashed: {e}\n{tb}")
         finally:
+            # Unload all models to free GPU memory
+            _emit_log("[SHUTDOWN] Unloading models...", "info")
+            if self._daemon:
+                self._daemon._on_enter_idle()
             # Disconnect session from server
             _emit_log("[SHUTDOWN] Disconnecting session...", "info")
             if self._daemon:
