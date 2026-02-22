@@ -131,6 +131,236 @@ ImageParser는 PSD, PNG, JPG 이미지를 AI 검색 가능한 데이터로 변�
 
 ---
 
+## 6. 분산 워커 고도화
+
+### 핵심 통찰
+
+**현재 구조의 낭비**: 모든 워커가 모든 Phase를 순차 처리하므로, 매 배치 사이클마다 3개 모델을 올리고 내린다.
+
+```
+현재 워커 1대의 사이클:
+  Load VLM(8GB) → MC(5files) → Unload VLM
+  → Load SigLIP2(2GB) → VV(5files) → Unload SigLIP2
+  → Load Embedding(1GB) → MV(5files) → Unload Embedding
+  → (반복)
+```
+
+**제안**: 워커가 하나의 Phase만 담당하면 모델을 **영구 상주**시킬 수 있다.
+
+```
+제안 구조:
+  워커 A (MC 전문): VLM 상시 로드 → MC만 계속 처리
+  워커 B (VV 전문): SigLIP2 상시 로드 → VV만 계속 처리
+  워커 C (MV 전문): Embedding 상시 로드 → MV만 계속 처리
+```
+
+### 6.1 Phase 전문화 워커 풀
+
+#### Phase별 속도 비대칭
+
+| Phase | 모델 | 파일당 소요 | GPU 메모리 | 배치 가능 |
+|---|---|---|---|---|
+| **P (Parse)** | 없음 (CPU) | ~0.1s | 0 | 무제한 |
+| **V (MC/VLM)** | Qwen3-VL-4B | **~5-15s** | ~8GB | batch=1 (MLX/Ollama) |
+| **VV (SigLIP2)** | SigLIP2-so400m | ~0.3s | ~2GB | batch=8 |
+| **MV (Embedding)** | Qwen3-Embed-0.6B | ~0.1s | ~1GB | batch=16 |
+
+MC가 전체의 ~90% 시간을 차지. VV+MV는 합쳐도 MC의 1/10.
+
+#### 현재 vs 제안 비교
+
+**현재: All-in-One 워커 3대**
+
+```
+워커A: [Load VLM→MC(5)→Unload→Load SigLIP→VV(5)→Unload→Load Embed→MV(5)→Unload] ← 1 cycle
+워커B: [동일]
+워커C: [동일]
+
+사이클당 모델 로드/언로드: 3회 × 3대 = 9회
+MC가 느려서 VV/MV는 항상 MC를 기다림 (워커 내부에서 직렬)
+```
+
+**제안: Phase 전문화 3대**
+
+```
+워커A (MC전문):  VLM 영구 상주 → MC(file1) → MC(file2) → MC(file3) → ...
+워커B (VV전문):  SigLIP2 영구 상주 → VV(file1) → VV(file2) → ...  (MC 완료된 것부터)
+워커C (MV전문):  Embedding 영구 상주 → MV(file1) → MV(file2) → ...  (MC 완료된 것부터)
+
+사이클당 모델 로드/언로드: 0회
+각 워커가 독립적으로 파이프라인 흐름
+```
+
+#### MC 병목에 맞춘 비대칭 배치 (5대 머신)
+
+```
+워커 A1 (MC): RTX 4090 — VLM 상주, MC 전담
+워커 A2 (MC): RTX 3060 — VLM 상주, MC 전담
+워커 A3 (MC): Mac M5  — VLM 상주, MC 전담
+워커 B  (VV): 아무 GPU — SigLIP2 상주, VV 전담 (빠르므로 1대로 충분)
+워커 C  (MV): CPU도 가능 — Embedding 상주, MV 전담 (매우 빠름)
+```
+
+MC 워커 3대가 파일을 처리하면, VV 워커 1대가 결과를 받아 VV 처리, MV 워커 1대가 MV 처리.
+
+#### 서버 큐 변경: Phase별 상태 추적
+
+```
+현재: job_queue: file_path → status (pending/assigned/completed/failed)
+제안: job_queue: file_path → phase_status (parse_done, mc_done, vv_done, mv_done)
+```
+
+워커가 Phase별로 claim:
+- MC 워커: `parse_done=true AND mc_done=false`인 Job을 요청
+- VV 워커: `mc_done=true AND vv_done=false`인 Job을 요청
+- MV 워커: `vv_done=true AND mv_done=false`인 Job을 요청
+
+기존 Smart Skip의 `_check_phase_skip()` 로직을 서버 큐에 올리면 Phase별 claim 가능.
+
+#### 데이터 흐름: 서버 DB 경유 (시나리오 A)
+
+```
+MC 워커 → MC 결과를 서버 DB에 저장 (mc_caption, ai_tags) → phase_status.mc_done = true
+VV 워커 → 서버에서 원본 이미지 다운로드 → SigLIP2 → VV 결과를 서버 DB에 저장
+MV 워커 → 서버에서 MC 텍스트 읽기 → Embedding → MV 결과를 서버 DB에 저장
+```
+
+워커 간 직접 통신 없이 서버 경유 — 단순하고 안정적.
+
+### 6.2 리소스 인식 쓰로틀링
+
+각 워커가 자기 머신의 상태를 모니터링하고 **자동으로 속도를 조절/휴식**:
+
+- **정상** → 전속력 처리
+- **경고** (GPU 85°C, 메모리 80%) → 배치 크기 축소 + 처리 간격 추가
+- **위험** (GPU 90°C, 메모리 90%) → 휴식 (N초 대기 후 재확인)
+- **심각** → 처리 중단, 서버에 "paused" 보고
+
+#### 모니터링 지표
+
+| 지표 | 도구 | 의미 |
+|---|---|---|
+| GPU 온도 | `nvidia-smi` (CUDA), IOKit (MPS) | 과열 시 쓰로틀링 |
+| GPU 메모리 사용률 | torch.cuda / torch.mps | OOM 방지 |
+| CPU 사용률 | psutil | 다른 프로세스와 경합 |
+| 시스템 메모리 | psutil | 전체 시스템 안정성 |
+| 디스크 IO | psutil | 이미지 읽기/쓰기 병목 |
+
+#### 하트비트에 리소스 메트릭 포함
+
+```json
+{
+  "status": "online",
+  "jobs_completed": 42,
+  "resources": {
+    "gpu_temp_c": 78,
+    "gpu_mem_percent": 65,
+    "cpu_percent": 45,
+    "sys_mem_percent": 72,
+    "throttle_level": "normal"
+  }
+}
+```
+
+서버 Admin UI에서 각 워커의 실시간 리소스 현황을 확인 가능.
+
+### 6.3 활동 스케줄링
+
+워커가 살아 있지만 **사용자 지정 시간에만 활동**:
+
+```yaml
+# user-settings.yaml (머신별 개인 설정)
+worker:
+  schedule:
+    enabled: true
+    active_hours:
+      - start: "22:00"    # 밤 10시부터
+        end: "06:00"       # 아침 6시까지
+    active_days: [mon, tue, wed, thu, fri]  # 평일만
+    timezone: "Asia/Seoul"
+```
+
+#### 사용 시나리오: 게임 스튜디오 아티스트 워크스테이션
+
+```
+낮 (09:00-22:00): 아티스트가 작업 중 → 워커 대기 (하트비트만)
+밤 (22:00-06:00): 아티스트 퇴근 → 워커 자동 활성화, GPU 전력 투입
+주말: 설정에 따라 24시간 활동 또는 완전 휴식
+```
+
+#### 워커 상태 머신
+
+- **active**: 스케줄 시간 내, 리소스 정상 → 전력 처리
+- **idle**: 스케줄 시간 외 → 하트비트만, Job claim 안 함
+- **resting**: 스케줄 시간 내지만 리소스 압력 → 잠시 대기 후 재개
+
+### 6.4 성과 분석
+
+#### 모델 로드/언로드 제거
+
+| 항목 | 현재 (All-in-One) | 제안 (전문화) |
+|---|---|---|
+| VLM 로드 횟수 | 매 배치마다 | **앱 시작 시 1회** |
+| SigLIP2 로드 횟수 | 매 배치마다 | **앱 시작 시 1회** |
+| Embedding 로드 횟수 | 매 배치마다 | **앱 시작 시 1회** |
+| 모델 전환 대기 | ~10-30초/배치 | **0초** |
+| GPU 메모리 peak | Phase별 상이 | **Phase별 고정** |
+
+#### 파이프라인 처리량 (5대 머신, 1000개 파일)
+
+**현재**: 각 워커가 5파일씩 전체 Phase 처리
+
+```
+워커당 배치 시간 ≈ MC(5×10s) + 모델전환(15s) + VV(5×0.3s) + 모델전환(10s) + MV(5×0.1s) + 모델전환(10s)
+                 = 50s + 15s + 1.5s + 10s + 0.5s + 10s ≈ 87s / 5파일
+처리량 ≈ 5대 × (5/87) ≈ 0.29 files/sec ≈ 17 files/min
+```
+
+**제안**: MC 3대 + VV 1대 + MV 1대
+
+```
+MC 워커 3대: 각각 10s/file → 합산 0.33 files/sec
+VV 워커 1대: 0.3s/file → 3.3 files/sec (여유)
+MV 워커 1대: 0.1s/file → 10 files/sec (여유)
+모델 전환 시간: 0초
+처리량 ≈ 0.33 files/sec ≈ 20 files/min
+```
+
+동일 5대 기준 약 **18% 향상** (모델 전환 제거분). 진짜 이점은 **확장성** — MC 워커를 추가할수록 선형적으로 처리량 증가, VV/MV는 1대로 충분하므로 나머지 모든 GPU를 MC에 투입 가능.
+
+### 6.5 고려사항 및 제약
+
+- **단일 머신 폴백**: 1대에서는 기존 All-in-One이 더 효율적. Phase 전문화는 2대 이상에서만 의미.
+- **Parse Phase**: CPU-only이고 매우 빠름. MC 워커가 MC 전에 Parse도 함께 처리.
+- **VV + MV 합체**: VV(0.3s) + MV(0.1s) = 0.4s/file. 별도 워커 2대 대신 VV+MV 합체 워커 1대로 충분 (~3GB).
+- **장애 복구**: Phase별 상태를 DB에 기록하면 부분 재처리 가능 — MC 완료 후 VV crash → VV만 재처리.
+- **워커 역할 자동 배정**: 서버가 워커 풀을 보고 최적 역할을 자동 배정 (gpu_vram, 현재 병목 Phase 기준).
+
+### 6.6 구현 난이도 예상
+
+| 변경 | 난이도 | 설명 |
+|---|---|---|
+| Job 큐에 Phase별 상태 추가 | 중 | `job_queue` 테이블에 `mc_done`, `vv_done`, `mv_done` 컬럼 |
+| Phase별 claim API | 중 | `POST /api/v1/jobs/claim?phase=mc` |
+| 워커 역할 모드 추가 | 중 | `worker_daemon.py`에 `--role mc` 옵션 |
+| 모델 영구 상주 로직 | 소 | 기존 unload 호출을 role에 따라 스킵 |
+| 서버 자동 역할 배정 | 대 | 워커 풀 분석 + 병목 Phase 감지 + 동적 배정 |
+| 단일 머신 폴백 | 소 | 워커 1대면 기존 All-in-One 모드 유지 |
+| Admin UI (Phase별 진행률) | 중 | Phase별 pending/processing 카운트 표시 |
+| 리소스 모니터링 | 중 | 하트비트에 GPU/CPU/메모리 메트릭 추가 |
+| 활동 스케줄링 | 소 | user-settings.yaml의 schedule 읽기 + 상태 머신 |
+
+### 인수 조건
+- [ ] Phase 전문화 모드에서 MC/VV/MV 워커가 독립적으로 Job을 claim하고 처리
+- [ ] 모델 영구 상주: 전문화 워커에서 배치 간 모델 로드/언로드 0회
+- [ ] 단일 머신에서는 기존 All-in-One 모드 자동 폴백
+- [ ] 하트비트에 GPU 온도, 메모리 사용률 등 리소스 메트릭 포함
+- [ ] 리소스 압력 시 자동 쓰로틀링 (배치 크기 축소 또는 휴식)
+- [ ] user-settings.yaml의 스케줄 설정에 따라 워커 활동 시간 제한
+- [ ] Admin UI에서 워커별 역할, 상태, 리소스, 스케줄 확인 가능
+
+---
+
 ## 기술 제약 사항
 
 - **DB**: SQLite + sqlite-vec 유지 (PostgreSQL 전환 금지)
