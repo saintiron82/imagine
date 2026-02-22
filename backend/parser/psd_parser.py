@@ -58,9 +58,8 @@ class PSDParser(BaseParser):
         try:
             # Open PSD file
             psd = PSDImage.open(file_path)
-            
             width, height = psd.width, psd.height
-            
+
             # Extract layer information
             layer_tree, layer_paths, text_contents, fonts = self._extract_layers(
                 psd, (width, height)
@@ -72,13 +71,13 @@ class PSDParser(BaseParser):
             # Build semantic tags from layer paths
             # v3.1 Context Injection: Use raw layer names for richer context
             semantic_tags = self._build_semantic_tags_raw(psd)
-            
+
             # Get file stats
             file_stats = file_path.stat()
-            
+
             # Count layers
             layer_count = len(list(psd.descendants()))
-            
+
             # Build AssetMeta
             asset_meta = AssetMeta(
                 file_path=str(file_path.absolute()),
@@ -102,7 +101,8 @@ class PSDParser(BaseParser):
             
             # Save JSON
             self._save_json(asset_meta, file_path)
-            
+            logger.info(f"Parsed PSD: {file_path.name} ({width}x{height}, {layer_count} layers)")
+
             return ParseResult(
                 success=True,
                 asset_meta=asset_meta,

@@ -268,6 +268,139 @@ daemon._disconnect_session()
 
 ---
 
+## [2026-02-22] v9.3: Windows 워커 Parse Phase 무한 행(Hang) — stdin 파이프 I/O 락 데드락
+
+### 증상
+- Windows Electron 앱에서 워커 시작 → 서버 접속, 파일 다운로드 모두 정상
+- "Phase parse — 3 files" 로그 출력 후 **영구적으로 멈춤** (CPU 0%, 타임아웃까지 무반응)
+- PSD 파싱 중 `psd.composite()` 호출 시점에서 정확히 멈춤
+- macOS에서는 동일 코드가 정상 동작 (**Windows 전용 문제**)
+
+### 원인 분석
+
+**근본 원인: Windows CRT(C Runtime) I/O 락과 piped stdin의 충돌**
+
+```
+Electron (main.cjs)
+  └─ spawn("python", ["-u", "worker_ipc.py"], { stdio: ['pipe', 'pipe', 'pipe'] })
+       ├─ stdin: Electron → Python (JSON 명령)
+       ├─ stdout: Python → Electron (JSON 이벤트)
+       └─ stderr: Python → Electron (로그)
+```
+
+1. `worker_ipc.py`의 메인 스레드가 `for line in sys.stdin`으로 **stdin을 블로킹 읽기**
+2. 워커 로직은 **백그라운드 스레드**에서 `psd.composite()` 실행 (numpy C-extension 호출)
+3. **Windows에서만 발생**: 파이프된 stdin의 블로킹 `ReadFile()`이 CRT/커널 I/O 락을 보유
+4. 백그라운드 스레드의 numpy/C-extension이 같은 I/O 서브시스템을 사용하려 할 때 **데드락**
+5. macOS/Linux에서는 이 락 경합이 발생하지 않음 (POSIX I/O 모델이 다름)
+
+**검증 과정** (체계적 격리 테스트):
+
+| 테스트 조건 | stdin 방식 | 스레드 | 결과 |
+|------------|-----------|--------|------|
+| subprocess, 메인 스레드 | pipe | 메인 | ✅ 0.3초 정상 |
+| subprocess, 백그라운드 스레드 | pipe (stdin 안 읽음) | 백그라운드 | ✅ 0.3초 정상 |
+| subprocess, 백그라운드 스레드 | pipe (stdin 블로킹 읽기) | 백그라운드 | ❌ **데드락** |
+| subprocess, 백그라운드 스레드 | pipe (os.read 블로킹) | 백그라운드 | ❌ **데드락** |
+| subprocess, 백그라운드 스레드 | pipe (별도 스레드에서 블로킹) | 백그라운드 | ❌ **데드락** |
+| subprocess, 백그라운드 스레드 | pipe (PeekNamedPipe 논블로킹) | 백그라운드 | ✅ **0.3초 정상** |
+
+**핵심 발견**: Windows에서는 어떤 스레드든 파이프된 stdin을 블로킹 읽기하면, 다른 스레드의 C-extension I/O가 멈춤.
+유일한 해결책: 블로킹 읽기를 아예 하지 않는 것 (논블로킹 폴링).
+
+### 해결 방법
+
+**Win32 `PeekNamedPipe` 논블로킹 stdin 리더** (`worker_ipc.py`):
+
+```python
+def _make_win32_stdin_reader():
+    """Windows 전용: PeekNamedPipe로 stdin을 논블로킹 폴링."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+    buf = bytearray()
+
+    def readline():
+        nonlocal buf
+        while True:
+            available = wintypes.DWORD(0)
+            ok = kernel32.PeekNamedPipe(
+                handle, None, 0, None, ctypes.byref(available), None
+            )
+            if not ok:
+                return _STDIN_CLOSED  # 파이프 닫힘
+
+            if available.value > 0:
+                # 데이터 있을 때만 ReadFile (논블로킹)
+                read_buf = ctypes.create_string_buffer(available.value)
+                bytes_read = wintypes.DWORD(0)
+                kernel32.ReadFile(handle, read_buf, available.value,
+                                  ctypes.byref(bytes_read), None)
+                buf.extend(read_buf.raw[:bytes_read.value])
+                if b"\n" in buf:
+                    # 라인 완성 시 반환
+                    idx = buf.index(b"\n")
+                    line = bytes(buf[:idx])
+                    del buf[:idx + 1]
+                    return line.decode("utf-8", errors="replace").strip() or None
+            else:
+                time.sleep(0.05)  # 50ms 폴링 (CPU 부하 최소)
+    return readline
+```
+
+**플랫폼 분기** (`main()` 함수):
+```python
+if sys.platform == "win32":
+    _read_line = _make_win32_stdin_reader()   # 논블로킹 폴링
+else:
+    _line_iter = iter(sys.stdin)              # 블로킹 (Unix에서는 안전)
+    def _read_line():
+        try:
+            return next(_line_iter).strip() or None
+        except StopIteration:
+            return _STDIN_CLOSED
+```
+
+**추가 조치 (이전 커밋에서 적용)**:
+- 무거운 모듈(numpy, psd_tools, PIL, torch)을 메인 스레드에서 사전 import
+  - Windows `LoadLibrary` + Python import lock = 백그라운드 스레드 DLL 로딩 데드락 방지
+- `ingest_engine.py`의 `sys.stdout` UTF-8 래핑을 `__main__` 가드로 보호
+  - 모듈로 import될 때 stdout 스트림 교체 방지
+
+### 플랫폼별 차이 요약
+
+| 항목 | Windows | macOS / Linux |
+|------|---------|---------------|
+| **stdin 읽기** | Win32 PeekNamedPipe (논블로킹 50ms 폴링) | `for line in sys.stdin` (블로킹) |
+| **DLL/SO 로딩** | 메인 스레드 사전 import 필수 (LoadLibrary 락) | 사전 import 불필요 (안전) |
+| **stdout 인코딩** | UTF-8 강제 래핑 필요 (기본 cp949) | UTF-8 기본 |
+| **프로세스 종료** | SIGKILL 필요 (SIGTERM 무시 가능) | SIGTERM 정상 동작 |
+
+### 예방책
+
+- **Windows에서 piped subprocess 개발 시**: 블로킹 stdin 읽기 + 백그라운드 C-extension 조합 금지
+- **크로스 플랫폼 IPC 코드**: `sys.platform` 분기로 Windows/Unix 별도 처리
+- **새 워커 기능 추가 시**: Windows/macOS 양쪽에서 테스트 필수
+- **C-extension 사용 모듈** (numpy, torch, psd-tools): Windows에서는 메인 스레드 사전 import
+
+### 후속 조치 (v0.5.0)
+
+- **공용 유틸리티 추출**: 인라인 Win32 코드를 `backend/utils/win32_stdin.py`로 추출.
+  `make_stdin_reader()` 함수가 플랫폼을 자동 감지하여 적절한 리더 반환.
+- **검색 데몬 분석**: `api_search.py`의 `run_daemon()`도 `for line in sys.stdin` 사용하나,
+  단일 스레드 구조이므로 CRT I/O 락 경합 위험 없음 (백그라운드 스레드 부재). 수정 불필요.
+- **규칙 명시**: 향후 새 Python subprocess가 stdin 파이프 + 백그라운드 C-extension 조합을
+  사용할 경우 반드시 `make_stdin_reader()` 사용 (CLAUDE.md에 규칙 추가).
+
+### 교훈
+
+macOS에서 정상 동작하는 코드가 Windows에서 데드락을 일으킬 수 있다. 파이프된 stdin의 I/O 락 동작이 OS별로 근본적으로 다르며, Windows CRT의 I/O 직렬화는 문서화가 거의 되어있지 않아 디버깅이 극도로 어렵다.
+**"동일 코드, 다른 OS = 다른 동작"을 항상 가정**해야 한다.
+
+---
+
 ## [2026-02-21] v10.x: 동일 머신 멀티워커 GPU 경합 (처리속도 이득 없음)
 
 ### 증상
@@ -288,3 +421,50 @@ daemon._disconnect_session()
 - 문서화: "멀티워커는 별도 GPU 탑재 머신에 분산 배치할 때만 효과적"
 - Admin 패널에서 워커별 처리속도를 모니터링하여 GPU 경합 여부 판단 가능
 - 향후 과제: CPU-only 워커에서 VLM 스킵 + VV/MV만 처리하는 partial 모드 검토
+
+---
+
+## [2026-02-22] v0.5: 부모 프로세스 사망 시 자식 잔류 — 3가지 버그 수정
+
+### 증상
+- Electron 앱을 강제 종료(taskkill /F)하면 Python subprocess(Server, Pipeline, Discover)가 잔류
+- 잔류 프로세스가 포트(8000)와 GPU 메모리를 점유하여 앱 재시작 실패
+- Windows에서만 프로세스 트리 킬이 동작하지 않음
+
+### 원인 분석
+
+**버그 1 (CRITICAL): Pipeline/Discover의 stdin 파이프 누락**
+- `main.cjs`에서 `spawn(..., { detached: true })` 시 `stdio` 옵션 미지정
+- Node.js 기본값으로 부모의 stdio를 상속 → stdin이 파이프가 아닌 부모의 stdin
+- `parent_watchdog.py`의 stdin 모니터링이 작동하지 않음
+- 더블클릭으로 앱 실행 시 stdin이 `/dev/null` → `read()` 즉시 EOF → 프로세스 즉시 종료 위험
+
+**버그 2 (MEDIUM): parent_watchdog.py의 BufferedReader 락**
+- `sys.stdin.buffer.read()` 사용 → Python BufferedReader 내부 락을 블로킹 중 보유
+- 백그라운드 C-extension 스레드(numpy, torch)와 경합 가능성
+
+**버그 3 (MEDIUM): Windows에서 프로세스 그룹 킬 실패**
+- `process.kill(-pid, 'SIGKILL')` — 음수 PID는 POSIX 프로세스 그룹 시그널로, Windows 미지원
+- Windows에서 항상 예외 → catch 블록이 루트 프로세스만 종료, 자식 트리 미종료
+
+### 해결 방법
+
+**3계층 방어 체계 구축**:
+
+| 계층 | 메커니즘 | OS | 반응 속도 |
+|------|---------|-------|----------|
+| **Layer 1** | `prctl(PR_SET_PDEATHSIG, SIGKILL)` | Linux 전용 | 즉시 (커널 레벨) |
+| **Layer 2** | stdin 파이프 EOF 감지 (`os.read()`) | 전체 | ~수ms |
+| **Layer 3** | PID 폴링 (2초 간격) | 전체 (폴백) | ~2초 |
+
+**구체적 수정**:
+1. Pipeline/Discover spawn에 `stdio: ['pipe', 'pipe', 'pipe']` 추가 (stdin lifeline 확보)
+2. `parent_watchdog.py` 리라이트: `sys.stdin.buffer.read()` → `os.read(fd, 1024)` (BufferedReader 락 회피)
+3. Linux `prctl(PR_SET_PDEATHSIG, SIGKILL)` 추가 (커널이 직접 SIGKILL 전달)
+4. `killProcessTree()` 헬퍼 추가: Windows `taskkill /F /T /PID`, Unix `process.kill(-pid)`
+
+### 예방책
+- 새 Python subprocess spawn 시 반드시 `stdio: ['pipe', 'pipe', 'pipe']` 명시
+- stdin 읽기에는 `sys.stdin.buffer.read()` 대신 `os.read()` 사용
+- Windows 프로세스 종료에는 `taskkill /F /T /PID` 사용 (프로세스 트리 전체)
+- `parent_watchdog.py`는 stdin 파이프가 있는 모든 장수명 subprocess에서 호출

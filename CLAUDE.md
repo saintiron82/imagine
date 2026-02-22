@@ -1285,6 +1285,56 @@ analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
 - **멀티워커 동일 GPU 경합**: 같은 머신에서 워커 N개 실행 시 각 워커 속도 1/N (총 처리량 이득 없음)
   - 원인: GPU 시분할로 인한 경합
   - 멀티워커는 **별도 GPU 머신에 분산 배치할 때만 효과적**
+- **Windows 워커 stdin 파이프 데드락**: Electron에서 spawn한 Python 워커가 Parse Phase에서 무한 행
+  - 원인: Windows CRT I/O 락 — piped stdin 블로킹 읽기가 백그라운드 스레드의 C-extension(numpy, psd-tools) 작업을 차단
+  - 해결: Win32 `PeekNamedPipe` 논블로킹 폴링으로 stdin 읽기 교체 (`worker_ipc.py`)
+  - macOS/Linux에서는 발생하지 않음 (POSIX I/O 모델 차이)
+  - 상세: `docs/troubleshooting.md` 참조
+
+### 플랫폼별 분기 처리 (MANDATORY)
+
+**Electron에서 spawn하는 Python subprocess에 적용되는 플랫폼별 규칙입니다.**
+
+| 항목 | Windows | macOS / Linux | 관련 파일 |
+|------|---------|---------------|----------|
+| subprocess stdin 읽기 | Win32 PeekNamedPipe 논블로킹 | `for line in sys.stdin` 블로킹 | `backend/utils/win32_stdin.py` |
+| 무거운 모듈 import | 메인 스레드 사전 import 필수 | 불필요 (안전) | `worker_ipc.py` |
+| stdout/stderr 인코딩 | UTF-8 강제 래핑 (기본 cp949) | UTF-8 기본 | `ingest_engine.py` |
+| 프로세스 종료 (사용자 요청) | SIGKILL (SIGTERM 비신뢰) | SIGTERM 정상 | `main.cjs` |
+| 프로세스 트리 킬 | `taskkill /F /T /PID` | `process.kill(-pid, 'SIGKILL')` | `main.cjs:killProcessTree()` |
+| 부모 사망 감지 (커널) | stdin 파이프 EOF | Linux: `prctl(PR_SET_PDEATHSIG)`, macOS: stdin EOF | `parent_watchdog.py` |
+| 파일 경로 구분자 | `\` (pathlib 자동 처리) | `/` | 전역 |
+
+**규칙:**
+
+1. **stdin 파이프 + 백그라운드 스레드 조합**: 새 Python subprocess가 Electron에서 stdin 파이프로 장수명 실행되고 백그라운드 스레드에서 C-extension(numpy, torch, psd-tools 등)을 사용하는 경우, 반드시 `backend/utils/win32_stdin.py`의 `make_stdin_reader()` 사용.
+2. **C-extension 모듈 사전 import**: Windows에서 백그라운드 스레드가 numpy/torch를 최초 import하면 DLL 로딩 데드락 발생. 메인 스레드에서 사전 import 필수.
+3. **단일 스레드 stdin 데몬은 안전**: 검색 데몬(`api_search.py`)처럼 stdin 블로킹 읽기를 사용하더라도 백그라운드 스레드가 없으면 데드락 없음. 분기 처리 불필요.
+4. **공용 유틸리티**: `backend/utils/win32_stdin.py` — 플랫폼 자동 감지, `make_stdin_reader()` 호출 시 Windows/Unix 자동 분기.
+5. **부모 프로세스 워치독 (3계층 방어)**: 장수명 subprocess에 반드시 `start_parent_watchdog()` 적용.
+   - Layer 1 (Linux): `prctl(PR_SET_PDEATHSIG, SIGKILL)` — 커널이 즉시 SIGKILL 전달
+   - Layer 2 (전체): stdin 파이프 EOF 감지 (`os.read()`) — 수ms 반응
+   - Layer 3 (폴백): PID 폴링 — 2초 간격 (터미널 직접 실행 시)
+6. **spawn 시 stdio 필수**: Electron에서 Python subprocess spawn 시 반드시 `stdio: ['pipe', 'pipe', 'pipe']` 명시. 미지정 시 부모 stdio 상속으로 stdin 파이프 lifeline 없음.
+7. **프로세스 트리 킬**: Windows에서 `process.kill(-pid)` 미동작 (POSIX 전용). 반드시 `killProcessTree()` 헬퍼 사용.
+
+**적용 현황:**
+
+| 프로세스 | stdin 파이프 | stdin 자체 읽기 | 부모 워치독 | 잔류 방지 |
+|---------|------------|---------------|-----------|----------|
+| Worker IPC | ✅ | ✅ PeekNamedPipe | 불필요 (stdin으로 감지) | ✅ |
+| Search Daemon | ✅ | ✅ `for line in sys.stdin` | 불필요 (stdin으로 감지) | ✅ |
+| FastAPI Server | ✅ | ❌ | ✅ `start_parent_watchdog()` | ✅ |
+| Pipeline/Discover | ✅ | ❌ | ✅ `start_parent_watchdog()` | ✅ |
+| 기타 API 스크립트 | 다양 | 다양 | 불필요 (단수명) | ✅ |
+
+**공용 유틸리티:**
+
+| 모듈 | 역할 | 사용 시점 |
+|------|------|----------|
+| `backend/utils/win32_stdin.py` | Windows CRT I/O 락 회피 (PeekNamedPipe) | stdin + 백그라운드 C-extension 조합 |
+| `backend/utils/parent_watchdog.py` | 부모 사망 감지 → 자동 종료 (3계층: prctl + stdin EOF + PID) | stdin을 읽지 않는 장수명 프로세스 |
+| `main.cjs:killProcessTree()` | 크로스 플랫폼 프로세스 트리 킬 | before-quit, stop-pipeline 등 |
 
 ### 양자화 옵션 (조사 완료, 미적용)
 

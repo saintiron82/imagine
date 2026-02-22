@@ -573,8 +573,8 @@ function App() {
       const creds = getWorkerCredentials();
       const result = await w.start({
         serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
-        accessToken: getAccessToken() || '',
-        refreshToken: getRefreshToken() || '',
+        accessToken: creds ? '' : (getAccessToken() || ''),   // Only use tokens if no credentials
+        refreshToken: creds ? '' : (getRefreshToken() || ''), // Credentials = independent login
         username: creds?.username || '',
         password: creds?.password || '',
       });

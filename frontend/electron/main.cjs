@@ -76,18 +76,47 @@ function getSearchScriptPath() {
         : path.join(projectRoot, 'backend/api_search.py');
 }
 
-/** Kill any orphaned Imagine-Search processes from previous runs. */
+/**
+ * Kill residual processes from previous crashed sessions.
+ *
+ * Primary defense against residual processes is the parent_watchdog.py
+ * (stdin pipe monitoring) in each Python subprocess.  This cleanup runs
+ * as a safety net on app startup in case the watchdog failed.
+ */
 function cleanupOrphanDaemons() {
+    const patterns = ['Imagine-Search', 'Imagine-Pipeline'];
     try {
         if (process.platform === 'win32') {
-            // Windows: taskkill by window title or image name
-            execSync('taskkill /F /FI "WINDOWTITLE eq Imagine-Search" 2>nul', { stdio: 'ignore' });
+            // Windows: try taskkill by window title (works for console processes)
+            for (const p of patterns) {
+                try {
+                    execSync(`taskkill /F /FI "WINDOWTITLE eq ${p}" 2>nul`, { stdio: 'ignore' });
+                } catch { /* no match — fine */ }
+            }
+            // Also try wmic for piped (windowless) processes by command line
+            const wmicPatterns = ['api_search.py', 'ingest_engine.py', 'uvicorn'];
+            for (const pat of wmicPatterns) {
+                try {
+                    execSync(
+                        `wmic process where "name='python.exe' and commandline like '%${pat}%'" call terminate 2>nul`,
+                        { stdio: 'ignore', timeout: 5000 },
+                    );
+                } catch { /* wmic may be unavailable or no match */ }
+            }
         } else {
-            // macOS/Linux: pkill by process name set via setproctitle
-            execSync('pkill -f "Imagine-Search" 2>/dev/null || true', { stdio: 'ignore' });
+            // macOS/Linux: pkill by process name (set via setproctitle) or command line
+            for (const p of patterns) {
+                try {
+                    execSync(`pkill -f "${p}" 2>/dev/null || true`, { stdio: 'ignore' });
+                } catch { /* no match */ }
+            }
+            // Also kill by script name for processes without setproctitle
+            try {
+                execSync('pkill -f "uvicorn.*backend.server.app" 2>/dev/null || true', { stdio: 'ignore' });
+            } catch { /* no match */ }
         }
     } catch (e) {
-        // No orphan found — that's fine
+        // Cleanup is best-effort — watchdog is the primary defense
     }
 }
 
@@ -916,7 +945,9 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
         cwd: projectRoot,
         detached: true,  // Own process group for clean tree kill
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        stdio: ['pipe', 'pipe', 'pipe'],  // stdin pipe = watchdog lifeline
     });
+    proc.stdin.on('error', () => {}); // Suppress EPIPE on process exit
     console.log('[run-pipeline] Spawned PID:', proc.pid);
     activePipelineProc = proc;
 
@@ -1062,18 +1093,11 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     });
 });
 
-// IPC Handler: Stop running pipeline (kill entire process group to avoid orphans)
+// IPC Handler: Stop running pipeline (kill entire process tree to avoid residual processes)
 ipcMain.on('stop-pipeline', () => {
     if (activePipelineProc) {
         pipelineStoppedByUser = true;
-        const pid = activePipelineProc.pid;
-        // Kill entire process group (detached=true gives child its own PGID=PID)
-        try {
-            process.kill(-pid, 'SIGKILL');
-        } catch {
-            // Fallback: kill just the main process
-            try { activePipelineProc.kill('SIGKILL'); } catch { }
-        }
+        killProcessTree(activePipelineProc);
         // Don't send events here — proc.on('close') handles cleanup
     }
 });
@@ -1124,7 +1148,13 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
         });
     }
 
-    const proc = spawn(finalPython, args, { cwd: projectRoot, detached: true, env: { ...process.env, PYTHONUNBUFFERED: '1' } });
+    const proc = spawn(finalPython, args, {
+        cwd: projectRoot,
+        detached: true,
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        stdio: ['pipe', 'pipe', 'pipe'],  // stdin pipe = watchdog lifeline
+    });
+    proc.stdin.on('error', () => {}); // Suppress EPIPE on process exit
     activeDiscoverProcs.set(folderPath, proc);
 
     // Immediate feedback while Python loads modules (~15-30s)
@@ -1449,12 +1479,14 @@ function killWorkerProc() {
     workerBuffer = '';
     workerStartCmd = null;
 
+    // Try graceful exit first
     try {
         proc.stdin.write(JSON.stringify({ cmd: 'exit' }) + '\n');
     } catch (e) { /* ignore */ }
+    // Force kill after 2 seconds (SIGKILL works on Windows, SIGTERM doesn't)
     setTimeout(() => {
-        try { proc.kill('SIGTERM'); } catch (e) { /* already dead */ }
-    }, 3000);
+        try { proc.kill('SIGKILL'); } catch (e) { /* already dead */ }
+    }, 2000);
 }
 
 // IPC Handler: Start worker daemon
@@ -1471,7 +1503,7 @@ ipcMain.handle('worker-start', async (event, opts) => {
 
     console.log('[Worker] Starting worker_ipc.py...');
 
-    workerProc = spawn(finalPython, ['-m', 'backend.worker.worker_ipc'], {
+    workerProc = spawn(finalPython, ['-u', '-m', 'backend.worker.worker_ipc'], {
         cwd: projectRoot,
         env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -1500,10 +1532,12 @@ ipcMain.handle('worker-start', async (event, opts) => {
         const msg = data.toString().trim();
         if (msg) {
             console.error('[Worker:stderr]', msg);
-            // Forward errors as log events
-            if (/\bERROR\b|Traceback|Exception:|FAIL/i.test(msg)) {
-                sendWorkerEvent('worker-log', { message: msg, type: 'error' });
-            }
+            // Forward ALL stderr to UI for debugging (not just errors)
+            const isError = /\bERROR\b|Traceback|Exception:|FAIL/i.test(msg);
+            sendWorkerEvent('worker-log', {
+                message: `[stderr] ${msg}`,
+                type: isError ? 'error' : 'warning',
+            });
         }
     });
 
@@ -2015,31 +2049,39 @@ app.on('window-all-closed', () => {
     }
 });
 
-// Kill active pipeline/discover process groups (prevents orphans on quit)
-function killActivePipeline() {
-    if (activePipelineProc) {
+/**
+ * Kill a process and its entire child tree.
+ * Windows: taskkill /T (tree kill) — kills all descendants.
+ * Unix: process.kill(-pid) — kills process group (detached spawn creates own group).
+ */
+function killProcessTree(proc) {
+    if (!proc || !proc.pid) return;
+    if (process.platform === 'win32') {
         try {
-            process.kill(-activePipelineProc.pid, 'SIGKILL');
-        } catch {
-            try { activePipelineProc.kill('SIGKILL'); } catch { }
-        }
-        activePipelineProc = null;
-    }
-    for (const [, proc] of activeDiscoverProcs) {
+            execSync(`taskkill /F /T /PID ${proc.pid} 2>nul`, { stdio: 'ignore', timeout: 5000 });
+        } catch { /* already dead */ }
+    } else {
         try {
             process.kill(-proc.pid, 'SIGKILL');
         } catch {
-            try { proc.kill('SIGKILL'); } catch { }
+            try { proc.kill('SIGKILL'); } catch { /* already dead */ }
         }
+    }
+}
+
+// Kill active pipeline/discover process trees (prevents residual processes on quit)
+function killActivePipeline() {
+    if (activePipelineProc) {
+        killProcessTree(activePipelineProc);
+        activePipelineProc = null;
+    }
+    for (const [, proc] of activeDiscoverProcs) {
+        killProcessTree(proc);
     }
     activeDiscoverProcs.clear();
 
     if (activeBackfillProc) {
-        try {
-            process.kill(-activeBackfillProc.pid, 'SIGKILL');
-        } catch {
-            try { activeBackfillProc.kill('SIGKILL'); } catch { }
-        }
+        killProcessTree(activeBackfillProc);
         activeBackfillProc = null;
     }
 }

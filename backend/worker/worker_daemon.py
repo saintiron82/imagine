@@ -480,7 +480,7 @@ class WorkerDaemon:
     def _resolve_file(self, job: dict) -> str:
         """Get local file path — shared FS, pre-parsed thumbnail, or full download."""
         file_path = job["file_path"]
-        file_id = job["file_id"]
+        file_id = job.get("file_id")
 
         if self.storage_mode == "shared_fs":
             # Direct access via shared filesystem
@@ -497,11 +497,17 @@ class WorkerDaemon:
             logger.warning(f"Pre-parsed thumbnail download failed for file_id={file_id}, falling back to full download")
 
         # Full original download (fallback)
-        return self.uploader.download_file(file_id, self.tmp_dir)
+        logger.info(f"[DOWNLOAD] Downloading file_id={file_id} from {self.server_url}...")
+        result = self.uploader.download_file(file_id, self.tmp_dir)
+        if result:
+            logger.info(f"[DOWNLOAD] OK -> {result}")
+        else:
+            logger.error(f"[DOWNLOAD] FAILED for file_id={file_id} ({file_path})")
+        return result
 
     def _resolve_thumbnail(self, job: dict) -> Optional[str]:
         """Download only the thumbnail for a pre-parsed job (~200KB instead of ~500MB)."""
-        file_id = job["file_id"]
+        file_id = job.get("file_id")
         try:
             resp = self.session.get(
                 f"{self.server_url}/api/v1/upload/download/thumbnail/{file_id}",
@@ -746,12 +752,22 @@ class WorkerDaemon:
                 ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
-                    ctx.error = f"Pre-parsed thumbnail unavailable: {job['file_path']}"
+                    ctx.error = f"Pre-parsed thumbnail unavailable: {job['file_path']} (file_id={job.get('file_id')})"
+                    logger.error(f"[RESOLVE] {ctx.error}")
+                    _notify(progress_callback, "file_error", {
+                        "file_name": Path(job["file_path"]).name,
+                        "error": ctx.error,
+                    })
             else:
                 ctx.local_path = self._resolve_file(job)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
-                    ctx.error = f"Cannot access file: {job['file_path']}"
+                    ctx.error = f"Cannot access file: {job['file_path']} (file_id={job.get('file_id')})"
+                    logger.error(f"[RESOLVE] {ctx.error}")
+                    _notify(progress_callback, "file_error", {
+                        "file_name": Path(job["file_path"]).name,
+                        "error": ctx.error,
+                    })
 
             contexts.append(ctx)
 
@@ -777,6 +793,7 @@ class WorkerDaemon:
             if result is None:
                 ctx.failed = True
                 ctx.error = f"Parse failed: {ctx.job['file_path']}"
+                logger.warning(f"Parse failed: {self._current_file}")
             else:
                 ctx.metadata, ctx.thumb_path, ctx.meta_obj = result
 

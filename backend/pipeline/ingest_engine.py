@@ -32,8 +32,11 @@ from typing import List, Optional, Tuple
 # Force UTF-8 for stdout/stderr to handle generic unicode characters
 # line_buffering=True ensures each log line is flushed immediately
 # (critical for subprocess → Electron IPC stdout parsing)
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
+# SKIP when imported by worker_ipc — replacing stdout breaks the JSON IPC protocol
+# and causes deadlock (two TextIOWrappers sharing the same buffer across threads)
+if __name__ == "__main__" or "ingest_engine" in sys.argv[0:1]:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
 
 # Set process title for Activity Monitor visibility
 try:
@@ -2445,6 +2448,15 @@ def parse_batch_size(value):
 
 
 def main():
+    # Start parent watchdog — auto-exit when Electron (parent) dies unexpectedly.
+    # Pipeline/Discover are spawned as detached processes; without this watchdog
+    # they would continue running indefinitely after a parent crash.
+    try:
+        from backend.utils.parent_watchdog import start_parent_watchdog
+        start_parent_watchdog()
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="ImageParser Ingest Engine")
     parser.add_argument("--file", help="Process a single file")
     parser.add_argument("--files", help="Process multiple files (JSON array)")
