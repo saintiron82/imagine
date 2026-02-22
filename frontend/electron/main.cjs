@@ -1562,6 +1562,9 @@ function processWorkerOutput() {
             } else if (evt === 'processing_mode') {
                 console.log('[Worker] Processing mode:', parsed.mode);
                 sendWorkerEvent('worker-processing-mode', parsed);
+            } else if (evt === 'worker_state') {
+                console.log('[Worker] State:', parsed.state);
+                sendWorkerEvent('worker-state', parsed);
             }
         } catch (e) {
             console.error('[Worker] JSON parse error:', e, line);

@@ -135,12 +135,38 @@ class WorkerIPCController:
             _emit_log("[IMPORT] Importing WorkerDaemon (numpy=lazy)...", "info")
             from backend.worker.worker_daemon import WorkerDaemon
             from backend.worker.config import get_heartbeat_interval
+            from backend.worker.worker_state import WorkerState
+            from backend.worker.schedule import is_active_now
             _emit_log("[IMPORT] OK — all imports complete", "info")
 
             _emit_log("[THREAD] Creating WorkerDaemon...", "info")
             daemon = WorkerDaemon()
             self._daemon = daemon
             _emit_log(f"[THREAD] Daemon created, server_url={daemon.server_url}", "info")
+
+            # Wire state machine callbacks to emit IPC events
+            _orig_on_idle = daemon._on_enter_idle
+            _orig_on_active = daemon._on_enter_active
+            _orig_on_resting = daemon._on_enter_resting
+
+            def _ipc_on_idle():
+                _orig_on_idle()
+                _emit({"event": "worker_state", "state": "idle"})
+                _emit_log("[STATE] -> idle (models unloaded)", "info")
+
+            def _ipc_on_active():
+                _orig_on_active()
+                _emit({"event": "worker_state", "state": "active"})
+                _emit_log("[STATE] -> active", "info")
+
+            def _ipc_on_resting():
+                _orig_on_resting()
+                _emit({"event": "worker_state", "state": "resting"})
+                _emit_log("[STATE] -> resting (resource pressure)", "warning")
+
+            daemon._state_machine._on_enter_idle = _ipc_on_idle
+            daemon._state_machine._on_enter_active = _ipc_on_active
+            daemon._state_machine._on_enter_resting = _ipc_on_resting
 
             # ── Authentication ──
             import os
@@ -235,8 +261,45 @@ class WorkerIPCController:
             _emit_log(f"[LOOP] Starting job claim loop (poll={poll_interval}s, heartbeat={heartbeat_interval}s)", "info")
 
             loop_count = 0
+            _prev_worker_state = None
             while self._running:
                 loop_count += 1
+
+                # ── State Machine check (schedule + throttle + idle timeout) ──
+                try:
+                    scheduled_active = is_active_now()
+                    throttle = daemon._check_throttle()
+                except Exception:
+                    scheduled_active = True
+                    throttle = "normal"
+
+                daemon._state_machine.update(
+                    is_scheduled_active=scheduled_active,
+                    throttle_level=throttle,
+                    has_pending_jobs=True,  # Assume true until claim proves otherwise
+                )
+
+                current_state = daemon._state_machine.state
+                if current_state in (WorkerState.IDLE, WorkerState.RESTING):
+                    # Not active — skip job processing, only heartbeat
+                    if time.time() - last_heartbeat >= heartbeat_interval:
+                        hb = daemon._heartbeat()
+                        last_heartbeat = time.time()
+                        if hb:
+                            consecutive_heartbeat_fails = 0
+                            cmd = hb.get("command")
+                            if cmd in ("stop", "block"):
+                                _emit_log(f"[HEARTBEAT] Server command: {cmd}", "warning")
+                                self._running = False
+                                break
+                        else:
+                            consecutive_heartbeat_fails += 1
+                            if consecutive_heartbeat_fails >= MAX_HEARTBEAT_FAILS:
+                                _emit_log("[HEARTBEAT] Server unreachable — stopping worker", "error")
+                                self._running = False
+                                break
+                    time.sleep(poll_interval)
+                    continue
 
                 # Periodic heartbeat
                 if time.time() - last_heartbeat >= heartbeat_interval:
@@ -274,6 +337,12 @@ class WorkerIPCController:
                     if loop_count <= 3 or loop_count % 10 == 0:
                         _emit_log(f"[CLAIM] No jobs available, waiting {poll_interval}s...", "info")
                     _emit_status("running", [])
+                    # Update state machine with no pending jobs (may trigger idle timeout)
+                    daemon._state_machine.update(
+                        is_scheduled_active=scheduled_active,
+                        throttle_level=throttle,
+                        has_pending_jobs=False,
+                    )
                     time.sleep(poll_interval)
                     continue
 
@@ -321,6 +390,9 @@ class WorkerIPCController:
                     })
                     if not success:
                         _emit_log(f"Failed: {file_name}", "error")
+
+                # Record job activity to reset idle timeout timer
+                daemon._state_machine.record_job_activity()
 
                 # Brief pause between batches
                 time.sleep(1)

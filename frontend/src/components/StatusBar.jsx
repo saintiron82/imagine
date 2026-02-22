@@ -262,9 +262,17 @@ const StatusBar = ({
                     // Phase-level speed (from latest batch)
                     const pFpm = wp.phaseFpm || {};
 
+                    const wState = wp.workerState || 'active';
+
                     return (
                         <div className="flex items-center space-x-2 flex-shrink-0 mx-4" onClick={(e) => e.stopPropagation()}>
-                            <Loader2 className="animate-spin text-emerald-400" size={14} />
+                            {wState === 'idle' ? (
+                                <span className="text-[9px] font-mono text-blue-400/80 bg-blue-900/30 px-1.5 py-0.5 rounded">IDLE</span>
+                            ) : wState === 'resting' ? (
+                                <span className="text-[9px] font-mono text-amber-400/80 bg-amber-900/30 px-1.5 py-0.5 rounded">REST</span>
+                            ) : (
+                                <Loader2 className="animate-spin text-emerald-400" size={14} />
+                            )}
 
                             {/* MC Only mode indicator */}
                             {isMcOnly && (
