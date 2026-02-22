@@ -263,8 +263,8 @@ class WorkerDaemon:
 
     # ── Session Management ─────────────────────────────────────
 
-    def _connect_session(self):
-        """Register worker session with server."""
+    def _connect_session(self) -> bool:
+        """Register worker session with server. Returns True on success."""
         try:
             resp = self._authed_request(
                 "post",
@@ -285,10 +285,13 @@ class WorkerDaemon:
                 if data.get("processing_mode"):
                     self.processing_mode = data["processing_mode"]
                 logger.info(f"Session registered: id={self.session_id}, pool_hint={self.pool_size}, batch={self.batch_capacity}, mode={self.processing_mode}")
+                return True
             else:
-                logger.warning(f"Session connect failed: {resp.status_code}")
+                logger.error(f"Session connect failed: {resp.status_code} {resp.text[:200]}")
+                return False
         except Exception as e:
-            logger.warning(f"Session connect error: {e}")
+            logger.error(f"Session connect error: {e}")
+            return False
 
     def _heartbeat(self) -> dict:
         """Send heartbeat and receive server commands."""

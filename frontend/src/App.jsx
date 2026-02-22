@@ -451,7 +451,11 @@ function App() {
     if (!w) return;
 
     const onStatus = (data) => {
-      setIsWorkerRunning(data.status === 'running');
+      if (data.status === 'error') {
+        setIsWorkerRunning(false);
+      } else {
+        setIsWorkerRunning(data.status === 'running');
+      }
     };
 
     const onBatchStart = (data) => {

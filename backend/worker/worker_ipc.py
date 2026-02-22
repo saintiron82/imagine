@@ -199,21 +199,39 @@ class WorkerIPCController:
                 _emit_log(f"[NET] Health check: {test_resp.status_code} {test_resp.text[:200]}", "info")
             except Exception as net_err:
                 _emit_log(f"[NET] Health check FAILED: {net_err}", "error")
+                _emit_log("[NET] Server may be offline or unreachable", "error")
+                _emit_status("error")
+                self._running = False
+                return
 
-            # ── Register worker session ──
-            _emit_log("[SESSION] Connecting worker session...", "info")
-            daemon._connect_session()
-            if daemon.session_id:
+            # ── Register worker session (retry up to 3 times) ──
+            session_ok = False
+            for attempt in range(1, 4):
+                _emit_log(f"[SESSION] Connecting worker session (attempt {attempt}/3)...", "info")
+                session_ok = daemon._connect_session()
+                if session_ok:
+                    break
+                if attempt < 3:
+                    wait = attempt * 2
+                    _emit_log(f"[SESSION] Retrying in {wait}s...", "warning")
+                    time.sleep(wait)
+
+            if session_ok and daemon.session_id:
                 _emit_log(f"[SESSION] Registered (id={daemon.session_id}, mode={daemon.processing_mode})", "success")
                 # Notify UI of processing mode so phase pills can be dimmed
                 _emit({"event": "processing_mode", "mode": daemon.processing_mode})
             else:
-                _emit_log("[SESSION] Warning: session not registered (no session_id)", "warning")
+                _emit_log("[SESSION] FAILED: could not register session after 3 attempts", "error")
+                _emit_status("error")
+                self._running = False
+                return
 
             # ── Main claim loop ──
             poll_interval = 5
             heartbeat_interval = get_heartbeat_interval()
             last_heartbeat = time.time()
+            consecutive_heartbeat_fails = 0
+            MAX_HEARTBEAT_FAILS = 3
             _emit_log(f"[LOOP] Starting job claim loop (poll={poll_interval}s, heartbeat={heartbeat_interval}s)", "info")
 
             loop_count = 0
@@ -222,19 +240,30 @@ class WorkerIPCController:
 
                 # Periodic heartbeat
                 if time.time() - last_heartbeat >= heartbeat_interval:
-                    _emit_log(f"[HEARTBEAT] Sending heartbeat (loop #{loop_count})...", "info")
+                    if loop_count <= 3 or loop_count % 10 == 0:
+                        _emit_log(f"[HEARTBEAT] Sending heartbeat (loop #{loop_count})...", "info")
                     old_mode = daemon.processing_mode
                     hb = daemon._heartbeat()
                     last_heartbeat = time.time()
-                    cmd = hb.get("command")
-                    _emit_log(f"[HEARTBEAT] Response: {hb}", "info")
-                    # Relay processing mode changes from server
-                    if daemon.processing_mode != old_mode:
-                        _emit({"event": "processing_mode", "mode": daemon.processing_mode})
-                    if cmd in ("stop", "block"):
-                        _emit_log(f"[HEARTBEAT] Server command: {cmd}", "warning")
-                        self._running = False
-                        break
+                    if not hb:
+                        consecutive_heartbeat_fails += 1
+                        _emit_log(f"[HEARTBEAT] No response ({consecutive_heartbeat_fails}/{MAX_HEARTBEAT_FAILS})", "warning")
+                        if consecutive_heartbeat_fails >= MAX_HEARTBEAT_FAILS:
+                            _emit_log("[HEARTBEAT] Server unreachable — stopping worker", "error")
+                            self._running = False
+                            break
+                    else:
+                        consecutive_heartbeat_fails = 0
+                        cmd = hb.get("command")
+                        if loop_count <= 3 or loop_count % 10 == 0:
+                            _emit_log(f"[HEARTBEAT] OK", "info")
+                        # Relay processing mode changes from server
+                        if daemon.processing_mode != old_mode:
+                            _emit({"event": "processing_mode", "mode": daemon.processing_mode})
+                        if cmd in ("stop", "block"):
+                            _emit_log(f"[HEARTBEAT] Server command: {cmd}", "warning")
+                            self._running = False
+                            break
 
                 # Claim jobs
                 if loop_count <= 3 or loop_count % 10 == 0:
