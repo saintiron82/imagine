@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
@@ -427,10 +427,16 @@ def admin_update_worker_config(
 @router.patch("/admin/workers/global-config")
 def admin_update_global_config(
     req: GlobalModeUpdate,
+    request: Request,
     admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db),
 ):
-    """Change processing mode for ALL online workers."""
+    """Change processing mode for ALL online workers.
+
+    Also dynamically starts/stops EmbedAheadPool and updates
+    ParseAheadPool's processing_mode based on the new mode.
+    """
+
     cursor = db.conn.cursor()
     cursor.execute(
         """UPDATE worker_sessions
@@ -440,5 +446,42 @@ def admin_update_global_config(
     )
     db.conn.commit()
     affected = cursor.rowcount
+
+    # Persist to config so heartbeat reads the updated global mode
+    try:
+        from backend.utils.config import get_config
+        cfg = get_config()
+        cfg._set_dotted("server.processing_mode", req.processing_mode)
+    except Exception as e:
+        logger.warning(f"Failed to persist global processing_mode: {e}")
+
+    # Dynamically manage server-side pools based on new mode
+    try:
+        app = request.app
+
+        if app:
+            # Update ParseAheadPool's processing_mode (for VV embedding decision)
+            if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
+                app.state.parse_ahead._processing_mode = req.processing_mode
+                logger.info(f"ParseAheadPool mode updated: {req.processing_mode}")
+
+            if req.processing_mode == "mc_only":
+                # Start EmbedAheadPool if not running
+                if not (hasattr(app.state, "embed_ahead") and app.state.embed_ahead
+                        and app.state.embed_ahead._thread
+                        and app.state.embed_ahead._thread.is_alive()):
+                    from backend.server.queue.embed_ahead import EmbedAheadPool
+                    app.state.embed_ahead = EmbedAheadPool(db)
+                    app.state.embed_ahead.start()
+                    logger.info("EmbedAheadPool started dynamically (mc_only mode)")
+            else:
+                # Stop EmbedAheadPool if running
+                if hasattr(app.state, "embed_ahead") and app.state.embed_ahead:
+                    app.state.embed_ahead.stop()
+                    app.state.embed_ahead = None
+                    logger.info("EmbedAheadPool stopped (full mode)")
+    except Exception as e:
+        logger.warning(f"Pool management on mode switch failed: {e}")
+
     logger.info(f"Admin set global processing mode: {req.processing_mode} ({affected} workers)")
     return {"ok": True, "affected": affected}
