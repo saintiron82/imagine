@@ -8,6 +8,55 @@
 
 - **"고아(orphan)"**: 어떤 맥락에서도 사용 금지. 대신 "참조 없는(unreferenced)", "매칭되지 않는(unmatched)", "잔여(residual)" 등으로 표현할 것.
 
+## Git 브랜치 워크플로우 (MANDATORY)
+
+**모든 작업은 브랜치에서 수행합니다. `main`에 직접 커밋하지 않습니다.**
+
+### 브랜치 전략
+
+```
+main (안정) ← merge ← feat/xxx, fix/xxx, refactor/xxx, ...
+```
+
+| 항목 | 규칙 |
+|------|------|
+| **main** | 항상 안정 상태 유지. 직접 커밋 금지 |
+| **작업 브랜치** | main에서 분기하여 작업 수행 |
+| **병합** | 작업 완료 후 main으로 merge |
+| **삭제** | 병합 완료 후 로컬 브랜치 삭제 |
+
+### 브랜치 명명 규칙
+
+```
+<type>/<간결한-설명>
+```
+
+| type | 용도 | 예시 |
+|------|------|------|
+| `feat` | 새 기능 | `feat/parse-ahead-pool` |
+| `fix` | 버그 수정 | `fix/worker-ipc-hang` |
+| `refactor` | 리팩토링 | `refactor/cleanup-unused-code` |
+| `docs` | 문서 변경 | `docs/update-api-spec` |
+| `chore` | 설정/빌드 | `chore/update-deps` |
+
+### 워크플로우
+
+```
+1. git checkout -b <type>/<설명>   ← main에서 브랜치 생성
+2. 작업 + 커밋 (아래 커밋 규칙 동일 적용)
+3. 작업 완료 → git checkout main && git merge <브랜치>
+4. 버전 bump (main에서 1회)
+5. git branch -d <브랜치>   ← 로컬 브랜치 삭제
+```
+
+### main 직접 커밋 예외
+
+- 버전 bump 커밋
+- CLAUDE.md 규칙 변경
+- 긴급 핫픽스 (1-2줄 수정)
+
+---
+
 ## 커밋 규칙 (MANDATORY)
 
 **작업 단위(논리적으로 완결된 변경)마다 커밋합니다.** 사용자가 별도로 커밋을 요청하지 않아도, 하나의 작업 단위가 끝나면 자동으로 커밋합니다.
@@ -43,7 +92,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 
 ## 버전 규칙 (MANDATORY)
 
-**모든 수정 커밋 후 반드시 버전을 올립니다.**
+**브랜치가 main에 병합된 후 1회 버전을 올립니다.** 작업 브랜치 내에서는 version bump를 하지 않습니다.
 
 ### 현재 버전
 
