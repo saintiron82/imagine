@@ -1220,7 +1220,7 @@ class WorkerDaemon:
         logger.info("MV embedder unloaded")
 
     def _try_empty_gpu_cache(self):
-        """Helper to clear GPU memory cache."""
+        """Helper to clear GPU memory cache (CUDA, MPS, and MLX Metal)."""
         try:
             import torch
             if torch.cuda.is_available():
@@ -1228,6 +1228,12 @@ class WorkerDaemon:
             elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 torch.mps.empty_cache()
         except ImportError:
+            pass
+        # MLX uses its own Metal buffer allocator, separate from torch.mps
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+        except Exception:
             pass
 
     # ── State Machine Callbacks ─────────────────────────────────
