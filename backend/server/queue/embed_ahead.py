@@ -10,18 +10,16 @@ The MV model (Qwen3-Embedding) is loaded once and stays resident.
 
 import json
 import logging
-import threading
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Optional
 
-from backend.db.sqlite_client import SQLiteDB
+from backend.server.queue.base_ahead_pool import BaseAheadPool
 
 logger = logging.getLogger(__name__)
 
 
-class EmbedAheadPool:
+class EmbedAheadPool(BaseAheadPool):
     """Server-side MV embedder that runs after workers upload MC.
 
     In mc_only mode:
@@ -32,40 +30,12 @@ class EmbedAheadPool:
     The Qwen3-Embedding model is loaded once and stays resident.
     """
 
-    def __init__(self, db: SQLiteDB):
-        self.db = db
-        self._thread: Optional[threading.Thread] = None
-        self._running = False
-        self._lock = threading.Lock()
+    def __init__(self, db):
+        super().__init__(db)
         self._mv_provider = None  # Lazy-loaded, stays resident
 
-    def start(self):
-        """Start the background embed-ahead daemon thread."""
-        if self._thread is not None and self._thread.is_alive():
-            logger.warning("EmbedAheadPool already running")
-            return
-
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._embed_loop,
-            name="EmbedAheadPool",
-            daemon=True,
-        )
-        self._thread.start()
-        logger.info("EmbedAheadPool started")
-
-    def stop(self):
-        """Gracefully stop the embed-ahead daemon thread."""
-        self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout=30)
-            if self._thread.is_alive():
-                logger.warning("EmbedAheadPool thread did not stop within timeout")
-            else:
-                logger.info("EmbedAheadPool stopped")
-        self._thread = None
-
-        # Unload MV provider
+    def _unload_models(self):
+        """Unload MV provider if loaded."""
         if self._mv_provider is not None:
             try:
                 if hasattr(self._mv_provider, 'unload'):
@@ -75,7 +45,7 @@ class EmbedAheadPool:
                 logger.warning(f"EmbedAheadPool: MV provider unload error: {e}")
             self._mv_provider = None
 
-    def _embed_loop(self):
+    def _loop(self):
         """Main loop: find MC-completed jobs and run MV embedding."""
         logger.info("EmbedAheadPool loop started")
         poll_interval_s = self._get_config_value("server.embed_ahead.poll_interval_s", 2)
@@ -219,14 +189,6 @@ class EmbedAheadPool:
             logger.error(f"EmbedAhead: commit failed: {e}")
 
         logger.info(f"EmbedAhead: processed {len(valid_jobs)} jobs (MV batch)")
-
-    def _get_config_value(self, dotted_key: str, default):
-        """Read a value from config.yaml by dotted key."""
-        try:
-            from backend.utils.config import get_config
-            return get_config().get(dotted_key, default)
-        except Exception:
-            return default
 
     def get_stats(self) -> dict:
         """Get current embed-ahead pool statistics."""

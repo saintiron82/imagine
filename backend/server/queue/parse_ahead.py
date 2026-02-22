@@ -14,20 +14,19 @@ needs the image (independent of MC). SigLIP2 stays loaded for the session.
 import json
 import logging
 import shutil
-import threading
 import time
 import traceback
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from backend.db.sqlite_client import SQLiteDB
+from backend.server.queue.base_ahead_pool import BaseAheadPool
+from backend.utils.meta_helpers import meta_to_dict
 
 logger = logging.getLogger(__name__)
 
 
-class ParseAheadPool:
+class ParseAheadPool(BaseAheadPool):
     """Server-side pre-parser that runs Phase P ahead of worker demand.
 
     Monitors connected workers' total capacity and pre-parses
@@ -37,41 +36,13 @@ class ParseAheadPool:
     since VV only needs the image pixel data, not MC text.
     """
 
-    def __init__(self, db: SQLiteDB):
-        self.db = db
-        self._thread: Optional[threading.Thread] = None
-        self._running = False
-        self._lock = threading.Lock()
+    def __init__(self, db):
+        super().__init__(db)
         self._processing_mode = self._get_config_value("server.processing_mode", "full")
         self._vv_encoder = None  # Lazy-loaded SigLIP2, stays resident in mc_only mode
 
-    def start(self):
-        """Start the background parse-ahead daemon thread."""
-        if self._thread is not None and self._thread.is_alive():
-            logger.warning("ParseAheadPool already running")
-            return
-
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._parse_loop,
-            name="ParseAheadPool",
-            daemon=True,
-        )
-        self._thread.start()
-        logger.info("ParseAheadPool started")
-
-    def stop(self):
-        """Gracefully stop the parse-ahead daemon thread."""
-        self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout=30)
-            if self._thread.is_alive():
-                logger.warning("ParseAheadPool thread did not stop within timeout")
-            else:
-                logger.info("ParseAheadPool stopped")
-        self._thread = None
-
-        # Unload VV encoder if loaded (mc_only mode)
+    def _unload_models(self):
+        """Unload VV encoder if loaded (mc_only mode)."""
         if self._vv_encoder is not None:
             try:
                 self._vv_encoder.unload()
@@ -106,7 +77,7 @@ class ParseAheadPool:
             logger.warning(f"Failed to calculate buffer target: {e}")
             return 0
 
-    def _parse_loop(self):
+    def _loop(self):
         """Main loop: continuously pre-parse pending jobs to fill the buffer."""
         logger.info("ParseAheadPool loop started")
         poll_interval_s = self._get_config_value("server.parse_ahead.poll_interval_s", 2)
@@ -280,7 +251,7 @@ class ParseAheadPool:
                     server_thumb_path = None
 
         # 6. Upsert metadata to files table
-        meta_dict = self._meta_to_dict(meta)
+        meta_dict = meta_to_dict(meta)
         meta_dict["file_path"] = str(file_p)
 
         try:
@@ -360,33 +331,6 @@ class ParseAheadPool:
         self.db.upsert_vectors(file_id, vv_vec=vv_vec)
         logger.debug(f"ParseAhead VV: file_id={file_id} embedded OK")
 
-    def _meta_to_dict(self, meta) -> dict:
-        """Convert AssetMeta dataclass to dict for storage.
-
-        Removes None values and converts non-serializable types (Path) to str.
-        """
-        try:
-            d = asdict(meta)
-            clean = {}
-            for k, v in d.items():
-                if v is None:
-                    continue
-                if isinstance(v, (str, int, float, bool)):
-                    clean[k] = v
-                elif isinstance(v, (list, dict)):
-                    clean[k] = v
-                elif isinstance(v, Path):
-                    clean[k] = str(v)
-            return clean
-        except Exception:
-            # Fallback: extract key fields manually
-            return {
-                "file_name": getattr(meta, "file_name", ""),
-                "file_path": getattr(meta, "file_path", ""),
-                "format": getattr(meta, "format", ""),
-                "file_size": getattr(meta, "file_size", 0),
-            }
-
     def _get_thumbnail_dir(self) -> Path:
         """Get server thumbnail directory (same logic as upload.py)."""
         from backend.server.config import get_storage_config
@@ -395,14 +339,6 @@ class ParseAheadPool:
         thumb_dir = Path(cfg.get("thumbnail_dir", "./thumbnails"))
         thumb_dir.mkdir(parents=True, exist_ok=True)
         return thumb_dir
-
-    def _get_config_value(self, dotted_key: str, default):
-        """Read a value from config.yaml by dotted key."""
-        try:
-            from backend.utils.config import get_config
-            return get_config().get(dotted_key, default)
-        except Exception:
-            return default
 
     def get_stats(self) -> dict:
         """Get current parse-ahead pool statistics.
