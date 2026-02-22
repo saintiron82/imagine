@@ -478,7 +478,7 @@ class WorkerDaemon:
         self._current_phase = None
 
     def _resolve_file(self, job: dict) -> str:
-        """Get local file path — either shared FS path or download from server."""
+        """Get local file path — shared FS, pre-parsed thumbnail, or full download."""
         file_path = job["file_path"]
         file_id = job["file_id"]
 
@@ -488,9 +488,41 @@ class WorkerDaemon:
                 return file_path
             logger.warning(f"Shared FS file not found: {file_path}")
             return None
-        else:
-            # Download from server
-            return self.uploader.download_file(file_id, self.tmp_dir)
+
+        # server_upload mode: prefer thumbnail if pre-parsed
+        if job.get("pre_parsed"):
+            thumb = self._resolve_thumbnail(job)
+            if thumb:
+                return thumb
+            logger.warning(f"Pre-parsed thumbnail download failed for file_id={file_id}, falling back to full download")
+
+        # Full original download (fallback)
+        return self.uploader.download_file(file_id, self.tmp_dir)
+
+    def _resolve_thumbnail(self, job: dict) -> Optional[str]:
+        """Download only the thumbnail for a pre-parsed job (~200KB instead of ~500MB)."""
+        file_id = job["file_id"]
+        try:
+            resp = self.session.get(
+                f"{self.server_url}/api/v1/upload/download/thumbnail/{file_id}",
+                stream=True,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"Thumbnail download failed: HTTP {resp.status_code}")
+                return None
+
+            dest = Path(self.tmp_dir) / f"thumb_{file_id}.png"
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            size_kb = dest.stat().st_size / 1024
+            logger.info(f"Downloaded thumbnail for file_id={file_id} ({size_kb:.0f}KB)")
+            return str(dest)
+
+        except Exception as e:
+            logger.error(f"Thumbnail download failed for file_id={file_id}: {e}")
+            return None
 
     # ── Pipeline Phases (reusing existing backend code) ────────
 
@@ -545,8 +577,15 @@ class WorkerDaemon:
             logger.error(f"Parse error: {e}", exc_info=True)
             return None
 
-    def _run_vision(self, file_path: Path, thumb_path: str, meta) -> dict:
-        """Phase V: Run VLM to generate MC (caption, tags, classification)."""
+    def _run_vision(self, file_path: Path, thumb_path: str, meta, mc_raw_override: dict = None) -> dict:
+        """Phase V: Run VLM to generate MC (caption, tags, classification).
+
+        Args:
+            file_path: Original file path (for logging).
+            thumb_path: Path to thumbnail image.
+            meta: AssetMeta object (local parse) or None (pre-parsed mode).
+            mc_raw_override: Pre-built mc_raw dict from server (pre-parsed mode).
+        """
         if not thumb_path or not Path(thumb_path).exists():
             logger.warning(f"No thumbnail for vision: {file_path.name}")
             return {}
@@ -567,7 +606,8 @@ class WorkerDaemon:
             elif thumb_img.mode != "RGB":
                 thumb_img = thumb_img.convert("RGB")
 
-            mc_raw = _build_mc_raw(meta)
+            # Use pre-built mc_raw if provided (pre-parsed mode), otherwise build from meta
+            mc_raw = mc_raw_override if mc_raw_override else _build_mc_raw(meta)
 
             # Run 2-Stage vision
             vision_result = analyzer.analyze(thumb_img, mc_raw)
@@ -697,18 +737,38 @@ class WorkerDaemon:
         contexts = []
         for job in jobs:
             ctx = _JobContext(job=job)
-            ctx.local_path = self._resolve_file(job)
-            if not ctx.local_path or not Path(ctx.local_path).exists():
-                ctx.failed = True
-                ctx.error = f"Cannot access file: {job['file_path']}"
+
+            if job.get("pre_parsed"):
+                # Server already ran Phase P — use claim metadata directly
+                ctx.local_path = self._resolve_file(job)
+                ctx.metadata = dict(job.get("metadata", {}))
+                ctx.thumb_path = ctx.local_path  # Downloaded thumbnail IS the thumb
+                ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
+                if not ctx.local_path or not Path(ctx.local_path).exists():
+                    ctx.failed = True
+                    ctx.error = f"Pre-parsed thumbnail unavailable: {job['file_path']}"
+            else:
+                ctx.local_path = self._resolve_file(job)
+                if not ctx.local_path or not Path(ctx.local_path).exists():
+                    ctx.failed = True
+                    ctx.error = f"Cannot access file: {job['file_path']}"
+
             contexts.append(ctx)
 
         active = [c for c in contexts if not c.failed]
 
-        # ── Phase P: Parse all (CPU, 1-by-1) ──
+        # Split into pre-parsed (Phase P skipped) and needs-parse
+        needs_parse = [c for c in active if not c.job.get("pre_parsed")]
+        already_parsed = [c for c in active if c.job.get("pre_parsed")]
+
+        if already_parsed:
+            logger.info(f"Phase P skipped for {len(already_parsed)} pre-parsed jobs")
+
+        # ── Phase P: Parse only unparsed jobs (CPU, 1-by-1) ──
         t_phase = time.perf_counter()
-        _notify(progress_callback, "phase_start", {"phase": "parse", "count": len(active)})
-        for i, ctx in enumerate(active):
+        parse_count = len(needs_parse)
+        _notify(progress_callback, "phase_start", {"phase": "parse", "count": parse_count})
+        for i, ctx in enumerate(needs_parse):
             self._current_phase = "parse"
             self._current_file = Path(ctx.job["file_path"]).name
             self.uploader.report_progress(ctx.job["job_id"], "parse")
@@ -722,12 +782,12 @@ class WorkerDaemon:
 
             _notify(progress_callback, "file_done", {
                 "phase": "parse", "file_name": self._current_file,
-                "index": i + 1, "count": len(active), "success": not ctx.failed,
+                "index": i + 1, "count": parse_count, "success": not ctx.failed,
             })
         elapsed_parse = time.perf_counter() - t_phase
-        fpm_parse = (len(active) / elapsed_parse * 60) if elapsed_parse > 0 else 0
+        fpm_parse = (parse_count / elapsed_parse * 60) if elapsed_parse > 0 and parse_count > 0 else 0
         _notify(progress_callback, "phase_complete", {
-            "phase": "parse", "count": len(active),
+            "phase": "parse", "count": parse_count,
             "elapsed_s": round(elapsed_parse, 2), "files_per_min": round(fpm_parse, 1),
         })
 
@@ -741,8 +801,11 @@ class WorkerDaemon:
             self._current_file = Path(ctx.job["file_path"]).name
             self.uploader.report_progress(ctx.job["job_id"], "vision")
 
+            # For pre-parsed jobs, use mc_raw from server instead of building from meta_obj
+            mc_raw_override = ctx.job.get("mc_raw") if ctx.job.get("pre_parsed") else None
             vision_fields = self._run_vision(
-                Path(ctx.local_path), ctx.thumb_path, ctx.meta_obj
+                Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
+                mc_raw_override=mc_raw_override,
             )
             if vision_fields:
                 ctx.metadata.update(vision_fields)

@@ -137,6 +137,31 @@ class ResultUploader:
             logger.error(f"Download failed for file {file_id}: {e}")
             return None
 
+    def download_thumbnail(self, file_id: int, dest_dir: str) -> Optional[str]:
+        """Download thumbnail only for a pre-parsed job (~200KB instead of ~500MB)."""
+        try:
+            resp = self.session.get(
+                f"{self.base}/api/v1/upload/download/thumbnail/{file_id}",
+                stream=True,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"Thumbnail download failed for file {file_id}: {resp.status_code}")
+                return None
+
+            dest = Path(dest_dir) / f"thumb_{file_id}.png"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            size_kb = dest.stat().st_size / 1024
+            logger.info(f"Downloaded thumbnail for file {file_id} ({size_kb:.0f}KB)")
+            return str(dest)
+        except Exception as e:
+            logger.error(f"Thumbnail download failed for file {file_id}: {e}")
+            return None
+
 
 def _encode_vector(vec: np.ndarray) -> str:
     """Encode numpy float32 vector to base64 string."""
