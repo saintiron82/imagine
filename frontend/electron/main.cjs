@@ -945,7 +945,9 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
         cwd: projectRoot,
         detached: true,  // Own process group for clean tree kill
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        stdio: ['pipe', 'pipe', 'pipe'],  // stdin pipe = watchdog lifeline
     });
+    proc.stdin.on('error', () => {}); // Suppress EPIPE on process exit
     console.log('[run-pipeline] Spawned PID:', proc.pid);
     activePipelineProc = proc;
 
@@ -1091,18 +1093,11 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     });
 });
 
-// IPC Handler: Stop running pipeline (kill entire process group to avoid orphans)
+// IPC Handler: Stop running pipeline (kill entire process tree to avoid residual processes)
 ipcMain.on('stop-pipeline', () => {
     if (activePipelineProc) {
         pipelineStoppedByUser = true;
-        const pid = activePipelineProc.pid;
-        // Kill entire process group (detached=true gives child its own PGID=PID)
-        try {
-            process.kill(-pid, 'SIGKILL');
-        } catch {
-            // Fallback: kill just the main process
-            try { activePipelineProc.kill('SIGKILL'); } catch { }
-        }
+        killProcessTree(activePipelineProc);
         // Don't send events here — proc.on('close') handles cleanup
     }
 });
@@ -1153,7 +1148,13 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
         });
     }
 
-    const proc = spawn(finalPython, args, { cwd: projectRoot, detached: true, env: { ...process.env, PYTHONUNBUFFERED: '1' } });
+    const proc = spawn(finalPython, args, {
+        cwd: projectRoot,
+        detached: true,
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        stdio: ['pipe', 'pipe', 'pipe'],  // stdin pipe = watchdog lifeline
+    });
+    proc.stdin.on('error', () => {}); // Suppress EPIPE on process exit
     activeDiscoverProcs.set(folderPath, proc);
 
     // Immediate feedback while Python loads modules (~15-30s)
@@ -2048,31 +2049,39 @@ app.on('window-all-closed', () => {
     }
 });
 
-// Kill active pipeline/discover process groups (prevents orphans on quit)
-function killActivePipeline() {
-    if (activePipelineProc) {
+/**
+ * Kill a process and its entire child tree.
+ * Windows: taskkill /T (tree kill) — kills all descendants.
+ * Unix: process.kill(-pid) — kills process group (detached spawn creates own group).
+ */
+function killProcessTree(proc) {
+    if (!proc || !proc.pid) return;
+    if (process.platform === 'win32') {
         try {
-            process.kill(-activePipelineProc.pid, 'SIGKILL');
-        } catch {
-            try { activePipelineProc.kill('SIGKILL'); } catch { }
-        }
-        activePipelineProc = null;
-    }
-    for (const [, proc] of activeDiscoverProcs) {
+            execSync(`taskkill /F /T /PID ${proc.pid} 2>nul`, { stdio: 'ignore', timeout: 5000 });
+        } catch { /* already dead */ }
+    } else {
         try {
             process.kill(-proc.pid, 'SIGKILL');
         } catch {
-            try { proc.kill('SIGKILL'); } catch { }
+            try { proc.kill('SIGKILL'); } catch { /* already dead */ }
         }
+    }
+}
+
+// Kill active pipeline/discover process trees (prevents residual processes on quit)
+function killActivePipeline() {
+    if (activePipelineProc) {
+        killProcessTree(activePipelineProc);
+        activePipelineProc = null;
+    }
+    for (const [, proc] of activeDiscoverProcs) {
+        killProcessTree(proc);
     }
     activeDiscoverProcs.clear();
 
     if (activeBackfillProc) {
-        try {
-            process.kill(-activeBackfillProc.pid, 'SIGKILL');
-        } catch {
-            try { activeBackfillProc.kill('SIGKILL'); } catch { }
-        }
+        killProcessTree(activeBackfillProc);
         activeBackfillProc = null;
     }
 }

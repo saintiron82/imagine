@@ -1,10 +1,20 @@
 """
 Parent process watchdog — auto-exit when the parent process (Electron) dies.
 
-When a Python subprocess is spawned by Electron with piped stdio, the stdin
-pipe acts as a "lifeline".  If Electron crashes or is force-killed, the pipe
-handle becomes invalid.  This module monitors stdin in a background thread
-and triggers process exit when the pipe breaks.
+3-layer defense system for cross-platform reliability:
+
+  Layer 1 (kernel, Linux only):
+      prctl(PR_SET_PDEATHSIG, SIGKILL) — instant, 100% reliable.
+      Kernel delivers SIGKILL directly when parent exits.
+
+  Layer 2 (stdin pipe monitoring, primary):
+      When spawned with piped stdin, reads stdin with os.read().
+      Parent death closes the pipe → read returns EOF → exit.
+      Response time: ~milliseconds.
+
+  Layer 3 (PID polling, fallback):
+      When stdin is a tty (running from terminal), polls parent PID.
+      Response time: ~check_interval seconds (default 2s).
 
 This is critical for processes that do NOT read stdin themselves:
   - FastAPI server (uvicorn)
@@ -29,54 +39,88 @@ logger = logging.getLogger(__name__)
 
 
 def start_parent_watchdog(check_interval: float = 2.0, exit_code: int = 0):
-    """Start a background thread that exits when the parent process dies.
-
-    Detection method (dual approach for robustness):
-    1. **stdin pipe monitoring**: Read stdin — when the pipe breaks
-       (parent died), read() returns EOF immediately.
-    2. **Parent PID polling (fallback)**: If stdin is not piped (e.g.
-       running from terminal), poll parent PID every ``check_interval``
-       seconds.
+    """Start parent death detection with 3-layer defense.
 
     Args:
-        check_interval: Seconds between parent PID checks (fallback only).
+        check_interval: Seconds between parent PID checks (layer 3 only).
         exit_code: Exit code when parent death is detected.
     """
-    if sys.stdin.isatty():
-        # Not a piped subprocess — use PID polling as fallback
-        _start_pid_watchdog(check_interval, exit_code)
-    else:
-        # Piped subprocess — monitor stdin (more responsive)
+    # Layer 1: Linux kernel-level death signal (instant, most reliable)
+    _try_prctl()
+
+    # Layer 2 or 3: userspace detection
+    if sys.stdin and not sys.stdin.closed and not sys.stdin.isatty():
+        # Piped subprocess — monitor stdin pipe (layer 2, fast)
         _start_stdin_watchdog(exit_code)
+    else:
+        # Terminal or no stdin — poll parent PID (layer 3, fallback)
+        _start_pid_watchdog(check_interval, exit_code)
+
+
+def _try_prctl():
+    """Layer 1: Linux prctl(PR_SET_PDEATHSIG, SIGKILL).
+
+    Asks the kernel to deliver SIGKILL when the parent process exits.
+    This is the fastest and most reliable mechanism — kernel-level,
+    no polling, no pipe, instant.
+
+    Only available on Linux. No-op on Windows/macOS.
+    """
+    if sys.platform != "linux":
+        return
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        PR_SET_PDEATHSIG = 1
+        result = libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+        if result == 0:
+            logger.debug("Layer 1: prctl(PR_SET_PDEATHSIG, SIGKILL) set")
+        else:
+            errno = ctypes.get_errno()
+            logger.debug(f"prctl failed with errno={errno}")
+    except Exception as e:
+        logger.debug(f"prctl not available: {e}")
 
 
 def _start_stdin_watchdog(exit_code: int):
-    """Monitor stdin pipe — exit when it closes (parent died)."""
+    """Layer 2: Monitor stdin pipe — exit when it closes (parent died).
+
+    Uses os.read() directly instead of sys.stdin.buffer.read() to avoid
+    holding Python's BufferedReader internal lock, which could contend
+    with C-extension threads (numpy, torch, psd-tools).
+    """
     def _watch():
         try:
-            # On Windows, sys.stdin.read() may be wrapped in TextIOWrapper.
-            # Read from the underlying buffer for reliability.
-            if hasattr(sys.stdin, 'buffer'):
-                sys.stdin.buffer.read()
-            else:
-                sys.stdin.read()
-        except Exception:
-            pass
+            fd = sys.stdin.fileno()
+        except (ValueError, OSError):
+            # stdin already closed or no fd available
+            logger.info("stdin has no valid fd — falling back to PID polling")
+            _start_pid_watchdog(2.0, exit_code)
+            return
+
+        try:
+            while True:
+                data = os.read(fd, 1024)
+                if not data:  # EOF — pipe closed (parent died)
+                    break
+        except OSError:
+            pass  # Broken pipe or invalid fd — same as parent death
+
         logger.info("Parent process died (stdin pipe closed) — exiting")
         os._exit(exit_code)
 
-    t = threading.Thread(target=_watch, name="parent-watchdog", daemon=True)
+    t = threading.Thread(target=_watch, name="parent-watchdog-stdin", daemon=True)
     t.start()
-    logger.debug("Parent watchdog started (stdin pipe mode)")
+    logger.debug("Layer 2: Parent watchdog started (stdin pipe mode)")
 
 
 def _start_pid_watchdog(check_interval: float, exit_code: int):
-    """Poll parent PID — exit when parent is no longer alive."""
+    """Layer 3: Poll parent PID — exit when parent is no longer alive."""
     import time
 
     parent_pid = os.getppid()
     if parent_pid <= 1:
-        # Parent is init/launchd — we're already orphaned or running standalone
+        # Parent is init/launchd — we're already detached or running standalone
         logger.debug("Parent PID is 1 (init) — watchdog not started")
         return
 
@@ -87,9 +131,9 @@ def _start_pid_watchdog(check_interval: float, exit_code: int):
                 logger.info(f"Parent process (PID {parent_pid}) died — exiting")
                 os._exit(exit_code)
 
-    t = threading.Thread(target=_watch, name="parent-watchdog", daemon=True)
+    t = threading.Thread(target=_watch, name="parent-watchdog-pid", daemon=True)
     t.start()
-    logger.debug(f"Parent watchdog started (PID poll mode, parent={parent_pid})")
+    logger.debug(f"Layer 3: Parent watchdog started (PID poll mode, parent={parent_pid})")
 
 
 def _is_pid_alive(pid: int) -> bool:
