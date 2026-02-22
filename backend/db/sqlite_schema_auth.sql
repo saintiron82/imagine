@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
     current_job_id INTEGER,
     current_file TEXT,
     current_phase TEXT,
+    -- Resource metrics (JSON blob from resource_monitor.collect_metrics())
+    resources_json TEXT DEFAULT NULL,
     -- Command queue (server → worker, consumed on heartbeat)
     pending_command TEXT DEFAULT NULL
         CHECK (pending_command IN (NULL, 'stop', 'pause', 'block')),

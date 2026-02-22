@@ -92,6 +92,7 @@ class SQLiteDB:
                 self._migrate_parse_ahead_columns()
                 self._migrate_worker_session_tracking()
                 self._migrate_worker_session_overrides()
+                self._migrate_worker_resources_json()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -102,6 +103,7 @@ class SQLiteDB:
                 self._migrate_parse_ahead_columns()
                 self._migrate_worker_session_tracking()
                 self._migrate_worker_session_overrides()
+                self._migrate_worker_resources_json()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -245,6 +247,19 @@ class SQLiteDB:
             self.conn.execute("ALTER TABLE job_queue ADD COLUMN worker_session_id INTEGER")
             self.conn.commit()
             logger.info("✅ worker_session_id column added to job_queue")
+
+
+    def _migrate_worker_resources_json(self):
+        """Add resources_json column to worker_sessions for resource metrics."""
+        if not self._table_exists('worker_sessions'):
+            return
+        try:
+            self.conn.execute("SELECT resources_json FROM worker_sessions LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding resources_json column to worker_sessions...")
+            self.conn.execute("ALTER TABLE worker_sessions ADD COLUMN resources_json TEXT DEFAULT NULL")
+            self.conn.commit()
+            logger.info("✅ resources_json column added to worker_sessions")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

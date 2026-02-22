@@ -45,9 +45,34 @@ class JobQueueManager:
         downloading the full original file.
 
         Uses serialized access (SQLite single-writer) to avoid race conditions.
+        Resource-aware: throttle_level from worker session limits claim count.
         """
         cursor = self.db.conn.cursor()
         now = datetime.now(timezone.utc).isoformat()
+
+        # Resource-aware claim throttling: check worker's throttle_level
+        if worker_session_id is not None:
+            cursor.execute(
+                "SELECT resources_json FROM worker_sessions WHERE id = ?",
+                (worker_session_id,)
+            )
+            session_row = cursor.fetchone()
+            if session_row and session_row[0]:
+                try:
+                    resources = json.loads(session_row[0])
+                    throttle = resources.get("throttle_level", "normal")
+                    if throttle == "critical":
+                        logger.info(
+                            f"Claim denied for session {worker_session_id}: "
+                            f"throttle_level=critical"
+                        )
+                        return []
+                    elif throttle == "danger":
+                        count = min(count, 1)
+                    elif throttle == "warning":
+                        count = max(1, int(count * 0.5))
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         # 1) Prefer pre-parsed jobs (server already ran Phase P)
         cursor.execute(

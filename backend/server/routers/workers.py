@@ -6,6 +6,7 @@ Server piggybacks commands (stop/block) in heartbeat responses.
 """
 
 import logging
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -36,6 +37,9 @@ class HeartbeatRequest(BaseModel):
     current_file: Optional[str] = None
     current_phase: Optional[str] = None
     pool_size: int = 0
+    resources: Optional[dict] = None
+    throttle_level: Optional[str] = None  # normal/warning/danger/critical
+    worker_state: Optional[str] = None    # active/idle/resting
 
 
 class DisconnectRequest(BaseModel):
@@ -137,7 +141,12 @@ def worker_heartbeat(
     if session_status == "blocked":
         return {"ok": True, "command": "block", "pool_hint": 0}
 
-    # Update metrics
+    # Update metrics (merge throttle_level + worker_state into resources JSON)
+    resources_data = dict(req.resources) if req.resources else {}
+    if req.throttle_level:
+        resources_data["throttle_level"] = req.throttle_level
+    if req.worker_state:
+        resources_data["worker_state"] = req.worker_state
     cursor.execute(
         """UPDATE worker_sessions
            SET last_heartbeat = ?,
@@ -146,10 +155,12 @@ def worker_heartbeat(
                current_job_id = ?,
                current_file = ?,
                current_phase = ?,
+               resources_json = ?,
                pending_command = NULL
            WHERE id = ?""",
         (now, req.jobs_completed, req.jobs_failed,
          req.current_job_id, req.current_file, req.current_phase,
+         json.dumps(resources_data) if resources_data else None,
          req.session_id)
     )
     db.conn.commit()
@@ -158,11 +169,22 @@ def worker_heartbeat(
     processing_mode = mode_override or _get_global_processing_mode()
     effective_batch = batch_override or batch_capacity
 
+    # Resource-aware batch_hint: throttle down based on worker resource pressure
+    throttle = resources_data.get("throttle_level", "normal") if resources_data else "normal"
+    if throttle == "critical":
+        resource_batch_hint = 0
+    elif throttle == "danger":
+        resource_batch_hint = 1
+    elif throttle == "warning":
+        resource_batch_hint = max(1, int(effective_batch * 0.5))
+    else:
+        resource_batch_hint = effective_batch
+
     return {
         "ok": True,
         "command": pending_cmd,
-        "pool_hint": effective_batch * 2,
-        "batch_hint": effective_batch,
+        "pool_hint": resource_batch_hint * 2,
+        "batch_hint": resource_batch_hint,
         "processing_mode": processing_mode,
     }
 
@@ -251,7 +273,8 @@ def admin_list_workers(
                   ws.current_file, ws.current_phase,
                   ws.last_heartbeat, ws.connected_at, ws.disconnected_at,
                   ws.pending_command, u.username, ws.user_id,
-                  ws.processing_mode_override, ws.batch_capacity_override
+                  ws.processing_mode_override, ws.batch_capacity_override,\
+                  ws.resources_json
            FROM worker_sessions ws
            JOIN users u ON ws.user_id = u.id
            ORDER BY
@@ -331,6 +354,7 @@ def admin_list_workers(
             "throughput": throughput,
             "processing_mode_override": row[15],
             "batch_capacity_override": row[16],
+            "resources": json.loads(row[17]) if row[17] else None,
         })
     return {"workers": workers}
 
