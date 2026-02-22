@@ -321,7 +321,7 @@ const StatusBar = ({
                     </div>
                 )}
 
-                <span className="text-[9px] text-gray-600 font-mono mr-2">v0.5.1.20260222_59</span>
+                <span className="text-[9px] text-gray-600 font-mono mr-2">v0.6.0.20260222_60</span>
                 <div className="flex-shrink-0">
                     {isOpen ? <X size={14} /> : t('label.show_logs')}
                 </div>
