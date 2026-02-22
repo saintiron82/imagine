@@ -47,6 +47,8 @@ from backend.worker.config import (
 )
 from backend.utils.meta_helpers import meta_to_dict
 from backend.worker.result_uploader import ResultUploader
+from backend.worker.schedule import is_active_now
+from backend.worker.worker_state import WorkerStateMachine, WorkerState
 
 logging.basicConfig(
     level=logging.INFO,
@@ -126,6 +128,17 @@ class WorkerDaemon:
         self._current_job_id = None
         self._current_file = None
         self._current_phase = None
+
+        # Throttle state
+        self._throttle_level = "normal"
+        self._original_batch_capacity = self.batch_capacity  # preserved for restore
+
+        # State machine (schedule + throttle driven)
+        self._state_machine = WorkerStateMachine(
+            on_enter_idle=self._on_enter_idle,
+            on_enter_active=self._on_enter_active,
+            on_enter_resting=self._on_enter_resting,
+        )
 
         logger.info(
             f"Worker initialized: server={self.server_url}, mode={self.storage_mode}, "
@@ -281,6 +294,14 @@ class WorkerDaemon:
         try:
             with self._pool_lock:
                 pool_sz = len(self._job_pool)
+            # Collect system resource metrics + throttle level
+            try:
+                from backend.worker.resource_monitor import collect_metrics, get_throttle_level
+                resources = collect_metrics()
+                throttle_level = get_throttle_level(resources)
+            except Exception:
+                resources = None
+                throttle_level = "normal"
             resp = self._authed_request(
                 "post",
                 f"{self.server_url}/api/v1/workers/heartbeat",
@@ -292,6 +313,9 @@ class WorkerDaemon:
                     "current_file": self._current_file,
                     "current_phase": self._current_phase,
                     "pool_size": pool_sz,
+                    "resources": resources,
+                    "throttle_level": throttle_level,
+                    "worker_state": self._state_machine.state_name,
                 },
             )
             if resp.status_code == 200:
@@ -1206,6 +1230,111 @@ class WorkerDaemon:
         except ImportError:
             pass
 
+    # ── State Machine Callbacks ─────────────────────────────────
+
+    def _on_enter_idle(self):
+        """Called when transitioning to IDLE (schedule inactive).
+        Unload all models to free GPU memory during off-hours."""
+        logger.info("Entering IDLE: unloading all models for off-schedule period")
+        self._unload_vlm()
+        self._unload_vv()
+        self._unload_mv()
+
+    def _on_enter_active(self):
+        """Called when transitioning to ACTIVE.
+        Models will reload lazily on first use — no explicit preload needed."""
+        logger.info("Entering ACTIVE: ready to process jobs (models load on demand)")
+
+    def _on_enter_resting(self):
+        """Called when transitioning to RESTING (throttle critical).
+        Models should already be unloaded by the throttle handler."""
+        logger.info("Entering RESTING: resource pressure critical, waiting for recovery")
+
+    # ── Throttle Logic ────────────────────────────────────────
+
+    def _check_throttle(self) -> str:
+        """Collect metrics and determine current throttle level.
+
+        Returns:
+            One of 'normal', 'warning', 'danger', 'critical'.
+        """
+        try:
+            from backend.worker.resource_monitor import collect_metrics, get_throttle_level
+            metrics = collect_metrics()
+            level = get_throttle_level(metrics)
+        except Exception:
+            level = "normal"
+
+        if level != self._throttle_level:
+            logger.info(f"Throttle level changed: {self._throttle_level} → {level}")
+        self._throttle_level = level
+        return level
+
+    def _apply_throttle(self, level: str) -> bool:
+        """Apply throttle actions based on the current level.
+
+        Args:
+            level: Throttle level from _check_throttle().
+
+        Returns:
+            True if processing should proceed, False if this iteration
+            should be skipped (danger pause or critical halt).
+        """
+        if level == "normal":
+            # Restore original batch capacity if it was reduced
+            if self.batch_capacity < self._original_batch_capacity:
+                self.batch_capacity = self._original_batch_capacity
+                logger.info(f"Throttle normal: batch_capacity restored to {self.batch_capacity}")
+            return True
+
+        if level == "warning":
+            # Reduce batch capacity to ~50% (minimum 1)
+            reduced = max(1, self._original_batch_capacity // 2)
+            if self.batch_capacity != reduced:
+                logger.warning(f"Throttle warning: batch_capacity {self.batch_capacity} → {reduced}")
+                self.batch_capacity = reduced
+            return True
+
+        if level == "danger":
+            # Pause for N seconds, then allow retry
+            try:
+                from backend.utils.config import get_config
+                cfg = get_config()
+                wait_s = cfg.get("worker", {}).get("throttle", {}).get("danger_wait_seconds", 30)
+            except Exception:
+                wait_s = 30
+            logger.warning(f"Throttle danger: pausing {wait_s}s before retry")
+            for _ in range(wait_s):
+                if _shutdown:
+                    return False
+                time.sleep(1)
+            return False  # Skip this iteration, re-check on next loop
+
+        if level == "critical":
+            # Stop processing, unload all models, wait for recovery
+            logger.error("Throttle critical: unloading all models, waiting for recovery")
+            self._unload_vlm()
+            self._unload_vv()
+            self._unload_mv()
+            # Wait in 10-second intervals, re-checking level
+            for _ in range(6):  # Up to 60 seconds
+                if _shutdown:
+                    return False
+                time.sleep(10)
+                try:
+                    from backend.worker.resource_monitor import collect_metrics, get_throttle_level
+                    m = collect_metrics()
+                    new_level = get_throttle_level(m)
+                    if new_level != "critical":
+                        logger.info(f"Throttle recovered from critical → {new_level}")
+                        self._throttle_level = new_level
+                        return False  # Re-enter loop to apply new level
+                except Exception:
+                    pass
+            return False  # Still critical after 60s — skip this iteration
+
+        return True
+
     # ── Main Loop ─────────────────────────────────────────────
 
     def run(self):
@@ -1229,6 +1358,39 @@ class WorkerDaemon:
 
         while not _shutdown:
             try:
+                # ── Schedule + State Machine check ──
+                scheduled_active = is_active_now()
+                throttle = self._check_throttle()
+
+                # Determine if there are pending jobs (pool + server)
+                with self._pool_lock:
+                    pool_count = len(self._job_pool)
+                has_pending = pool_count > 0
+
+                self._state_machine.update(
+                    is_scheduled_active=scheduled_active,
+                    throttle_level=throttle,
+                    has_pending_jobs=has_pending,
+                )
+
+                current_state = self._state_machine.state
+                if current_state in (WorkerState.IDLE, WorkerState.RESTING):
+                    # Not active — skip job processing, just heartbeat and wait
+                    if time.time() - last_heartbeat >= heartbeat_interval:
+                        hb = self._heartbeat()
+                        last_heartbeat = time.time()
+                        cmd = hb.get("command")
+                        if cmd in ("stop", "block"):
+                            logger.info(f"Server command received: {cmd}")
+                            break
+                    state_label = current_state.value
+                    logger.debug(f"Worker {state_label}: waiting {poll_interval}s")
+                    for _ in range(poll_interval):
+                        if _shutdown:
+                            break
+                        time.sleep(1)
+                    continue
+
                 # Heartbeat check
                 if time.time() - last_heartbeat >= heartbeat_interval:
                     hb = self._heartbeat()
@@ -1272,6 +1434,15 @@ class WorkerDaemon:
 
                 consecutive_empty = 0
 
+                # ── Throttle check before processing ──
+                throttle = self._check_throttle()
+                if not self._apply_throttle(throttle):
+                    # Put jobs back into pool (not lost)
+                    with self._pool_lock:
+                        self._job_pool.extendleft(reversed(batch))
+                    logger.info(f"Throttle ({throttle}): {len(batch)} jobs returned to pool")
+                    continue
+
                 # Start background refill while processing
                 refill_thread = threading.Thread(target=self._fill_pool, daemon=True)
                 refill_thread.start()
@@ -1279,6 +1450,8 @@ class WorkerDaemon:
                 # Phase-level batch processing (all files through each phase)
                 if not _shutdown:
                     self.process_batch_phased(batch)
+                    # Record job activity to reset idle timeout timer
+                    self._state_machine.record_job_activity()
 
                 # Wait for refill to complete
                 refill_thread.join(timeout=30)
