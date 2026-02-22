@@ -205,6 +205,8 @@ class WorkerIPCController:
             daemon._connect_session()
             if daemon.session_id:
                 _emit_log(f"[SESSION] Registered (id={daemon.session_id}, mode={daemon.processing_mode})", "success")
+                # Notify UI of processing mode so phase pills can be dimmed
+                _emit({"event": "processing_mode", "mode": daemon.processing_mode})
             else:
                 _emit_log("[SESSION] Warning: session not registered (no session_id)", "warning")
 
@@ -221,10 +223,14 @@ class WorkerIPCController:
                 # Periodic heartbeat
                 if time.time() - last_heartbeat >= heartbeat_interval:
                     _emit_log(f"[HEARTBEAT] Sending heartbeat (loop #{loop_count})...", "info")
+                    old_mode = daemon.processing_mode
                     hb = daemon._heartbeat()
                     last_heartbeat = time.time()
                     cmd = hb.get("command")
                     _emit_log(f"[HEARTBEAT] Response: {hb}", "info")
+                    # Relay processing mode changes from server
+                    if daemon.processing_mode != old_mode:
+                        _emit({"event": "processing_mode", "mode": daemon.processing_mode})
                     if cmd in ("stop", "block"):
                         _emit_log(f"[HEARTBEAT] Server command: {cmd}", "warning")
                         self._running = False

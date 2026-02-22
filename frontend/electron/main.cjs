@@ -1559,6 +1559,9 @@ function processWorkerOutput() {
             } else if (evt === 'batch_complete') {
                 console.log('[Worker:batch] COMPLETE', parsed.count, 'files in', parsed.elapsed_s, 's', parsed.files_per_min, '/min');
                 sendWorkerEvent('worker-batch-complete', parsed);
+            } else if (evt === 'processing_mode') {
+                console.log('[Worker] Processing mode:', parsed.mode);
+                sendWorkerEvent('worker-processing-mode', parsed);
             }
         } catch (e) {
             console.error('[Worker] JSON parse error:', e, line);

@@ -224,6 +224,7 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
           const progressPct = totalQ > 0 ? Math.min(100, (completed / totalQ) * 100) : 0;
           const perMin = wp.throughput || 0;
 
+          const isMcOnly = wp.processingMode === 'mc_only';
           const phaseOrder = ['parse', 'vision', 'embed_vv', 'embed_mv'];
           const phaseConfig = {
             parse:    { label: t('status.phase.parse'), color: 'bg-cyan-500',   textColor: 'text-cyan-400' },
@@ -231,6 +232,8 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
             embed_vv: { label: 'VV',                    color: 'bg-purple-500', textColor: 'text-purple-400' },
             embed_mv: { label: 'MV',                    color: 'bg-green-500',  textColor: 'text-green-400' },
           };
+          // In mc_only mode, server handles P/VV/MV — worker only does MC
+          const serverPhases = isMcOnly ? new Set(['parse', 'embed_vv', 'embed_mv']) : new Set();
           const currentIdx = phaseOrder.indexOf(wp.currentPhase);
 
           return (
@@ -251,8 +254,9 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
               <div className="grid grid-cols-2 gap-3 mb-4">
                 {phaseOrder.map((phase, idx) => {
                   const cfg = phaseConfig[phase];
-                  const isActive = wp.currentPhase === phase;
-                  const isDone = currentIdx > idx;
+                  const isServer = serverPhases.has(phase);
+                  const isActive = !isServer && wp.currentPhase === phase;
+                  const isDone = !isServer && currentIdx > idx;
                   const pct = isActive && wp.phaseCount > 0
                     ? Math.round((wp.phaseIndex / wp.phaseCount) * 100)
                     : isDone ? 100 : 0;
@@ -260,20 +264,31 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                   const elapsed = wp.phaseElapsed?.[phase] || 0;
 
                   return (
-                    <div key={phase} className={`bg-gray-900 rounded-lg p-3 ${isActive ? 'ring-1 ring-blue-500/50' : ''}`}>
+                    <div key={phase} className={`bg-gray-900 rounded-lg p-3 ${
+                      isServer ? 'opacity-40' :
+                      isActive ? 'ring-1 ring-blue-500/50' : ''
+                    }`}>
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className={`text-xs font-bold ${isDone ? 'text-green-400' : isActive ? cfg.textColor : 'text-gray-600'}`}>
+                        <span className={`text-xs font-bold ${
+                          isServer ? 'text-gray-600' :
+                          isDone ? 'text-green-400' : isActive ? cfg.textColor : 'text-gray-600'
+                        }`}>
                           {cfg.label}
+                          {isServer && <span className="text-[8px] font-normal text-gray-600 ml-1">SVR</span>}
                         </span>
                         <div className="flex items-center gap-2">
-                          {(isDone || isActive) && fpm > 0 && (
+                          {!isServer && (isDone || isActive) && fpm > 0 && (
                             <span className="text-[9px] font-mono text-yellow-400">{fpm.toFixed(1)}/m</span>
                           )}
-                          {isDone && elapsed > 0 && (
+                          {!isServer && isDone && elapsed > 0 && (
                             <span className="text-[9px] font-mono text-gray-500">{elapsed.toFixed(1)}s</span>
                           )}
-                          <span className={`text-[10px] font-mono ${isDone ? 'text-green-400' : isActive ? 'text-gray-300' : 'text-gray-600'}`}>
-                            {isDone ? `${wp.phaseCount}/${wp.phaseCount}` :
+                          <span className={`text-[10px] font-mono ${
+                            isServer ? 'text-gray-700' :
+                            isDone ? 'text-green-400' : isActive ? 'text-gray-300' : 'text-gray-600'
+                          }`}>
+                            {isServer ? '-' :
+                             isDone ? `${wp.phaseCount}/${wp.phaseCount}` :
                              isActive ? `${wp.phaseIndex}/${wp.phaseCount}` :
                              `-`}
                           </span>
@@ -281,7 +296,10 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                       </div>
                       <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all duration-300 ${isDone ? 'bg-green-500' : isActive ? `${cfg.color} animate-pulse` : 'bg-gray-700'}`}
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            isServer ? 'bg-gray-700' :
+                            isDone ? 'bg-green-500' : isActive ? `${cfg.color} animate-pulse` : 'bg-gray-700'
+                          }`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
@@ -317,7 +335,7 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                   <span className="text-gray-500">{t('worker.phase_speed')}:</span>
                   {phaseOrder.map(phase => {
                     const fpm = wp.phaseFpm?.[phase] || 0;
-                    if (fpm <= 0) return null;
+                    if (fpm <= 0 || serverPhases.has(phase)) return null;
                     const cfg = phaseConfig[phase];
                     return (
                       <span key={phase} className={cfg.textColor}>
@@ -331,7 +349,10 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
               {/* Current file */}
               <div className="flex items-center gap-3 text-xs">
                 {wp.currentPhase && (
-                  <span className={`font-mono font-bold ${phaseConfig[wp.currentPhase]?.textColor || 'text-gray-400'}`}>
+                  <span className={`font-mono font-bold ${
+                    serverPhases.has(wp.currentPhase) ? 'text-gray-600' :
+                    (phaseConfig[wp.currentPhase]?.textColor || 'text-gray-400')
+                  }`}>
                     {phaseConfig[wp.currentPhase]?.label || wp.currentPhase}
                   </span>
                 )}

@@ -194,5 +194,7 @@ contextBridge.exposeInMainWorld('electron', {
         offBatchPhaseComplete: () => ipcRenderer.removeAllListeners('worker-batch-phase-complete'),
         onBatchComplete: (cb) => ipcRenderer.on('worker-batch-complete', (_, data) => cb(data)),
         offBatchComplete: () => ipcRenderer.removeAllListeners('worker-batch-complete'),
+        onProcessingMode: (cb) => ipcRenderer.on('worker-processing-mode', (_, data) => cb(data)),
+        offProcessingMode: () => ipcRenderer.removeAllListeners('worker-processing-mode'),
     }
 });

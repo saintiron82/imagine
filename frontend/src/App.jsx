@@ -69,6 +69,7 @@ function App() {
     completed: 0,
     totalQueue: 0, pending: 0,
     etaMs: null, throughput: 0,  // overall items/min
+    processingMode: 'full',     // "full" | "mc_only" — controls phase pill dimming
     // Per-phase speed (files/min) — updated on phase_complete
     phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
     // Per-phase elapsed (seconds) — updated on phase_complete
@@ -524,6 +525,10 @@ function App() {
       });
     };
 
+    const onProcessingMode = (data) => {
+      setWorkerProgress(prev => ({ ...prev, processingMode: data.mode || 'full' }));
+    };
+
     w.onStatus(onStatus);
     w.onBatchStart?.(onBatchStart);
     w.onBatchPhaseStart?.(onBatchPhaseStart);
@@ -531,6 +536,7 @@ function App() {
     w.onBatchPhaseComplete?.(onBatchPhaseComplete);
     w.onBatchComplete?.(onBatchComplete);
     w.onJobDone(onJobDone);
+    w.onProcessingMode?.(onProcessingMode);
 
     return () => {
       w.offStatus();
@@ -540,6 +546,7 @@ function App() {
       w.offBatchPhaseComplete?.();
       w.offBatchComplete?.();
       w.offJobDone();
+      w.offProcessingMode?.();
     };
   }, [appMode]);
 
@@ -616,7 +623,7 @@ function App() {
       setWorkerProgress({
         batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
         currentFile: '', completed: 0, totalQueue: 0, pending: 0,
-        etaMs: null, throughput: 0,
+        etaMs: null, throughput: 0, processingMode: 'full',
         phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
         phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
       });
