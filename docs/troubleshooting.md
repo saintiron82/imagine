@@ -385,6 +385,15 @@ else:
 - **새 워커 기능 추가 시**: Windows/macOS 양쪽에서 테스트 필수
 - **C-extension 사용 모듈** (numpy, torch, psd-tools): Windows에서는 메인 스레드 사전 import
 
+### 후속 조치 (v0.5.0)
+
+- **공용 유틸리티 추출**: 인라인 Win32 코드를 `backend/utils/win32_stdin.py`로 추출.
+  `make_stdin_reader()` 함수가 플랫폼을 자동 감지하여 적절한 리더 반환.
+- **검색 데몬 분석**: `api_search.py`의 `run_daemon()`도 `for line in sys.stdin` 사용하나,
+  단일 스레드 구조이므로 CRT I/O 락 경합 위험 없음 (백그라운드 스레드 부재). 수정 불필요.
+- **규칙 명시**: 향후 새 Python subprocess가 stdin 파이프 + 백그라운드 C-extension 조합을
+  사용할 경우 반드시 `make_stdin_reader()` 사용 (CLAUDE.md에 규칙 추가).
+
 ### 교훈
 
 macOS에서 정상 동작하는 코드가 Windows에서 데드락을 일으킬 수 있다. 파이프된 stdin의 I/O 락 동작이 OS별로 근본적으로 다르며, Windows CRT의 I/O 직렬화는 문서화가 거의 되어있지 않아 디버깅이 극도로 어렵다.

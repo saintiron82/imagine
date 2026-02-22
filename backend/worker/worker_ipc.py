@@ -28,75 +28,12 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from backend.utils.win32_stdin import make_stdin_reader, STDIN_CLOSED
+
 logger = logging.getLogger("WorkerIPC")
 
 # Thread-safe stdout lock — prevents interleaved JSON lines from main/bg threads
 _stdout_lock = threading.Lock()
-
-# Sentinel for stdin closed
-_STDIN_CLOSED = object()
-
-
-def _make_win32_stdin_reader():
-    """Create a non-blocking stdin reader for Windows using PeekNamedPipe.
-
-    On Windows, any blocking read on a piped stdin holds a CRT/kernel I/O lock
-    that prevents background threads from completing numpy/C-extension work
-    (psd.composite(), torch CUDA ops, etc.).  This uses PeekNamedPipe to poll
-    without blocking, avoiding the lock contention entirely.
-
-    Returns a callable that yields one line per call:
-        str: A stripped line of text, or
-        None: No data available yet (caller should retry), or
-        _STDIN_CLOSED: The pipe was closed.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.windll.kernel32
-    handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
-    buf = bytearray()
-
-    def readline():
-        nonlocal buf
-        # First check if we already have a buffered line
-        if b"\n" in buf:
-            idx = buf.index(b"\n")
-            line = bytes(buf[:idx])
-            del buf[:idx + 1]
-            return line.decode("utf-8", errors="replace").strip() or None
-
-        # Poll for new data (non-blocking)
-        while True:
-            available = wintypes.DWORD(0)
-            ok = kernel32.PeekNamedPipe(
-                handle, None, 0, None, ctypes.byref(available), None
-            )
-            if not ok:
-                return _STDIN_CLOSED
-
-            if available.value > 0:
-                read_buf = ctypes.create_string_buffer(available.value)
-                bytes_read = wintypes.DWORD(0)
-                kernel32.ReadFile(
-                    handle, read_buf, available.value,
-                    ctypes.byref(bytes_read), None,
-                )
-                buf.extend(read_buf.raw[:bytes_read.value])
-
-                if b"\n" in buf:
-                    idx = buf.index(b"\n")
-                    line = bytes(buf[:idx])
-                    del buf[:idx + 1]
-                    return line.decode("utf-8", errors="replace").strip() or None
-            else:
-                time.sleep(0.05)  # 50ms poll — responsive for IPC commands
-
-    return readline
-
-
-# Pre-create the reader if on Windows (only used in main())
-_win32_stdin_readline = None
 
 
 def _emit(event_data: dict):
@@ -404,27 +341,16 @@ def main():
     controller = WorkerIPCController()
     _emit({"event": "ready"})
 
-    # On Windows, ANY blocking read on a piped stdin (for line in sys.stdin,
-    # os.read, ReadFile) holds a CRT / kernel I/O lock that prevents background
-    # threads from completing numpy/C-extension work (psd.composite(), torch ops).
-    # Fix: use Win32 PeekNamedPipe to poll stdin non-blockingly, so no thread
-    # ever blocks on a pipe read and the I/O lock is never held.
-    if sys.platform == "win32":
-        _read_line = _make_win32_stdin_reader()
-    else:
-        # On Unix, blocking stdin is fine — no CRT lock contention.
-        _line_iter = iter(sys.stdin)
-
-        def _read_line():
-            try:
-                return next(_line_iter).strip() or None
-            except StopIteration:
-                return _STDIN_CLOSED
+    # Platform-aware stdin reader:
+    # - Windows: Win32 PeekNamedPipe (non-blocking, avoids CRT I/O lock deadlock)
+    # - Unix: blocking iter(sys.stdin) (safe, no lock contention)
+    # See backend/utils/win32_stdin.py for details.
+    _read_line = make_stdin_reader()
 
     while True:
         line = _read_line()
 
-        if line is _STDIN_CLOSED:
+        if line is STDIN_CLOSED:
             controller.stop()
             break
         if line is None:

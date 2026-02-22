@@ -1291,6 +1291,35 @@ analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
   - macOS/Linux에서는 발생하지 않음 (POSIX I/O 모델 차이)
   - 상세: `docs/troubleshooting.md` 참조
 
+### 플랫폼별 분기 처리 (MANDATORY)
+
+**Electron에서 spawn하는 Python subprocess에 적용되는 플랫폼별 규칙입니다.**
+
+| 항목 | Windows | macOS / Linux | 관련 파일 |
+|------|---------|---------------|----------|
+| subprocess stdin 읽기 | Win32 PeekNamedPipe 논블로킹 | `for line in sys.stdin` 블로킹 | `backend/utils/win32_stdin.py` |
+| 무거운 모듈 import | 메인 스레드 사전 import 필수 | 불필요 (안전) | `worker_ipc.py` |
+| stdout/stderr 인코딩 | UTF-8 강제 래핑 (기본 cp949) | UTF-8 기본 | `ingest_engine.py` |
+| 프로세스 종료 | SIGKILL (SIGTERM 비신뢰) | SIGTERM 정상 | `main.cjs` |
+| 파일 경로 구분자 | `\` (pathlib 자동 처리) | `/` | 전역 |
+
+**규칙:**
+
+1. **stdin 파이프 + 백그라운드 스레드 조합**: 새 Python subprocess가 Electron에서 stdin 파이프로 장수명 실행되고 백그라운드 스레드에서 C-extension(numpy, torch, psd-tools 등)을 사용하는 경우, 반드시 `backend/utils/win32_stdin.py`의 `make_stdin_reader()` 사용.
+2. **C-extension 모듈 사전 import**: Windows에서 백그라운드 스레드가 numpy/torch를 최초 import하면 DLL 로딩 데드락 발생. 메인 스레드에서 사전 import 필수.
+3. **단일 스레드 stdin 데몬은 안전**: 검색 데몬(`api_search.py`)처럼 stdin 블로킹 읽기를 사용하더라도 백그라운드 스레드가 없으면 데드락 없음. 분기 처리 불필요.
+4. **공용 유틸리티**: `backend/utils/win32_stdin.py` — 플랫폼 자동 감지, `make_stdin_reader()` 호출 시 Windows/Unix 자동 분기.
+
+**적용 현황:**
+
+| 프로세스 | stdin | 백그라운드 스레드 | PeekNamedPipe | 상태 |
+|---------|-------|-----------------|---------------|------|
+| Worker IPC | 장수명 stdin | 있음 (워커) | 적용됨 | ✅ |
+| Search Daemon | 장수명 stdin | 없음 (단일 스레드) | 불필요 | ✅ |
+| FastAPI Server | stdin 안 읽음 | uvicorn 내부 | 불필요 | ✅ |
+| Pipeline/Discover | stdin 안 읽음 | 있음 | 불필요 | ✅ |
+| 기타 API 스크립트 | 단수명/argv | 없음 | 불필요 | ✅ |
+
 ### 양자화 옵션 (조사 완료, 미적용)
 
 Mac MPS (Apple Silicon)에서 사용 가능한 양자화 방법 3가지. 현재는 적용하지 않음.
