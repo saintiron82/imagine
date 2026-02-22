@@ -278,7 +278,9 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
                         </span>
                         <div className="flex items-center gap-2">
                           {!isServer && (isDone || isActive) && fpm > 0 && (
-                            <span className="text-[9px] font-mono text-yellow-400">{fpm.toFixed(1)}/m</span>
+                            <span className="text-[9px] font-mono text-yellow-400">
+                              {isMcOnly ? `${(60 / fpm).toFixed(1)}s` : `${fpm.toFixed(1)}/m`}
+                            </span>
                           )}
                           {!isServer && isDone && elapsed > 0 && (
                             <span className="text-[9px] font-mono text-gray-500">{elapsed.toFixed(1)}s</span>

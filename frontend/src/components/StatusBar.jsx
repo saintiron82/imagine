@@ -291,7 +291,7 @@ const StatusBar = ({
                             {(pFpm.parse > 0 || pFpm.vision > 0 || pFpm.embed_vv > 0 || pFpm.embed_mv > 0) && (
                                 <span className="font-mono text-[9px] text-gray-400">
                                     {pFpm.parse > 0 && <span className={dimmedPhases.has('parse') ? 'text-gray-600' : 'text-cyan-400'}>P:{pFpm.parse.toFixed(0)} </span>}
-                                    {pFpm.vision > 0 && <span className="text-blue-400">MC:{pFpm.vision.toFixed(1)} </span>}
+                                    {pFpm.vision > 0 && <span className="text-blue-400">MC:{isMcOnly ? `${(60 / pFpm.vision).toFixed(1)}s` : `${pFpm.vision.toFixed(1)}/m`} </span>}
                                     {pFpm.embed_vv > 0 && <span className={dimmedPhases.has('embed_vv') ? 'text-gray-600' : 'text-purple-400'}>VV:{pFpm.embed_vv.toFixed(0)} </span>}
                                     {pFpm.embed_mv > 0 && <span className={dimmedPhases.has('embed_mv') ? 'text-gray-600' : 'text-green-400'}>MV:{pFpm.embed_mv.toFixed(0)}</span>}
                                 </span>
@@ -299,7 +299,9 @@ const StatusBar = ({
 
                             {perMin > 0 && (
                                 <span className="text-yellow-300 font-mono text-[10px]">
-                                    {perMin.toFixed(1)}/min
+                                    {isMcOnly
+                                        ? `${(60 / perMin).toFixed(1)}s/file`
+                                        : `${perMin.toFixed(1)}/min`}
                                 </span>
                             )}
 
