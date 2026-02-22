@@ -112,6 +112,12 @@ CREATE TABLE IF NOT EXISTS job_queue (
     -- Priority (higher = first)
     priority INTEGER DEFAULT 0,
 
+    -- Parse-ahead (server-side pre-parsing for worker optimization)
+    parse_status TEXT DEFAULT NULL
+        CHECK (parse_status IN (NULL, 'pending', 'parsing', 'parsed', 'failed')),
+    parsed_metadata TEXT DEFAULT NULL,   -- Phase P result JSON (metadata + thumb_path + mc_raw)
+    parsed_at TEXT DEFAULT NULL,
+
     -- Timestamps
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
@@ -132,3 +138,5 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_assigned ON job_queue(assigned_to, stat
 CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_worker_sessions_user ON worker_sessions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
+    ON job_queue(parse_status, priority DESC, created_at ASC);

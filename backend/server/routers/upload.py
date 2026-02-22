@@ -174,6 +174,50 @@ def download_file(
     )
 
 
+# ── Thumbnail Download (for Parse-ahead mode) ────────────────
+
+@router.get("/download/thumbnail/{file_id}")
+def download_thumbnail(
+    file_id: int,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Download pre-generated thumbnail for a pre-parsed file.
+
+    Workers use this in Parse-ahead mode to download only the thumbnail
+    (~200KB) instead of the full original file (50-500MB).
+    """
+    cursor = db.conn.cursor()
+
+    # Verify user has an assigned job for this file
+    cursor.execute(
+        """SELECT jq.id FROM job_queue jq
+           WHERE jq.file_id = ? AND jq.assigned_to = ?
+             AND jq.status IN ('assigned', 'processing')""",
+        (file_id, user["id"])
+    )
+    if cursor.fetchone() is None:
+        raise HTTPException(
+            status_code=403,
+            detail="No active job assignment for this file",
+        )
+
+    cursor.execute("SELECT thumbnail_url FROM files WHERE id = ?", (file_id,))
+    row = cursor.fetchone()
+    if not row or not row[0]:
+        raise HTTPException(status_code=404, detail="Thumbnail not found in DB")
+
+    thumb_path = Path(row[0])
+    if not thumb_path.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail file not found on disk")
+
+    return FileResponse(
+        str(thumb_path),
+        media_type="image/png",
+        filename=thumb_path.name,
+    )
+
+
 # ── Thumbnail Upload (dual storage: server + client) ─────────
 
 @router.post("/thumbnails/{file_id}")

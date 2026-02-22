@@ -40,27 +40,60 @@ class JobQueueManager:
     def claim_jobs(self, user_id: int, count: int = 10) -> List[Dict[str, Any]]:
         """Claim up to N pending jobs for a worker.
 
+        Pre-parsed jobs (parse_status='parsed') are preferred — they contain
+        metadata + thumbnail so the worker can skip Phase P and avoid
+        downloading the full original file.
+
         Uses serialized access (SQLite single-writer) to avoid race conditions.
         """
         cursor = self.db.conn.cursor()
         now = datetime.now(timezone.utc).isoformat()
 
-        # Select pending jobs ordered by priority (desc) then age (asc)
+        # 1) Prefer pre-parsed jobs (server already ran Phase P)
         cursor.execute(
-            """SELECT id, file_id, file_path, priority
+            """SELECT id, file_id, file_path, priority, parsed_metadata
                FROM job_queue
-               WHERE status = 'pending'
+               WHERE status = 'pending' AND parse_status = 'parsed'
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (count,)
         )
-        rows = cursor.fetchall()
+        rows = list(cursor.fetchall())
+
+        # 2) Fill remainder with unparsed jobs (fallback)
+        if len(rows) < count:
+            remainder = count - len(rows)
+            claimed_ids = [r[0] for r in rows]
+            if claimed_ids:
+                placeholders = ",".join("?" * len(claimed_ids))
+                cursor.execute(
+                    f"""SELECT id, file_id, file_path, priority, parsed_metadata
+                        FROM job_queue
+                        WHERE status = 'pending'
+                          AND (parse_status IS NULL OR parse_status = 'pending' OR parse_status = 'failed')
+                          AND id NOT IN ({placeholders})
+                        ORDER BY priority DESC, created_at ASC
+                        LIMIT ?""",
+                    (*claimed_ids, remainder)
+                )
+            else:
+                cursor.execute(
+                    """SELECT id, file_id, file_path, priority, parsed_metadata
+                       FROM job_queue
+                       WHERE status = 'pending'
+                         AND (parse_status IS NULL OR parse_status = 'pending' OR parse_status = 'failed')
+                       ORDER BY priority DESC, created_at ASC
+                       LIMIT ?""",
+                    (remainder,)
+                )
+            rows.extend(cursor.fetchall())
+
         if not rows:
             return []
 
         claimed = []
         for row in rows:
-            job_id, file_id, file_path, priority = row
+            job_id, file_id, file_path, priority, parsed_metadata = row
             cursor.execute(
                 """UPDATE job_queue
                    SET status = 'assigned', assigned_to = ?, assigned_at = ?
@@ -68,15 +101,32 @@ class JobQueueManager:
                 (user_id, now, job_id)
             )
             if cursor.rowcount > 0:
-                claimed.append({
+                job_data = {
                     "job_id": job_id,
                     "file_id": file_id,
                     "file_path": file_path,
                     "priority": priority,
-                })
+                    "pre_parsed": False,
+                }
+                # Attach pre-parsed metadata if available
+                if parsed_metadata:
+                    try:
+                        pm = json.loads(parsed_metadata)
+                        job_data["pre_parsed"] = True
+                        job_data["metadata"] = pm.get("metadata", {})
+                        job_data["mc_raw"] = pm.get("mc_raw", {})
+                        job_data["thumb_path"] = pm.get("thumb_path")
+                    except (json.JSONDecodeError, TypeError):
+                        job_data["pre_parsed"] = False
+
+                claimed.append(job_data)
 
         self.db.conn.commit()
-        logger.info(f"User {user_id} claimed {len(claimed)} jobs")
+        pre_parsed_count = sum(1 for j in claimed if j.get("pre_parsed"))
+        logger.info(
+            f"User {user_id} claimed {len(claimed)} jobs "
+            f"({pre_parsed_count} pre-parsed, {len(claimed) - pre_parsed_count} unparsed)"
+        )
         return claimed
 
     def update_progress(self, job_id: int, user_id: int, phase: str) -> bool:
@@ -222,6 +272,23 @@ class JobQueueManager:
         else:
             throughput = 0.0
 
+        # Parse-ahead stats
+        parse_ahead_stats = {}
+        try:
+            cursor.execute("""
+                SELECT parse_status, COUNT(*) FROM job_queue
+                WHERE status = 'pending' AND parse_status IS NOT NULL
+                GROUP BY parse_status
+            """)
+            pa_counts = dict(cursor.fetchall())
+            parse_ahead_stats = {
+                "parse_ahead_parsed": pa_counts.get("parsed", 0),
+                "parse_ahead_parsing": pa_counts.get("parsing", 0),
+                "parse_ahead_failed": pa_counts.get("failed", 0),
+            }
+        except Exception:
+            pass
+
         return {
             "total": total,
             "pending": status_counts.get("pending", 0),
@@ -232,6 +299,7 @@ class JobQueueManager:
             "throughput": throughput,
             "recent_1min": recent_1min,
             "recent_5min": recent_5min,
+            **parse_ahead_stats,
         }
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0) -> Dict[str, Any]:

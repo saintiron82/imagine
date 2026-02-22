@@ -89,6 +89,7 @@ class SQLiteDB:
                 self._migrate_auth_tables()
                 self._migrate_worker_tokens()
                 self._migrate_worker_sessions()
+                self._migrate_parse_ahead_columns()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -96,6 +97,7 @@ class SQLiteDB:
                 self._migrate_auth_tables()
                 self._migrate_worker_tokens()
                 self._migrate_worker_sessions()
+                self._migrate_parse_ahead_columns()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -196,6 +198,24 @@ class SQLiteDB:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status)")
         self.conn.commit()
         logger.info("✅ worker_sessions table created")
+
+    def _migrate_parse_ahead_columns(self):
+        """Add parse_status / parsed_metadata / parsed_at to job_queue (v10.3 Parse-ahead Pool)."""
+        if not self._table_exists('job_queue'):
+            return
+        try:
+            self.conn.execute("SELECT parse_status FROM job_queue LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding parse-ahead columns to job_queue...")
+            self.conn.execute("ALTER TABLE job_queue ADD COLUMN parse_status TEXT DEFAULT NULL")
+            self.conn.execute("ALTER TABLE job_queue ADD COLUMN parsed_metadata TEXT DEFAULT NULL")
+            self.conn.execute("ALTER TABLE job_queue ADD COLUMN parsed_at TEXT DEFAULT NULL")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status "
+                "ON job_queue(parse_status, priority DESC, created_at ASC)"
+            )
+            self.conn.commit()
+            logger.info("✅ parse-ahead columns added to job_queue")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

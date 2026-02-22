@@ -59,6 +59,23 @@ async def startup():
     _create_default_admin()
     _cleanup_stale_jobs()
 
+    # Parse-ahead pool: pre-parse pending jobs in background (server-side Phase P)
+    try:
+        from backend.utils.config import get_config
+        cfg = get_config()
+        pa_enabled = cfg.get("server.parse_ahead.enabled", True)
+        if pa_enabled:
+            from backend.server.queue.parse_ahead import ParseAheadPool
+            from backend.server.deps import get_db
+            db = get_db()
+            app.state.parse_ahead = ParseAheadPool(db)
+            app.state.parse_ahead.start()
+            logger.info("Parse-ahead pool started")
+        else:
+            logger.info("Parse-ahead pool disabled via config")
+    except Exception as e:
+        logger.warning(f"Parse-ahead pool failed to start: {e}")
+
     # mDNS service registration (optional — requires zeroconf)
     try:
         from backend.server.mdns import ImagineServiceAnnouncer
@@ -75,6 +92,9 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Imagine Server shutting down...")
+    if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
+        app.state.parse_ahead.stop()
+        logger.info("Parse-ahead pool stopped")
     if hasattr(app.state, "mdns") and app.state.mdns:
         app.state.mdns.stop()
     close_db()
@@ -163,6 +183,17 @@ def _cleanup_stale_jobs():
         )
         if cursor.rowcount > 0:
             logger.info(f"Startup cleanup: marked {cursor.rowcount} stale worker sessions offline")
+
+        # Reset stuck 'parsing' parse-ahead jobs from previous server run
+        try:
+            cursor.execute(
+                "UPDATE job_queue SET parse_status = NULL WHERE parse_status = 'parsing'"
+            )
+            if cursor.rowcount > 0:
+                logger.info(f"Startup cleanup: reset {cursor.rowcount} stuck parsing jobs")
+        except Exception:
+            pass  # Column may not exist yet (pre-migration)
+
         db.conn.commit()
     except Exception as e:
         logger.warning(f"Startup job cleanup failed: {e}")
