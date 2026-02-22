@@ -52,11 +52,15 @@ export default function LoginPage({ onShowDownload }) {
   // mDNS discovery (Electron only)
   const { servers: mdnsServers, browsing } = useMdnsDiscovery();
 
-  // Auto-check on mount if URL is saved
+  // Auto-check on mount if URL is saved + auto-fill username
   useEffect(() => {
     const saved = localStorage.getItem('imagine-server-url');
     if (saved && saved !== 'http://localhost:8000') {
       handleCheckServer(saved);
+      const entry = getServerHistory().find(h => h.url === saved);
+      if (entry?.lastUsername) {
+        setUsername(entry.lastUsername);
+      }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -83,6 +87,11 @@ export default function LoginPage({ onShowDownload }) {
     setServerUrlLocal(url);
     setServerStatus(null);
     handleCheckServer(url);
+    // Auto-fill username from server history
+    const entry = getServerHistory().find(h => h.url === url);
+    if (entry?.lastUsername) {
+      setUsername(entry.lastUsername);
+    }
   };
 
   const handleSelectMdns = (server) => {
@@ -91,6 +100,11 @@ export default function LoginPage({ onShowDownload }) {
     setServerUrlLocal(url);
     setServerStatus(null);
     handleCheckServer(url);
+    // Auto-fill username from history if previously connected
+    const entry = getServerHistory().find(h => h.url === url);
+    if (entry?.lastUsername) {
+      setUsername(entry.lastUsername);
+    }
   };
 
   const handleRemoveHistory = (e, url) => {
