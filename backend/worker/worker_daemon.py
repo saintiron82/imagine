@@ -119,6 +119,7 @@ class WorkerDaemon:
 
         # Session tracking
         self.session_id = None
+        self.processing_mode = "full"  # "full" or "mc_only" — set by server on connect/heartbeat
         self._total_completed = 0
         self._total_failed = 0
         self._current_job_id = None
@@ -262,7 +263,11 @@ class WorkerDaemon:
                 self.session_id = data["session_id"]
                 if data.get("pool_hint"):
                     self.pool_size = data["pool_hint"]
-                logger.info(f"Session registered: id={self.session_id}, pool_hint={self.pool_size}")
+                if data.get("batch_hint"):
+                    self.batch_capacity = data["batch_hint"]
+                if data.get("processing_mode"):
+                    self.processing_mode = data["processing_mode"]
+                logger.info(f"Session registered: id={self.session_id}, pool_hint={self.pool_size}, batch={self.batch_capacity}, mode={self.processing_mode}")
             else:
                 logger.warning(f"Session connect failed: {resp.status_code}")
         except Exception as e:
@@ -292,6 +297,16 @@ class WorkerDaemon:
                 data = resp.json()
                 if data.get("pool_hint"):
                     self.pool_size = data["pool_hint"]
+                if data.get("batch_hint"):
+                    old_cap = self.batch_capacity
+                    self.batch_capacity = data["batch_hint"]
+                    if old_cap != self.batch_capacity:
+                        logger.info(f"Batch capacity changed: {old_cap} → {self.batch_capacity}")
+                if data.get("processing_mode"):
+                    old_mode = self.processing_mode
+                    self.processing_mode = data["processing_mode"]
+                    if old_mode != self.processing_mode:
+                        logger.info(f"Processing mode changed: {old_mode} → {self.processing_mode}")
                 return data
             return {}
         except Exception as e:
@@ -731,6 +746,9 @@ class WorkerDaemon:
         - VV (SigLIP2): real batch via encode_image_batch()
         - MV (Qwen3-Embedding): real batch via encode_batch()
 
+        In mc_only mode, only Vision (VLM/MC) phase runs — VLM stays loaded.
+        Server handles Parse (ParseAhead), VV (ParseAhead), and MV (EmbedAhead).
+
         Each phase tracks elapsed time and reports files/min.
 
         Args:
@@ -739,6 +757,9 @@ class WorkerDaemon:
         Returns:
             List of (job_id, success) tuples.
         """
+        if self.processing_mode == "mc_only":
+            return self._process_batch_mc_only(jobs, progress_callback)
+
         # Build job contexts and resolve file access
         contexts = []
         for job in jobs:
@@ -1051,6 +1072,118 @@ class WorkerDaemon:
         gc.collect()
         self._try_empty_gpu_cache()
 
+        return results
+
+    def _process_batch_mc_only(self, jobs: list, progress_callback=None) -> list:
+        """MC-only mode: VLM stays loaded, only generate MC (caption/tags).
+
+        Server handles Parse+VV (ParseAheadPool) and MV (EmbedAheadPool).
+        Worker only runs Phase V (VLM) and uploads vision fields.
+
+        VLM is NOT unloaded between batches — stays resident for speed.
+        """
+        import time as _time
+
+        # Build job contexts — all jobs should be pre-parsed in mc_only mode
+        contexts = []
+        for job in jobs:
+            ctx = _JobContext(job=job)
+            ctx.local_path = self._resolve_file(job)
+            ctx.metadata = dict(job.get("metadata", {}))
+            ctx.thumb_path = ctx.local_path  # Pre-parsed thumbnail
+
+            if not ctx.local_path or not Path(ctx.local_path).exists():
+                ctx.failed = True
+                ctx.error = f"MC-only: thumbnail unavailable: {job['file_path']}"
+                logger.error(f"[RESOLVE] {ctx.error}")
+                _notify(progress_callback, "file_error", {
+                    "file_name": Path(job["file_path"]).name,
+                    "error": ctx.error,
+                })
+            contexts.append(ctx)
+
+        active = [c for c in contexts if not c.failed]
+
+        # ── Phase V: Vision/MC only (VLM, 1-by-1) ──
+        t_phase = _time.perf_counter()
+        _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
+
+        for i, ctx in enumerate(active):
+            self._current_phase = "vision"
+            self._current_file = Path(ctx.job["file_path"]).name
+            self.uploader.report_progress(ctx.job["job_id"], "vision")
+
+            mc_raw_override = ctx.job.get("mc_raw")
+            vision_fields = self._run_vision(
+                Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
+                mc_raw_override=mc_raw_override,
+            )
+            if vision_fields:
+                ctx.vision_fields = vision_fields
+
+            _notify(progress_callback, "file_done", {
+                "phase": "vision", "file_name": self._current_file,
+                "index": i + 1, "count": len(active), "success": True,
+            })
+
+        elapsed_vision = _time.perf_counter() - t_phase
+        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "vision", "count": len(active),
+            "elapsed_s": round(elapsed_vision, 2), "files_per_min": round(fpm_vision, 1),
+        })
+
+        # NOTE: VLM is NOT unloaded in mc_only mode — stays resident
+
+        # ── Upload MC results (vision fields only, no vectors) ──
+        t_upload = _time.perf_counter()
+        results = []
+        for ctx in contexts:
+            job_id = ctx.job["job_id"]
+
+            if ctx.failed:
+                self.uploader.fail_job(job_id, ctx.error)
+                self._total_failed += 1
+                results.append((job_id, False))
+                continue
+
+            success = self.uploader.complete_mc(job_id, ctx.vision_fields)
+            if success:
+                self._total_completed += 1
+            else:
+                self._total_failed += 1
+            results.append((job_id, success))
+
+            _notify(progress_callback, "job_upload", {
+                "job_id": job_id, "success": success,
+                "file_name": Path(ctx.job["file_path"]).name,
+            })
+
+            # Cleanup downloaded temp files
+            if self.storage_mode == "server_upload" and ctx.local_path != ctx.job["file_path"]:
+                try:
+                    Path(ctx.local_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        elapsed_upload = _time.perf_counter() - t_upload
+        total_elapsed = elapsed_vision + elapsed_upload
+        total_fpm = (len(contexts) / total_elapsed * 60) if total_elapsed > 0 else 0
+
+        _notify(progress_callback, "batch_complete", {
+            "count": len(contexts),
+            "elapsed_s": round(total_elapsed, 2),
+            "files_per_min": round(total_fpm, 1),
+            "phase_times": {
+                "vision": round(elapsed_vision, 2),
+                "upload": round(elapsed_upload, 2),
+            },
+            "phase_fpm": {
+                "vision": round(fpm_vision, 1),
+            },
+        })
+
+        self._clear_current()
         return results
 
     # ── Model Unload Helpers ──────────────────────────────────

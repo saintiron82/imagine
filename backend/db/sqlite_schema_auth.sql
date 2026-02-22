@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
     -- Command queue (server → worker, consumed on heartbeat)
     pending_command TEXT DEFAULT NULL
         CHECK (pending_command IN (NULL, 'stop', 'pause', 'block')),
+    -- Per-worker overrides (admin-controlled, applied via heartbeat)
+    processing_mode_override TEXT DEFAULT NULL,   -- NULL = global config, "full" | "mc_only"
+    batch_capacity_override INTEGER DEFAULT NULL,  -- NULL = worker default
     -- Timestamps
     connected_at TEXT DEFAULT (datetime('now')),
     last_heartbeat TEXT DEFAULT (datetime('now')),

@@ -6,6 +6,9 @@ so that workers receive thumbnails (~200KB) instead of raw files (~500MB).
 
 The pool runs as a background daemon thread, continuously maintaining
 a buffer of pre-parsed jobs proportional to worker demand.
+
+mc_only mode: Also runs Phase VV (SigLIP2) on parsed jobs since VV only
+needs the image (independent of MC). SigLIP2 stays loaded for the session.
 """
 
 import json
@@ -29,6 +32,9 @@ class ParseAheadPool:
 
     Monitors connected workers' total capacity and pre-parses
     pending jobs to have thumbnails + metadata ready before claim.
+
+    In mc_only mode, also runs Phase VV (SigLIP2 visual embedding)
+    since VV only needs the image pixel data, not MC text.
     """
 
     def __init__(self, db: SQLiteDB):
@@ -36,6 +42,8 @@ class ParseAheadPool:
         self._thread: Optional[threading.Thread] = None
         self._running = False
         self._lock = threading.Lock()
+        self._processing_mode = self._get_config_value("server.processing_mode", "full")
+        self._vv_encoder = None  # Lazy-loaded SigLIP2, stays resident in mc_only mode
 
     def start(self):
         """Start the background parse-ahead daemon thread."""
@@ -62,6 +70,15 @@ class ParseAheadPool:
             else:
                 logger.info("ParseAheadPool stopped")
         self._thread = None
+
+        # Unload VV encoder if loaded (mc_only mode)
+        if self._vv_encoder is not None:
+            try:
+                self._vv_encoder.unload()
+                logger.info("ParseAheadPool: VV encoder unloaded")
+            except Exception as e:
+                logger.warning(f"ParseAheadPool: VV encoder unload error: {e}")
+            self._vv_encoder = None
 
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
@@ -307,8 +324,41 @@ class ParseAheadPool:
             logger.error(f"ParseAhead: parsed_metadata storage failed: {e}")
             return False
 
+        # 10. mc_only mode: Phase VV — encode image with SigLIP2
+        if self._processing_mode == "mc_only":
+            try:
+                self._run_vv_embedding(stored_file_id, file_p, server_thumb_path)
+            except Exception as e:
+                logger.warning(f"ParseAhead: VV embedding failed for job {job_id}: {e}")
+                # VV failure is non-fatal — job still counts as parsed
+
         logger.info(f"ParseAhead: job {job_id} pre-parsed OK ({file_p.name})")
         return True
+
+    def _run_vv_embedding(self, file_id: int, file_path: Path, thumb_path: Optional[Path] = None):
+        """Run SigLIP2 VV embedding on a single image (mc_only mode).
+
+        Loads SigLIP2 once and keeps it resident for the session.
+        Uses thumbnail if available, falls back to original file.
+        """
+        from PIL import Image
+
+        if self._vv_encoder is None:
+            from backend.vector.siglip2_encoder import SigLIP2Encoder
+            self._vv_encoder = SigLIP2Encoder()
+            logger.info("ParseAheadPool: SigLIP2 VV encoder loaded (mc_only mode, will stay resident)")
+
+        # Prefer thumbnail (smaller, faster), fall back to original
+        img_source = thumb_path if thumb_path and thumb_path.exists() else file_path
+        try:
+            img = Image.open(str(img_source)).convert("RGB")
+        except Exception as e:
+            logger.warning(f"ParseAhead VV: cannot open image {img_source}: {e}")
+            return
+
+        vv_vec = self._vv_encoder.encode_image(img)
+        self.db.upsert_vectors(file_id, vv_vec=vv_vec)
+        logger.debug(f"ParseAhead VV: file_id={file_id} embedded OK")
 
     def _meta_to_dict(self, meta) -> dict:
         """Convert AssetMeta dataclass to dict for storage.

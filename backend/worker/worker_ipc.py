@@ -199,7 +199,7 @@ class WorkerIPCController:
             _emit_log("[SESSION] Connecting worker session...", "info")
             daemon._connect_session()
             if daemon.session_id:
-                _emit_log(f"[SESSION] Registered (id={daemon.session_id})", "success")
+                _emit_log(f"[SESSION] Registered (id={daemon.session_id}, mode={daemon.processing_mode})", "success")
             else:
                 _emit_log("[SESSION] Warning: session not registered (no session_id)", "warning")
 

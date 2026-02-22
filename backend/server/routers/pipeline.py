@@ -44,6 +44,10 @@ class FailReport(BaseModel):
     error_message: str
 
 
+class MCCompleteRequest(BaseModel):
+    vision_fields: Dict[str, Any]  # mc_caption, ai_tags, image_type, etc.
+
+
 class RegisterPathsRequest(BaseModel):
     file_paths: List[str]
     priority: int = 0
@@ -178,6 +182,62 @@ def fail_job(
     if not success:
         raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
     return {"success": True}
+
+
+@router.patch("/api/v1/jobs/{job_id}/complete_mc")
+def complete_mc(
+    job_id: int,
+    req: MCCompleteRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db),
+):
+    """MC-only worker: store vision fields, mark MC done (not fully complete).
+
+    In mc_only mode, workers only generate MC (VLM caption/tags).
+    Server handles VV (ParseAhead) and MV (EmbedAhead) separately.
+    Job stays in 'processing' status until EmbedAhead completes MV.
+    """
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT file_id, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
+        (job_id, user["id"])
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
+
+    file_id, file_path = row
+
+    # Look up stored file_id (pre-parsed by ParseAhead)
+    cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
+    existing = cursor.fetchone()
+    if existing is None:
+        raise HTTPException(status_code=404, detail="File not found in DB — ParseAhead may not have processed this job")
+    stored_file_id = existing[0]
+
+    # Store vision fields (mc_caption, ai_tags, image_type, etc.)
+    vision_keys = [
+        "mc_caption", "ai_tags", "ocr_text", "dominant_color", "ai_style",
+        "image_type", "art_style", "color_palette", "scene_type",
+        "time_of_day", "weather", "character_type", "item_type", "ui_type",
+        "structured_meta", "perceptual_hash", "dup_group_id", "caption_model",
+    ]
+    vision_fields = {k: v for k, v in req.vision_fields.items() if k in vision_keys and v is not None}
+    if vision_fields:
+        db.update_vision_fields(file_path, vision_fields)
+
+    # Update job: mark vision done, keep status='processing' for EmbedAhead to finish MV
+    now = json.dumps({"parse": True, "vision": True, "embed": False})
+    cursor.execute(
+        """UPDATE job_queue
+           SET phase_completed = ?, status = 'processing'
+           WHERE id = ? AND assigned_to = ?""",
+        (now, job_id, user["id"])
+    )
+    db.conn.commit()
+
+    logger.info(f"MC-only job {job_id} vision done by {user['username']}: {file_path}")
+    return {"success": True, "file_id": stored_file_id}
 
 
 # ── Discover: Browse & Scan server filesystem ────────────────

@@ -69,6 +69,7 @@ async def startup():
     _cleanup_stale_jobs()
 
     # Parse-ahead pool: pre-parse pending jobs in background (server-side Phase P)
+    # In mc_only mode, ParseAhead also handles Phase VV (SigLIP2)
     try:
         from backend.utils.config import get_config
         cfg = get_config()
@@ -84,6 +85,19 @@ async def startup():
             logger.info("Parse-ahead pool disabled via config")
     except Exception as e:
         logger.warning(f"Parse-ahead pool failed to start: {e}")
+
+    # Embed-ahead pool: mc_only mode — server-side Phase MV after workers upload MC
+    try:
+        processing_mode = cfg.get("server.processing_mode", "full")
+        if processing_mode == "mc_only":
+            from backend.server.queue.embed_ahead import EmbedAheadPool
+            from backend.server.deps import get_db
+            db = get_db()
+            app.state.embed_ahead = EmbedAheadPool(db)
+            app.state.embed_ahead.start()
+            logger.info("Embed-ahead pool started (mc_only mode)")
+    except Exception as e:
+        logger.warning(f"Embed-ahead pool failed to start: {e}")
 
     # mDNS service registration (optional — requires zeroconf)
     try:
@@ -104,6 +118,9 @@ async def shutdown():
     if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
         app.state.parse_ahead.stop()
         logger.info("Parse-ahead pool stopped")
+    if hasattr(app.state, "embed_ahead") and app.state.embed_ahead:
+        app.state.embed_ahead.stop()
+        logger.info("Embed-ahead pool stopped")
     if hasattr(app.state, "mdns") and app.state.mdns:
         app.state.mdns.stop()
     close_db()

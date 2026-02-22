@@ -91,6 +91,7 @@ class SQLiteDB:
                 self._migrate_worker_sessions()
                 self._migrate_parse_ahead_columns()
                 self._migrate_worker_session_tracking()
+                self._migrate_worker_session_overrides()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -100,6 +101,7 @@ class SQLiteDB:
                 self._migrate_worker_sessions()
                 self._migrate_parse_ahead_columns()
                 self._migrate_worker_session_tracking()
+                self._migrate_worker_session_overrides()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -218,6 +220,19 @@ class SQLiteDB:
             )
             self.conn.commit()
             logger.info("✅ parse-ahead columns added to job_queue")
+
+    def _migrate_worker_session_overrides(self):
+        """Add per-worker override columns to worker_sessions (v10.6 real-time control)."""
+        if not self._table_exists('worker_sessions'):
+            return
+        try:
+            self.conn.execute("SELECT processing_mode_override FROM worker_sessions LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding per-worker override columns to worker_sessions...")
+            self.conn.execute("ALTER TABLE worker_sessions ADD COLUMN processing_mode_override TEXT DEFAULT NULL")
+            self.conn.execute("ALTER TABLE worker_sessions ADD COLUMN batch_capacity_override INTEGER DEFAULT NULL")
+            self.conn.commit()
+            logger.info("✅ per-worker override columns added to worker_sessions")
 
     def _migrate_worker_session_tracking(self):
         """Add worker_session_id to job_queue for per-worker throughput tracking."""
