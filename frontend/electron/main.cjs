@@ -38,6 +38,124 @@ const projectRoot = (() => {
 // In built mode: process.resourcesPath (allows separate config per app instance).
 const configRoot = isDev ? projectRoot : process.resourcesPath;
 
+// User settings: personal per-user config (Tier, registered folders, etc.)
+// Stored in OS app data directory, separate from system config.yaml.
+const userSettingsPath = path.join(app.getPath('userData'), 'user-settings.yaml');
+
+// Keys that belong to user-settings.yaml (personal, per-user)
+const USER_SETTING_PREFIXES = [
+    'ai_mode.override', 'ai_mode.auto_detect',
+    'batch_processing.enabled', 'batch_processing.adaptive',
+    'registered_folders', 'last_session',
+    'worker.claim_batch_size', 'worker.gpu_memory_percent',
+    'worker.cpu_cores', 'worker.batch_capacity',
+];
+
+function isUserSetting(key) {
+    return USER_SETTING_PREFIXES.some(p => key === p || key.startsWith(p + '.'));
+}
+
+/**
+ * Deep merge two objects. Arrays are replaced (not merged).
+ * Source values override target values.
+ */
+function deepMerge(target, source) {
+    const result = { ...target };
+    for (const key of Object.keys(source)) {
+        if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])
+            && target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])) {
+            result[key] = deepMerge(target[key], source[key]);
+        } else {
+            result[key] = source[key];
+        }
+    }
+    return result;
+}
+
+/**
+ * Read and parse a YAML file. Returns empty object if file doesn't exist.
+ */
+function readYamlFile(filePath) {
+    const yaml = require('js-yaml');
+    if (!fs.existsSync(filePath)) return {};
+    try {
+        return yaml.load(fs.readFileSync(filePath, 'utf8')) || {};
+    } catch (err) {
+        console.error(`[Config] Failed to read ${filePath}:`, err.message);
+        return {};
+    }
+}
+
+/**
+ * Write an object to a YAML file, creating parent directories if needed.
+ */
+function writeYamlFile(filePath, data) {
+    const yaml = require('js-yaml');
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, yaml.dump(data, { lineWidth: -1 }), 'utf8');
+}
+
+/**
+ * Set a dotted key in an object (e.g., 'ai_mode.override' → obj.ai_mode.override).
+ */
+function setDottedKey(obj, key, value) {
+    const keys = key.split('.');
+    let current = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        if (!current[keys[i]] || typeof current[keys[i]] !== 'object') {
+            current[keys[i]] = {};
+        }
+        current = current[keys[i]];
+    }
+    current[keys[keys.length - 1]] = value;
+}
+
+/**
+ * Migrate personal settings from config.yaml to user-settings.yaml on first run.
+ * config.yaml values are preserved as defaults (not deleted).
+ */
+function migrateUserSettings() {
+    if (fs.existsSync(userSettingsPath)) return; // Already migrated
+
+    const systemConfigPath = path.join(configRoot, 'config.yaml');
+    const config = readYamlFile(systemConfigPath);
+    if (!config || Object.keys(config).length === 0) return;
+
+    const userSettings = {};
+
+    // Extract personal settings
+    if (config.ai_mode) {
+        userSettings.ai_mode = {};
+        if (config.ai_mode.auto_detect != null) userSettings.ai_mode.auto_detect = config.ai_mode.auto_detect;
+        if (config.ai_mode.override != null) userSettings.ai_mode.override = config.ai_mode.override;
+    }
+    if (config.batch_processing) {
+        userSettings.batch_processing = {};
+        if (config.batch_processing.enabled != null) userSettings.batch_processing.enabled = config.batch_processing.enabled;
+        if (config.batch_processing.adaptive) userSettings.batch_processing.adaptive = config.batch_processing.adaptive;
+    }
+    if (config.registered_folders) {
+        userSettings.registered_folders = config.registered_folders;
+    }
+    if (config.last_session) {
+        userSettings.last_session = config.last_session;
+    }
+    if (config.worker) {
+        userSettings.worker = {};
+        const workerKeys = ['claim_batch_size', 'gpu_memory_percent', 'cpu_cores', 'batch_capacity'];
+        for (const k of workerKeys) {
+            if (config.worker[k] != null) userSettings.worker[k] = config.worker[k];
+        }
+        if (Object.keys(userSettings.worker).length === 0) delete userSettings.worker;
+    }
+
+    if (Object.keys(userSettings).length === 0) return;
+
+    writeYamlFile(userSettingsPath, userSettings);
+    console.log('[Config] Migrated user settings to', userSettingsPath);
+}
+
 // Cross-platform Python path resolution
 function getPythonPath() {
     const isWin = process.platform === 'win32';
@@ -138,7 +256,7 @@ function spawnSearchDaemon() {
 
     searchDaemon = spawn(finalPython, [scriptPath, '--daemon'], {
         cwd: projectRoot,
-        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
         stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -659,7 +777,7 @@ ipcMain.handle('get-db-stats', async () => {
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
         });
         let output = '';
         proc.stdout.on('data', (d) => output += d.toString());
@@ -689,7 +807,7 @@ function spawnQueueCmd(cmd, data) {
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, cmd, JSON.stringify(data || {})], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
         });
         let output = '';
         let errOutput = '';
@@ -748,7 +866,7 @@ ipcMain.handle('get-incomplete-stats', async () => {
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
         });
         let output = '';
         proc.stdout.on('data', (d) => output += d.toString());
@@ -777,7 +895,7 @@ ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
     return new Promise((resolve) => {
         const proc = spawn(finalPython, [scriptPath, storageRoot], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' }
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
         });
         let output = '';
         proc.stdout.on('data', (d) => output += d.toString());
@@ -1267,18 +1385,12 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     });
 });
 
-// IPC Handler: Get config.yaml
+// IPC Handler: Get config (system config.yaml merged with user-settings.yaml)
 ipcMain.handle('get-config', async () => {
     try {
-        const yaml = require('js-yaml');
-        const configPath = path.join(configRoot, 'config.yaml');
-
-        if (!fs.existsSync(configPath)) {
-            return { success: false, error: 'config.yaml not found' };
-        }
-
-        const fileContents = fs.readFileSync(configPath, 'utf8');
-        const config = yaml.load(fileContents);
+        const systemConfig = readYamlFile(path.join(configRoot, 'config.yaml'));
+        const userConfig = readYamlFile(userSettingsPath);
+        const config = deepMerge(systemConfig, userConfig);
 
         return { success: true, config };
     } catch (err) {
@@ -1287,16 +1399,12 @@ ipcMain.handle('get-config', async () => {
     }
 });
 
-// IPC Handler: Get registered folders from config.yaml
+// IPC Handler: Get registered folders from user-settings.yaml (fallback: config.yaml)
 ipcMain.handle('get-registered-folders', async () => {
     try {
-        const yaml = require('js-yaml');
-        const configPath = path.join(configRoot, 'config.yaml');
-        if (!fs.existsSync(configPath)) {
-            return { success: true, folders: [], autoScan: true };
-        }
-        const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
-        const regFolders = config.registered_folders || { folders: [], auto_scan: true };
+        const userConfig = readYamlFile(userSettingsPath);
+        const systemConfig = readYamlFile(path.join(configRoot, 'config.yaml'));
+        const regFolders = userConfig.registered_folders || systemConfig.registered_folders || { folders: [], auto_scan: true };
         const folders = (regFolders.folders || []).map(fp => ({
             path: fp,
             exists: fs.existsSync(fp),
@@ -1308,7 +1416,7 @@ ipcMain.handle('get-registered-folders', async () => {
     }
 });
 
-// IPC Handler: Add registered folders (opens multi-select dialog)
+// IPC Handler: Add registered folders (opens multi-select dialog) — writes to user-settings.yaml
 ipcMain.handle('add-registered-folder', async () => {
     try {
         const result = await dialog.showOpenDialog({
@@ -1319,19 +1427,17 @@ ipcMain.handle('add-registered-folder', async () => {
             return { success: true, added: [] };
         }
 
-        const yaml = require('js-yaml');
-        const configPath = path.join(configRoot, 'config.yaml');
-        const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
-        if (!config.registered_folders) config.registered_folders = { folders: [], auto_scan: true };
-        if (!config.registered_folders.folders) config.registered_folders.folders = [];
+        const userConfig = readYamlFile(userSettingsPath);
+        if (!userConfig.registered_folders) userConfig.registered_folders = { folders: [], auto_scan: true };
+        if (!userConfig.registered_folders.folders) userConfig.registered_folders.folders = [];
 
-        const existing = new Set(config.registered_folders.folders);
+        const existing = new Set(userConfig.registered_folders.folders);
         const added = result.filePaths.filter(fp => !existing.has(fp));
-        config.registered_folders.folders.push(...added);
+        userConfig.registered_folders.folders.push(...added);
 
-        fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+        writeYamlFile(userSettingsPath, userConfig);
 
-        const folders = config.registered_folders.folders.map(fp => ({
+        const folders = userConfig.registered_folders.folders.map(fp => ({
             path: fp,
             exists: fs.existsSync(fp),
         }));
@@ -1342,19 +1448,17 @@ ipcMain.handle('add-registered-folder', async () => {
     }
 });
 
-// IPC Handler: Remove a registered folder
+// IPC Handler: Remove a registered folder — writes to user-settings.yaml
 ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
     try {
-        const yaml = require('js-yaml');
-        const configPath = path.join(configRoot, 'config.yaml');
-        const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
-        if (!config.registered_folders || !config.registered_folders.folders) {
+        const userConfig = readYamlFile(userSettingsPath);
+        if (!userConfig.registered_folders || !userConfig.registered_folders.folders) {
             return { success: true, folders: [] };
         }
-        config.registered_folders.folders = config.registered_folders.folders.filter(fp => fp !== folderPath);
-        fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+        userConfig.registered_folders.folders = userConfig.registered_folders.folders.filter(fp => fp !== folderPath);
+        writeYamlFile(userSettingsPath, userConfig);
 
-        const folders = config.registered_folders.folders.map(fp => ({
+        const folders = userConfig.registered_folders.folders.map(fp => ({
             path: fp,
             exists: fs.existsSync(fp),
         }));
@@ -1365,29 +1469,13 @@ ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
     }
 });
 
-// IPC Handler: Update config.yaml
+// IPC Handler: Update config — routes personal keys to user-settings.yaml, system keys to config.yaml
 ipcMain.handle('update-config', async (_, key, value) => {
     try {
-        const yaml = require('js-yaml');
-        const configPath = path.join(configRoot, 'config.yaml');
-
-        if (!fs.existsSync(configPath)) {
-            return { success: false, error: 'config.yaml not found' };
-        }
-
-        const fileContents = fs.readFileSync(configPath, 'utf8');
-        const config = yaml.load(fileContents);
-
-        const keys = key.split('.');
-        let current = config;
-        for (let i = 0; i < keys.length - 1; i++) {
-            if (!current[keys[i]]) current[keys[i]] = {};
-            current = current[keys[i]];
-        }
-        current[keys[keys.length - 1]] = value;
-
-        const newYaml = yaml.dump(config, { lineWidth: -1 });
-        fs.writeFileSync(configPath, newYaml, 'utf8');
+        const targetPath = isUserSetting(key) ? userSettingsPath : path.join(configRoot, 'config.yaml');
+        const config = readYamlFile(targetPath);
+        setDottedKey(config, key, value);
+        writeYamlFile(targetPath, config);
 
         return { success: true };
     } catch (err) {
@@ -1395,6 +1483,9 @@ ipcMain.handle('update-config', async (_, key, value) => {
         return { success: false, error: err.message };
     }
 });
+
+// IPC Handler: Get user settings file path
+ipcMain.handle('get-user-settings-path', () => userSettingsPath);
 
 // ── Worker Daemon (controlled via WorkerPage) ────────────────────
 // Spawns backend/worker/worker_ipc.py and relays JSON events to renderer.
@@ -1505,7 +1596,7 @@ ipcMain.handle('worker-start', async (event, opts) => {
 
     workerProc = spawn(finalPython, ['-u', '-m', 'backend.worker.worker_ipc'], {
         cwd: projectRoot,
-        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
         stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -1660,7 +1751,7 @@ async function startEmbeddedServer(port = 8000) {
         '--host', '0.0.0.0', '--port', String(port),
     ], {
         cwd: projectRoot,
-        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
         stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -2016,6 +2107,9 @@ function createWindow() {
 app.setName('Imagine');
 
 app.whenReady().then(async () => {
+    // Migrate personal settings from config.yaml to user-settings.yaml (first run only)
+    migrateUserSettings();
+
     // Set macOS dock icon
     if (process.platform === 'darwin' && app.dock) {
         const { nativeImage } = require('electron');

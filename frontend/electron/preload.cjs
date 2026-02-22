@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('electron', {
         // Config Management
         getConfig: () => ipcRenderer.invoke('get-config'),
         updateConfig: (key, value) => ipcRenderer.invoke('update-config', key, value),
+        getUserSettingsPath: () => ipcRenderer.invoke('get-user-settings-path'),
 
         // Registered Folders
         getRegisteredFolders: () => ipcRenderer.invoke('get-registered-folders'),
