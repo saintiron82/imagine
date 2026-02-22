@@ -45,6 +45,7 @@ const userSettingsPath = path.join(app.getPath('userData'), 'user-settings.yaml'
 // Keys that belong to user-settings.yaml (personal, per-user)
 const USER_SETTING_PREFIXES = [
     'ai_mode.override', 'ai_mode.auto_detect',
+    'ai_mode.vlm_backend',
     'batch_processing.enabled', 'batch_processing.adaptive',
     'registered_folders', 'last_session',
     'worker.claim_batch_size', 'worker.gpu_memory_percent',

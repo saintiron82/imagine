@@ -87,44 +87,34 @@ class VisionAnalyzerFactory:
         Returns:
             List of dicts: [{"backend": str, "model": str|None, "batch_size": int|None}, ...]
         """
+        # Backend resolution priority:
+        # 1. VISION_BACKEND env var (explicit override)
+        # 2. user-settings.yaml ai_mode.vlm_backend (per-system)
+        # 3. config.yaml tier vlm.backend
+        # 4. auto-detect via platform detector
+        from backend.utils.config import get_config
+        app_cfg = get_config()
         backend = (
-            vlm_config.get("backend")
-            or os.getenv('VISION_BACKEND')
-            or "transformers"
+            os.getenv('VISION_BACKEND')
+            or app_cfg.get("ai_mode.vlm_backend")
+            or vlm_config.get("backend")
+            or "auto"
         ).lower()
 
         chain = []
 
         if backend == 'auto':
-            current_platform = platform.system().lower()
-            platform_configs = vlm_config.get("backends", {})
-
-            if current_platform in platform_configs:
-                plat_cfg = platform_configs[current_platform]
-                # Primary backend from platform config
-                chain.append({
-                    "backend": plat_cfg.get("backend", "transformers"),
-                    "model": plat_cfg.get("model"),
-                    "batch_size": plat_cfg.get("batch_size"),
-                })
-                # Explicit fallback from config (1 level)
-                fallback = plat_cfg.get("fallback")
-                if fallback:
-                    chain.append({
-                        "backend": fallback,
-                        "model": None,
-                        "batch_size": None,
-                    })
-            else:
-                # No platform config — use platform detector
-                detected = get_optimal_backend(tier_name)
-                chain.append({
-                    "backend": detected,
-                    "model": None,
-                    "batch_size": None,
-                })
+            # Auto-detect: use platform detector to find optimal backend
+            detected = get_optimal_backend(tier_name)
+            logger.info(f"Auto-detected backend: {detected} (tier: {tier_name})")
+            chain.append({
+                "backend": detected,
+                "model": vlm_config.get("model"),
+                "batch_size": vlm_config.get("batch_size"),
+            })
         else:
-            # Explicit backend (e.g., standard tier: backend: transformers)
+            # Explicit backend (from env, user-settings, or config)
+            logger.info(f"Explicit backend: {backend} (tier: {tier_name})")
             chain.append({
                 "backend": backend,
                 "model": vlm_config.get("model"),
