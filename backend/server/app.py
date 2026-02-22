@@ -55,6 +55,15 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     logger.info("Imagine Server starting up...")
+
+    # Start parent watchdog — auto-exit when Electron (parent) dies unexpectedly.
+    # Without this, the server process would remain orphaned and hold the port.
+    try:
+        from backend.utils.parent_watchdog import start_parent_watchdog
+        start_parent_watchdog()
+    except Exception as e:
+        logger.warning(f"Parent watchdog failed to start: {e}")
+
     # DB will be lazily initialized on first request via get_db()
     _create_default_admin()
     _cleanup_stale_jobs()

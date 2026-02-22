@@ -2448,6 +2448,15 @@ def parse_batch_size(value):
 
 
 def main():
+    # Start parent watchdog — auto-exit when Electron (parent) dies unexpectedly.
+    # Pipeline/Discover are spawned as detached processes; without this watchdog
+    # they would continue running indefinitely after a parent crash.
+    try:
+        from backend.utils.parent_watchdog import start_parent_watchdog
+        start_parent_watchdog()
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="ImageParser Ingest Engine")
     parser.add_argument("--file", help="Process a single file")
     parser.add_argument("--files", help="Process multiple files (JSON array)")

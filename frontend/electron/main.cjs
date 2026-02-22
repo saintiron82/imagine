@@ -76,18 +76,47 @@ function getSearchScriptPath() {
         : path.join(projectRoot, 'backend/api_search.py');
 }
 
-/** Kill any orphaned Imagine-Search processes from previous runs. */
+/**
+ * Kill residual processes from previous crashed sessions.
+ *
+ * Primary defense against residual processes is the parent_watchdog.py
+ * (stdin pipe monitoring) in each Python subprocess.  This cleanup runs
+ * as a safety net on app startup in case the watchdog failed.
+ */
 function cleanupOrphanDaemons() {
+    const patterns = ['Imagine-Search', 'Imagine-Pipeline'];
     try {
         if (process.platform === 'win32') {
-            // Windows: taskkill by window title or image name
-            execSync('taskkill /F /FI "WINDOWTITLE eq Imagine-Search" 2>nul', { stdio: 'ignore' });
+            // Windows: try taskkill by window title (works for console processes)
+            for (const p of patterns) {
+                try {
+                    execSync(`taskkill /F /FI "WINDOWTITLE eq ${p}" 2>nul`, { stdio: 'ignore' });
+                } catch { /* no match — fine */ }
+            }
+            // Also try wmic for piped (windowless) processes by command line
+            const wmicPatterns = ['api_search.py', 'ingest_engine.py', 'uvicorn'];
+            for (const pat of wmicPatterns) {
+                try {
+                    execSync(
+                        `wmic process where "name='python.exe' and commandline like '%${pat}%'" call terminate 2>nul`,
+                        { stdio: 'ignore', timeout: 5000 },
+                    );
+                } catch { /* wmic may be unavailable or no match */ }
+            }
         } else {
-            // macOS/Linux: pkill by process name set via setproctitle
-            execSync('pkill -f "Imagine-Search" 2>/dev/null || true', { stdio: 'ignore' });
+            // macOS/Linux: pkill by process name (set via setproctitle) or command line
+            for (const p of patterns) {
+                try {
+                    execSync(`pkill -f "${p}" 2>/dev/null || true`, { stdio: 'ignore' });
+                } catch { /* no match */ }
+            }
+            // Also kill by script name for processes without setproctitle
+            try {
+                execSync('pkill -f "uvicorn.*backend.server.app" 2>/dev/null || true', { stdio: 'ignore' });
+            } catch { /* no match */ }
         }
     } catch (e) {
-        // No orphan found — that's fine
+        // Cleanup is best-effort — watchdog is the primary defense
     }
 }
 
