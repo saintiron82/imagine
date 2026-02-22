@@ -349,6 +349,9 @@ class WorkerIPCController:
                 _emit_log(f"[CLAIM] Got {len(jobs)} jobs — batch processing", "info")
                 _emit({"event": "batch_start", "batch_size": len(jobs)})
 
+                # Start background downloads for this batch
+                daemon._prefetch_downloads(jobs)
+
                 # Batch progress callback — relay events to Electron
                 def _batch_progress_cb(event_type, data):
                     evt = {"event": f"batch_{event_type}", **data}

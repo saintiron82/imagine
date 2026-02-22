@@ -27,9 +27,10 @@ import sys
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 # Ensure project root is in path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -135,6 +136,10 @@ class WorkerDaemon:
         # Throttle state
         self._throttle_level = "normal"
         self._original_batch_capacity = self.batch_capacity  # preserved for restore
+
+        # Background download pool (overlap download with GPU processing)
+        self._download_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dl")
+        self._download_cache: Dict[int, Future] = {}  # file_id -> Future<local_path>
 
         # State machine (schedule + throttle driven)
         self._state_machine = WorkerStateMachine(
@@ -576,6 +581,46 @@ class WorkerDaemon:
             logger.error(f"Thumbnail download failed for file_id={file_id}: {e}")
             return None
 
+    # ── Background Download (overlap with GPU processing) ─────
+
+    def _prefetch_downloads(self, jobs: list):
+        """Submit download tasks for upcoming jobs in background threads.
+
+        Called right after claim_jobs() so files download in parallel
+        while the current batch is being processed on GPU.
+        """
+        if self.storage_mode == "shared_fs":
+            return  # No network download needed — instant local access
+
+        for job in jobs:
+            file_id = job.get("file_id")
+            if file_id is not None and file_id not in self._download_cache:
+                future = self._download_pool.submit(self._resolve_file, job)
+                self._download_cache[file_id] = future
+
+    def _get_downloaded(self, job: dict) -> Optional[str]:
+        """Get downloaded file path, waiting if download is still in progress.
+
+        If the file was prefetched, returns the cached result.
+        Otherwise falls back to synchronous _resolve_file().
+        """
+        file_id = job.get("file_id")
+        future = self._download_cache.pop(file_id, None) if file_id is not None else None
+        if future:
+            try:
+                return future.result(timeout=300)  # 5 min max wait
+            except Exception as e:
+                logger.error(f"[PREFETCH] Download failed for file_id={file_id}: {e}")
+                return None
+        # Fallback: not prefetched (e.g. shared_fs or cache miss)
+        return self._resolve_file(job)
+
+    def _clear_download_cache(self):
+        """Cancel pending downloads and clear the cache."""
+        for file_id, future in list(self._download_cache.items()):
+            future.cancel()
+        self._download_cache.clear()
+
     # ── Pipeline Phases (reusing existing backend code) ────────
 
     def _run_parse(self, file_path: Path):
@@ -821,14 +866,14 @@ class WorkerDaemon:
 
         t_batch = time.perf_counter()
 
-        # Build job contexts and resolve file access
+        # Build job contexts and resolve file access (uses prefetched downloads)
         contexts = []
         for job in jobs:
             ctx = _JobContext(job=job)
 
             if job.get("pre_parsed"):
                 # Server already ran Phase P — use claim metadata directly
-                ctx.local_path = self._resolve_file(job)
+                ctx.local_path = self._get_downloaded(job)
                 ctx.metadata = dict(job.get("metadata", {}))
                 ctx.thumb_path = ctx.local_path  # Downloaded thumbnail IS the thumb
                 ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
@@ -841,7 +886,7 @@ class WorkerDaemon:
                         "error": ctx.error,
                     })
             else:
-                ctx.local_path = self._resolve_file(job)
+                ctx.local_path = self._get_downloaded(job)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
                     ctx.error = f"Cannot access file: {job['file_path']} (file_id={job.get('file_id')})"
@@ -1182,7 +1227,7 @@ class WorkerDaemon:
         contexts = []
         for job in jobs:
             ctx = _JobContext(job=job)
-            ctx.local_path = self._resolve_file(job)
+            ctx.local_path = self._get_downloaded(job)
             ctx.metadata = dict(job.get("metadata", {}))
             ctx.thumb_path = ctx.local_path  # Pre-parsed thumbnail
 
@@ -1315,6 +1360,7 @@ class WorkerDaemon:
         """Called when transitioning to IDLE (schedule inactive).
         Unload all models to free GPU memory during off-hours."""
         logger.info("Entering IDLE: unloading all models for off-schedule period")
+        self._clear_download_cache()
         self._unload_vlm()
         self._unload_vv()
         self._unload_mv()
@@ -1526,6 +1572,9 @@ class WorkerDaemon:
                 refill_thread = threading.Thread(target=self._fill_pool, daemon=True)
                 refill_thread.start()
 
+                # Prefetch file downloads for this batch
+                self._prefetch_downloads(batch)
+
                 # Phase-level batch processing (all files through each phase)
                 if not _shutdown:
                     self.process_batch_phased(batch)
@@ -1542,6 +1591,8 @@ class WorkerDaemon:
                 time.sleep(poll_interval)
 
         # Graceful shutdown
+        self._clear_download_cache()
+        self._download_pool.shutdown(wait=False)
         self._disconnect_session()
         logger.info(f"Worker daemon shutting down. (completed={self._total_completed}, failed={self._total_failed})")
         # Cleanup temp directory
