@@ -221,12 +221,35 @@ def admin_list_workers(
     )
     rows = cursor.fetchall()
 
-    # Per-user throughput: completed jobs in the last 5 minutes by assigned_to
+    # Per-worker throughput: completed jobs by worker_session_id (preferred),
+    # falling back to assigned_to (user_id) for legacy jobs without session tracking
+    cursor.execute(
+        """SELECT worker_session_id, COUNT(*) FROM job_queue
+           WHERE status = 'completed'
+             AND completed_at IS NOT NULL
+             AND datetime(completed_at) > datetime('now', '-5 minutes')
+             AND worker_session_id IS NOT NULL
+           GROUP BY worker_session_id"""
+    )
+    session_recent_5m = dict(cursor.fetchall())
+
+    cursor.execute(
+        """SELECT worker_session_id, COUNT(*) FROM job_queue
+           WHERE status = 'completed'
+             AND completed_at IS NOT NULL
+             AND datetime(completed_at) > datetime('now', '-1 minute')
+             AND worker_session_id IS NOT NULL
+           GROUP BY worker_session_id"""
+    )
+    session_recent_1m = dict(cursor.fetchall())
+
+    # Fallback: per-user throughput for jobs without worker_session_id
     cursor.execute(
         """SELECT assigned_to, COUNT(*) FROM job_queue
            WHERE status = 'completed'
              AND completed_at IS NOT NULL
              AND datetime(completed_at) > datetime('now', '-5 minutes')
+             AND worker_session_id IS NULL
            GROUP BY assigned_to"""
     )
     user_recent_5m = dict(cursor.fetchall())
@@ -236,15 +259,19 @@ def admin_list_workers(
            WHERE status = 'completed'
              AND completed_at IS NOT NULL
              AND datetime(completed_at) > datetime('now', '-1 minute')
+             AND worker_session_id IS NULL
            GROUP BY assigned_to"""
     )
     user_recent_1m = dict(cursor.fetchall())
 
     workers = []
     for row in rows:
+        session_id = row[0]
         user_id = row[14]
-        r1 = user_recent_1m.get(user_id, 0)
-        r5 = user_recent_5m.get(user_id, 0)
+
+        # Prefer per-session throughput; fall back to per-user for legacy jobs
+        r1 = session_recent_1m.get(session_id, 0) or user_recent_1m.get(user_id, 0)
+        r5 = session_recent_5m.get(session_id, 0) or user_recent_5m.get(user_id, 0)
         # Use 1-min if active, otherwise 5-min average
         if r1 > 0:
             throughput = float(r1)
@@ -254,7 +281,7 @@ def admin_list_workers(
             throughput = 0.0
 
         workers.append({
-            "id": row[0], "worker_name": row[1], "hostname": row[2],
+            "id": session_id, "worker_name": row[1], "hostname": row[2],
             "status": row[3], "batch_capacity": row[4],
             "jobs_completed": row[5], "jobs_failed": row[6],
             "current_file": row[7], "current_phase": row[8],

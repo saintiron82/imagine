@@ -90,6 +90,7 @@ class SQLiteDB:
                 self._migrate_worker_tokens()
                 self._migrate_worker_sessions()
                 self._migrate_parse_ahead_columns()
+                self._migrate_worker_session_tracking()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -98,6 +99,7 @@ class SQLiteDB:
                 self._migrate_worker_tokens()
                 self._migrate_worker_sessions()
                 self._migrate_parse_ahead_columns()
+                self._migrate_worker_session_tracking()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -216,6 +218,18 @@ class SQLiteDB:
             )
             self.conn.commit()
             logger.info("✅ parse-ahead columns added to job_queue")
+
+    def _migrate_worker_session_tracking(self):
+        """Add worker_session_id to job_queue for per-worker throughput tracking."""
+        if not self._table_exists('job_queue'):
+            return
+        try:
+            self.conn.execute("SELECT worker_session_id FROM job_queue LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding worker_session_id to job_queue...")
+            self.conn.execute("ALTER TABLE job_queue ADD COLUMN worker_session_id INTEGER")
+            self.conn.commit()
+            logger.info("✅ worker_session_id column added to job_queue")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

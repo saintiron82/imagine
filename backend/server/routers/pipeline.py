@@ -28,6 +28,7 @@ def _get_queue(db: SQLiteDB) -> JobQueueManager:
 
 class ClaimRequest(BaseModel):
     count: int = 10
+    session_id: Optional[int] = None  # worker_session_id for per-worker tracking
 
 
 class ProgressUpdate(BaseModel):
@@ -63,7 +64,7 @@ def claim_jobs(
 ):
     """Claim pending jobs for processing."""
     queue = _get_queue(db)
-    jobs = queue.claim_jobs(user["id"], min(req.count, 50))
+    jobs = queue.claim_jobs(user["id"], min(req.count, 50), worker_session_id=req.session_id)
     return {"success": True, "jobs": jobs, "count": len(jobs)}
 
 
@@ -112,25 +113,31 @@ def complete_job(
     db: SQLiteDB = Depends(get_db),
 ):
     """Complete a job with analysis results (metadata + vectors)."""
-    # Get job info
+    # Get job info (include parse_status to avoid duplicate upsert)
     cursor = db.conn.cursor()
     cursor.execute(
-        "SELECT file_id, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
+        "SELECT file_id, file_path, parse_status FROM job_queue WHERE id = ? AND assigned_to = ?",
         (job_id, user["id"])
     )
     row = cursor.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
 
-    file_id, file_path = row
+    file_id, file_path, parse_status = row
 
     # Store metadata
     meta = req.metadata
     if "file_path" not in meta:
         meta["file_path"] = file_path
 
-    # Phase 1: metadata
-    stored_file_id = db.upsert_metadata(file_path, meta)
+    # Phase 1: metadata — skip if ParseAheadPool already saved it
+    if parse_status == 'parsed':
+        # Pre-parsed: metadata already in DB, just look up file_id
+        cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
+        existing = cursor.fetchone()
+        stored_file_id = existing[0] if existing else db.upsert_metadata(file_path, meta)
+    else:
+        stored_file_id = db.upsert_metadata(file_path, meta)
 
     # Phase 2: vision fields
     vision_keys = [

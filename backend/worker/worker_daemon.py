@@ -322,7 +322,7 @@ class WorkerDaemon:
             resp = self._authed_request(
                 "post",
                 f"{self.server_url}/api/v1/jobs/claim",
-                json={"count": count},
+                json={"count": count, "session_id": self.session_id},
             )
             if resp.status_code == 200:
                 data = resp.json()

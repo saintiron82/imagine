@@ -296,7 +296,13 @@ class VisionAnalyzerFactory:
 
     @classmethod
     def reset(cls):
-        """Reset cached analyzer (for testing or switching backends)."""
+        """Reset cached analyzer — unload model first to free GPU memory."""
+        if cls._cached_analyzer is not None:
+            try:
+                if hasattr(cls._cached_analyzer, 'unload_model'):
+                    cls._cached_analyzer.unload_model()
+            except Exception as e:
+                logger.warning(f"Error unloading cached analyzer: {e}")
         cls._cached_analyzer = None
 
 
