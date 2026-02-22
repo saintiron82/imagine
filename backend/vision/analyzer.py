@@ -150,30 +150,30 @@ class VisionAnalyzer:
                 from transformers import Blip2Processor, Blip2ForConditionalGeneration
 
                 self.processor = Blip2Processor.from_pretrained(self.model_id, **hf_kwargs)
-
-                # Use float16 on CUDA for speed, float32 on CPU
-                dtype = torch.float16 if self.device == "cuda" else torch.float32
-
+                dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
+                blip_kwargs = {"torch_dtype": dtype, **hf_kwargs}
+                if self.device in ("cuda", "mps"):
+                    blip_kwargs["device_map"] = {"": self.device}
                 self.model = Blip2ForConditionalGeneration.from_pretrained(
-                    self.model_id,
-                    torch_dtype=dtype,
-                    **hf_kwargs,
-                ).to(self.device)
+                    self.model_id, **blip_kwargs,
+                )
+                if self.device not in ("cuda", "mps"):
+                    self.model = self.model.to(self.device)
 
             elif "blip" in self.model_id.lower():
                 # BLIP (original) model (default, simple and reliable)
                 from transformers import BlipProcessor, BlipForConditionalGeneration
 
                 self.processor = BlipProcessor.from_pretrained(self.model_id, **hf_kwargs)
-
-                # Use float16 on CUDA for speed, float32 on CPU
-                dtype = torch.float16 if self.device == "cuda" else torch.float32
-
+                dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
+                blip_kwargs = {"torch_dtype": dtype, **hf_kwargs}
+                if self.device in ("cuda", "mps"):
+                    blip_kwargs["device_map"] = {"": self.device}
                 self.model = BlipForConditionalGeneration.from_pretrained(
-                    self.model_id,
-                    torch_dtype=dtype,
-                    **hf_kwargs,
-                ).to(self.device)
+                    self.model_id, **blip_kwargs,
+                )
+                if self.device not in ("cuda", "mps"):
+                    self.model = self.model.to(self.device)
 
             elif "Qwen2-VL" in self.model_id:
                 # Qwen2-VL model
@@ -181,10 +181,12 @@ class VisionAnalyzer:
 
                 self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
                 self._configure_padding_for_decoder_generation()
+                qwen2_dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
+                qwen2_dm = {"": self.device} if self.device in ("cuda", "mps") else "auto"
                 self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                     self.model_id,
-                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                    device_map="auto",
+                    torch_dtype=qwen2_dtype,
+                    device_map=qwen2_dm,
                     **hf_kwargs,
                 )
 
@@ -201,36 +203,28 @@ class VisionAnalyzer:
                     f"[VLM load] AutoProcessor ready in {time.perf_counter() - t_proc:.1f}s"
                 )
 
-                # MPS does not support device_map="auto"
-                if self.device == "mps":
-                    t_model = time.perf_counter()
-                    logger.info("[VLM load] AutoModelForImageTextToText.from_pretrained start (mps path)")
+                # Load directly onto target device via device_map to avoid
+                # 2x memory peak from CPU staging (MPS supported since transformers 5.0+)
+                t_model = time.perf_counter()
+                if self.device in ("cuda", "mps"):
+                    dm = {"": self.device}
+                    logger.info(f"[VLM load] from_pretrained start (device_map={{\"\":\"{self.device}\"}})")
                     self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_id,
                         torch_dtype=torch.float16,
+                        device_map=dm,
                         **hf_kwargs,
                     )
-                    logger.info(
-                        f"[VLM load] Weights loaded in {time.perf_counter() - t_model:.1f}s "
-                        "(mps path, before to(device))"
-                    )
-                    t_to = time.perf_counter()
-                    logger.info("[VLM load] model.to(mps) start")
-                    self.model = self.model.to(self.device)
-                    logger.info(f"[VLM load] model.to(mps) done in {time.perf_counter() - t_to:.1f}s")
                 else:
-                    t_model = time.perf_counter()
-                    logger.info("[VLM load] AutoModelForImageTextToText.from_pretrained start (device_map path)")
+                    logger.info("[VLM load] from_pretrained start (cpu path)")
                     self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_id,
-                        torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                        device_map="auto",
+                        torch_dtype=torch.float32,
                         **hf_kwargs,
                     )
-                    logger.info(
-                        f"[VLM load] Weights loaded in {time.perf_counter() - t_model:.1f}s "
-                        "(device_map path)"
-                    )
+                logger.info(
+                    f"[VLM load] Weights loaded in {time.perf_counter() - t_model:.1f}s"
+                )
 
             else:
                 # Florence-2 or other models
@@ -241,12 +235,19 @@ class VisionAnalyzer:
                     trust_remote_code=True,
                     **hf_kwargs,
                 )
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_id,
-                    trust_remote_code=True,
-                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                other_dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
+                other_kwargs = {
+                    "trust_remote_code": True,
+                    "torch_dtype": other_dtype,
                     **hf_kwargs,
-                ).to(self.device)
+                }
+                if self.device in ("cuda", "mps"):
+                    other_kwargs["device_map"] = {"": self.device}
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.model_id, **other_kwargs,
+                )
+                if self.device not in ("cuda", "mps"):
+                    self.model = self.model.to(self.device)
 
             logger.info(f"{self.model_id} loaded successfully on {self.device}")
 

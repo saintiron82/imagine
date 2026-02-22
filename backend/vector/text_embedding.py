@@ -257,9 +257,15 @@ class TransformersEmbeddingProvider(EmbeddingProvider):
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._hf_model_id, padding_side='left'
         )
+        # Use device_map to load directly onto GPU/MPS, avoiding 2x memory peak
+        load_kwargs = {"torch_dtype": torch.float16}
+        if self._device in ("cuda", "mps"):
+            load_kwargs["device_map"] = {"": self._device}
         self._model = AutoModel.from_pretrained(
-            self._hf_model_id, torch_dtype=torch.float16
-        ).to(self._device).eval()
+            self._hf_model_id, **load_kwargs,
+        ).eval()
+        if self._device not in ("cuda", "mps"):
+            self._model = self._model.to(self._device)
         logger.info(f"MV model loaded on {self._device}")
 
     def unload(self):
