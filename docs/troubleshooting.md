@@ -421,3 +421,50 @@ macOS에서 정상 동작하는 코드가 Windows에서 데드락을 일으킬 �
 - 문서화: "멀티워커는 별도 GPU 탑재 머신에 분산 배치할 때만 효과적"
 - Admin 패널에서 워커별 처리속도를 모니터링하여 GPU 경합 여부 판단 가능
 - 향후 과제: CPU-only 워커에서 VLM 스킵 + VV/MV만 처리하는 partial 모드 검토
+
+---
+
+## [2026-02-22] v0.5: 부모 프로세스 사망 시 자식 잔류 — 3가지 버그 수정
+
+### 증상
+- Electron 앱을 강제 종료(taskkill /F)하면 Python subprocess(Server, Pipeline, Discover)가 잔류
+- 잔류 프로세스가 포트(8000)와 GPU 메모리를 점유하여 앱 재시작 실패
+- Windows에서만 프로세스 트리 킬이 동작하지 않음
+
+### 원인 분석
+
+**버그 1 (CRITICAL): Pipeline/Discover의 stdin 파이프 누락**
+- `main.cjs`에서 `spawn(..., { detached: true })` 시 `stdio` 옵션 미지정
+- Node.js 기본값으로 부모의 stdio를 상속 → stdin이 파이프가 아닌 부모의 stdin
+- `parent_watchdog.py`의 stdin 모니터링이 작동하지 않음
+- 더블클릭으로 앱 실행 시 stdin이 `/dev/null` → `read()` 즉시 EOF → 프로세스 즉시 종료 위험
+
+**버그 2 (MEDIUM): parent_watchdog.py의 BufferedReader 락**
+- `sys.stdin.buffer.read()` 사용 → Python BufferedReader 내부 락을 블로킹 중 보유
+- 백그라운드 C-extension 스레드(numpy, torch)와 경합 가능성
+
+**버그 3 (MEDIUM): Windows에서 프로세스 그룹 킬 실패**
+- `process.kill(-pid, 'SIGKILL')` — 음수 PID는 POSIX 프로세스 그룹 시그널로, Windows 미지원
+- Windows에서 항상 예외 → catch 블록이 루트 프로세스만 종료, 자식 트리 미종료
+
+### 해결 방법
+
+**3계층 방어 체계 구축**:
+
+| 계층 | 메커니즘 | OS | 반응 속도 |
+|------|---------|-------|----------|
+| **Layer 1** | `prctl(PR_SET_PDEATHSIG, SIGKILL)` | Linux 전용 | 즉시 (커널 레벨) |
+| **Layer 2** | stdin 파이프 EOF 감지 (`os.read()`) | 전체 | ~수ms |
+| **Layer 3** | PID 폴링 (2초 간격) | 전체 (폴백) | ~2초 |
+
+**구체적 수정**:
+1. Pipeline/Discover spawn에 `stdio: ['pipe', 'pipe', 'pipe']` 추가 (stdin lifeline 확보)
+2. `parent_watchdog.py` 리라이트: `sys.stdin.buffer.read()` → `os.read(fd, 1024)` (BufferedReader 락 회피)
+3. Linux `prctl(PR_SET_PDEATHSIG, SIGKILL)` 추가 (커널이 직접 SIGKILL 전달)
+4. `killProcessTree()` 헬퍼 추가: Windows `taskkill /F /T /PID`, Unix `process.kill(-pid)`
+
+### 예방책
+- 새 Python subprocess spawn 시 반드시 `stdio: ['pipe', 'pipe', 'pipe']` 명시
+- stdin 읽기에는 `sys.stdin.buffer.read()` 대신 `os.read()` 사용
+- Windows 프로세스 종료에는 `taskkill /F /T /PID` 사용 (프로세스 트리 전체)
+- `parent_watchdog.py`는 stdin 파이프가 있는 모든 장수명 subprocess에서 호출
