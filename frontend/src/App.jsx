@@ -1102,7 +1102,7 @@ function App() {
                 <span>{user.username}</span>
               </div>
               <button
-                onClick={logout}
+                onClick={() => { if (isWorkerRunning) handleWorkerStop(); logout(); }}
                 className="flex items-center space-x-1 px-2 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-red-400 hover:bg-gray-700/50 transition-colors"
                 title={t('auth.logout')}
               >
