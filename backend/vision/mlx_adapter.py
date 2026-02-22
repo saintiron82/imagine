@@ -279,7 +279,7 @@ class MLXVisionAdapter:
         """Unload MLX model to free memory.
 
         MLX uses its own Metal buffer allocator (not torch.mps),
-        so we must call mx.metal.clear_cache() to release GPU memory.
+        so we must call mx.clear_cache() to release GPU memory.
         """
         if self._model is not None:
             del self._model
@@ -295,7 +295,7 @@ class MLXVisionAdapter:
         # has no effect on MLX allocations.
         try:
             import mlx.core as mx
-            mx.metal.clear_cache()
+            mx.clear_cache()
         except Exception:
             pass
         logger.info(f"[MLX] Model unloaded ({self.model_id})")

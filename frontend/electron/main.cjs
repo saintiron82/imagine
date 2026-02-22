@@ -1588,17 +1588,37 @@ function killWorkerProc() {
 
 // IPC Handler: Start worker daemon
 ipcMain.handle('worker-start', async (event, opts) => {
+    const accessToken = opts.accessToken || '';
+    const refreshToken = opts.refreshToken || '';
+    const startCmd = {
+        cmd: 'start',
+        server_url: opts.serverUrl || 'http://localhost:8000',
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        username: opts.username || '',
+        password: opts.password || '',
+    };
+
+    // If process is alive, send start command directly (restart after stop)
     if (workerProc) {
-        return { success: false, error: 'Worker already running' };
+        console.log('[Worker] Process alive — sending start command to existing process');
+        try {
+            workerProc.stdin.write(JSON.stringify(startCmd) + '\n');
+            return { success: true };
+        } catch (e) {
+            console.error('[Worker] Failed to write to existing process:', e);
+            // Process is dead, fall through to spawn new one
+            workerProc = null;
+        }
     }
 
     const finalPython = resolvePython();
-    const scriptPath = getWorkerScriptPath();
 
     // Store window reference for relaying events
     workerMainWindow = BrowserWindow.fromWebContents(event.sender);
 
     console.log('[Worker] Starting worker_ipc.py...');
+    console.log(`[Worker] Auth: access=${accessToken ? accessToken.substring(0, 20) + '...' : '(none)'}, refresh=${refreshToken ? refreshToken.substring(0, 16) + '...' : '(none)'}`);
 
     workerProc = spawn(finalPython, ['-u', '-m', 'backend.worker.worker_ipc'], {
         cwd: projectRoot,
@@ -1607,18 +1627,7 @@ ipcMain.handle('worker-start', async (event, opts) => {
     });
 
     // Queue the start command — will be sent after 'ready' event
-    // Supports token mode (from existing session) or credential mode
-    const accessToken = opts.accessToken || '';
-    const refreshToken = opts.refreshToken || '';
-    console.log(`[Worker] Auth: access=${accessToken ? accessToken.substring(0, 20) + '...' : '(none)'}, refresh=${refreshToken ? refreshToken.substring(0, 16) + '...' : '(none)'}`);
-    workerStartCmd = {
-        cmd: 'start',
-        server_url: opts.serverUrl || 'http://localhost:8000',
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        username: opts.username || '',
-        password: opts.password || '',
-    };
+    workerStartCmd = startCmd;
 
     workerProc.stdout.on('data', (chunk) => {
         workerBuffer += chunk.toString();
