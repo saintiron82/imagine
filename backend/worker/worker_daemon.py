@@ -263,9 +263,11 @@ class WorkerDaemon:
                 self.session_id = data["session_id"]
                 if data.get("pool_hint"):
                     self.pool_size = data["pool_hint"]
+                if data.get("batch_hint"):
+                    self.batch_capacity = data["batch_hint"]
                 if data.get("processing_mode"):
                     self.processing_mode = data["processing_mode"]
-                logger.info(f"Session registered: id={self.session_id}, pool_hint={self.pool_size}, mode={self.processing_mode}")
+                logger.info(f"Session registered: id={self.session_id}, pool_hint={self.pool_size}, batch={self.batch_capacity}, mode={self.processing_mode}")
             else:
                 logger.warning(f"Session connect failed: {resp.status_code}")
         except Exception as e:
@@ -295,6 +297,11 @@ class WorkerDaemon:
                 data = resp.json()
                 if data.get("pool_hint"):
                     self.pool_size = data["pool_hint"]
+                if data.get("batch_hint"):
+                    old_cap = self.batch_capacity
+                    self.batch_capacity = data["batch_hint"]
+                    if old_cap != self.batch_capacity:
+                        logger.info(f"Batch capacity changed: {old_cap} → {self.batch_capacity}")
                 if data.get("processing_mode"):
                     old_mode = self.processing_mode
                     self.processing_mode = data["processing_mode"]

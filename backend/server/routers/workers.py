@@ -42,6 +42,24 @@ class DisconnectRequest(BaseModel):
     session_id: int
 
 
+class WorkerConfigUpdate(BaseModel):
+    processing_mode: Optional[str] = None    # "full" | "mc_only" | null (=global)
+    batch_capacity: Optional[int] = None     # 1~32 | null (=worker default)
+
+
+class GlobalModeUpdate(BaseModel):
+    processing_mode: str  # "full" | "mc_only"
+
+
+def _get_global_processing_mode() -> str:
+    """Read global processing_mode from config (cached singleton)."""
+    try:
+        from backend.utils.config import get_config
+        return get_config().get("server.processing_mode", "full")
+    except Exception:
+        return "full"
+
+
 # ── Worker → Server endpoints ────────────────────────────────
 
 @router.post("/workers/connect")
@@ -70,17 +88,20 @@ def worker_connect(
     session_id = cursor.lastrowid
     db.conn.commit()
 
-    # Read processing mode from config
-    try:
-        from backend.utils.config import get_config
-        processing_mode = get_config().get("server.processing_mode", "full")
-    except Exception:
-        processing_mode = "full"
+    # Per-worker override > global config fallback
+    cursor.execute(
+        "SELECT processing_mode_override, batch_capacity_override FROM worker_sessions WHERE id = ?",
+        (session_id,)
+    )
+    ov = cursor.fetchone()
+    processing_mode = (ov[0] if ov and ov[0] else None) or _get_global_processing_mode()
+    effective_batch = (ov[1] if ov and ov[1] else None) or req.batch_capacity
 
     logger.info(f"Worker connected: {req.worker_name} (session={session_id}, user={user['username']}, mode={processing_mode})")
     return {
         "session_id": session_id,
-        "pool_hint": req.batch_capacity * 2,
+        "pool_hint": effective_batch * 2,
+        "batch_hint": effective_batch,
         "processing_mode": processing_mode,
     }
 
@@ -95,9 +116,11 @@ def worker_heartbeat(
     now = datetime.now(timezone.utc).isoformat()
     cursor = db.conn.cursor()
 
-    # Verify session ownership
+    # Verify session ownership + read overrides
     cursor.execute(
-        "SELECT id, status, pending_command, batch_capacity FROM worker_sessions WHERE id = ? AND user_id = ?",
+        """SELECT id, status, pending_command, batch_capacity,
+                  processing_mode_override, batch_capacity_override
+           FROM worker_sessions WHERE id = ? AND user_id = ?""",
         (req.session_id, user["id"])
     )
     row = cursor.fetchone()
@@ -107,6 +130,8 @@ def worker_heartbeat(
     session_status = row[1]
     pending_cmd = row[2]
     batch_capacity = row[3]
+    mode_override = row[4]
+    batch_override = row[5]
 
     # Blocked sessions should stop immediately
     if session_status == "blocked":
@@ -129,17 +154,15 @@ def worker_heartbeat(
     )
     db.conn.commit()
 
-    # Read processing mode (allows runtime switching without restart)
-    try:
-        from backend.utils.config import get_config
-        processing_mode = get_config().get("server.processing_mode", "full")
-    except Exception:
-        processing_mode = "full"
+    # Per-worker override > global config fallback
+    processing_mode = mode_override or _get_global_processing_mode()
+    effective_batch = batch_override or batch_capacity
 
     return {
         "ok": True,
         "command": pending_cmd,
-        "pool_hint": batch_capacity * 2,
+        "pool_hint": effective_batch * 2,
+        "batch_hint": effective_batch,
         "processing_mode": processing_mode,
     }
 
@@ -227,7 +250,8 @@ def admin_list_workers(
                   ws.batch_capacity, ws.jobs_completed, ws.jobs_failed,
                   ws.current_file, ws.current_phase,
                   ws.last_heartbeat, ws.connected_at, ws.disconnected_at,
-                  ws.pending_command, u.username, ws.user_id
+                  ws.pending_command, u.username, ws.user_id,
+                  ws.processing_mode_override, ws.batch_capacity_override
            FROM worker_sessions ws
            JOIN users u ON ws.user_id = u.id
            ORDER BY
@@ -305,6 +329,8 @@ def admin_list_workers(
             "disconnected_at": row[11], "pending_command": row[12],
             "username": row[13],
             "throughput": throughput,
+            "processing_mode_override": row[15],
+            "batch_capacity_override": row[16],
         })
     return {"workers": workers}
 
@@ -349,3 +375,46 @@ def admin_block_worker(
     db.conn.commit()
     logger.info(f"Admin blocked worker session {session_id}")
     return {"ok": True}
+
+
+@router.patch("/admin/workers/{session_id}/config")
+def admin_update_worker_config(
+    session_id: int,
+    req: WorkerConfigUpdate,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Update per-worker settings (applied on next heartbeat, ~30s)."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """UPDATE worker_sessions
+           SET processing_mode_override = ?,
+               batch_capacity_override = ?
+           WHERE id = ? AND status = 'online'""",
+        (req.processing_mode, req.batch_capacity, session_id)
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Session not found or not online")
+    db.conn.commit()
+    logger.info(f"Admin updated worker config: session={session_id}, mode={req.processing_mode}, batch={req.batch_capacity}")
+    return {"ok": True}
+
+
+@router.patch("/admin/workers/global-config")
+def admin_update_global_config(
+    req: GlobalModeUpdate,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Change processing mode for ALL online workers."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """UPDATE worker_sessions
+           SET processing_mode_override = ?
+           WHERE status = 'online'""",
+        (req.processing_mode,)
+    )
+    db.conn.commit()
+    affected = cursor.rowcount
+    logger.info(f"Admin set global processing mode: {req.processing_mode} ({affected} workers)")
+    return {"ok": True, "affected": affected}
