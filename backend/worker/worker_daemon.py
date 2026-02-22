@@ -45,6 +45,7 @@ from backend.worker.config import (
     get_batch_capacity,
     get_heartbeat_interval,
 )
+from backend.utils.meta_helpers import meta_to_dict
 from backend.worker.result_uploader import ResultUploader
 
 logging.basicConfig(
@@ -589,7 +590,7 @@ class WorkerDaemon:
                     thumb_path = str(tp)
 
             # Build metadata dict for API upload
-            metadata = self._meta_to_dict(meta)
+            metadata = meta_to_dict(meta)
             metadata["file_path"] = str(file_path)
 
             return metadata, thumb_path, meta
@@ -709,31 +710,54 @@ class WorkerDaemon:
 
         return mv_vec
 
-    def _meta_to_dict(self, meta) -> dict:
-        """Convert AssetMeta dataclass to dict for API submission."""
-        from dataclasses import asdict
-        try:
-            d = asdict(meta)
-            # Remove None values and non-serializable types
-            clean = {}
-            for k, v in d.items():
-                if v is None:
-                    continue
-                if isinstance(v, (str, int, float, bool)):
-                    clean[k] = v
-                elif isinstance(v, (list, dict)):
-                    clean[k] = v
-                elif isinstance(v, Path):
-                    clean[k] = str(v)
-            return clean
-        except Exception:
-            # Fallback: manually extract key fields
-            return {
-                "file_name": getattr(meta, "file_name", ""),
-                "file_path": getattr(meta, "file_path", ""),
-                "format": getattr(meta, "format", ""),
-                "file_size": getattr(meta, "file_size", 0),
-            }
+    # ── Phase Helpers ────────────────────────────────────────────
+
+    def _run_vision_phase(self, active: list, progress_callback=None) -> float:
+        """Run Vision (VLM) phase on active job contexts.
+
+        Iterates over each context, runs VLM to generate MC (caption/tags),
+        and updates context metadata and vision_fields.
+
+        For pre-parsed jobs, uses mc_raw from server instead of building from
+        meta_obj. For full-pipeline jobs, checks the pre_parsed flag first.
+
+        Args:
+            active: List of _JobContext with resolved files.
+            progress_callback: Optional progress callback.
+
+        Returns:
+            Elapsed time in seconds.
+        """
+        t_phase = time.perf_counter()
+        _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
+
+        for i, ctx in enumerate(active):
+            self._current_phase = "vision"
+            self._current_file = Path(ctx.job["file_path"]).name
+            self.uploader.report_progress(ctx.job["job_id"], "vision")
+
+            mc_raw_override = ctx.job.get("mc_raw") if ctx.job.get("pre_parsed") else None
+            vision_fields = self._run_vision(
+                Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
+                mc_raw_override=mc_raw_override,
+            )
+            if vision_fields:
+                if ctx.metadata:
+                    ctx.metadata.update(vision_fields)
+                ctx.vision_fields = vision_fields
+
+            _notify(progress_callback, "file_done", {
+                "phase": "vision", "file_name": self._current_file,
+                "index": i + 1, "count": len(active), "success": True,
+            })
+
+        elapsed = time.perf_counter() - t_phase
+        fpm = (len(active) / elapsed * 60) if elapsed > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "vision", "count": len(active),
+            "elapsed_s": round(elapsed, 2), "files_per_min": round(fpm, 1),
+        })
+        return elapsed
 
     # ── Batch Processing (Phase-Level with Sub-Batch Inference) ──
 
@@ -832,33 +856,8 @@ class WorkerDaemon:
         active = [c for c in contexts if not c.failed]
 
         # ── Phase V: Vision (VLM, 1-by-1 — MLX batch_size=1) ──
-        t_phase = time.perf_counter()
-        _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
-        for i, ctx in enumerate(active):
-            self._current_phase = "vision"
-            self._current_file = Path(ctx.job["file_path"]).name
-            self.uploader.report_progress(ctx.job["job_id"], "vision")
-
-            # For pre-parsed jobs, use mc_raw from server instead of building from meta_obj
-            mc_raw_override = ctx.job.get("mc_raw") if ctx.job.get("pre_parsed") else None
-            vision_fields = self._run_vision(
-                Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
-                mc_raw_override=mc_raw_override,
-            )
-            if vision_fields:
-                ctx.metadata.update(vision_fields)
-                ctx.vision_fields = vision_fields
-
-            _notify(progress_callback, "file_done", {
-                "phase": "vision", "file_name": self._current_file,
-                "index": i + 1, "count": len(active), "success": True,
-            })
-        elapsed_vision = time.perf_counter() - t_phase
+        elapsed_vision = self._run_vision_phase(active, progress_callback)
         fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
-        _notify(progress_callback, "phase_complete", {
-            "phase": "vision", "count": len(active),
-            "elapsed_s": round(elapsed_vision, 2), "files_per_min": round(fpm_vision, 1),
-        })
 
         # Unload VLM to free GPU memory for embedding phases
         self._unload_vlm()
@@ -1082,8 +1081,6 @@ class WorkerDaemon:
 
         VLM is NOT unloaded between batches — stays resident for speed.
         """
-        import time as _time
-
         # Build job contexts — all jobs should be pre-parsed in mc_only mode
         contexts = []
         for job in jobs:
@@ -1105,38 +1102,12 @@ class WorkerDaemon:
         active = [c for c in contexts if not c.failed]
 
         # ── Phase V: Vision/MC only (VLM, 1-by-1) ──
-        t_phase = _time.perf_counter()
-        _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
-
-        for i, ctx in enumerate(active):
-            self._current_phase = "vision"
-            self._current_file = Path(ctx.job["file_path"]).name
-            self.uploader.report_progress(ctx.job["job_id"], "vision")
-
-            mc_raw_override = ctx.job.get("mc_raw")
-            vision_fields = self._run_vision(
-                Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
-                mc_raw_override=mc_raw_override,
-            )
-            if vision_fields:
-                ctx.vision_fields = vision_fields
-
-            _notify(progress_callback, "file_done", {
-                "phase": "vision", "file_name": self._current_file,
-                "index": i + 1, "count": len(active), "success": True,
-            })
-
-        elapsed_vision = _time.perf_counter() - t_phase
-        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
-        _notify(progress_callback, "phase_complete", {
-            "phase": "vision", "count": len(active),
-            "elapsed_s": round(elapsed_vision, 2), "files_per_min": round(fpm_vision, 1),
-        })
+        elapsed_vision = self._run_vision_phase(active, progress_callback)
 
         # NOTE: VLM is NOT unloaded in mc_only mode — stays resident
 
         # ── Upload MC results (vision fields only, no vectors) ──
-        t_upload = _time.perf_counter()
+        t_upload = time.perf_counter()
         results = []
         for ctx in contexts:
             job_id = ctx.job["job_id"]
@@ -1166,9 +1137,10 @@ class WorkerDaemon:
                 except Exception:
                     pass
 
-        elapsed_upload = _time.perf_counter() - t_upload
+        elapsed_upload = time.perf_counter() - t_upload
         total_elapsed = elapsed_vision + elapsed_upload
         total_fpm = (len(contexts) / total_elapsed * 60) if total_elapsed > 0 else 0
+        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
 
         _notify(progress_callback, "batch_complete", {
             "count": len(contexts),
