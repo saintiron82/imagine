@@ -1310,15 +1310,24 @@ analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
 3. **단일 스레드 stdin 데몬은 안전**: 검색 데몬(`api_search.py`)처럼 stdin 블로킹 읽기를 사용하더라도 백그라운드 스레드가 없으면 데드락 없음. 분기 처리 불필요.
 4. **공용 유틸리티**: `backend/utils/win32_stdin.py` — 플랫폼 자동 감지, `make_stdin_reader()` 호출 시 Windows/Unix 자동 분기.
 
+5. **부모 프로세스 워치독**: stdin을 읽지 않는 장수명 프로세스(FastAPI 서버, Pipeline, Discover)에는 반드시 `backend/utils/parent_watchdog.py`의 `start_parent_watchdog()` 적용. Electron이 크래시/강제 종료되면 stdin 파이프가 끊기면서 자동 종료됨.
+
 **적용 현황:**
 
-| 프로세스 | stdin | 백그라운드 스레드 | PeekNamedPipe | 상태 |
-|---------|-------|-----------------|---------------|------|
-| Worker IPC | 장수명 stdin | 있음 (워커) | 적용됨 | ✅ |
-| Search Daemon | 장수명 stdin | 없음 (단일 스레드) | 불필요 | ✅ |
-| FastAPI Server | stdin 안 읽음 | uvicorn 내부 | 불필요 | ✅ |
-| Pipeline/Discover | stdin 안 읽음 | 있음 | 불필요 | ✅ |
-| 기타 API 스크립트 | 단수명/argv | 없음 | 불필요 | ✅ |
+| 프로세스 | stdin 자체 읽기 | 부모 워치독 | 잔류 방지 | 상태 |
+|---------|---------------|-----------|----------|------|
+| Worker IPC | ✅ PeekNamedPipe | 불필요 (stdin으로 감지) | ✅ | ✅ |
+| Search Daemon | ✅ `for line in sys.stdin` | 불필요 (stdin으로 감지) | ✅ | ✅ |
+| FastAPI Server | ❌ stdin 안 읽음 | ✅ `start_parent_watchdog()` | ✅ | ✅ |
+| Pipeline/Discover | ❌ stdin 안 읽음 | ✅ `start_parent_watchdog()` | ✅ | ✅ |
+| 기타 API 스크립트 | 단수명 | 불필요 (곧 종료) | ✅ | ✅ |
+
+**공용 유틸리티:**
+
+| 모듈 | 역할 | 사용 시점 |
+|------|------|----------|
+| `backend/utils/win32_stdin.py` | Windows CRT I/O 락 회피 (PeekNamedPipe) | stdin + 백그라운드 C-extension 조합 |
+| `backend/utils/parent_watchdog.py` | 부모 프로세스 사망 감지 → 자동 종료 | stdin을 읽지 않는 장수명 프로세스 |
 
 ### 양자화 옵션 (조사 완료, 미적용)
 
