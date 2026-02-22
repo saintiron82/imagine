@@ -68,6 +68,132 @@ export default function AdminPage() {
 }
 
 
+// ── Resource Metrics Display ─────────────────────────────
+
+/**
+ * Compact resource metrics cell for the workers table.
+ * Shows GPU memory bar + temperature, CPU %, and RAM % in a stacked layout.
+ * Gracefully handles null/missing data.
+ */
+function ResourceMetrics({ resources, t }) {
+  if (!resources) {
+    return <span className="text-gray-600 text-xs">{t('admin.worker_no_metrics')}</span>;
+  }
+
+  const {
+    gpu_type,
+    gpu_memory_used_gb,
+    gpu_memory_total_gb,
+    gpu_memory_percent,
+    gpu_temperature_c,
+    cpu_percent,
+    memory_percent,
+    memory_used_gb,
+    memory_total_gb,
+  } = resources;
+
+  const hasGpu = gpu_type != null;
+  const hasGpuMem = gpu_memory_used_gb != null && gpu_memory_total_gb != null;
+  const hasCpu = cpu_percent != null;
+  const hasRam = memory_percent != null;
+
+  // Color based on percentage thresholds
+  const pctColor = (pct) => {
+    if (pct == null) return 'text-gray-500';
+    if (pct >= 90) return 'text-red-400';
+    if (pct >= 70) return 'text-yellow-400';
+    return 'text-emerald-400';
+  };
+
+  const barColor = (pct) => {
+    if (pct == null) return 'bg-gray-600';
+    if (pct >= 90) return 'bg-red-500';
+    if (pct >= 70) return 'bg-yellow-500';
+    return 'bg-emerald-500';
+  };
+
+  const tempColor = (temp) => {
+    if (temp == null) return 'text-gray-500';
+    if (temp >= 85) return 'text-red-400';
+    if (temp >= 70) return 'text-yellow-400';
+    return 'text-emerald-400';
+  };
+
+  return (
+    <div className="flex flex-col gap-1 min-w-[140px]">
+      {/* GPU row */}
+      {hasGpu && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-500 w-7 flex-shrink-0 uppercase">
+            {gpu_type === 'cuda' ? t('admin.worker_gpu_type_cuda') : t('admin.worker_gpu_type_mps')}
+          </span>
+          {hasGpuMem ? (
+            <>
+              <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden min-w-[40px]">
+                <div
+                  className={`h-full rounded-full transition-all ${barColor(gpu_memory_percent)}`}
+                  style={{ width: `${Math.min(gpu_memory_percent || 0, 100)}%` }}
+                />
+              </div>
+              <span className={`text-[10px] font-mono w-[52px] text-right flex-shrink-0 ${pctColor(gpu_memory_percent)}`}>
+                {gpu_memory_used_gb.toFixed(1)}/{gpu_memory_total_gb.toFixed(0)}G
+              </span>
+            </>
+          ) : (
+            <span className="text-[10px] text-gray-500">-</span>
+          )}
+          {gpu_temperature_c != null && (
+            <span className={`text-[10px] font-mono flex-shrink-0 ${tempColor(gpu_temperature_c)}`} title="GPU Temperature">
+              {gpu_temperature_c}°
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* CPU row */}
+      {hasCpu && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-500 w-7 flex-shrink-0">{t('admin.worker_cpu')}</span>
+          <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden min-w-[40px]">
+            <div
+              className={`h-full rounded-full transition-all ${barColor(cpu_percent)}`}
+              style={{ width: `${Math.min(cpu_percent, 100)}%` }}
+            />
+          </div>
+          <span className={`text-[10px] font-mono w-[52px] text-right flex-shrink-0 ${pctColor(cpu_percent)}`}>
+            {cpu_percent.toFixed(0)}%
+          </span>
+        </div>
+      )}
+
+      {/* RAM row */}
+      {hasRam && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-500 w-7 flex-shrink-0">{t('admin.worker_memory')}</span>
+          <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden min-w-[40px]">
+            <div
+              className={`h-full rounded-full transition-all ${barColor(memory_percent)}`}
+              style={{ width: `${Math.min(memory_percent, 100)}%` }}
+            />
+          </div>
+          <span className={`text-[10px] font-mono w-[52px] text-right flex-shrink-0 ${pctColor(memory_percent)}`}>
+            {memory_used_gb != null && memory_total_gb != null
+              ? `${memory_used_gb.toFixed(0)}/${memory_total_gb.toFixed(0)}G`
+              : `${memory_percent.toFixed(0)}%`
+            }
+          </span>
+        </div>
+      )}
+
+      {/* No data at all */}
+      {!hasGpu && !hasCpu && !hasRam && (
+        <span className="text-gray-600 text-xs">{t('admin.worker_no_metrics')}</span>
+      )}
+    </div>
+  );
+}
+
+
 // ── Workers Panel ────────────────────────────────────────
 
 function WorkersPanel() {
@@ -185,6 +311,7 @@ function WorkersPanel() {
               <th className="text-left px-4 py-3">Status</th>
               <th className="text-left px-4 py-3">{t('admin.worker_capacity')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_speed')}</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_resources')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_jobs_done')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_current_task')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_last_heartbeat')}</th>
@@ -209,6 +336,9 @@ function WorkersPanel() {
                   ) : (
                     <span className="text-gray-600">-</span>
                   )}
+                </td>
+                <td className="px-4 py-3">
+                  <ResourceMetrics resources={w.resources} t={t} />
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-green-400">{w.jobs_completed}</span>
