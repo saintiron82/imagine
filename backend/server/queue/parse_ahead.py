@@ -89,7 +89,7 @@ class ParseAheadPool(BaseAheadPool):
                 return 0
 
             buffer_multiplier = self._get_config_value(
-                "server.parse_ahead.buffer_multiplier", 2
+                "server.parse_ahead.buffer_multiplier", 1
             )
             return int(total_capacity * buffer_multiplier)
 
