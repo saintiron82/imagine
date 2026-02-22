@@ -91,6 +91,26 @@ class ResultUploader:
             logger.warning(f"Fail report failed for job {job_id}: {e}")
             return False
 
+    def complete_mc(self, job_id: int, vision_fields: Dict[str, Any]) -> bool:
+        """MC-only mode: upload vision fields without vectors.
+
+        Server handles VV (ParseAhead) and MV (EmbedAhead) separately.
+        """
+        try:
+            resp = self.session.patch(
+                f"{self.base}/api/v1/jobs/{job_id}/complete_mc",
+                json={"vision_fields": vision_fields},
+            )
+            if resp.status_code == 200:
+                logger.info(f"MC-only job {job_id} completed successfully")
+                return True
+            else:
+                logger.error(f"MC-only job {job_id} failed: {resp.status_code} {resp.text}")
+                return False
+        except Exception as e:
+            logger.error(f"MC-only job {job_id} request failed: {e}")
+            return False
+
     def upload_thumbnail(self, file_id: int, thumb_path: str) -> bool:
         """Upload thumbnail to server (dual storage)."""
         path = Path(thumb_path)

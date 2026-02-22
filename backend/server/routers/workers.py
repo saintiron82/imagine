@@ -70,10 +70,18 @@ def worker_connect(
     session_id = cursor.lastrowid
     db.conn.commit()
 
-    logger.info(f"Worker connected: {req.worker_name} (session={session_id}, user={user['username']})")
+    # Read processing mode from config
+    try:
+        from backend.utils.config import get_config
+        processing_mode = get_config().get("server.processing_mode", "full")
+    except Exception:
+        processing_mode = "full"
+
+    logger.info(f"Worker connected: {req.worker_name} (session={session_id}, user={user['username']}, mode={processing_mode})")
     return {
         "session_id": session_id,
         "pool_hint": req.batch_capacity * 2,
+        "processing_mode": processing_mode,
     }
 
 
@@ -121,10 +129,18 @@ def worker_heartbeat(
     )
     db.conn.commit()
 
+    # Read processing mode (allows runtime switching without restart)
+    try:
+        from backend.utils.config import get_config
+        processing_mode = get_config().get("server.processing_mode", "full")
+    except Exception:
+        processing_mode = "full"
+
     return {
         "ok": True,
         "command": pending_cmd,
         "pool_hint": batch_capacity * 2,
+        "processing_mode": processing_mode,
     }
 
 
