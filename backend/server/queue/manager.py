@@ -154,11 +154,13 @@ class JobQueueManager:
             f"({pre_parsed_count} pre-parsed, {len(claimed) - pre_parsed_count} unparsed)"
         )
 
-        # Signal to ParseAheadPool that there's active demand
+        # Signal to ParseAheadPool: record actual claim count per worker
         if claimed:
             try:
                 from backend.server.queue.base_ahead_pool import BaseAheadPool
-                BaseAheadPool.record_claim()
+                BaseAheadPool.record_claim(
+                    session_id=worker_session_id, count=len(claimed)
+                )
             except ImportError:
                 pass
 

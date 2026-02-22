@@ -54,48 +54,17 @@ class ParseAheadPool(BaseAheadPool):
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
 
-        Demand-driven: only returns > 0 when workers are actively claiming.
-
-        Gates:
-            1. Recent claim activity (within _claim_inactivity_timeout)
-            2. Online workers with recent heartbeat
-            3. Workers in 'active' state (not idle/resting)
+        Demand-driven: uses actual worker claim counts as the prediction.
+        Each worker's last claim count is recorded by JobQueueManager,
+        and we sum them to get the total expected demand.
 
         Returns:
-            Target count = sum(active workers' batch_capacity) * buffer_multiplier.
-            0 if no demand or no active workers.
+            Sum of recent per-worker claim counts, or 0 if no demand.
         """
-        # Gate 1: No recent claim activity → no pre-parsing needed
         if not self.has_recent_demand():
             return 0
 
-        try:
-            cursor = self.db.conn.cursor()
-            # Gate 2+3: Only count workers that are online, alive, and active
-            cursor.execute("""
-                SELECT COALESCE(SUM(batch_capacity), 0)
-                FROM worker_sessions
-                WHERE status = 'online'
-                  AND last_heartbeat > datetime('now', '-2 minutes')
-                  AND (
-                      resources_json IS NULL
-                      OR json_extract(resources_json, '$.worker_state') IS NULL
-                      OR json_extract(resources_json, '$.worker_state') = 'active'
-                  )
-            """)
-            total_capacity = cursor.fetchone()[0]
-
-            if total_capacity <= 0:
-                return 0
-
-            buffer_multiplier = self._get_config_value(
-                "server.parse_ahead.buffer_multiplier", 1
-            )
-            return int(total_capacity * buffer_multiplier)
-
-        except Exception as e:
-            logger.warning(f"Failed to calculate buffer target: {e}")
-            return 0
+        return self.get_total_demand()
 
     def _loop(self):
         """Main loop: continuously pre-parse pending jobs to fill the buffer."""

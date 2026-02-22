@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from backend.db.sqlite_client import SQLiteDB
 
@@ -31,16 +31,37 @@ class BaseAheadPool(ABC):
     # Shared demand signal: updated by JobQueueManager.claim_jobs()
     _last_claim_time: float = 0.0
     _claim_inactivity_timeout: float = 120.0  # 2 min without claim → pause
+    # Per-worker demand: session_id -> (last_claim_count, timestamp)
+    _worker_demand: Dict[int, Tuple[int, float]] = {}
 
     @classmethod
-    def record_claim(cls):
-        """Called by JobQueueManager when any worker claims jobs."""
+    def record_claim(cls, session_id: Optional[int] = None, count: int = 0):
+        """Called by JobQueueManager when a worker claims jobs.
+
+        Args:
+            session_id: Worker session ID (tracks per-worker demand).
+            count: Number of jobs actually claimed.
+        """
         cls._last_claim_time = time.time()
+        if session_id is not None and count > 0:
+            cls._worker_demand[session_id] = (count, time.time())
 
     @classmethod
     def has_recent_demand(cls) -> bool:
         """True if any worker claimed jobs within the inactivity timeout."""
         return (time.time() - cls._last_claim_time) < cls._claim_inactivity_timeout
+
+    @classmethod
+    def get_total_demand(cls) -> int:
+        """Sum of recent per-worker claim counts.
+
+        Only includes workers that claimed within the inactivity timeout.
+        This predicts the next round of claims based on actual consumption.
+        """
+        cutoff = time.time() - cls._claim_inactivity_timeout
+        return sum(
+            count for count, ts in cls._worker_demand.values() if ts > cutoff
+        )
 
     def __init__(self, db: SQLiteDB):
         self.db = db
