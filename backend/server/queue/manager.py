@@ -298,6 +298,26 @@ class JobQueueManager:
         else:
             throughput = 0.0
 
+        # Phase-level progress counts
+        phase_stats = {}
+        try:
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN json_extract(phase_completed, '$.parse') = 1 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN json_extract(phase_completed, '$.vision') = 1 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN json_extract(phase_completed, '$.embed') = 1 THEN 1 ELSE 0 END)
+                FROM job_queue
+                WHERE status IN ('pending', 'assigned', 'processing', 'completed')
+            """)
+            phase_row = cursor.fetchone()
+            phase_stats = {
+                "phase_parse_done": phase_row[0] or 0,
+                "phase_vision_done": phase_row[1] or 0,
+                "phase_embed_done": phase_row[2] or 0,
+            }
+        except Exception:
+            pass
+
         # Parse-ahead stats
         parse_ahead_stats = {}
         try:
@@ -325,6 +345,7 @@ class JobQueueManager:
             "throughput": throughput,
             "recent_1min": recent_1min,
             "recent_5min": recent_5min,
+            **phase_stats,
             **parse_ahead_stats,
         }
 

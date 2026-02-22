@@ -49,6 +49,8 @@ const USER_SETTING_PREFIXES = [
     'registered_folders', 'last_session',
     'worker.claim_batch_size', 'worker.gpu_memory_percent',
     'worker.cpu_cores', 'worker.batch_capacity',
+    'worker.schedule', 'worker.idle_unload_minutes',
+    'worker.processing_mode',
 ];
 
 function isUserSetting(key) {
