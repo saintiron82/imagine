@@ -105,10 +105,19 @@ class SigLIP2Encoder:
         from transformers import AutoModel, AutoImageProcessor, AutoTokenizer
 
         logger.info(f"Loading SigLIP 2 model: {self.model_name}...")
+
+        # Use device_map to load directly onto GPU/MPS, avoiding 2x memory peak
+        # from CPU staging via .to(device) (MPS device_map supported since transformers 5.0+)
+        load_kwargs = {"torch_dtype": torch.float16}
+        if self._device in ("cuda", "mps"):
+            load_kwargs["device_map"] = {"": self._device}
+
         try:
             self._model = AutoModel.from_pretrained(
-                self.model_name, torch_dtype=torch.float16, local_files_only=True
-            ).to(self._device).eval()
+                self.model_name, local_files_only=True, **load_kwargs,
+            ).eval()
+            if self._device not in ("cuda", "mps"):
+                self._model = self._model.to(self._device)
             self._processor = AutoImageProcessor.from_pretrained(
                 self.model_name, local_files_only=True
             )
@@ -119,8 +128,10 @@ class SigLIP2Encoder:
         except OSError:
             logger.info("Local cache not found, downloading from HuggingFace...")
             self._model = AutoModel.from_pretrained(
-                self.model_name, torch_dtype=torch.float16
-            ).to(self._device).eval()
+                self.model_name, **load_kwargs,
+            ).eval()
+            if self._device not in ("cuda", "mps"):
+                self._model = self._model.to(self._device)
             self._processor = AutoImageProcessor.from_pretrained(self.model_name)
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             logger.info(f"SigLIP 2 model downloaded and loaded ({self._device}, fp16)")
