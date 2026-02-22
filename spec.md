@@ -377,12 +377,12 @@ MV 워커 1대: 0.1s/file → 10 files/sec (여유)
 - [x] Phase 전문화 모드에서 MC/VV/MV 워커가 독립적으로 Job을 claim하고 처리 — `mc_only` 모드 (ParseAheadPool + EmbedAheadPool + Worker MC 전담)
 - [x] 모델 영구 상주: 전문화 워커에서 배치 간 모델 로드/언로드 0회 — mc_only 모드에서 VLM 언로드 안 함
 - [x] 단일 머신에서는 기존 All-in-One 모드 자동 폴백 — `processing_mode="full"` 기본값
-- [ ] 하트비트에 GPU 온도, 메모리 사용률 등 리소스 메트릭 포함
-- [ ] 리소스 압력 시 자동 쓰로틀링 (배치 크기 축소 또는 휴식)
-- [ ] user-settings.yaml의 스케줄 설정에 따라 워커 활동 시간 제한
-- [ ] 비활성(idle) 전환 시 모델 완전 언로드, GPU 메모리 사용자에게 반환
-- [ ] 활성(active) 전환 시 모델 자동 재로드 후 처리 재개
-- [ ] 대기 중 N분 이상 작업 없으면 모델 자동 언로드 (유휴 타임아웃)
+- [x] 하트비트에 GPU 온도, 메모리 사용률 등 리소스 메트릭 포함 — `resource_monitor.collect_metrics()` + HeartbeatRequest.resources
+- [x] 리소스 압력 시 자동 쓰로틀링 (배치 크기 축소 또는 휴식) — `get_throttle_level()` 4단계 (normal/warning/danger/critical)
+- [x] user-settings.yaml의 스케줄 설정에 따라 워커 활동 시간 제한 — `schedule.py` + `is_active_now()`
+- [x] 비활성(idle) 전환 시 모델 완전 언로드, GPU 메모리 사용자에게 반환 — `WorkerStateMachine` IDLE 상태 콜백
+- [x] 활성(active) 전환 시 모델 자동 재로드 후 처리 재개 — lazy 로드 (배치 처리 시 자동)
+- [x] 대기 중 N분 이상 작업 없으면 모델 자동 언로드 (유휴 타임아웃) — `idle_unload_minutes` 설정
 - [x] Admin UI에서 워커별 역할, 상태, 리소스, 스케줄 확인 가능 — per-worker config API 구현 (`PATCH /admin/workers/{id}/config`)
 
 ---
