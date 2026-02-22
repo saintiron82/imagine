@@ -7,6 +7,7 @@ and _unload_models() for cleanup on stop.
 
 import logging
 import threading
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -21,7 +22,25 @@ class BaseAheadPool(ABC):
     Provides common thread management, config access, and lifecycle.
     Subclasses implement _loop() for their specific processing logic
     and _unload_models() for cleanup.
+
+    Demand signal: ParseAheadPool only runs when workers are actively
+    claiming jobs. record_claim() is called by JobQueueManager on each
+    successful claim, and has_recent_demand() gates the pool.
     """
+
+    # Shared demand signal: updated by JobQueueManager.claim_jobs()
+    _last_claim_time: float = 0.0
+    _claim_inactivity_timeout: float = 120.0  # 2 min without claim → pause
+
+    @classmethod
+    def record_claim(cls):
+        """Called by JobQueueManager when any worker claims jobs."""
+        cls._last_claim_time = time.time()
+
+    @classmethod
+    def has_recent_demand(cls) -> bool:
+        """True if any worker claimed jobs within the inactivity timeout."""
+        return (time.time() - cls._last_claim_time) < cls._claim_inactivity_timeout
 
     def __init__(self, db: SQLiteDB):
         self.db = db

@@ -153,6 +153,15 @@ class JobQueueManager:
             f"User {user_id} claimed {len(claimed)} jobs "
             f"({pre_parsed_count} pre-parsed, {len(claimed) - pre_parsed_count} unparsed)"
         )
+
+        # Signal to ParseAheadPool that there's active demand
+        if claimed:
+            try:
+                from backend.server.queue.base_ahead_pool import BaseAheadPool
+                BaseAheadPool.record_claim()
+            except ImportError:
+                pass
+
         return claimed
 
     def update_progress(self, job_id: int, user_id: int, phase: str) -> bool:

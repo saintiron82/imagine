@@ -54,15 +54,35 @@ class ParseAheadPool(BaseAheadPool):
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
 
+        Demand-driven: only returns > 0 when workers are actively claiming.
+
+        Gates:
+            1. Recent claim activity (within _claim_inactivity_timeout)
+            2. Online workers with recent heartbeat
+            3. Workers in 'active' state (not idle/resting)
+
         Returns:
-            Target count = sum(online workers' batch_capacity) * buffer_multiplier.
-            0 if no workers are online.
+            Target count = sum(active workers' batch_capacity) * buffer_multiplier.
+            0 if no demand or no active workers.
         """
+        # Gate 1: No recent claim activity → no pre-parsing needed
+        if not self.has_recent_demand():
+            return 0
+
         try:
             cursor = self.db.conn.cursor()
-            cursor.execute(
-                "SELECT COALESCE(SUM(batch_capacity), 0) FROM worker_sessions WHERE status = 'online'"
-            )
+            # Gate 2+3: Only count workers that are online, alive, and active
+            cursor.execute("""
+                SELECT COALESCE(SUM(batch_capacity), 0)
+                FROM worker_sessions
+                WHERE status = 'online'
+                  AND last_heartbeat > datetime('now', '-2 minutes')
+                  AND (
+                      resources_json IS NULL
+                      OR json_extract(resources_json, '$.worker_state') IS NULL
+                      OR json_extract(resources_json, '$.worker_state') = 'active'
+                  )
+            """)
             total_capacity = cursor.fetchone()[0]
 
             if total_capacity <= 0:
@@ -87,7 +107,7 @@ class ParseAheadPool(BaseAheadPool):
                 try:
                     target = self._calculate_buffer_target()
                     if target <= 0:
-                        # No online workers — sleep longer
+                        # No demand or no active workers — sleep longer
                         time.sleep(5)
                         continue
 
