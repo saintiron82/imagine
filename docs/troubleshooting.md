@@ -468,3 +468,40 @@ macOS에서 정상 동작하는 코드가 Windows에서 데드락을 일으킬 �
 - stdin 읽기에는 `sys.stdin.buffer.read()` 대신 `os.read()` 사용
 - Windows 프로세스 종료에는 `taskkill /F /T /PID` 사용 (프로세스 트리 전체)
 - `parent_watchdog.py`는 stdin 파이프가 있는 모든 장수명 subprocess에서 호출
+
+---
+
+## [2026-02-22] v0.5: 서버-워커 시스템 4가지 이슈 수정
+
+### 이슈 1: VisionAnalyzerFactory.reset() 메모리 누수
+
+**증상**: 워커 데몬에서 반복 배치 처리 시 GPU 메모리 폭증
+
+**원인**: `VisionAnalyzerFactory.reset()`이 `cls._cached_analyzer = None`만 하고 `unload_model()` 미호출. GC에 의존하지만 순환 참조로 즉시 해제 안 됨. `_unload_vlm_verified()`가 `get_vision_analyzer()` 호출 → 캐시가 이미 None이면 새 인스턴스 생성하는 버그.
+
+**해결**: `reset()`에 `unload_model()` 호출 추가. `_unload_vlm_verified()`에서 `VisionAnalyzerFactory._cached_analyzer` 직접 접근.
+
+### 이슈 2: 다중 워커 throughput 합산 문제
+
+**증상**: 같은 유저의 워커 N대가 Admin 패널에서 동일한 throughput 표시
+
+**원인**: `job_queue.assigned_to`가 `user_id`만 저장. `admin_list_workers()`에서 `assigned_to`로 GROUP BY → 같은 유저의 워커 throughput 합산.
+
+**해결**: `job_queue`에 `worker_session_id` 컬럼 추가. `claim_jobs()`에서 session_id 함께 저장. throughput 계산에서 `worker_session_id`로 GROUP BY.
+
+### 이슈 3: complete_job 중복 upsert_metadata
+
+**증상**: pre_parsed 잡에서 불필요한 DB 쓰기 + FTS 리빌드
+
+**원인**: `complete_job`이 `parse_status`를 확인하지 않고 항상 `upsert_metadata()` 호출. ParseAheadPool이 이미 저장한 메타데이터를 다시 쓰는 중복.
+
+**해결**: `complete_job`에서 `parse_status == 'parsed'`이면 `upsert_metadata` 스킵, 기존 file_id 조회만 수행.
+
+### 이슈 4: Windows 배치 모드 현황 (수정 불필요)
+
+**현황 확인 결과**:
+- **VLM**: batch_size=1 고정 — Qwen3-VL의 구조적 제약 (이미지+텍스트 혼합 입력). 모든 플랫폼 동일.
+- **VV (SigLIP2)**: ✅ Adaptive batch discovery로 CUDA에서 배치 자동 증가.
+- **MV (Qwen3-Embedding)**: ✅ `encode_batch()` 배치 정상 지원.
+
+**결론**: Windows 특유 문제 아님. VV/MV는 정상 배치 운영.

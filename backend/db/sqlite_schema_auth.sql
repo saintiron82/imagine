@@ -112,6 +112,9 @@ CREATE TABLE IF NOT EXISTS job_queue (
     -- Priority (higher = first)
     priority INTEGER DEFAULT 0,
 
+    -- Per-worker tracking (for multi-worker throughput)
+    worker_session_id INTEGER REFERENCES worker_sessions(id) ON DELETE SET NULL,
+
     -- Parse-ahead (server-side pre-parsing for worker optimization)
     parse_status TEXT DEFAULT NULL
         CHECK (parse_status IN (NULL, 'pending', 'parsing', 'parsed', 'failed')),

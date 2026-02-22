@@ -1895,11 +1895,10 @@ def _force_memory_reclaim(monitor, label: str):
 def _unload_vlm_verified(monitor):
     """Unload VLM and verify memory drop."""
     try:
-        from backend.vision.vision_factory import get_vision_analyzer, VisionAnalyzerFactory
-        analyzer = get_vision_analyzer()
-        if hasattr(analyzer, 'unload_model'):
-            analyzer.unload_model()
-        VisionAnalyzerFactory.reset()
+        from backend.vision.vision_factory import VisionAnalyzerFactory
+        # Access cached instance directly — don't call get_vision_analyzer()
+        # which would create a NEW instance if cache is already None
+        VisionAnalyzerFactory.reset()  # reset() now calls unload_model() internally
     except Exception:
         pass
 

@@ -37,7 +37,7 @@ class JobQueueManager:
         self.db.conn.commit()
         return created
 
-    def claim_jobs(self, user_id: int, count: int = 10) -> List[Dict[str, Any]]:
+    def claim_jobs(self, user_id: int, count: int = 10, worker_session_id: int = None) -> List[Dict[str, Any]]:
         """Claim up to N pending jobs for a worker.
 
         Pre-parsed jobs (parse_status='parsed') are preferred — they contain
@@ -96,9 +96,10 @@ class JobQueueManager:
             job_id, file_id, file_path, priority, parsed_metadata = row
             cursor.execute(
                 """UPDATE job_queue
-                   SET status = 'assigned', assigned_to = ?, assigned_at = ?
+                   SET status = 'assigned', assigned_to = ?, assigned_at = ?,
+                       worker_session_id = ?
                    WHERE id = ? AND status = 'pending'""",
-                (user_id, now, job_id)
+                (user_id, now, worker_session_id, job_id)
             )
             if cursor.rowcount > 0:
                 job_data = {
