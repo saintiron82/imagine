@@ -5,7 +5,7 @@ FastAPI dependency injection — DB session, auth, etc.
 import logging
 from typing import Optional, Dict, Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from backend.db.sqlite_client import SQLiteDB
@@ -19,6 +19,17 @@ logger = logging.getLogger(__name__)
 _db_instance: Optional[SQLiteDB] = None
 
 security = HTTPBearer(auto_error=False)
+
+# Localhost auto-admin: virtual user returned for tokenless localhost requests.
+_LOCALHOST_ADMIN = {
+    "id": 0,
+    "username": "local",
+    "email": "",
+    "role": "admin",
+    "is_active": True,
+}
+
+_LOCALHOST_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
 
 
 def get_db() -> SQLiteDB:
@@ -40,14 +51,24 @@ def close_db():
 # ── Auth dependencies ────────────────────────────────────────
 
 def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: SQLiteDB = Depends(get_db),
 ) -> Dict[str, Any]:
     """Extract and validate current user from JWT token.
 
-    Returns user dict with id, username, role, etc.
+    Localhost auto-admin: requests from 127.0.0.1/::1 without a Bearer
+    token are granted admin access automatically. This covers:
+    - Electron embedded server (host is always admin)
+    - Local development/testing
+
+    When a token IS provided, it is validated normally regardless of source.
     """
     if credentials is None:
+        # Localhost auto-admin: no token + localhost = admin
+        client_host = request.client.host if request.client else None
+        if client_host in _LOCALHOST_HOSTS:
+            return _LOCALHOST_ADMIN
         logger.warning("[AUTH] 401 — No Bearer token in request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -58,6 +79,10 @@ def get_current_user(
     token_preview = credentials.credentials[:20] + "..." if len(credentials.credentials) > 20 else credentials.credentials
     payload = decode_access_token(credentials.credentials)
     if payload is None:
+        # Token exists but invalid/expired — try localhost fallback
+        client_host = request.client.host if request.client else None
+        if client_host in _LOCALHOST_HOSTS:
+            return _LOCALHOST_ADMIN
         logger.warning(f"[AUTH] 401 — Token decode failed (token={token_preview})")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
