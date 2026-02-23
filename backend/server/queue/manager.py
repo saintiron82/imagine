@@ -457,12 +457,20 @@ class JobQueueManager:
         return success
 
     def retry_failed_jobs(self) -> int:
-        """Retry all failed jobs by resetting them to pending."""
+        """Retry all failed jobs by resetting them to pending.
+
+        Also resets parse_status='failed' back to NULL so ParseAhead
+        can re-attempt pre-parsing (prevents permanent parse deadlock).
+        """
         cursor = self.db.conn.cursor()
         cursor.execute(
             """UPDATE job_queue
                SET status = 'pending', retry_count = 0,
-                   error_message = NULL, assigned_to = NULL, assigned_at = NULL
+                   error_message = NULL, assigned_to = NULL, assigned_at = NULL,
+                   parse_status = CASE
+                       WHEN parse_status = 'failed' THEN NULL
+                       ELSE parse_status
+                   END
                WHERE status = 'failed'"""
         )
         self.db.conn.commit()

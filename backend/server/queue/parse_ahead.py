@@ -70,6 +70,7 @@ class ParseAheadPool(BaseAheadPool):
         """Main loop: continuously pre-parse pending jobs to fill the buffer."""
         logger.info("ParseAheadPool loop started")
         poll_interval_s = self._get_config_value("server.parse_ahead.poll_interval_s", 2)
+        last_retry_reset = 0.0  # timestamp of last parse_status='failed' reset
 
         try:
             while self._running:
@@ -105,6 +106,22 @@ class ParseAheadPool(BaseAheadPool):
                     jobs_to_parse = cursor.fetchall()
 
                     if not jobs_to_parse:
+                        # No unparsed jobs — check if all are parse-failed (deadlock).
+                        # Reset parse_status='failed' back to NULL every 60s
+                        # so they can be retried.
+                        now = time.time()
+                        if now - last_retry_reset > 60:
+                            cursor.execute(
+                                """UPDATE job_queue SET parse_status = NULL
+                                   WHERE status = 'pending' AND parse_status = 'failed'"""
+                            )
+                            if cursor.rowcount > 0:
+                                self.db.conn.commit()
+                                logger.info(
+                                    f"ParseAhead: reset {cursor.rowcount} parse-failed "
+                                    f"jobs for retry"
+                                )
+                            last_retry_reset = now
                         time.sleep(poll_interval_s)
                         continue
 
@@ -285,7 +302,9 @@ class ParseAheadPool(BaseAheadPool):
             return False
 
         # 10. mc_only mode: Phase VV — encode image with SigLIP2
-        if self._processing_mode == "mc_only":
+        # Re-check processing_mode dynamically (may change via Admin API at runtime)
+        current_mode = self._get_config_value("server.processing_mode", "full")
+        if current_mode == "mc_only":
             try:
                 self._run_vv_embedding(stored_file_id, file_p, server_thumb_path)
             except Exception as e:
