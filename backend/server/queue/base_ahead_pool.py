@@ -57,11 +57,17 @@ class BaseAheadPool(ABC):
 
         Only includes workers that claimed within the inactivity timeout.
         This predicts the next round of claims based on actual consumption.
+        Also prunes stale entries to prevent unbounded dict growth.
         """
         cutoff = time.time() - cls._claim_inactivity_timeout
-        return sum(
-            count for count, ts in cls._worker_demand.values() if ts > cutoff
-        )
+        # Prune stale entries (prevents infinite growth from offline workers)
+        stale_keys = [
+            sid for sid, (_, ts) in cls._worker_demand.items() if ts <= cutoff
+        ]
+        for sid in stale_keys:
+            del cls._worker_demand[sid]
+
+        return sum(count for count, _ in cls._worker_demand.values())
 
     def __init__(self, db: SQLiteDB):
         self.db = db

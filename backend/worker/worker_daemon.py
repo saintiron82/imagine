@@ -693,21 +693,30 @@ class WorkerDaemon:
             from PIL import Image
 
             analyzer = get_vision_analyzer()
-            thumb_img = Image.open(thumb_path)
+            raw_img = Image.open(thumb_path)
 
             # Composite to RGB
-            if thumb_img.mode == "RGBA":
-                bg = Image.new("RGB", thumb_img.size, (255, 255, 255))
-                bg.paste(thumb_img, mask=thumb_img.split()[3])
-                thumb_img = bg
-            elif thumb_img.mode != "RGB":
-                thumb_img = thumb_img.convert("RGB")
+            try:
+                if raw_img.mode == "RGBA":
+                    thumb_img = Image.new("RGB", raw_img.size, (255, 255, 255))
+                    thumb_img.paste(raw_img, mask=raw_img.split()[3])
+                elif raw_img.mode != "RGB":
+                    thumb_img = raw_img.convert("RGB")
+                else:
+                    thumb_img = raw_img
+                    raw_img = None  # avoid double close
+            finally:
+                if raw_img is not None:
+                    raw_img.close()
 
             # Use pre-built mc_raw if provided (pre-parsed mode), otherwise build from meta
             mc_raw = mc_raw_override if mc_raw_override else _build_mc_raw(meta)
 
             # Run 2-Stage vision
-            vision_result = analyzer.analyze(thumb_img, mc_raw)
+            try:
+                vision_result = analyzer.analyze(thumb_img, mc_raw)
+            finally:
+                thumb_img.close()
 
             fields = {}
             if vision_result:
@@ -752,10 +761,13 @@ class WorkerDaemon:
                     WorkerDaemon._vv_encoder = SigLIP2Encoder()
                 encoder = WorkerDaemon._vv_encoder
                 img = Image.open(thumb_path).convert("RGB")
-                vv_vec = encoder.encode_image(img)
+                try:
+                    vv_vec = encoder.encode_image(img)
 
-                if hasattr(encoder, 'encode_structure'):
-                    structure_vec = encoder.encode_structure(img)
+                    if hasattr(encoder, 'encode_structure'):
+                        structure_vec = encoder.encode_structure(img)
+                finally:
+                    img.close()
 
             except Exception as e:
                 logger.warning(f"VV encoding failed: {e}")
@@ -1003,7 +1015,10 @@ class WorkerDaemon:
                             chunk_valid[j].vv_vec = encoder.encode_image(img)
                         except Exception:
                             pass
-                del images
+                finally:
+                    for img in images:
+                        img.close()
+                    del images
 
             processed_vv += len(chunk)
             self._current_phase = "embed"

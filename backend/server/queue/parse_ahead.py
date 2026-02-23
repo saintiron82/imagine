@@ -316,7 +316,10 @@ class ParseAheadPool(BaseAheadPool):
             logger.warning(f"ParseAhead VV: cannot open image {img_source}: {e}")
             return
 
-        vv_vec = self._vv_encoder.encode_image(img)
+        try:
+            vv_vec = self._vv_encoder.encode_image(img)
+        finally:
+            img.close()
         self.db.upsert_vectors(file_id, vv_vec=vv_vec)
         logger.debug(f"ParseAhead VV: file_id={file_id} embedded OK")
 
