@@ -404,16 +404,27 @@ class JobQueueManager:
         except Exception:
             pass
 
+        # ETA: estimated seconds to complete remaining jobs
+        pending = status_counts.get("pending", 0)
+        assigned = status_counts.get("assigned", 0)
+        processing = status_counts.get("processing", 0)
+        remaining = pending + assigned + processing
+        if throughput > 0 and remaining > 0:
+            eta_seconds = round((remaining / throughput) * 60)
+        else:
+            eta_seconds = None
+
         return {
             "total": total,
-            "pending": status_counts.get("pending", 0),
-            "assigned": status_counts.get("assigned", 0),
-            "processing": status_counts.get("processing", 0),
+            "pending": pending,
+            "assigned": assigned,
+            "processing": processing,
             "completed": status_counts.get("completed", 0),
             "failed": status_counts.get("failed", 0),
             "throughput": throughput,
             "recent_1min": recent_1min,
             "recent_5min": recent_5min,
+            "eta_seconds": eta_seconds,
             **phase_stats,
             **parse_ahead_stats,
         }

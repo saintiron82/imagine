@@ -557,6 +557,8 @@ function App() {
             totalQueue: data.total || 0,
             pending: (data.pending || 0) + (data.assigned || 0) + (data.processing || 0),
             failed: data.failed || prev.failed,
+            etaMs: data.eta_seconds != null ? data.eta_seconds * 1000 : prev.etaMs,
+            throughput: data.throughput || prev.throughput,
           }));
         }
       } catch { /* ignore */ }
