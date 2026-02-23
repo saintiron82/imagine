@@ -28,6 +28,19 @@ class JobQueueManager:
 
     def __init__(self, db: SQLiteDB):
         self.db = db
+        self._processing_mode: Optional[str] = None
+
+    def _get_processing_mode(self) -> str:
+        """Get server processing mode from config (cached)."""
+        if self._processing_mode is None:
+            try:
+                from backend.utils.config import get_config
+                self._processing_mode = get_config().get(
+                    "server.processing_mode", "full"
+                )
+            except Exception:
+                self._processing_mode = "full"
+        return self._processing_mode
 
     def create_jobs(self, file_ids: List[int], file_paths: List[str], priority: int = 0) -> int:
         """Create pending jobs for files. Returns count of jobs created."""
@@ -97,7 +110,10 @@ class JobQueueManager:
         rows = list(cursor.fetchall())
 
         # 2) Fill remainder with unparsed jobs (fallback)
-        if len(rows) < count:
+        # In mc_only mode, skip unparsed fallback — complete_mc() requires
+        # ParseAhead to have already upserted file metadata into files table.
+        processing_mode = self._get_processing_mode()
+        if processing_mode != "mc_only" and len(rows) < count:
             remainder = count - len(rows)
             claimed_ids = [r[0] for r in rows]
             if claimed_ids:
