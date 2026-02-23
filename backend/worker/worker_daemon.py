@@ -875,7 +875,13 @@ class WorkerDaemon:
                 # Server already ran Phase P — use claim metadata directly
                 ctx.local_path = self._get_downloaded(job)
                 ctx.metadata = dict(job.get("metadata", {}))
-                ctx.thumb_path = ctx.local_path  # Downloaded thumbnail IS the thumb
+                # Use server-generated thumbnail if available (shared_fs mode
+                # returns original file path, not thumbnail)
+                server_thumb = job.get("thumb_path")
+                if server_thumb and Path(server_thumb).exists():
+                    ctx.thumb_path = server_thumb
+                else:
+                    ctx.thumb_path = ctx.local_path
                 ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
@@ -1229,9 +1235,17 @@ class WorkerDaemon:
             ctx = _JobContext(job=job)
             ctx.local_path = self._get_downloaded(job)
             ctx.metadata = dict(job.get("metadata", {}))
-            ctx.thumb_path = ctx.local_path  # Pre-parsed thumbnail
 
-            if not ctx.local_path or not Path(ctx.local_path).exists():
+            # Use server-generated thumbnail if available (shared_fs mode).
+            # Without this, shared_fs returns the original file path and VLM
+            # processes at full resolution (~2x slower than thumbnail).
+            server_thumb = job.get("thumb_path")
+            if server_thumb and Path(server_thumb).exists():
+                ctx.thumb_path = server_thumb
+            else:
+                ctx.thumb_path = ctx.local_path
+
+            if not ctx.thumb_path or not Path(ctx.thumb_path).exists():
                 ctx.failed = True
                 ctx.error = f"MC-only: thumbnail unavailable: {job['file_path']}"
                 logger.error(f"[RESOLVE] {ctx.error}")
