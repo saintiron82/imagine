@@ -5,6 +5,7 @@ Pipeline router — job queue management, work distribution, result upload.
 import base64
 import json
 import logging
+import unicodedata
 from typing import Optional, List, Dict, Any
 
 import numpy as np
@@ -129,6 +130,10 @@ def complete_job(
 
     file_id, file_path, parse_status = row
 
+    # Normalize to NFC — job_queue may store NFD (macOS filesystem),
+    # but files table stores NFC (via upsert_metadata).
+    file_path = unicodedata.normalize('NFC', file_path)
+
     # Store metadata
     meta = req.metadata
     if "file_path" not in meta:
@@ -207,6 +212,10 @@ def complete_mc(
         raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
 
     file_id, file_path = row
+
+    # Normalize to NFC — job_queue may store NFD (macOS filesystem),
+    # but files table stores NFC (via upsert_metadata).
+    file_path = unicodedata.normalize('NFC', file_path)
 
     # Look up stored file_id (pre-parsed by ParseAhead)
     cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
@@ -316,7 +325,8 @@ def scan_folder(
     skipped = 0
 
     for file_path, folder_str, depth, folder_tags in discovered:
-        fpath_str = str(file_path)
+        # Normalize to NFC — macOS filesystem returns NFD for Korean paths
+        fpath_str = unicodedata.normalize('NFC', str(file_path))
 
         # Check if job already exists for this file (avoid duplicates)
         cursor.execute(

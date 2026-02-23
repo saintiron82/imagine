@@ -4,6 +4,7 @@ Job queue manager — work distribution for distributed processing.
 
 import json
 import logging
+import unicodedata
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -46,6 +47,9 @@ class JobQueueManager:
         cursor = self.db.conn.cursor()
         created = 0
         for fid, fpath in zip(file_ids, file_paths):
+            # Normalize to NFC — macOS filesystem returns NFD (decomposed Korean),
+            # but files table stores NFC (via upsert_metadata). Must match.
+            fpath = unicodedata.normalize('NFC', fpath)
             try:
                 cursor.execute(
                     """INSERT INTO job_queue (file_id, file_path, status, priority)
