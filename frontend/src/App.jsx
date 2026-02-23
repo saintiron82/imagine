@@ -66,7 +66,7 @@ function App() {
     phaseIndex: 0,          // 1-based progress within current phase
     phaseCount: 0,          // total files in current phase
     currentFile: '',
-    completed: 0,
+    completed: 0, failed: 0,
     totalQueue: 0, pending: 0,
     etaMs: null, throughput: 0,  // overall items/min
     processingMode: 'full',     // "full" | "mc_only" — controls phase pill dimming
@@ -488,7 +488,10 @@ function App() {
     };
 
     const onJobDone = (data) => {
-      if (!data.success) return;
+      if (!data.success) {
+        setWorkerProgress(prev => ({ ...prev, failed: prev.failed + 1 }));
+        return;
+      }
       const now = Date.now();
       const ref = workerThroughputRef.current;
       ref.windowTimes.push(now);
@@ -553,6 +556,7 @@ function App() {
             ...prev,
             totalQueue: data.total || 0,
             pending: (data.pending || 0) + (data.assigned || 0) + (data.processing || 0),
+            failed: data.failed || prev.failed,
           }));
         }
       } catch { /* ignore */ }
@@ -614,7 +618,7 @@ function App() {
       setIsWorkerRunning(false);
       setWorkerProgress({
         batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
-        currentFile: '', completed: 0, totalQueue: 0, pending: 0,
+        currentFile: '', completed: 0, failed: 0, totalQueue: 0, pending: 0,
         etaMs: null, throughput: 0, processingMode: 'full', workerState: 'active',
         phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
         phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },

@@ -294,6 +294,7 @@
   "worker.status_error": "오류",
   "worker.start": "워커 시작",
   "worker.stop": "워커 중지",
+  "worker.failed_jobs": "실패한 작업",
   "worker.queue_stats": "큐 통계",
   "worker.current_jobs": "현재 작업",
   "worker.recent_log": "최근 로그",

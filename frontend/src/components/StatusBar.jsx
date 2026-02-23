@@ -251,6 +251,7 @@ const StatusBar = ({
                 {isWorkerProcessing && !isProcessing && !isDiscovering && (() => {
                     const wp = workerProgress;
                     const completed = wp.completed || 0;
+                    const failedCount = wp.failed || 0;
                     const totalQ = wp.totalQueue || 0;
                     const isMcOnly = wp.processingMode === 'mc_only';
                     const phaseLabels = { parse: 'P', vision: 'MC', embed_vv: 'VV', embed_mv: 'MV', uploading: 'UP', starting: '...' };
@@ -290,10 +291,15 @@ const StatusBar = ({
                                 </span>
                             )}
 
-                            {/* Overall completed / total */}
+                            {/* Overall completed / total + failed */}
                             <span className="text-emerald-300 font-mono font-bold text-[11px]">
                                 {completed}/{totalQ}
                             </span>
+                            {failedCount > 0 && (
+                                <span className="text-red-400 font-mono font-bold text-[11px]" title={t('worker.failed_jobs')}>
+                                    {failedCount}F
+                                </span>
+                            )}
 
                             {/* Per-phase speeds (compact) — dim server-handled phases in mc_only */}
                             {(pFpm.parse > 0 || pFpm.vision > 0 || pFpm.embed_vv > 0 || pFpm.embed_mv > 0) && (

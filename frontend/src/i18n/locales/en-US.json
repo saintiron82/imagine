@@ -294,6 +294,7 @@
   "worker.status_error": "Error",
   "worker.start": "Start Worker",
   "worker.stop": "Stop Worker",
+  "worker.failed_jobs": "Failed jobs",
   "worker.queue_stats": "Queue Statistics",
   "worker.current_jobs": "Current Jobs",
   "worker.recent_log": "Recent Log",
