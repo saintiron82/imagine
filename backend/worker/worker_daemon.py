@@ -564,14 +564,17 @@ class WorkerDaemon:
                 f"{self.server_url}/api/v1/upload/download/thumbnail/{file_id}",
                 stream=True,
             )
-            if resp.status_code != 200:
-                logger.warning(f"Thumbnail download failed: HTTP {resp.status_code}")
-                return None
+            try:
+                if resp.status_code != 200:
+                    logger.warning(f"Thumbnail download failed: HTTP {resp.status_code}")
+                    return None
 
-            dest = Path(self.tmp_dir) / f"thumb_{file_id}.png"
-            with open(dest, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                dest = Path(self.tmp_dir) / f"thumb_{file_id}.png"
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            finally:
+                resp.close()
 
             size_kb = dest.stat().st_size / 1024
             logger.info(f"Downloaded thumbnail for file_id={file_id} ({size_kb:.0f}KB)")

@@ -58,47 +58,50 @@ class PSDParser(BaseParser):
         try:
             # Open PSD file
             psd = PSDImage.open(file_path)
-            width, height = psd.width, psd.height
+            try:
+                width, height = psd.width, psd.height
 
-            # Extract layer information
-            layer_tree, layer_paths, text_contents, fonts = self._extract_layers(
-                psd, (width, height)
-            )
+                # Extract layer information
+                layer_tree, layer_paths, text_contents, fonts = self._extract_layers(
+                    psd, (width, height)
+                )
 
-            # Generate composite thumbnail
-            thumbnail_path = self._create_thumbnail(psd, file_path)
+                # Generate composite thumbnail
+                thumbnail_path = self._create_thumbnail(psd, file_path)
 
-            # Build semantic tags from layer paths
-            # v3.1 Context Injection: Use raw layer names for richer context
-            semantic_tags = self._build_semantic_tags_raw(psd)
+                # Build semantic tags from layer paths
+                # v3.1 Context Injection: Use raw layer names for richer context
+                semantic_tags = self._build_semantic_tags_raw(psd)
 
-            # Get file stats
-            file_stats = file_path.stat()
+                # Get file stats
+                file_stats = file_path.stat()
 
-            # Count layers
-            layer_count = len(list(psd.descendants()))
+                # Count layers
+                layer_count = len(list(psd.descendants()))
 
-            # Build AssetMeta
-            asset_meta = AssetMeta(
-                file_path=str(file_path.absolute()),
-                file_name=file_path.name,
-                file_size=file_stats.st_size,
-                format='PSD',
-                resolution=(width, height),
-                visual_source_path=str(thumbnail_path) if thumbnail_path else None,
-                semantic_tags=semantic_tags,
-                text_content=text_contents,
-                layer_tree=layer_tree,
-                layer_count=layer_count,
-                used_fonts=fonts,
-                metadata={
-                    'color_mode': str(psd.color_mode),
-                    'channels': psd.channels,
-                },
-                modified_at=datetime.fromtimestamp(file_stats.st_mtime),
-                thumbnail_url=str(thumbnail_path) if thumbnail_path else None
-            )
-            
+                # Build AssetMeta
+                asset_meta = AssetMeta(
+                    file_path=str(file_path.absolute()),
+                    file_name=file_path.name,
+                    file_size=file_stats.st_size,
+                    format='PSD',
+                    resolution=(width, height),
+                    visual_source_path=str(thumbnail_path) if thumbnail_path else None,
+                    semantic_tags=semantic_tags,
+                    text_content=text_contents,
+                    layer_tree=layer_tree,
+                    layer_count=layer_count,
+                    used_fonts=fonts,
+                    metadata={
+                        'color_mode': str(psd.color_mode),
+                        'channels': psd.channels,
+                    },
+                    modified_at=datetime.fromtimestamp(file_stats.st_mtime),
+                    thumbnail_url=str(thumbnail_path) if thumbnail_path else None
+                )
+            finally:
+                psd.close()
+
             # Save JSON
             self._save_json(asset_meta, file_path)
             logger.info(f"Parsed PSD: {file_path.name} ({width}x{height}, {layer_count} layers)")
@@ -108,7 +111,7 @@ class PSDParser(BaseParser):
                 asset_meta=asset_meta,
                 warnings=warnings
             )
-            
+
         except Exception as e:
             logger.exception(f"Failed to parse PSD: {file_path}")
             errors.append(f"Failed to parse {file_path}: {str(e)}")
