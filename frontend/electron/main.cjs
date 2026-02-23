@@ -7,6 +7,60 @@ const isDev = process.env.NODE_ENV === 'development';
 // Suppress EPIPE errors from console.log when parent pipe is closed (background launch)
 process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 process.stderr?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+
+// ---------- File-based crash/error logging ----------
+// Logs to <userData>/logs/main.log (survives crashes, rotated at 5MB)
+const LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const logDir = path.join(app.getPath('userData'), 'logs');
+try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* ignore */ }
+const logFilePath = path.join(logDir, 'main.log');
+
+function _rotateLogIfNeeded() {
+    try {
+        const stat = fs.statSync(logFilePath);
+        if (stat.size > LOG_MAX_BYTES) {
+            const prev = logFilePath + '.1';
+            try { fs.unlinkSync(prev); } catch { /* ok */ }
+            fs.renameSync(logFilePath, prev);
+        }
+    } catch { /* file doesn't exist yet */ }
+}
+
+function writeLog(level, ...args) {
+    const ts = new Date().toISOString();
+    const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+    const line = `${ts} [${level}] ${msg}\n`;
+    try {
+        _rotateLogIfNeeded();
+        fs.appendFileSync(logFilePath, line, 'utf8');
+    } catch { /* best effort */ }
+}
+
+// Crash handlers — log to file before process dies
+process.on('uncaughtException', (err) => {
+    writeLog('FATAL', 'uncaughtException:', err.stack || err.message || String(err));
+    console.error('[FATAL] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+    writeLog('ERROR', 'unhandledRejection:', String(reason));
+    console.error('[ERROR] unhandledRejection:', reason);
+});
+
+// V8 heap monitoring — warn before OOM
+let _heapWarnedAt = 0;
+const HEAP_CHECK_INTERVAL = 30_000; // 30s
+const HEAP_WARN_THRESHOLD = 1.5 * 1024 * 1024 * 1024; // 1.5 GB
+setInterval(() => {
+    const mem = process.memoryUsage();
+    if (mem.heapUsed > HEAP_WARN_THRESHOLD && Date.now() - _heapWarnedAt > 60_000) {
+        _heapWarnedAt = Date.now();
+        const mb = (mem.heapUsed / 1024 / 1024).toFixed(0);
+        writeLog('WARN', `V8 heap high: ${mb} MB (rss: ${(mem.rss / 1024 / 1024).toFixed(0)} MB)`);
+        console.warn(`[HEAP] V8 heap: ${mb} MB`);
+    }
+}, HEAP_CHECK_INTERVAL);
+
+writeLog('INFO', `Imagine starting (pid: ${process.pid}, electron: ${process.versions.electron}, node: ${process.versions.node})`);
 // Resolve project root where backend/ and config.yaml live.
 // In dev mode: two levels up from electron/ directory.
 // In built mode: first check resourcesPath (bundled production), then traverse
@@ -1773,29 +1827,50 @@ async function startEmbeddedServer(port = 8000) {
         stdio: ['pipe', 'pipe', 'pipe'],
     });
 
+    // Throttled server log forwarding: max 20 IPC messages/sec to renderer
+    // Prevents OOM when server outputs high-volume warnings (e.g., EmbedAhead loops)
+    let _serverLogCount = 0;
+    let _serverLogWindowStart = Date.now();
+    const SERVER_LOG_MAX_PER_SEC = 20;
+    let _serverLogDropped = 0;
+
+    function throttledServerLog(msg, type) {
+        const now = Date.now();
+        if (now - _serverLogWindowStart > 1000) {
+            if (_serverLogDropped > 0) {
+                writeLog('WARN', `Server log throttled: ${_serverLogDropped} messages dropped in last window`);
+            }
+            _serverLogCount = 0;
+            _serverLogDropped = 0;
+            _serverLogWindowStart = now;
+        }
+        _serverLogCount++;
+        if (_serverLogCount > SERVER_LOG_MAX_PER_SEC) {
+            _serverLogDropped++;
+            return; // drop excess messages
+        }
+        try {
+            if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                serverMainWindow.webContents.send('server-log', { message: msg, type });
+            }
+        } catch (e) { /* window may be closed */ }
+    }
+
     serverProc.stdout.on('data', (chunk) => {
         const msg = chunk.toString().trim();
         if (msg) {
-            console.log('[Server:stdout]', msg);
-            try {
-                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
-                    serverMainWindow.webContents.send('server-log', { message: msg, type: 'info' });
-                }
-            } catch (e) { /* window may be closed */ }
+            writeLog('INFO', '[Server:stdout]', msg);
+            throttledServerLog(msg, 'info');
         }
     });
 
     serverProc.stderr.on('data', (chunk) => {
         const msg = chunk.toString().trim();
         if (msg) {
-            console.log('[Server:stderr]', msg);
-            try {
-                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
-                    // uvicorn logs to stderr by default
-                    const type = /\bERROR\b|Traceback|Exception:/i.test(msg) ? 'error' : 'info';
-                    serverMainWindow.webContents.send('server-log', { message: msg, type });
-                }
-            } catch (e) { /* window may be closed */ }
+            writeLog('INFO', '[Server:stderr]', msg);
+            // uvicorn logs to stderr by default
+            const type = /\bERROR\b|Traceback|Exception:/i.test(msg) ? 'error' : 'info';
+            throttledServerLog(msg, type);
         }
     });
 

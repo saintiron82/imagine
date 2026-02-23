@@ -114,6 +114,7 @@ class EmbedAheadPool(BaseAheadPool):
         # Collect MC text from DB for each job
         texts = []
         valid_jobs = []
+        failed_job_ids = []
         cursor = self.db.conn.cursor()
 
         for job_id, file_id, file_path in jobs:
@@ -125,7 +126,8 @@ class EmbedAheadPool(BaseAheadPool):
             )
             row = cursor.fetchone()
             if row is None:
-                logger.warning(f"EmbedAhead: file not found for job {job_id}: {file_path}")
+                logger.warning(f"EmbedAhead: file record missing for job {job_id}: {file_path}")
+                failed_job_ids.append(job_id)
                 continue
 
             stored_file_id, mc_caption, ai_tags, image_type, art_style, scene_type = row
@@ -150,10 +152,30 @@ class EmbedAheadPool(BaseAheadPool):
             doc_text = build_document_text(mc_caption, tags, facts=facts)
             if not doc_text.strip():
                 logger.warning(f"EmbedAhead: empty document text for job {job_id}")
+                failed_job_ids.append(job_id)
                 continue
 
             texts.append(doc_text)
             valid_jobs.append((job_id, stored_file_id, file_path))
+
+        # Mark unrecoverable jobs as failed to prevent infinite re-polling
+        if failed_job_ids:
+            now = datetime.now(timezone.utc).isoformat()
+            for fid in failed_job_ids:
+                try:
+                    cursor.execute(
+                        """UPDATE job_queue
+                           SET status = 'failed', completed_at = ?
+                           WHERE id = ?""",
+                        (now, fid),
+                    )
+                except Exception as e:
+                    logger.error(f"EmbedAhead: failed to mark job {fid} as failed: {e}")
+            try:
+                self.db.conn.commit()
+            except Exception:
+                pass
+            logger.info(f"EmbedAhead: marked {len(failed_job_ids)} unrecoverable jobs as failed")
 
         if not texts:
             return
