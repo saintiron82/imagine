@@ -84,6 +84,7 @@ class SQLiteDB:
                 self._migrate_content_hash()
                 self._migrate_structure_table()
                 self._migrate_uploaded_by()
+                self._migrate_backfill_storage_root()
                 self._ensure_system_meta()
                 self._ensure_fts()
                 self._migrate_auth_tables()
@@ -472,6 +473,34 @@ class SQLiteDB:
             except sqlite3.OperationalError as e:
                 logger.warning(f"Skipping vec_structure creation: {e}")
 
+
+    def _migrate_backfill_storage_root(self):
+        """Backfill storage_root for files where it's NULL.
+
+        Derives parent directory from file_path.
+        Without storage_root, folder-level phase stats (Sidebar green/orange dots) break.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM files
+            WHERE storage_root IS NULL OR TRIM(storage_root) = ''
+        """)
+        null_count = cursor.fetchone()[0]
+        if null_count == 0:
+            return
+
+        logger.info(f"Migrating: backfilling storage_root for {null_count} files...")
+        # Derive parent directory: remove '/' + file_name from file_path
+        cursor.execute("""
+            UPDATE files
+            SET storage_root = REPLACE(file_path, '/' || file_name, '')
+            WHERE (storage_root IS NULL OR TRIM(storage_root) = '')
+              AND file_name IS NOT NULL AND file_name != ''
+              AND file_path IS NOT NULL AND file_path != ''
+        """)
+        updated = cursor.rowcount
+        self.conn.commit()
+        logger.info(f"✅ storage_root backfill complete: {updated} files updated")
 
     def _migrate_uploaded_by(self):
         """Add uploaded_by column for server-mode file ownership tracking."""
@@ -1774,12 +1803,16 @@ class SQLiteDB:
             db_fts_ver = 0
         fts_version_mismatch = db_fts_ver < self.CURRENT_FTS_INDEX_VERSION
 
+        # Use COALESCE to derive folder from file_path when storage_root is NULL.
+        # Without this, files with NULL storage_root are invisible to folder stats.
+        effective_root_expr = "COALESCE(NULLIF(TRIM(f.storage_root), ''), REPLACE(f.file_path, '/' || f.file_name, ''))"
+
         rows = []
         vector_extension_available = True
         try:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT
-                    f.storage_root,
+                    {effective_root_expr} as effective_root,
                     COUNT(*) as total,
                     COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
                     -- VV now requires BOTH Visual (SigLIP) and Structure (DINOv2) vectors
@@ -1797,15 +1830,15 @@ class SQLiteDB:
                     END) as missing_structure
                 FROM files f
                 WHERE f.file_path LIKE ? || '%'
-                GROUP BY f.storage_root
+                GROUP BY effective_root
             """, (prefix,))
             rows = cursor.fetchall()
         except Exception:
             # vec0 unavailable: fallback query without vec tables
             vector_extension_available = False
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT
-                    f.storage_root,
+                    {effective_root_expr} as effective_root,
                     COUNT(*) as total,
                     COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
                     0 as vv,
@@ -1814,7 +1847,7 @@ class SQLiteDB:
                     0 as missing_structure
                 FROM files f
                 WHERE f.file_path LIKE ? || '%'
-                GROUP BY f.storage_root
+                GROUP BY effective_root
             """, (prefix,))
             rows = cursor.fetchall()
 

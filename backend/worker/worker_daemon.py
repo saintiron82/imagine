@@ -629,7 +629,7 @@ class WorkerDaemon:
     def _run_parse(self, file_path: Path):
         """Phase P: Parse file and extract metadata."""
         try:
-            from backend.pipeline.ingest_engine import ParserFactory, _build_mc_raw, _set_tier_metadata
+            from backend.pipeline.ingest_engine import ParserFactory, _build_mc_raw, _set_tier_metadata, _normalize_paths
 
             parser = ParserFactory.get_parser(file_path)
             if not parser:
@@ -659,6 +659,9 @@ class WorkerDaemon:
 
             # Tier metadata
             _set_tier_metadata(meta)
+
+            # Normalize storage_root and relative_path (required for folder stats)
+            _normalize_paths(meta, file_path)
 
             # Resolve thumbnail
             thumb_path = None
