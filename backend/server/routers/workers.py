@@ -466,6 +466,16 @@ def admin_update_global_config(
                 logger.info(f"ParseAheadPool mode updated: {req.processing_mode}")
 
             if req.processing_mode == "mc_only":
+                # Bootstrap demand signal so ParseAheadPool starts
+                # pre-parsing immediately without waiting for next worker claim.
+                # session_id=-1 is a sentinel for "system bootstrap".
+                try:
+                    from backend.server.queue.base_ahead_pool import BaseAheadPool
+                    BaseAheadPool.record_claim(session_id=-1, count=10)
+                    logger.info("Bootstrap demand seeded for ParseAheadPool (mc_only switch)")
+                except Exception:
+                    pass
+
                 # Start EmbedAheadPool if not running
                 if not (hasattr(app.state, "embed_ahead") and app.state.embed_ahead
                         and app.state.embed_ahead._thread

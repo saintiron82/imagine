@@ -28,19 +28,18 @@ class JobQueueManager:
 
     def __init__(self, db: SQLiteDB):
         self.db = db
-        self._processing_mode: Optional[str] = None
 
     def _get_processing_mode(self) -> str:
-        """Get server processing mode from config (cached)."""
-        if self._processing_mode is None:
-            try:
-                from backend.utils.config import get_config
-                self._processing_mode = get_config().get(
-                    "server.processing_mode", "full"
-                )
-            except Exception:
-                self._processing_mode = "full"
-        return self._processing_mode
+        """Get server processing mode from config (always fresh).
+
+        No caching — config.get() reads from an in-memory dict, so it's cheap.
+        This ensures runtime mode changes via Admin API propagate immediately.
+        """
+        try:
+            from backend.utils.config import get_config
+            return get_config().get("server.processing_mode", "full")
+        except Exception:
+            return "full"
 
     def create_jobs(self, file_ids: List[int], file_paths: List[str], priority: int = 0) -> int:
         """Create pending jobs for files. Returns count of jobs created."""
@@ -140,6 +139,20 @@ class JobQueueManager:
                 )
             rows.extend(cursor.fetchall())
 
+        # Signal demand to ParseAheadPool BEFORE early return.
+        # Uses requested count (not actual claimed count) — represents
+        # "workers want N jobs" regardless of what's available.
+        # This prevents the chicken-and-egg deadlock in mc_only mode where
+        # 0 pre-parsed jobs → no record_claim → no demand → no pre-parsing.
+        if worker_session_id is not None:
+            try:
+                from backend.server.queue.base_ahead_pool import BaseAheadPool
+                BaseAheadPool.record_claim(
+                    session_id=worker_session_id, count=count
+                )
+            except ImportError:
+                pass
+
         if not rows:
             return []
 
@@ -180,16 +193,6 @@ class JobQueueManager:
             f"User {user_id} claimed {len(claimed)} jobs "
             f"({pre_parsed_count} pre-parsed, {len(claimed) - pre_parsed_count} unparsed)"
         )
-
-        # Signal to ParseAheadPool: record actual claim count per worker
-        if claimed:
-            try:
-                from backend.server.queue.base_ahead_pool import BaseAheadPool
-                BaseAheadPool.record_claim(
-                    session_id=worker_session_id, count=len(claimed)
-                )
-            except ImportError:
-                pass
 
         return claimed
 
