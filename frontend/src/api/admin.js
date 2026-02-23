@@ -113,3 +113,17 @@ export async function stopMyWorker(sessionId) {
 export async function registerWorker() {
   return apiClient.post('/api/v1/worker/register');
 }
+
+// ── Classification Domains ──────────────────────────────
+
+export async function listClassificationDomains() {
+  return apiClient.get('/api/v1/admin/classification/domains');
+}
+
+export async function getClassificationDomainDetail(domainId) {
+  return apiClient.get(`/api/v1/admin/classification/domains/${domainId}`);
+}
+
+export async function setActiveClassificationDomain(domainId) {
+  return apiClient.put('/api/v1/admin/classification/active', { domain_id: domainId });
+}

@@ -151,6 +151,56 @@ export async function syncDeleteMissing(fileIds) {
 }
 
 
+// ── Classification Domains ───────────────────────────────────
+
+/**
+ * List available classification domain presets.
+ */
+export async function listDomains() {
+  if (_useLocalBackend) {
+    return window.electron.pipeline.listDomains();
+  }
+  return apiClient.get('/api/v1/admin/classification/domains');
+}
+
+/**
+ * Get full details of a classification domain.
+ */
+export async function getDomainDetail(domainId) {
+  if (_useLocalBackend) {
+    return window.electron.pipeline.getDomainDetail(domainId);
+  }
+  return apiClient.get(`/api/v1/admin/classification/domains/${domainId}`);
+}
+
+/**
+ * Get current active domain config.
+ * Returns { active_domain: string|null, domain: DomainDetail|null }
+ */
+export async function getActiveDomainConfig() {
+  if (_useLocalBackend) {
+    const result = await window.electron.pipeline.getConfig();
+    const config = result?.config || result || {};
+    const activeId = config?.classification?.active_domain || null;
+    if (!activeId) return { active_domain: null, domain: null };
+    const domain = await window.electron.pipeline.getDomainDetail(activeId);
+    return { active_domain: activeId, domain };
+  }
+  return apiClient.get('/api/v1/admin/classification/active');
+}
+
+/**
+ * Set the active classification domain.
+ */
+export async function setActiveDomain(domainId) {
+  if (_useLocalBackend) {
+    await window.electron.pipeline.updateConfig('classification.active_domain', domainId);
+    return { success: true, active_domain: domainId };
+  }
+  return apiClient.put('/api/v1/admin/classification/active', { domain_id: domainId });
+}
+
+
 // ── File Download ────────────────────────────────────────────
 
 /**

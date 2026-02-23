@@ -18,7 +18,9 @@ import {
   Shield, ShieldOff, Trash2, Copy, Plus, Square, Ban,
   RefreshCw, CheckCircle, XCircle, AlertTriangle,
   Folder, FolderOpen, ChevronRight, ArrowUp, Play, Loader2,
+  Tag, ChevronDown,
 } from 'lucide-react';
+import { listDomains, getDomainDetail, getActiveDomainConfig, setActiveDomain } from '../services/bridge';
 
 export default function AdminPage() {
   const { t } = useLocale();
@@ -29,6 +31,7 @@ export default function AdminPage() {
     { id: 'discover', label: t('admin.tab_discover'), icon: FolderSearch },
     { id: 'queue', label: t('admin.tab_queue'), icon: Activity },
     { id: 'workers', label: t('admin.tab_workers'), icon: Server },
+    { id: 'classification', label: t('admin.tab_classification'), icon: Tag },
     { id: 'users', label: t('admin.tab_users'), icon: Users },
     { id: 'invites', label: t('admin.tab_invites'), icon: Key },
     { id: 'worker_tokens', label: t('admin.tab_worker_tokens'), icon: Terminal },
@@ -59,6 +62,7 @@ export default function AdminPage() {
         {activeTab === 'discover' && <DiscoverPanel />}
         {activeTab === 'queue' && <QueuePanel />}
         {activeTab === 'workers' && <WorkersPanel />}
+        {activeTab === 'classification' && <ClassificationPanel />}
         {activeTab === 'users' && <UsersPanel />}
         {activeTab === 'invites' && <InvitesPanel />}
         {activeTab === 'worker_tokens' && <WorkerTokensPanel />}
@@ -1085,6 +1089,220 @@ function QueuePanel() {
             <span>{stats.total} {t('admin.queue_total').toLowerCase()}</span>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Classification Panel ─────────────────────────────────
+
+function ClassificationPanel() {
+  const { t } = useLocale();
+  const [domains, setDomains] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [selectedDomain, setSelectedDomain] = useState(null);
+  const [expandedTypes, setExpandedTypes] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [domainList, activeConfig] = await Promise.all([
+        listDomains(),
+        getActiveDomainConfig(),
+      ]);
+      setDomains(domainList || []);
+      const currentId = activeConfig?.active_domain || null;
+      setActiveId(currentId);
+      // Auto-select active domain or first
+      const autoSelect = currentId || (domainList?.[0]?.id || null);
+      if (autoSelect) {
+        const detail = await getDomainDetail(autoSelect);
+        setSelectedDomain(detail);
+      }
+    } catch (e) {
+      console.error('Failed to load classification domains:', e);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleActivate = async (domainId) => {
+    if (saving || domainId === activeId) return;
+    setSaving(true);
+    try {
+      await setActiveDomain(domainId);
+      setActiveId(domainId);
+    } catch (e) {
+      console.error('Failed to activate domain:', e);
+    }
+    setSaving(false);
+  };
+
+  const handleSelectDomain = async (domainId) => {
+    if (selectedDomain?.id === domainId) return;
+    try {
+      const detail = await getDomainDetail(domainId);
+      setSelectedDomain(detail);
+      setExpandedTypes(new Set());
+    } catch (e) {
+      console.error('Failed to load domain detail:', e);
+    }
+  };
+
+  const toggleType = (type) => {
+    setExpandedTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
+
+  if (loading) return <div className="text-gray-400 text-sm">{t('status.loading')}</div>;
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold">{t('admin.classification_title')}</h2>
+        <p className="text-sm text-gray-400 mt-1">{t('admin.classification_desc')}</p>
+      </div>
+
+      {/* Domain Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+        {domains.map(d => {
+          const isActive = d.id === activeId;
+          const isSelected = d.id === selectedDomain?.id;
+          return (
+            <div
+              key={d.id}
+              onClick={() => handleSelectDomain(d.id)}
+              className={`bg-gray-800 rounded-lg border p-4 cursor-pointer transition-colors ${
+                isSelected
+                  ? isActive ? 'border-green-500 ring-1 ring-green-500/30' : 'border-blue-500 ring-1 ring-blue-500/30'
+                  : isActive ? 'border-green-500/50' : 'border-gray-700 hover:border-gray-500'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium truncate">{d.name}</h3>
+                {isActive ? (
+                  <span className="bg-green-900/50 text-green-300 rounded px-2 py-0.5 text-xs flex-shrink-0">
+                    {t('admin.classification_active')}
+                  </span>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleActivate(d.id); }}
+                    disabled={saving}
+                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-xs px-3 py-1 flex-shrink-0 transition-colors"
+                  >
+                    {saving ? '...' : t('admin.classification_activate')}
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-gray-400 mb-2 line-clamp-2">{d.description}</p>
+              <div className="text-xs text-gray-500">
+                {t('admin.classification_types_count', { count: d.image_types_count || d.image_types?.length || 0 })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Selected Domain Detail */}
+      {selectedDomain ? (
+        <div className="space-y-4">
+          {/* Image Types */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-300 mb-2">{t('admin.classification_image_types')}</h3>
+            <div className="flex flex-wrap gap-2">
+              {(selectedDomain.image_types || []).map(type => (
+                <span
+                  key={type}
+                  className="bg-blue-900/50 text-blue-300 rounded px-2.5 py-1 text-xs"
+                >
+                  {type}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Type Hints Accordion */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-300 mb-2">{t('admin.classification_type_hints')}</h3>
+            <div className="bg-gray-800 rounded-lg border border-gray-700 divide-y divide-gray-700">
+              {Object.entries(selectedDomain.type_hints || {}).map(([type, hints]) => (
+                <div key={type}>
+                  <button
+                    onClick={() => toggleType(type)}
+                    className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-gray-700/30 transition-colors"
+                  >
+                    <ChevronDown
+                      size={14}
+                      className={`text-gray-400 transition-transform ${expandedTypes.has(type) ? '' : '-rotate-90'}`}
+                    />
+                    <span className="font-medium text-gray-200">{type}</span>
+                    <span className="text-xs text-gray-500 ml-auto">
+                      {Object.keys(hints).length} hints
+                    </span>
+                  </button>
+                  {expandedTypes.has(type) && (
+                    <div className="px-4 pb-3 space-y-1.5">
+                      {Object.entries(hints).length > 0 ? (
+                        Object.entries(hints).map(([key, values]) => (
+                          <div key={key} className="flex gap-2 text-xs">
+                            <span className="text-gray-400 min-w-[120px] flex-shrink-0">{key}:</span>
+                            <span className="text-gray-300">
+                              {Array.isArray(values) ? values.join(', ') : String(values)}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-xs text-gray-500">{t('admin.classification_no_hints')}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Common Hints */}
+          {selectedDomain.common_hints && Object.keys(selectedDomain.common_hints).length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-gray-300 mb-2">{t('admin.classification_common_hints')}</h3>
+              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-1.5">
+                {Object.entries(selectedDomain.common_hints).map(([key, values]) => (
+                  <div key={key} className="flex gap-2 text-xs">
+                    <span className="text-gray-400 min-w-[120px] flex-shrink-0">{key}:</span>
+                    <span className="text-gray-300">
+                      {Array.isArray(values) ? values.join(', ') : String(values)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Type Instructions */}
+          {selectedDomain.type_instructions && Object.keys(selectedDomain.type_instructions).length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-gray-300 mb-2">{t('admin.classification_type_instructions')}</h3>
+              <div className="bg-gray-800 rounded-lg border border-gray-700 divide-y divide-gray-700">
+                {Object.entries(selectedDomain.type_instructions).map(([type, instruction]) => (
+                  <div key={type} className="px-4 py-3">
+                    <span className="text-xs font-medium text-gray-200">{type}</span>
+                    <p className="text-xs text-gray-400 mt-1">{instruction}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-sm text-gray-500">{t('admin.classification_no_domain')}</div>
       )}
     </div>
   );

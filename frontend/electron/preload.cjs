@@ -92,6 +92,10 @@ contextBridge.exposeInMainWorld('electron', {
         updateConfig: (key, value) => ipcRenderer.invoke('update-config', key, value),
         getUserSettingsPath: () => ipcRenderer.invoke('get-user-settings-path'),
 
+        // Classification Domains
+        listDomains: () => ipcRenderer.invoke('list-domains'),
+        getDomainDetail: (domainId) => ipcRenderer.invoke('get-domain-detail', domainId),
+
         // Registered Folders
         getRegisteredFolders: () => ipcRenderer.invoke('get-registered-folders'),
         addRegisteredFolder: () => ipcRenderer.invoke('add-registered-folder'),

@@ -1385,6 +1385,54 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     });
 });
 
+// IPC Handler: List available classification domains
+ipcMain.handle('list-domains', async () => {
+    try {
+        const domainsDir = path.join(configRoot, 'backend', 'vision', 'domains');
+        if (!fs.existsSync(domainsDir)) return [];
+        const files = fs.readdirSync(domainsDir)
+            .filter(f => f.endsWith('.yaml') && !f.startsWith('_'));
+        return files.map(f => {
+            const data = readYamlFile(path.join(domainsDir, f));
+            const meta = data.domain || {};
+            return {
+                id: meta.id || path.basename(f, '.yaml'),
+                name: meta.name || path.basename(f, '.yaml'),
+                name_ko: meta.name_ko || '',
+                description: meta.description || '',
+                image_types: data.image_types || [],
+                image_types_count: (data.image_types || []).length,
+            };
+        });
+    } catch (err) {
+        console.error('[List Domains Error]', err);
+        return [];
+    }
+});
+
+// IPC Handler: Get classification domain detail (merged with _base.yaml)
+ipcMain.handle('get-domain-detail', async (_, domainId) => {
+    try {
+        const domainsDir = path.join(configRoot, 'backend', 'vision', 'domains');
+        const baseData = readYamlFile(path.join(domainsDir, '_base.yaml'));
+        const data = readYamlFile(path.join(domainsDir, `${domainId}.yaml`));
+        const meta = data.domain || {};
+        return {
+            id: meta.id || domainId,
+            name: meta.name || domainId,
+            name_ko: meta.name_ko || '',
+            description: meta.description || '',
+            image_types: data.image_types || [],
+            type_hints: data.type_hints || {},
+            type_instructions: data.type_instructions || {},
+            common_hints: baseData.common_hints || {},
+        };
+    } catch (err) {
+        console.error('[Get Domain Detail Error]', err);
+        return null;
+    }
+});
+
 // IPC Handler: Get config (system config.yaml merged with user-settings.yaml)
 ipcMain.handle('get-config', async () => {
     try {
