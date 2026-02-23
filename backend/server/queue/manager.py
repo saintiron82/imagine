@@ -318,22 +318,46 @@ class JobQueueManager:
         cursor.execute("SELECT COUNT(*) FROM job_queue")
         total = cursor.fetchone()[0]
 
-        # Throughput: completed jobs in sliding windows
-        cursor.execute("""
-            SELECT COUNT(*) FROM job_queue
-            WHERE status = 'completed'
-              AND completed_at IS NOT NULL
-              AND datetime(completed_at) > datetime('now', '-5 minutes')
-        """)
-        recent_5min = cursor.fetchone()[0]
+        # Determine processing mode for throughput calculation
+        try:
+            from backend.utils.config import get_config
+            processing_mode = get_config().get("server.processing_mode", "full")
+        except Exception:
+            processing_mode = "full"
 
-        cursor.execute("""
-            SELECT COUNT(*) FROM job_queue
-            WHERE status = 'completed'
-              AND completed_at IS NOT NULL
-              AND datetime(completed_at) > datetime('now', '-1 minute')
-        """)
-        recent_1min = cursor.fetchone()[0]
+        # Throughput: sliding windows
+        # mc_only: use mc_completed_at (worker MC speed, not EmbedAhead MV speed)
+        # full:    use completed_at (full pipeline completion)
+        if processing_mode == "mc_only":
+            cursor.execute("""
+                SELECT COUNT(*) FROM job_queue
+                WHERE mc_completed_at IS NOT NULL
+                  AND datetime(mc_completed_at) > datetime('now', '-5 minutes')
+            """)
+            recent_5min = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*) FROM job_queue
+                WHERE mc_completed_at IS NOT NULL
+                  AND datetime(mc_completed_at) > datetime('now', '-1 minute')
+            """)
+            recent_1min = cursor.fetchone()[0]
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) FROM job_queue
+                WHERE status = 'completed'
+                  AND completed_at IS NOT NULL
+                  AND datetime(completed_at) > datetime('now', '-5 minutes')
+            """)
+            recent_5min = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*) FROM job_queue
+                WHERE status = 'completed'
+                  AND completed_at IS NOT NULL
+                  AND datetime(completed_at) > datetime('now', '-1 minute')
+            """)
+            recent_1min = cursor.fetchone()[0]
 
         # Use 1-min window if active, otherwise 5-min average
         if recent_1min > 0:

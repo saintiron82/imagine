@@ -93,6 +93,7 @@ class SQLiteDB:
                 self._migrate_worker_session_tracking()
                 self._migrate_worker_session_overrides()
                 self._migrate_worker_resources_json()
+                self._migrate_mc_completed_at()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -104,6 +105,7 @@ class SQLiteDB:
                 self._migrate_worker_session_tracking()
                 self._migrate_worker_session_overrides()
                 self._migrate_worker_resources_json()
+                self._migrate_mc_completed_at()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -260,6 +262,22 @@ class SQLiteDB:
             self.conn.execute("ALTER TABLE worker_sessions ADD COLUMN resources_json TEXT DEFAULT NULL")
             self.conn.commit()
             logger.info("✅ resources_json column added to worker_sessions")
+
+    def _migrate_mc_completed_at(self):
+        """Add mc_completed_at column to job_queue for mc_only throughput measurement."""
+        if not self._table_exists('job_queue'):
+            return
+        try:
+            self.conn.execute("SELECT mc_completed_at FROM job_queue LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding mc_completed_at column to job_queue...")
+            self.conn.execute("ALTER TABLE job_queue ADD COLUMN mc_completed_at TEXT")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed "
+                "ON job_queue(mc_completed_at)"
+            )
+            self.conn.commit()
+            logger.info("✅ mc_completed_at column + index added to job_queue")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

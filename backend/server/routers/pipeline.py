@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user, require_admin
-from backend.server.queue.manager import JobQueueManager
+from backend.server.queue.manager import JobQueueManager, _utcnow_sql
 
 logger = logging.getLogger(__name__)
 
@@ -236,12 +236,13 @@ def complete_mc(
         db.update_vision_fields(file_path, vision_fields)
 
     # Update job: mark vision done, keep status='processing' for EmbedAhead to finish MV
-    now = json.dumps({"parse": True, "vision": True, "embed": False})
+    phase_json = json.dumps({"parse": True, "vision": True, "embed": False})
+    mc_now = _utcnow_sql()
     cursor.execute(
         """UPDATE job_queue
-           SET phase_completed = ?, status = 'processing'
+           SET phase_completed = ?, status = 'processing', mc_completed_at = ?
            WHERE id = ? AND assigned_to = ?""",
-        (now, job_id, user["id"])
+        (phase_json, mc_now, job_id, user["id"])
     )
     db.conn.commit()
 

@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
     assigned_at TEXT,
     started_at TEXT,
     completed_at TEXT,
+    mc_completed_at TEXT,          -- MC(Vision) completion timestamp (mc_only throughput measurement)
 
     -- Phase-level tracking (JSON)
     phase_completed TEXT DEFAULT '{"parse":false,"vision":false,"embed":false}',
@@ -148,3 +149,5 @@ CREATE INDEX IF NOT EXISTS idx_worker_sessions_user ON worker_sessions(user_id, 
 CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
     ON job_queue(parse_status, priority DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed
+    ON job_queue(mc_completed_at);
