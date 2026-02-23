@@ -76,6 +76,12 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
     setServerUrlLocal(url);
     setClientServerUrl(url);
 
+    // Auto-fill last username from server history
+    const entry = getServerHistory().find(h => h.url === url);
+    if (entry?.lastUsername && !username) {
+      setUsername(entry.lastUsername);
+    }
+
     if (serverRunning && !healthCheckDone.current) {
       healthCheckDone.current = true;
       // Small delay to ensure server is fully ready
