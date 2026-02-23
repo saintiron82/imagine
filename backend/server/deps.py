@@ -57,12 +57,11 @@ def get_current_user(
 ) -> Dict[str, Any]:
     """Extract and validate current user from JWT token.
 
-    Localhost auto-admin: requests from 127.0.0.1/::1 without a Bearer
-    token are granted admin access automatically. This covers:
+    Localhost auto-admin: ALL requests from 127.0.0.1/::1 are granted
+    admin access automatically, regardless of token presence or user role.
+    This covers:
     - Electron embedded server (host is always admin)
     - Local development/testing
-
-    When a token IS provided, it is validated normally regardless of source.
     """
     if credentials is None:
         # Localhost auto-admin: no token + localhost = admin
@@ -124,11 +123,15 @@ def get_current_user(
             detail="Account is deactivated",
         )
 
+    # Localhost auto-admin: elevate any localhost user to admin
+    client_host = request.client.host if request.client else None
+    role = "admin" if client_host in _LOCALHOST_HOSTS else row[3]
+
     return {
         "id": row[0],
         "username": row[1],
         "email": row[2],
-        "role": row[3],
+        "role": role,
         "is_active": bool(row[4]),
     }
 
