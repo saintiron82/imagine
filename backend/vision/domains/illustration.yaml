@@ -1,0 +1,137 @@
+# Illustration / Manga domain profile
+# For illustrators, comic artists, concept artists: character illustrations, backgrounds, covers, panels.
+
+domain:
+  id: illustration
+  name: "Illustration / Manga"
+  name_ko: "일러스트 / 만화"
+  description: "Illustration and manga artwork including character art, scene paintings, cover art, comic panels, and concept art"
+
+# Stage 1: image_type choices for this domain
+image_types:
+  - character
+  - background
+  - illustration
+  - item
+  - effect
+  - logo
+  - other
+
+# Stage 2: per-type category hints
+type_hints:
+  character:
+    character_type:
+      - human
+      - fantasy_creature
+      - animal
+      - anthropomorphic
+      - robot
+      - deity
+      - chibi
+    pose:
+      - standing
+      - action
+      - portrait
+      - full_body
+      - bust
+      - dynamic
+      - profile
+      - three_quarter
+    emotion:
+      - neutral
+      - happy
+      - angry
+      - sad
+      - contemplative
+      - playful
+      - dramatic
+    gender_presentation:
+      - masculine
+      - feminine
+      - androgynous
+      - ambiguous
+
+  background:
+    scene_type:
+      - indoor
+      - outdoor
+      - fantasy
+      - sci_fi
+      - urban
+      - rural
+      - abstract
+      - celestial
+      - underwater
+      - historical
+    time_of_day:
+      - dawn
+      - morning
+      - noon
+      - golden_hour
+      - sunset
+      - twilight
+      - night
+      - midnight
+    weather:
+      - clear
+      - rain
+      - snow
+      - fog
+      - storm
+      - cherry_blossom
+    mood:
+      - peaceful
+      - melancholic
+      - romantic
+      - dramatic
+      - whimsical
+      - nostalgic
+      - ethereal
+      - dystopian
+
+  illustration:
+    subject:
+      - scene
+      - portrait
+      - landscape
+      - still_life
+      - action_scene
+      - group_shot
+      - cover_art
+      - concept_art
+      - fan_art
+    mood:
+      - cheerful
+      - dark
+      - romantic
+      - epic
+      - serene
+      - chaotic
+      - mysterious
+
+  item:
+    item_type:
+      - prop
+      - weapon
+      - clothing
+      - food
+      - vehicle
+      - furniture
+      - artifact
+      - musical_instrument
+
+  effect:
+    effect_type:
+      - magic
+      - light
+      - particle
+      - speed_line
+      - aura
+      - environmental
+      - screen_tone
+
+# Stage 2: extra prompt instructions per type
+type_instructions:
+  character: "Focus on art style details, line quality, and coloring technique. Note if this is a character sheet with multiple views/expressions."
+  background: "Analyze the composition, perspective, and atmospheric depth. Note if this is a concept painting or finished illustration."
+  illustration: "Identify the overall composition type and narrative elements. Note the medium (digital, watercolor, ink, mixed)."

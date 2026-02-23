@@ -5,10 +5,18 @@ STAGE1_SYSTEM / STAGE1_USER: Quick classification (1-2s).
 STAGE2_SYSTEM / STAGE2_PROMPTS: Per-type detailed analysis prompts.
 
 v3.6: system role separated from user prompt for better JSON compliance.
+v3.7: Domain-aware dynamic prompt generation.
+      build_stage1_prompt(domain) generates domain-specific Stage 1 prompts.
+      get_stage2_prompt() now accepts domain parameter for hint injection.
 """
 
 import json
-from .schemas import get_schema
+from typing import TYPE_CHECKING
+
+from .schemas import get_schema, inject_hints_to_schema
+
+if TYPE_CHECKING:
+    from .domain_loader import DomainProfile
 
 # ── Stage 1: Classification ─────────────────────────────────────────────
 STAGE1_SYSTEM = "You are a strict JSON generator. Output valid JSON only. No explanation, no markdown fences."
@@ -139,7 +147,42 @@ INSTRUCTIONS:
 }
 
 
-def get_stage2_prompt(image_type: str, context: dict = None) -> str:
+def build_stage1_prompt(domain: "DomainProfile" = None) -> str:
+    """
+    Build Stage 1 classification prompt, optionally scoped to a domain.
+
+    When a domain is provided, only the domain's image_types are listed
+    as choices, producing more focused classification.
+
+    Args:
+        domain: Optional DomainProfile. If None, uses the full legacy type list.
+
+    Returns:
+        Stage 1 user prompt string
+    """
+    if domain and domain.image_types:
+        types_str = ", ".join(domain.image_types)
+    else:
+        # Legacy: all 11 types
+        types_str = (
+            "character, background, ui_element, item, icon, "
+            "texture, effect, logo, photo, illustration, other"
+        )
+
+    return (
+        "Classify this image into exactly ONE type.\n\n"
+        "{\n"
+        f'  "image_type": "ONE OF: {types_str}",\n'
+        '  "confidence": "ONE OF: high, medium, low"\n'
+        "}"
+    )
+
+
+def get_stage2_prompt(
+    image_type: str,
+    context: dict = None,
+    domain: "DomainProfile" = None,
+) -> str:
     """
     Build the full Stage 2 prompt with embedded schema.
 
@@ -147,12 +190,24 @@ def get_stage2_prompt(image_type: str, context: dict = None) -> str:
         image_type: Image classification type
         context: Optional file metadata context (v3.1: MC.raw)
                 Format: {"file_name": str, "folder_path": str, "layer_names": list, ...}
+        domain: Optional DomainProfile for domain-specific hint injection (v3.7)
 
     Returns:
-        Stage 2 prompt string with schema and context
+        Stage 2 prompt string with schema, domain hints, and context
     """
     template = STAGE2_PROMPTS.get(image_type, STAGE2_PROMPTS["other"])
     schema = get_schema(image_type)
+
+    # v3.7: Inject domain-specific category hints into schema
+    if domain:
+        hints = domain.get_type_hints(image_type)
+        schema = inject_hints_to_schema(schema, hints)
+
+        # Inject extra domain-specific instructions
+        extra_instruction = domain.get_type_instruction(image_type)
+        if extra_instruction:
+            template = f"{template}\n\nDOMAIN-SPECIFIC: {extra_instruction}"
+
     prompt = template.replace("{schema}", json.dumps(schema, indent=2))
 
     # v3.1: Inject file metadata context

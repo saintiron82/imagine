@@ -743,24 +743,26 @@ class VisionAnalyzer:
             # Fallback for non-Qwen models: use _generate_caption with the prompt
             return self._generate_caption(image, context={"prompt_override": user_prompt})
 
-    def classify(self, image: Image.Image, keep_alive: str = None) -> Dict[str, Any]:
+    def classify(self, image: Image.Image, keep_alive: str = None, domain=None) -> Dict[str, Any]:
         """
         Stage 1: Classify image type.
 
         Args:
             image: PIL Image
             keep_alive: Ignored (Ollama-only concept, kept for interface compatibility)
+            domain: Optional DomainProfile for domain-scoped classification
 
         Returns:
             {"image_type": "character"|"background"|..., "confidence": "high"|...}
         """
-        from .prompts import STAGE1_USER, STAGE1_SYSTEM
+        from .prompts import STAGE1_USER, STAGE1_SYSTEM, build_stage1_prompt
         from .schemas import STAGE1_SCHEMA
         from .repair import parse_structured_output
 
+        prompt = build_stage1_prompt(domain) if domain else STAGE1_USER
         try:
             t0 = time.perf_counter()
-            raw = self._generate_response(image, STAGE1_USER, STAGE1_SYSTEM)
+            raw = self._generate_response(image, prompt, STAGE1_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(raw, STAGE1_SCHEMA, image_type="other")
             logger.info(f"Stage 1 completed in {elapsed:.1f}s → {result.get('image_type')}")
@@ -770,7 +772,8 @@ class VisionAnalyzer:
             return {"image_type": "other", "confidence": "low"}
 
     def analyze_structured(
-        self, image: Image.Image, image_type: str, keep_alive: str = None, context: dict = None
+        self, image: Image.Image, image_type: str, keep_alive: str = None,
+        context: dict = None, domain=None
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -780,6 +783,7 @@ class VisionAnalyzer:
             image_type: Result from Stage 1 classify()
             keep_alive: Ignored (Ollama-only concept)
             context: Optional file metadata context (v3.1: MC.raw)
+            domain: Optional DomainProfile for domain-specific hints
 
         Returns:
             Structured dict with type-specific fields + caption + tags
@@ -790,7 +794,7 @@ class VisionAnalyzer:
 
         try:
             t0 = time.perf_counter()
-            prompt = get_stage2_prompt(image_type, context=context)
+            prompt = get_stage2_prompt(image_type, context=context, domain=domain)
             raw = self._generate_response(image, prompt, STAGE2_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(raw, get_schema(image_type), image_type=image_type)
@@ -802,7 +806,8 @@ class VisionAnalyzer:
             return {"caption": "", "tags": [], "image_type": image_type}
 
     def classify_and_analyze(
-        self, image: Image.Image, keep_alive: str = None, context: dict = None
+        self, image: Image.Image, keep_alive: str = None, context: dict = None,
+        domain=None
     ) -> Dict[str, Any]:
         """
         Full 2-Stage pipeline: classify → analyze_structured.
@@ -811,17 +816,18 @@ class VisionAnalyzer:
             image: PIL Image to analyze
             keep_alive: Ignored (Ollama-only concept)
             context: Optional file metadata context (v3.1: MC.raw)
+            domain: Optional DomainProfile for domain-aware classification
 
         Returns:
             Merged dict with image_type + all structured fields
         """
         t_total = time.perf_counter()
 
-        classification = self.classify(image, keep_alive)
+        classification = self.classify(image, keep_alive, domain=domain)
         image_type = classification.get("image_type", "other")
         logger.info(f"Stage 1 → {image_type} (confidence: {classification.get('confidence', '?')})")
 
-        analysis = self.analyze_structured(image, image_type, keep_alive, context=context)
+        analysis = self.analyze_structured(image, image_type, keep_alive, context=context, domain=domain)
 
         total_elapsed = time.perf_counter() - t_total
         logger.info(f"2-Stage total: {total_elapsed:.1f}s ({image_type})")
@@ -903,18 +909,19 @@ class VisionAnalyzer:
 
         return decoded
 
-    def classify_batch(self, images: List[Image.Image]) -> List[Dict[str, Any]]:
+    def classify_batch(self, images: List[Image.Image], domain=None) -> List[Dict[str, Any]]:
         """Stage 1 batch: classify multiple images at once."""
-        from .prompts import STAGE1_USER, STAGE1_SYSTEM
+        from .prompts import STAGE1_USER, STAGE1_SYSTEM, build_stage1_prompt
         from .schemas import STAGE1_SCHEMA
         from .repair import parse_structured_output
 
+        prompt = build_stage1_prompt(domain) if domain else STAGE1_USER
         t0 = time.perf_counter()
         try:
-            raw_list = self._generate_response_batch(images, STAGE1_USER, STAGE1_SYSTEM)
+            raw_list = self._generate_response_batch(images, prompt, STAGE1_SYSTEM)
         except Exception as e:
             logger.warning(f"Stage 1 batch failed ({e}), falling back to sequential")
-            return [self.classify(img) for img in images]
+            return [self.classify(img, domain=domain) for img in images]
 
         results = []
         for raw in raw_list:
@@ -926,7 +933,7 @@ class VisionAnalyzer:
 
     def analyze_structured_batch(
         self, images: List[Image.Image], image_type: str,
-        contexts: List[dict] = None
+        contexts: List[dict] = None, domain=None
     ) -> List[Dict[str, Any]]:
         """Stage 2 batch: same image_type, multiple images."""
         from .prompts import get_stage2_prompt, STAGE2_SYSTEM
@@ -938,7 +945,7 @@ class VisionAnalyzer:
         prompts = []
         for i, img in enumerate(images):
             ctx = contexts[i] if contexts else None
-            prompts.append(get_stage2_prompt(image_type, context=ctx))
+            prompts.append(get_stage2_prompt(image_type, context=ctx, domain=domain))
 
         # Batch with per-image prompts (different contexts are fine)
         t0 = time.perf_counter()
@@ -947,7 +954,7 @@ class VisionAnalyzer:
         except Exception as e:
             logger.warning(f"Stage 2 batch failed ({e}), falling back to sequential")
             return [
-                self.analyze_structured(img, image_type, context=contexts[i] if contexts else None)
+                self.analyze_structured(img, image_type, context=contexts[i] if contexts else None, domain=domain)
                 for i, img in enumerate(images)
             ]
         elapsed = time.perf_counter() - t0
@@ -962,7 +969,7 @@ class VisionAnalyzer:
         return results
 
     def classify_and_analyze_batch(
-        self, items: list, vlm_batch: int = 8, progress_callback=None
+        self, items: list, vlm_batch: int = 8, progress_callback=None, domain=None
     ) -> list:
         """
         Full 2-Stage batch pipeline: batch classify → group by type → batch analyze.
@@ -971,6 +978,7 @@ class VisionAnalyzer:
             items: List of (image, context) tuples
             vlm_batch: Max images per GPU batch (VRAM limit)
             progress_callback: fn(idx, total, result)
+            domain: Optional DomainProfile for domain-aware classification
         """
         self._load_model()
         n = len(items)
@@ -982,7 +990,7 @@ class VisionAnalyzer:
         classifications = []
         for sb_start in range(0, n, vlm_batch):
             sb_images = images[sb_start:sb_start + vlm_batch]
-            classifications.extend(self.classify_batch(sb_images))
+            classifications.extend(self.classify_batch(sb_images, domain=domain))
 
         # ── Group by image_type for Stage 2 ──
         type_groups = {}  # image_type → [(original_idx, image, context)]
@@ -1007,7 +1015,7 @@ class VisionAnalyzer:
                 sb_imgs = group_images[sb_start:sb_start + vlm_batch]
                 sb_ctxs = group_contexts[sb_start:sb_start + vlm_batch]
                 sb_results = self.analyze_structured_batch(
-                    sb_imgs, image_type, contexts=sb_ctxs
+                    sb_imgs, image_type, contexts=sb_ctxs, domain=domain
                 )
                 group_results.extend(sb_results)
 
@@ -1029,7 +1037,7 @@ class VisionAnalyzer:
         return results
 
     def classify_and_analyze_sequence(
-        self, items: list, progress_callback=None
+        self, items: list, progress_callback=None, domain=None
     ) -> list:
         """Process multiple images — batch if supported, else sequential."""
         self._load_model()
@@ -1042,7 +1050,8 @@ class VisionAnalyzer:
                 vlm_batch = tier_cfg.get("vlm", {}).get("batch_size", 8)
                 logger.info(f"VLM batch mode: {len(items)} images, batch_size={vlm_batch}")
                 return self.classify_and_analyze_batch(
-                    items, vlm_batch=vlm_batch, progress_callback=progress_callback
+                    items, vlm_batch=vlm_batch, progress_callback=progress_callback,
+                    domain=domain
                 )
             except Exception as e:
                 logger.warning(f"Batch VLM failed ({e}), falling back to sequential")
@@ -1053,7 +1062,7 @@ class VisionAnalyzer:
         results = []
         for idx, (image, context) in enumerate(items):
             try:
-                result = self.classify_and_analyze(image, context=context)
+                result = self.classify_and_analyze(image, context=context, domain=domain)
             except Exception as e:
                 logger.warning(f"Vision failed for item {idx}: {e}")
                 result = {"caption": "", "tags": [], "image_type": "other"}

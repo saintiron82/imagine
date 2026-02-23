@@ -1,0 +1,74 @@
+# Stock Photo / Photography domain profile
+# For photographers, stock photo agencies: portraits, landscapes, products, architecture, etc.
+
+domain:
+  id: stock_photo
+  name: "Stock Photo / Photography"
+  name_ko: "스톡 사진 / 포토그래피"
+  description: "Photography and stock photo assets including portraits, landscapes, products, architecture, food, and editorial photos"
+
+# Stage 1: image_type choices for this domain
+image_types:
+  - photo
+  - illustration
+  - logo
+  - icon
+  - other
+
+# Stage 2: per-type category hints
+type_hints:
+  photo:
+    subject:
+      - portrait
+      - landscape
+      - product
+      - architecture
+      - food
+      - nature
+      - street
+      - aerial
+      - macro
+      - event
+      - lifestyle
+      - fashion
+      - travel
+      - sports
+      - documentary
+    mood:
+      - professional
+      - casual
+      - dramatic
+      - minimalist
+      - vibrant
+      - moody
+      - warm
+      - editorial
+
+  illustration:
+    subject:
+      - infographic
+      - diagram
+      - editorial_illustration
+      - vector_art
+      - pattern
+      - map
+      - icon_set
+    mood:
+      - professional
+      - playful
+      - informative
+      - artistic
+
+  logo:
+    subject:
+      - corporate
+      - brand
+      - watermark
+      - badge
+      - stamp
+      - monogram
+
+# Stage 2: extra prompt instructions per type
+type_instructions:
+  photo: "Identify the photography technique (shallow DOF, long exposure, HDR, etc.). Note if the image has commercial usage indicators (model release, editorial). Analyze lighting setup (natural, studio, mixed)."
+  illustration: "Determine if this is a vector illustration, hand-drawn, or digitally created. Note the intended commercial use."

@@ -274,23 +274,31 @@ Format your response as JSON:
             raise RuntimeError(f"Ollama API error: {response.status_code}")
         return response.json().get("response", "")
 
-    def classify(self, image: Image.Image, keep_alive: str = None) -> Dict[str, Any]:
+    def classify(self, image: Image.Image, keep_alive: str = None, domain=None) -> Dict[str, Any]:
         """
         Stage 1: Classify image type.
+
+        Args:
+            image: PIL Image
+            keep_alive: Model keep-alive duration
+            domain: Optional DomainProfile for domain-scoped classification
 
         Returns:
             {"image_type": "character"|"background"|..., "confidence": "high"|...}
         """
+        from .prompts import build_stage1_prompt
+
         if not self.check_ollama_running():
             logger.error("Ollama server is not running!")
             return {"image_type": "other", "confidence": "low"}
 
+        prompt = build_stage1_prompt(domain) if domain else STAGE1_PROMPT
         img_b64 = self._encode_image(image)
 
         for attempt in range(self._max_retries + 1):
             try:
                 t0 = time.perf_counter()
-                raw = self._call_ollama(STAGE1_PROMPT, img_b64, keep_alive)
+                raw = self._call_ollama(prompt, img_b64, keep_alive)
                 elapsed = time.perf_counter() - t0
                 result = parse_structured_output(raw, STAGE1_SCHEMA, image_type="other")
                 if result.get("image_type"):
@@ -303,7 +311,8 @@ Format your response as JSON:
         return {"image_type": "other", "confidence": "low"}
 
     def analyze_structured(
-        self, image: Image.Image, image_type: str, keep_alive: str = None, context: dict = None
+        self, image: Image.Image, image_type: str, keep_alive: str = None,
+        context: dict = None, domain=None
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -312,6 +321,8 @@ Format your response as JSON:
             image: PIL Image
             image_type: Result from Stage 1 classify()
             keep_alive: Override keep_alive for batch processing
+            context: Optional file metadata context
+            domain: Optional DomainProfile for domain-specific hints
 
         Returns:
             Structured dict with type-specific fields + caption + tags
@@ -321,7 +332,7 @@ Format your response as JSON:
             return {"caption": "", "tags": [], "image_type": image_type}
 
         # v3.1: Inject context into Stage 2 prompt
-        prompt = get_stage2_prompt(image_type, context=context)
+        prompt = get_stage2_prompt(image_type, context=context, domain=domain)
         schema = get_schema(image_type)
         img_b64 = self._encode_image(image)
 
@@ -341,7 +352,8 @@ Format your response as JSON:
         return {"caption": "", "tags": [], "image_type": image_type}
 
     def classify_and_analyze(
-        self, image: Image.Image, keep_alive: str = None, context: dict = None
+        self, image: Image.Image, keep_alive: str = None, context: dict = None,
+        domain=None
     ) -> Dict[str, Any]:
         """
         Full 2-Stage pipeline: classify → analyze_structured.
@@ -350,17 +362,18 @@ Format your response as JSON:
             image: PIL Image to analyze
             keep_alive: Model keep-alive duration (default from config)
             context: Optional file metadata context (v3.1: MC.raw)
+            domain: Optional DomainProfile for domain-aware classification
 
         Returns:
             Merged dict with image_type + all structured fields
         """
         t_total = time.perf_counter()
 
-        classification = self.classify(image, keep_alive)
+        classification = self.classify(image, keep_alive, domain=domain)
         image_type = classification.get("image_type", "other")
         logger.info(f"Stage 1 → {image_type} (confidence: {classification.get('confidence', '?')})")
 
-        analysis = self.analyze_structured(image, image_type, keep_alive, context=context)
+        analysis = self.analyze_structured(image, image_type, keep_alive, context=context, domain=domain)
 
         total_elapsed = time.perf_counter() - t_total
         logger.info(f"2-Stage total: {total_elapsed:.1f}s ({image_type})")
@@ -368,13 +381,13 @@ Format your response as JSON:
         return analysis
 
     def classify_and_analyze_sequence(
-        self, items: list, progress_callback=None
+        self, items: list, progress_callback=None, domain=None
     ) -> list:
         """Process multiple images sequentially via Ollama API."""
         results = []
         for idx, (image, context) in enumerate(items):
             try:
-                result = self.classify_and_analyze(image, context=context)
+                result = self.classify_and_analyze(image, context=context, domain=domain)
             except Exception as e:
                 logger.warning(f"Vision failed for item {idx}: {e}")
                 result = {"caption": "", "tags": [], "image_type": "other"}

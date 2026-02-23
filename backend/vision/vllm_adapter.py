@@ -160,7 +160,8 @@ class VLLMAdapter:
     def classify(
         self,
         image: Image.Image,
-        keep_alive: str = None
+        keep_alive: str = None,
+        domain=None
     ) -> Dict[str, Any]:
         """
         Stage 1: Classify image type.
@@ -168,6 +169,7 @@ class VLLMAdapter:
         Args:
             image: PIL Image
             keep_alive: Ignored (vLLM doesn't have keep_alive concept)
+            domain: Optional DomainProfile for domain-scoped classification
 
         Returns:
             {
@@ -176,10 +178,13 @@ class VLLMAdapter:
                 "reasoning": str
             }
         """
+        from .prompts import build_stage1_prompt
+
         try:
             # Prepare prompt
             img_base64 = self._image_to_base64(image)
-            prompt_text = f"{STAGE1_PROMPT}\n\nOutput JSON only:"
+            stage1_prompt = build_stage1_prompt(domain) if domain else STAGE1_PROMPT
+            prompt_text = f"{stage1_prompt}\n\nOutput JSON only:"
 
             # vLLM inference
             from vllm import SamplingParams
@@ -221,7 +226,9 @@ class VLLMAdapter:
         self,
         image: Image.Image,
         image_type: str,
-        keep_alive: str = None
+        keep_alive: str = None,
+        context: dict = None,
+        domain=None
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -230,13 +237,15 @@ class VLLMAdapter:
             image: PIL Image
             image_type: Image type from Stage 1
             keep_alive: Ignored
+            context: Optional file metadata context
+            domain: Optional DomainProfile for domain-specific hints
 
         Returns:
             Structured analysis result (schema depends on image_type)
         """
         try:
             # Get type-specific prompt and schema
-            prompt_text = get_stage2_prompt(image_type)
+            prompt_text = get_stage2_prompt(image_type, context=context, domain=domain)
             schema = get_schema(image_type)
 
             # Prepare image
@@ -281,7 +290,9 @@ class VLLMAdapter:
     def classify_and_analyze(
         self,
         image: Image.Image,
-        keep_alive: str = None
+        keep_alive: str = None,
+        context: dict = None,
+        domain=None
     ) -> Dict[str, Any]:
         """
         Full 2-Stage pipeline: classify → analyze_structured.
@@ -291,18 +302,20 @@ class VLLMAdapter:
         Args:
             image: PIL Image
             keep_alive: Ignored
+            context: Optional file metadata context
+            domain: Optional DomainProfile for domain-aware classification
 
         Returns:
             Combined result from both stages
         """
         # Stage 1: Classification
-        stage1_result = self.classify(image, keep_alive)
+        stage1_result = self.classify(image, keep_alive, domain=domain)
         image_type = stage1_result.get("image_type", "unknown")
 
         logger.info(f"Stage 1: {image_type} (confidence: {stage1_result.get('confidence', 0.0):.2f})")
 
         # Stage 2: Structured analysis
-        stage2_result = self.analyze_structured(image, image_type, keep_alive)
+        stage2_result = self.analyze_structured(image, image_type, keep_alive, context=context, domain=domain)
 
         # Merge results
         result = {**stage2_result}

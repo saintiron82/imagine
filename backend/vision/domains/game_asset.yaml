@@ -1,0 +1,179 @@
+# Game Asset domain profile
+# For game development studios: characters, backgrounds, UI, items, effects, etc.
+
+domain:
+  id: game_asset
+  name: "Game Asset"
+  name_ko: "게임 에셋"
+  description: "Game development assets including characters, environments, UI elements, items, icons, textures, and visual effects"
+
+# Stage 1: image_type choices for this domain
+image_types:
+  - character
+  - background
+  - ui_element
+  - item
+  - icon
+  - texture
+  - effect
+
+# Stage 2: per-type category hints (injected as "suggested" values in VLM prompt)
+type_hints:
+  character:
+    character_type:
+      - hero
+      - villain
+      - NPC
+      - boss
+      - monster
+      - animal
+      - summon
+      - mount
+      - companion
+    pose:
+      - standing
+      - action
+      - portrait
+      - full_body
+      - bust
+      - sitting
+      - running
+      - attack
+    emotion:
+      - neutral
+      - happy
+      - angry
+      - sad
+      - determined
+      - surprised
+      - menacing
+
+  background:
+    scene_type:
+      - dungeon
+      - castle
+      - forest
+      - village
+      - arena
+      - cave
+      - city
+      - interior
+      - sky
+      - underwater
+      - desert
+      - mountain
+      - ruins
+      - temple
+      - battlefield
+    time_of_day:
+      - dawn
+      - morning
+      - noon
+      - sunset
+      - dusk
+      - night
+      - midnight
+    weather:
+      - clear
+      - rain
+      - snow
+      - fog
+      - storm
+      - sandstorm
+      - aurora
+    mood:
+      - peaceful
+      - tense
+      - mysterious
+      - epic
+      - desolate
+      - cozy
+      - ominous
+      - magical
+
+  item:
+    item_type:
+      - weapon
+      - armor
+      - potion
+      - accessory
+      - material
+      - currency
+      - consumable
+      - tool
+      - scroll
+      - gem
+    rarity_feel:
+      - common
+      - uncommon
+      - rare
+      - epic
+      - legendary
+      - mythic
+
+  ui_element:
+    ui_type:
+      - button
+      - panel
+      - hud
+      - dialog
+      - inventory
+      - minimap
+      - healthbar
+      - tooltip
+      - menu
+      - loading_screen
+    platform:
+      - mobile
+      - pc
+      - console
+      - cross_platform
+
+  effect:
+    effect_type:
+      - magic
+      - fire
+      - ice
+      - lightning
+      - heal
+      - explosion
+      - aura
+      - projectile
+      - smoke
+      - water
+      - shield
+      - buff
+
+  icon:
+    icon_category:
+      - skill
+      - buff
+      - debuff
+      - item
+      - status
+      - menu
+      - achievement
+      - currency
+      - class
+      - element
+
+  texture:
+    texture_type:
+      - wood
+      - metal
+      - stone
+      - fabric
+      - organic
+      - crystal
+      - terrain
+      - brick
+      - leather
+      - magical
+
+# Stage 2: extra prompt instructions per type
+type_instructions:
+  character: "Identify character class/role from visual cues (armor type, weapons, accessories). Note if this is a sprite sheet or single illustration."
+  background: "Pay special attention to game-specific scene elements like interactive objects, spawn points, and pathways. Identify if this is a tileable background or standalone scene."
+  item: "Identify item rarity from visual cues (glow effects, color coding, particle effects). Note if the item has a transparent background for game UI overlay."
+  effect: "Determine if this effect is a sprite sheet, particle texture, or standalone VFX. Note animation frame count if applicable."
+  texture: "Identify if the texture is seamlessly tileable. Note the intended surface type and resolution class."

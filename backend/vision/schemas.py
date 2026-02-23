@@ -109,5 +109,41 @@ _GENERIC_TYPES = {"logo", "photo", "illustration", "other"}
 def get_schema(image_type: str) -> dict:
     """Return the Stage 2 schema for the given image_type."""
     if image_type in _GENERIC_TYPES:
-        return STAGE2_SCHEMAS["generic"]
-    return STAGE2_SCHEMAS.get(image_type, STAGE2_SCHEMAS["generic"])
+        return dict(STAGE2_SCHEMAS["generic"])
+    return dict(STAGE2_SCHEMAS.get(image_type, STAGE2_SCHEMAS["generic"]))
+
+
+def inject_hints_to_schema(
+    schema: dict, hints: dict[str, list[str]]
+) -> dict:
+    """
+    Inject domain-specific suggested values into a schema.
+
+    Transforms:
+        {"scene_type": "string"}
+    Into:
+        {"scene_type": "string (suggested: dungeon, castle, forest, ...)"}
+
+    Only injects hints for fields that already exist in the schema.
+    Fields with "array" type are not modified (tags, equipment, etc.).
+
+    Args:
+        schema: Base schema dict (will NOT be mutated)
+        hints: {field_name: [suggested_values, ...]}
+
+    Returns:
+        New schema dict with hints injected
+    """
+    if not hints:
+        return schema
+
+    result = dict(schema)
+    for field_name, values in hints.items():
+        if field_name not in result:
+            continue
+        # Only inject into string fields, not arrays
+        if result[field_name] == "string" and values:
+            suggested = ", ".join(values)
+            result[field_name] = f"string (suggested: {suggested})"
+
+    return result

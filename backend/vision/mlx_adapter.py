@@ -144,7 +144,7 @@ class MLXVisionAdapter:
     # ── 2-Stage Pipeline ──────────────────────────────────────────
 
     def classify(
-        self, image: Image.Image, keep_alive: str = None
+        self, image: Image.Image, keep_alive: str = None, domain=None
     ) -> Dict[str, Any]:
         """
         Stage 1: Classify image type.
@@ -152,17 +152,19 @@ class MLXVisionAdapter:
         Args:
             image: PIL Image
             keep_alive: Ignored (interface compatibility)
+            domain: Optional DomainProfile for domain-scoped classification
 
         Returns:
             {"image_type": str, "confidence": str}
         """
-        from .prompts import STAGE1_USER, STAGE1_SYSTEM
+        from .prompts import STAGE1_USER, STAGE1_SYSTEM, build_stage1_prompt
         from .schemas import STAGE1_SCHEMA
         from .repair import parse_structured_output
 
+        prompt = build_stage1_prompt(domain) if domain else STAGE1_USER
         try:
             t0 = time.perf_counter()
-            raw = self._generate_response(image, STAGE1_USER, STAGE1_SYSTEM)
+            raw = self._generate_response(image, prompt, STAGE1_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(raw, STAGE1_SCHEMA, image_type="other")
             logger.info(
@@ -179,6 +181,7 @@ class MLXVisionAdapter:
         image_type: str,
         keep_alive: str = None,
         context: dict = None,
+        domain=None,
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -188,6 +191,7 @@ class MLXVisionAdapter:
             image_type: Result from Stage 1
             keep_alive: Ignored (interface compatibility)
             context: Optional file metadata context
+            domain: Optional DomainProfile for domain-specific hints
 
         Returns:
             Structured dict with type-specific fields + caption + tags
@@ -198,7 +202,7 @@ class MLXVisionAdapter:
 
         try:
             t0 = time.perf_counter()
-            prompt = get_stage2_prompt(image_type, context=context)
+            prompt = get_stage2_prompt(image_type, context=context, domain=domain)
             raw = self._generate_response(image, prompt, STAGE2_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(
@@ -212,7 +216,8 @@ class MLXVisionAdapter:
             return {"caption": "", "tags": [], "image_type": image_type}
 
     def classify_and_analyze(
-        self, image: Image.Image, keep_alive: str = None, context: dict = None
+        self, image: Image.Image, keep_alive: str = None, context: dict = None,
+        domain=None
     ) -> Dict[str, Any]:
         """
         Full 2-Stage pipeline: classify -> analyze_structured.
@@ -221,13 +226,14 @@ class MLXVisionAdapter:
             image: PIL Image to analyze
             keep_alive: Ignored (interface compatibility)
             context: Optional file metadata context
+            domain: Optional DomainProfile for domain-aware classification
 
         Returns:
             Merged dict with image_type + all structured fields
         """
         t_total = time.perf_counter()
 
-        classification = self.classify(image, keep_alive)
+        classification = self.classify(image, keep_alive, domain=domain)
         image_type = classification.get("image_type", "other")
         logger.info(
             f"[MLX] Stage 1 → {image_type} "
@@ -235,7 +241,7 @@ class MLXVisionAdapter:
         )
 
         analysis = self.analyze_structured(
-            image, image_type, keep_alive, context=context
+            image, image_type, keep_alive, context=context, domain=domain
         )
 
         total_elapsed = time.perf_counter() - t_total
@@ -247,6 +253,7 @@ class MLXVisionAdapter:
         self,
         items: list,
         progress_callback=None,
+        domain=None,
     ) -> list:
         """
         Process multiple images sequentially through 2-stage pipeline.
@@ -266,7 +273,7 @@ class MLXVisionAdapter:
         results = []
         for idx, (image, context) in enumerate(items):
             try:
-                result = self.classify_and_analyze(image, context=context)
+                result = self.classify_and_analyze(image, context=context, domain=domain)
             except Exception as e:
                 logger.warning(f"[MLX] Vision failed for item {idx}: {e}")
                 result = {"caption": "", "tags": [], "image_type": "other"}

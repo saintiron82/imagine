@@ -1,0 +1,31 @@
+# Base domain profile - common hints inherited by all domains.
+# Do NOT use this as an active domain; it provides shared defaults only.
+
+domain:
+  id: _base
+  name: "Base"
+  name_ko: "기본"
+  description: "Common defaults inherited by all domain profiles"
+
+# Common hints merged into every domain's type_hints
+common_hints:
+  art_style:
+    - realistic
+    - anime
+    - pixel
+    - painterly
+    - cartoon
+    - 3d_render
+    - watercolor
+    - sketch
+    - cel_shaded
+  color_palette:
+    - warm
+    - cool
+    - monochrome
+    - vibrant
+    - pastel
+    - dark
+    - neutral
+    - neon
+    - earth_tones

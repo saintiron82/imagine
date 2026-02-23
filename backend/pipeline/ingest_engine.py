@@ -358,10 +358,17 @@ def process_file(
                     logger.warning(f"   dHash calculation failed: {e}")
                     # Continue processing even if hash calculation fails
 
+                # Load active domain for classification
+                from backend.vision.domain_loader import get_active_domain as _get_domain
+                _domain = _get_domain()
+
                 # Check if adapter supports 2-stage
                 if hasattr(_global_vision_analyzer, 'classify_and_analyze'):
                     # v3.1: 2-Stage with MC.raw context injection
-                    vision_result = _global_vision_analyzer.classify_and_analyze(image, context=mc_raw)
+                    # v3.7: Domain-aware classification
+                    vision_result = _global_vision_analyzer.classify_and_analyze(
+                        image, context=mc_raw, domain=_domain
+                    )
 
                     # Common fields
                     meta.mc_caption = vision_result.get('caption', '')
@@ -1123,7 +1130,13 @@ def phase2_vision_adaptive(
     logger.info(f"STEP 2/4 AI Vision ({total_vision} images, adaptive batch)")
 
     from backend.vision.vision_factory import get_vision_analyzer
+    from backend.vision.domain_loader import get_active_domain
     analyzer = get_vision_analyzer()
+    domain = get_active_domain()
+    if domain:
+        logger.info(f"  [DOMAIN] Active domain: {domain.id} ({len(domain.image_types)} types)")
+    else:
+        logger.info("  [DOMAIN] No active domain (legacy mode)")
     analyzer_device = getattr(analyzer, "device", None)
     force_vlm_single = analyzer_device == "cpu"
     if force_vlm_single:
@@ -1221,7 +1234,8 @@ def phase2_vision_adaptive(
                         vision_results = _run_vlm_inference_with_policy(
                             analyzer,
                             lambda: analyzer.classify_and_analyze_sequence(
-                                vision_items, progress_callback=_progress
+                                vision_items, progress_callback=_progress,
+                                domain=domain
                             ),
                             vlm_timeout_s,
                         )
@@ -1229,7 +1243,7 @@ def phase2_vision_adaptive(
                         vision_results = _run_vlm_inference_with_policy(
                             analyzer,
                             lambda: [
-                                analyzer.classify_and_analyze(img, context=ctx)
+                                analyzer.classify_and_analyze(img, context=ctx, domain=domain)
                                 for (img, ctx) in vision_items
                             ],
                             vlm_timeout_s,
