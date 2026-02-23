@@ -109,15 +109,14 @@ function App() {
     loadConfig();
   }, []);
 
-  const handleSetupComplete = (mode, serverUrl) => {
+  const handleSetupComplete = (mode) => {
     setAppMode(mode);
     setUseLocalBackend(mode === 'server');
 
     if (mode === 'server') {
       setServerUrl(`http://localhost:${serverPort}`);
-    } else if (mode === 'client' && serverUrl) {
-      setServerUrl(serverUrl);
     }
+    // client mode: URL is entered in LoginPage, not here
 
     // Switch auth: server → local bypass, client → JWT required
     configureAuth(mode);

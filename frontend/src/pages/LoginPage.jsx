@@ -31,9 +31,6 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
   const { t, locale, setLocale, availableLocales } = useLocale();
 
   const isServerMode = authMode === 'server';
-  const isClientMode = authMode === 'client';
-  // Client mode: URL already set from SetupPage, skip full discovery UI
-  const showServerSection = !isServerMode && !isClientMode;
 
   const [mode, setMode] = useState('login');
   const [serverUrl, setServerUrlLocal] = useState(
@@ -49,11 +46,11 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
   const [serverError, setServerError] = useState('');
   const [serverName, setServerName] = useState('');
 
-  // Server history (only needed in web mode where full discovery UI is shown)
+  // Server history
   const [history, setHistory] = useState([]);
   useEffect(() => {
-    if (showServerSection) setHistory(getServerHistory());
-  }, [showServerSection]);
+    if (!isServerMode) setHistory(getServerHistory());
+  }, [isServerMode]);
 
   // mDNS discovery (Electron only, not in server mode)
   const { servers: mdnsServers, browsing } = useMdnsDiscovery();
@@ -231,45 +228,8 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
             </div>
           )}
 
-          {/* ── Client Mode: compact connection status (URL already set from SetupPage) ── */}
-          {isClientMode && (
-            <div>
-              {serverStatus === 'checking' ? (
-                <div className="flex items-center justify-center gap-2 py-3">
-                  <Loader size={14} className="text-blue-400 animate-spin" />
-                  <span className="text-sm text-gray-400">{t('auth.checking_server')}</span>
-                </div>
-              ) : serverStatus === 'ok' ? (
-                <div className="flex items-center gap-2 text-xs text-green-400">
-                  <CheckCircle size={12} />
-                  <span>
-                    {serverName
-                      ? t('auth.connected_to', { name: serverName })
-                      : t('auth.server_connected')}
-                  </span>
-                  <span className="text-gray-600 font-mono ml-auto">
-                    {serverUrl.replace(/^https?:\/\//, '')}
-                  </span>
-                </div>
-              ) : serverStatus === 'error' ? (
-                <div className="flex items-center gap-1 text-xs text-red-400">
-                  <XCircle size={12} />
-                  <span>{serverError}</span>
-                  <span className="text-gray-600 font-mono ml-auto">
-                    {serverUrl.replace(/^https?:\/\//, '')}
-                  </span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-xs text-gray-400">
-                  <Server size={12} />
-                  <span className="font-mono">{serverUrl.replace(/^https?:\/\//, '')}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Server Connection Section (web mode only — no SetupPage) ── */}
-          {showServerSection && (
+          {/* ── Server Connection Section (client + web mode) ── */}
+          {!isServerMode && (
             <div>
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
                 <Wifi size={12} />
