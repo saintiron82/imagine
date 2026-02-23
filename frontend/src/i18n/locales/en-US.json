@@ -222,6 +222,7 @@
   "auth.server_url": "Server URL",
   "auth.check": "Check",
   "auth.server_connected": "Connected",
+  "auth.checking_server": "Checking server...",
   "auth.invite_code": "Invite Code",
   "auth.invite_code_placeholder": "Enter invite code",
   "auth.username": "Username",

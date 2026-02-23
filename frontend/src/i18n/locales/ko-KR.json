@@ -222,6 +222,7 @@
   "auth.server_url": "서버 URL",
   "auth.check": "확인",
   "auth.server_connected": "연결됨",
+  "auth.checking_server": "서버 확인 중...",
   "auth.invite_code": "초대 코드",
   "auth.invite_code_placeholder": "초대 코드를 입력하세요",
   "auth.username": "사용자명",
