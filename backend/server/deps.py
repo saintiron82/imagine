@@ -123,15 +123,11 @@ def get_current_user(
             detail="Account is deactivated",
         )
 
-    # Localhost auto-admin: elevate any localhost user to admin
-    client_host = request.client.host if request.client else None
-    role = "admin" if client_host in _LOCALHOST_HOSTS else row[3]
-
     return {
         "id": row[0],
         "username": row[1],
         "email": row[2],
-        "role": role,
+        "role": row[3],
         "is_active": bool(row[4]),
     }
 

@@ -426,25 +426,6 @@ function App() {
     return () => clearTimeout(timer);
   }, [appMode, serverPort, serverRunning]);
 
-  // Auto-login to local server for API access (JWT) in server mode
-  useEffect(() => {
-    if (!isElectron || appMode !== 'server' || !serverRunning) return;
-
-    const autoLogin = async () => {
-      try {
-        const url = `http://localhost:${serverPort}`;
-        setServerUrl(url);
-        if (getAccessToken()) return; // already have token
-        await login({ username: 'admin', password: 'admin', serverUrl: url });
-      } catch (e) {
-        console.warn('Server auto-login failed:', e);
-      }
-    };
-
-    const timer = setTimeout(autoLogin, 1000);
-    return () => clearTimeout(timer);
-  }, [serverRunning, appMode, serverPort, login]);
-
   // Worker IPC event listeners (Electron client mode)
   useEffect(() => {
     if (!isElectron || appMode !== 'client') return;
@@ -651,7 +632,8 @@ function App() {
       setServerRunning(false);
       setServerLanUrl(null);
       setServerLanAddresses([]);
-      clearTokens(); // clean up JWT when server stops
+      clearTokens();
+      logout(); // reset user state → LoginPage reappears
     } else {
       const result = await window.electron.server.start({ port: serverPort });
       if (result.success) {
@@ -897,7 +879,11 @@ function App() {
     if (showDownloadPage) {
       return <DownloadPage onBack={() => setShowDownloadPage(false)} />;
     }
-    return <LoginPage onShowDownload={() => setShowDownloadPage(true)} />;
+    return <LoginPage
+      onShowDownload={() => setShowDownloadPage(true)}
+      serverRunning={serverRunning}
+      serverPort={serverPort}
+    />;
   }
 
   // Download page overlay (web mode, authenticated)
