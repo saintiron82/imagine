@@ -608,38 +608,35 @@ def _load_visual_source_image(pf: ParsedFile) -> Optional["Image.Image"]:
             from psd_tools import PSDImage
             psd = PSDImage.open(pf.file_path)
             try:
-                try:
-                    composite = psd.composite()
-                except Exception as e:
-                    if "aggdraw" in str(e).lower():
-                        logger.warning(
-                            f"  [FALLBACK] PSD composite requires aggdraw, using embedded preview: {pf.file_path.name}"
-                        )
-                        if hasattr(psd, "topil"):
-                            composite = psd.topil()
-                        else:
-                            logger.warning(
-                                f"  [FALLBACK] PSDImage.topil() unavailable: {pf.file_path.name}"
-                            )
-                            composite = None
+                composite = psd.composite()
+            except Exception as e:
+                if "aggdraw" in str(e).lower():
+                    logger.warning(
+                        f"  [FALLBACK] PSD composite requires aggdraw, using embedded preview: {pf.file_path.name}"
+                    )
+                    if hasattr(psd, "topil"):
+                        composite = psd.topil()
                     else:
-                        raise
-                if composite is None:
-                    try:
-                        import numpy as np
-                        arr = psd.numpy()
-                        if arr is not None and getattr(arr, "size", 0) > 0:
-                            if arr.dtype != np.uint8:
-                                arr = np.clip(arr, 0, 255).astype(np.uint8)
-                            if arr.ndim == 3 and arr.shape[2] in (3, 4):
-                                composite = Image.fromarray(arr[:, :, :3], mode='RGB')
-                                logger.warning(
-                                    f"  [FALLBACK] Using PSD numpy rasterization: {pf.file_path.name}"
-                                )
-                    except Exception as e:
-                        logger.warning(f"  [FALLBACK] PSD numpy rasterization failed: {pf.file_path.name}: {e}")
-            finally:
-                psd.close()
+                        logger.warning(
+                            f"  [FALLBACK] PSDImage.topil() unavailable: {pf.file_path.name}"
+                        )
+                        composite = None
+                else:
+                    raise
+            if composite is None:
+                try:
+                    import numpy as np
+                    arr = psd.numpy()
+                    if arr is not None and getattr(arr, "size", 0) > 0:
+                        if arr.dtype != np.uint8:
+                            arr = np.clip(arr, 0, 255).astype(np.uint8)
+                        if arr.ndim == 3 and arr.shape[2] in (3, 4):
+                            composite = Image.fromarray(arr[:, :, :3], mode='RGB')
+                            logger.warning(
+                                f"  [FALLBACK] Using PSD numpy rasterization: {pf.file_path.name}"
+                            )
+                except Exception as e:
+                    logger.warning(f"  [FALLBACK] PSD numpy rasterization failed: {pf.file_path.name}: {e}")
             if composite is None:
                 return None
             if composite.mode == 'RGBA':

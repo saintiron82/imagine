@@ -56,51 +56,48 @@ class PSDParser(BaseParser):
             return ParseResult(success=False, errors=[error_msg])
         
         try:
-            # Open PSD file
+            # Open PSD file (psd-tools reads entire file into memory, no handle held)
             psd = PSDImage.open(file_path)
-            try:
-                width, height = psd.width, psd.height
+            width, height = psd.width, psd.height
 
-                # Extract layer information
-                layer_tree, layer_paths, text_contents, fonts = self._extract_layers(
-                    psd, (width, height)
-                )
+            # Extract layer information
+            layer_tree, layer_paths, text_contents, fonts = self._extract_layers(
+                psd, (width, height)
+            )
 
-                # Generate composite thumbnail
-                thumbnail_path = self._create_thumbnail(psd, file_path)
+            # Generate composite thumbnail
+            thumbnail_path = self._create_thumbnail(psd, file_path)
 
-                # Build semantic tags from layer paths
-                # v3.1 Context Injection: Use raw layer names for richer context
-                semantic_tags = self._build_semantic_tags_raw(psd)
+            # Build semantic tags from layer paths
+            # v3.1 Context Injection: Use raw layer names for richer context
+            semantic_tags = self._build_semantic_tags_raw(psd)
 
-                # Get file stats
-                file_stats = file_path.stat()
+            # Get file stats
+            file_stats = file_path.stat()
 
-                # Count layers
-                layer_count = len(list(psd.descendants()))
+            # Count layers
+            layer_count = len(list(psd.descendants()))
 
-                # Build AssetMeta
-                asset_meta = AssetMeta(
-                    file_path=str(file_path.absolute()),
-                    file_name=file_path.name,
-                    file_size=file_stats.st_size,
-                    format='PSD',
-                    resolution=(width, height),
-                    visual_source_path=str(thumbnail_path) if thumbnail_path else None,
-                    semantic_tags=semantic_tags,
-                    text_content=text_contents,
-                    layer_tree=layer_tree,
-                    layer_count=layer_count,
-                    used_fonts=fonts,
-                    metadata={
-                        'color_mode': str(psd.color_mode),
-                        'channels': psd.channels,
-                    },
-                    modified_at=datetime.fromtimestamp(file_stats.st_mtime),
-                    thumbnail_url=str(thumbnail_path) if thumbnail_path else None
-                )
-            finally:
-                psd.close()
+            # Build AssetMeta
+            asset_meta = AssetMeta(
+                file_path=str(file_path.absolute()),
+                file_name=file_path.name,
+                file_size=file_stats.st_size,
+                format='PSD',
+                resolution=(width, height),
+                visual_source_path=str(thumbnail_path) if thumbnail_path else None,
+                semantic_tags=semantic_tags,
+                text_content=text_contents,
+                layer_tree=layer_tree,
+                layer_count=layer_count,
+                used_fonts=fonts,
+                metadata={
+                    'color_mode': str(psd.color_mode),
+                    'channels': psd.channels,
+                },
+                modified_at=datetime.fromtimestamp(file_stats.st_mtime),
+                thumbnail_url=str(thumbnail_path) if thumbnail_path else None
+            )
 
             # Save JSON
             self._save_json(asset_meta, file_path)
