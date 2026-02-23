@@ -123,7 +123,48 @@ function App() {
     configureAuth(mode);
   };
 
-  const handleModeReset = () => {
+  const handleModeReset = async () => {
+    // Stop ALL running backend processes before returning to SetupPage
+    // The app screen must reflect the actual state — no hidden background work.
+    if (isWorkerRunning) {
+      try { await window.electron?.worker?.stop(); } catch { /* ignore */ }
+      setIsWorkerRunning(false);
+      setWorkerProgress({
+        batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
+        currentFile: '', completed: 0, failed: 0, totalQueue: 0, pending: 0,
+        etaMs: null, throughput: 0, processingMode: 'full', workerState: 'active',
+        phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+        phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+      });
+      workerThroughputRef.current = { windowTimes: [] };
+    }
+    if (serverRunning) {
+      try { await window.electron?.server?.stop(); } catch { /* ignore */ }
+      setServerRunning(false);
+      setServerLanUrl(null);
+      setServerLanAddresses([]);
+      clearTokens();
+    }
+    if (isProcessing) {
+      window.electron?.pipeline?.stop();
+      setIsProcessing(false);
+      setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
+      setFileStep({ step: 0, totalSteps: 5, stepName: '' });
+      etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
+    }
+    if (isDiscovering) {
+      window.electron?.pipeline?.stop();
+      setIsDiscovering(false);
+      setDiscoverProgress({
+        processed: 0, total: 0, skipped: 0, currentFile: '', folderPath: '',
+        cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
+        activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '',
+        etaMs: null
+      });
+      discoverEtaRef.current = { phase: -1, startTime: null, startCount: 0 };
+      discoverQueueRef.current = { folders: [], index: 0, scanning: false };
+    }
+
     setAppMode(null); // Show SetupPage
     setUseLocalBackend(false);
     configureAuth(null); // Reset to local bypass
