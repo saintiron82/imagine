@@ -12,6 +12,17 @@ from backend.db.sqlite_client import SQLiteDB
 logger = logging.getLogger(__name__)
 
 
+def _utcnow_sql() -> str:
+    """Return current UTC time in SQLite-native format: YYYY-MM-DD HH:MM:SS.
+
+    Using this format (no 'T' separator, no timezone suffix, no microseconds)
+    ensures correct lexicographic comparison with SQLite datetime() results.
+    Python's isoformat() produces '2026-02-23T04:22:25.505000+00:00' which
+    compares incorrectly as raw string ('T' > ' ').
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 class JobQueueManager:
     """Manages the job queue for distributed file processing."""
 
@@ -48,7 +59,7 @@ class JobQueueManager:
         Resource-aware: throttle_level from worker session limits claim count.
         """
         cursor = self.db.conn.cursor()
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utcnow_sql()
 
         # Resource-aware claim throttling: check worker's throttle_level
         if worker_session_id is not None:
@@ -183,7 +194,7 @@ class JobQueueManager:
         if phase in phases:
             phases[phase] = True
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utcnow_sql()
         cursor.execute(
             """UPDATE job_queue
                SET phase_completed = ?, status = 'processing', started_at = COALESCE(started_at, ?)
@@ -196,7 +207,7 @@ class JobQueueManager:
     def complete_job(self, job_id: int, user_id: int) -> bool:
         """Mark a job as completed."""
         cursor = self.db.conn.cursor()
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utcnow_sql()
         cursor.execute(
             """UPDATE job_queue
                SET status = 'completed', completed_at = ?,

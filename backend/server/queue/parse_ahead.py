@@ -16,11 +16,11 @@ import logging
 import shutil
 import time
 import traceback
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from backend.server.queue.base_ahead_pool import BaseAheadPool
+from backend.server.queue.manager import _utcnow_sql
 from backend.utils.meta_helpers import meta_to_dict
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ class ParseAheadPool(BaseAheadPool):
                                 f"{traceback.format_exc()}"
                             )
 
-                        now = datetime.now(timezone.utc).isoformat()
+                        now = _utcnow_sql()
                         if success:
                             cursor.execute(
                                 "UPDATE job_queue SET parse_status = 'parsed', parsed_at = ? WHERE id = ?",

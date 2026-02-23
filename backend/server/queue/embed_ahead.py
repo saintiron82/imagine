@@ -12,9 +12,9 @@ import json
 import logging
 import time
 import traceback
-from datetime import datetime, timezone
 
 from backend.server.queue.base_ahead_pool import BaseAheadPool
+from backend.server.queue.manager import _utcnow_sql
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ class EmbedAheadPool(BaseAheadPool):
 
         # Mark unrecoverable jobs as failed to prevent infinite re-polling
         if failed_job_ids:
-            now = datetime.now(timezone.utc).isoformat()
+            now = _utcnow_sql()
             for fid in failed_job_ids:
                 try:
                     cursor.execute(
@@ -188,7 +188,7 @@ class EmbedAheadPool(BaseAheadPool):
             return
 
         # Store vectors + mark jobs completed
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utcnow_sql()
         completed_phase = json.dumps({"parse": True, "vision": True, "embed": True})
 
         for (job_id, stored_file_id, file_path), mv_vec in zip(valid_jobs, mv_vecs):

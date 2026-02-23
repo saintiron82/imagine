@@ -7,7 +7,6 @@ Server piggybacks commands (stop/block) in heartbeat responses.
 
 import logging
 import json
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,6 +14,7 @@ from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user, require_admin
+from backend.server.queue.manager import _utcnow_sql
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def worker_connect(
     db: SQLiteDB = Depends(get_db),
 ):
     """Register a new worker session."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = _utcnow_sql()
     cursor = db.conn.cursor()
 
     # Mark any stale sessions from this user as offline
@@ -117,7 +117,7 @@ def worker_heartbeat(
     db: SQLiteDB = Depends(get_db),
 ):
     """Periodic heartbeat from worker. Returns pending commands."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = _utcnow_sql()
     cursor = db.conn.cursor()
 
     # Verify session ownership + read overrides
@@ -196,7 +196,7 @@ def worker_disconnect(
     db: SQLiteDB = Depends(get_db),
 ):
     """Worker graceful disconnect."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = _utcnow_sql()
     cursor = db.conn.cursor()
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
@@ -386,7 +386,7 @@ def admin_block_worker(
     db: SQLiteDB = Depends(get_db),
 ):
     """Block a worker — it will be forced to disconnect (admin only)."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = _utcnow_sql()
     cursor = db.conn.cursor()
     cursor.execute(
         """UPDATE worker_sessions
