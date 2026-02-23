@@ -356,7 +356,10 @@ def admin_list_workers(
             "batch_capacity_override": row[16],
             "resources": json.loads(row[17]) if row[17] else None,
         })
-    return {"workers": workers}
+    return {
+        "workers": workers,
+        "global_processing_mode": _get_global_processing_mode(),
+    }
 
 
 @router.post("/admin/workers/{session_id}/stop")
