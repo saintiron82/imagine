@@ -496,5 +496,11 @@
   "sync.all_synced": "All files synced",
   "sync.moved_details": "{count} moved files",
   "sync.missing_details": "{count} missing files",
-  "sync.error": "Sync failed"
+  "sync.error": "Sync failed",
+  "domain_select.title": "Select Classification Domain",
+  "domain_select.desc": "Choose a domain to customize how AI classifies your images. You can change this later in Admin settings.",
+  "domain_select.select": "Select",
+  "domain_select.skip": "Skip for now",
+  "domain_select.types_count": "{count} image types",
+  "domain_select.selected": "Selected!"
 }

@@ -17,8 +17,9 @@ import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
 import { getWorkerCredentials } from './api/auth';
-import { setUseLocalBackend } from './services/bridge';
+import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
 import { registerPaths, scanFolder, getJobStats } from './api/admin';
+import DomainSelectModal from './components/DomainSelectModal';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
@@ -57,6 +58,7 @@ function App() {
   const [folderStatsVersion, setFolderStatsVersion] = useState(0);
   const [queueReloadSignal, setQueueReloadSignal] = useState(0);
   const [showDownloadPage, setShowDownloadPage] = useState(false);
+  const [showDomainSelect, setShowDomainSelect] = useState(false);
 
   // Worker progress state (client mode)
   const [isWorkerRunning, setIsWorkerRunning] = useState(false);
@@ -563,6 +565,26 @@ function App() {
     return () => clearInterval(interval);
   }, [appMode, isWorkerRunning]);
 
+  // Domain setup check — show selection modal if no domain configured
+  const domainCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!appMode || (skipAuth === false && !isAuthenticated)) return;
+    if (domainCheckedRef.current) return;
+    domainCheckedRef.current = true;
+
+    const checkDomain = async () => {
+      try {
+        const config = await getActiveDomainConfig();
+        if (!config?.active_domain) {
+          setShowDomainSelect(true);
+        }
+      } catch {
+        // Config not available yet — ignore
+      }
+    };
+    checkDomain();
+  }, [appMode, skipAuth, isAuthenticated]);
+
   // Manual worker start handler (called from ClientWorkerView)
   const handleWorkerStart = async () => {
     if (!isElectron || isWorkerRunning) return;
@@ -903,6 +925,10 @@ function App() {
           onClose={() => setShowImportDialog(false)}
           onProcessNew={handleImportProcessNew}
         />
+      )}
+
+      {showDomainSelect && (
+        <DomainSelectModal onClose={() => setShowDomainSelect(false)} />
       )}
 
       {/* Header Bar */}
