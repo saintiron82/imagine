@@ -108,6 +108,16 @@ export async function stopMyWorker(sessionId) {
   return apiClient.post(`/api/v1/workers/${sessionId}/stop`);
 }
 
+// ── Worker Config (Admin) ────────────────────────────────
+
+export async function updateWorkerConfig(sessionId, config) {
+  return apiClient.patch(`/api/v1/admin/workers/${sessionId}/config`, config);
+}
+
+export async function updateGlobalProcessingMode(mode) {
+  return apiClient.patch('/api/v1/admin/workers/global-config', { processing_mode: mode });
+}
+
 // ── Worker Self-service ──────────────────────────────────
 
 export async function registerWorker() {

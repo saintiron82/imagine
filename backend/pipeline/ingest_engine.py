@@ -1013,9 +1013,12 @@ def _parse_single_file(file_info: tuple) -> ParsedFile:
             f"  [REGEN] {fp.name}: thumbnail {regen_reason}, regenerating at {required_edge}px"
         )
         try:
-            new_thumb = parser._create_thumbnail(
-                *(_open_for_thumbnail(fp, parser))
-            )
+            source, source_path = _open_for_thumbnail(fp, parser)
+            try:
+                new_thumb = parser._create_thumbnail(source, source_path)
+            finally:
+                if hasattr(source, 'close'):
+                    source.close()
             if new_thumb:
                 pf.thumb_path = new_thumb
                 meta.thumbnail_url = str(new_thumb)

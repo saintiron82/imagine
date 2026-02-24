@@ -100,6 +100,9 @@ class WorkerIPCController:
         _emit_log(f"[START] Auth mode: {self._auth_mode}", "info")
 
         self._running = True
+        # Reset stop signal from previous session
+        if self._daemon:
+            self._daemon._stop_requested = False
         self._thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._thread.start()
         _emit_status("running")
@@ -112,8 +115,10 @@ class WorkerIPCController:
             _emit_log("Tokens refreshed from app session", "info")
 
     def stop(self):
-        """Stop the worker loop."""
+        """Stop the worker loop — also signals daemon to abort current batch."""
         self._running = False
+        if self._daemon:
+            self._daemon._stop_requested = True
         _emit_status("idle")
         _emit_log("Worker stopped", "info")
 
@@ -130,12 +135,38 @@ class WorkerIPCController:
             _emit_log("[IMPORT] Importing WorkerDaemon (numpy=lazy)...", "info")
             from backend.worker.worker_daemon import WorkerDaemon
             from backend.worker.config import get_heartbeat_interval
+            from backend.worker.worker_state import WorkerState
+            from backend.worker.schedule import is_active_now
             _emit_log("[IMPORT] OK — all imports complete", "info")
 
             _emit_log("[THREAD] Creating WorkerDaemon...", "info")
             daemon = WorkerDaemon()
             self._daemon = daemon
             _emit_log(f"[THREAD] Daemon created, server_url={daemon.server_url}", "info")
+
+            # Wire state machine callbacks to emit IPC events
+            _orig_on_idle = daemon._on_enter_idle
+            _orig_on_active = daemon._on_enter_active
+            _orig_on_resting = daemon._on_enter_resting
+
+            def _ipc_on_idle():
+                _orig_on_idle()
+                _emit({"event": "worker_state", "state": "idle"})
+                _emit_log("[STATE] -> idle (models unloaded)", "info")
+
+            def _ipc_on_active():
+                _orig_on_active()
+                _emit({"event": "worker_state", "state": "active"})
+                _emit_log("[STATE] -> active", "info")
+
+            def _ipc_on_resting():
+                _orig_on_resting()
+                _emit({"event": "worker_state", "state": "resting"})
+                _emit_log("[STATE] -> resting (resource pressure)", "warning")
+
+            daemon._state_machine._on_enter_idle = _ipc_on_idle
+            daemon._state_machine._on_enter_active = _ipc_on_active
+            daemon._state_machine._on_enter_resting = _ipc_on_resting
 
             # ── Authentication ──
             import os
@@ -194,36 +225,108 @@ class WorkerIPCController:
                 _emit_log(f"[NET] Health check: {test_resp.status_code} {test_resp.text[:200]}", "info")
             except Exception as net_err:
                 _emit_log(f"[NET] Health check FAILED: {net_err}", "error")
+                _emit_log("[NET] Server may be offline or unreachable", "error")
+                _emit_status("error")
+                self._running = False
+                return
 
-            # ── Register worker session ──
-            _emit_log("[SESSION] Connecting worker session...", "info")
-            daemon._connect_session()
-            if daemon.session_id:
+            # ── Register worker session (retry up to 3 times) ──
+            session_ok = False
+            for attempt in range(1, 4):
+                _emit_log(f"[SESSION] Connecting worker session (attempt {attempt}/3)...", "info")
+                session_ok = daemon._connect_session()
+                if session_ok:
+                    break
+                if attempt < 3:
+                    wait = attempt * 2
+                    _emit_log(f"[SESSION] Retrying in {wait}s...", "warning")
+                    time.sleep(wait)
+
+            if session_ok and daemon.session_id:
                 _emit_log(f"[SESSION] Registered (id={daemon.session_id}, mode={daemon.processing_mode})", "success")
+                # Notify UI of processing mode so phase pills can be dimmed
+                _emit({"event": "processing_mode", "mode": daemon.processing_mode})
             else:
-                _emit_log("[SESSION] Warning: session not registered (no session_id)", "warning")
+                _emit_log("[SESSION] FAILED: could not register session after 3 attempts", "error")
+                _emit_status("error")
+                self._running = False
+                return
 
             # ── Main claim loop ──
             poll_interval = 5
             heartbeat_interval = get_heartbeat_interval()
             last_heartbeat = time.time()
+            consecutive_heartbeat_fails = 0
+            MAX_HEARTBEAT_FAILS = 3
             _emit_log(f"[LOOP] Starting job claim loop (poll={poll_interval}s, heartbeat={heartbeat_interval}s)", "info")
 
             loop_count = 0
+            _prev_worker_state = None
             while self._running:
                 loop_count += 1
 
+                # ── State Machine check (schedule + throttle + idle timeout) ──
+                try:
+                    scheduled_active = is_active_now()
+                    throttle = daemon._check_throttle()
+                except Exception:
+                    scheduled_active = True
+                    throttle = "normal"
+
+                daemon._state_machine.update(
+                    is_scheduled_active=scheduled_active,
+                    throttle_level=throttle,
+                    has_pending_jobs=True,  # Assume true until claim proves otherwise
+                )
+
+                current_state = daemon._state_machine.state
+                if current_state in (WorkerState.IDLE, WorkerState.RESTING):
+                    # Not active — skip job processing, only heartbeat
+                    if time.time() - last_heartbeat >= heartbeat_interval:
+                        hb = daemon._heartbeat()
+                        last_heartbeat = time.time()
+                        if hb:
+                            consecutive_heartbeat_fails = 0
+                            cmd = hb.get("command")
+                            if cmd in ("stop", "block"):
+                                _emit_log(f"[HEARTBEAT] Server command: {cmd}", "warning")
+                                self._running = False
+                                break
+                        else:
+                            consecutive_heartbeat_fails += 1
+                            if consecutive_heartbeat_fails >= MAX_HEARTBEAT_FAILS:
+                                _emit_log("[HEARTBEAT] Server unreachable — stopping worker", "error")
+                                self._running = False
+                                break
+                    time.sleep(poll_interval)
+                    continue
+
                 # Periodic heartbeat
                 if time.time() - last_heartbeat >= heartbeat_interval:
-                    _emit_log(f"[HEARTBEAT] Sending heartbeat (loop #{loop_count})...", "info")
+                    if loop_count <= 3 or loop_count % 10 == 0:
+                        _emit_log(f"[HEARTBEAT] Sending heartbeat (loop #{loop_count})...", "info")
+                    old_mode = daemon.processing_mode
                     hb = daemon._heartbeat()
                     last_heartbeat = time.time()
-                    cmd = hb.get("command")
-                    _emit_log(f"[HEARTBEAT] Response: {hb}", "info")
-                    if cmd in ("stop", "block"):
-                        _emit_log(f"[HEARTBEAT] Server command: {cmd}", "warning")
-                        self._running = False
-                        break
+                    if not hb:
+                        consecutive_heartbeat_fails += 1
+                        _emit_log(f"[HEARTBEAT] No response ({consecutive_heartbeat_fails}/{MAX_HEARTBEAT_FAILS})", "warning")
+                        if consecutive_heartbeat_fails >= MAX_HEARTBEAT_FAILS:
+                            _emit_log("[HEARTBEAT] Server unreachable — stopping worker", "error")
+                            self._running = False
+                            break
+                    else:
+                        consecutive_heartbeat_fails = 0
+                        cmd = hb.get("command")
+                        if loop_count <= 3 or loop_count % 10 == 0:
+                            _emit_log(f"[HEARTBEAT] OK", "info")
+                        # Relay processing mode changes from server
+                        if daemon.processing_mode != old_mode:
+                            _emit({"event": "processing_mode", "mode": daemon.processing_mode})
+                        if cmd in ("stop", "block"):
+                            _emit_log(f"[HEARTBEAT] Server command: {cmd}", "warning")
+                            self._running = False
+                            break
 
                 # Claim jobs
                 if loop_count <= 3 or loop_count % 10 == 0:
@@ -234,11 +337,20 @@ class WorkerIPCController:
                     if loop_count <= 3 or loop_count % 10 == 0:
                         _emit_log(f"[CLAIM] No jobs available, waiting {poll_interval}s...", "info")
                     _emit_status("running", [])
+                    # Update state machine with no pending jobs (may trigger idle timeout)
+                    daemon._state_machine.update(
+                        is_scheduled_active=scheduled_active,
+                        throttle_level=throttle,
+                        has_pending_jobs=False,
+                    )
                     time.sleep(poll_interval)
                     continue
 
                 _emit_log(f"[CLAIM] Got {len(jobs)} jobs — batch processing", "info")
                 _emit({"event": "batch_start", "batch_size": len(jobs)})
+
+                # Start background downloads for this batch
+                daemon._prefetch_downloads(jobs)
 
                 # Batch progress callback — relay events to Electron
                 def _batch_progress_cb(event_type, data):
@@ -282,6 +394,9 @@ class WorkerIPCController:
                     if not success:
                         _emit_log(f"Failed: {file_name}", "error")
 
+                # Record job activity to reset idle timeout timer
+                daemon._state_machine.record_job_activity()
+
                 # Brief pause between batches
                 time.sleep(1)
 
@@ -293,6 +408,10 @@ class WorkerIPCController:
             _emit_status("error")
             logger.error(f"Worker loop crashed: {e}\n{tb}")
         finally:
+            # Unload all models to free GPU memory
+            _emit_log("[SHUTDOWN] Unloading models...", "info")
+            if self._daemon:
+                self._daemon._on_enter_idle()
             # Disconnect session from server
             _emit_log("[SHUTDOWN] Disconnecting session...", "info")
             if self._daemon:

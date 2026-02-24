@@ -6,14 +6,15 @@ Server piggybacks commands (stop/block) in heartbeat responses.
 """
 
 import logging
-from datetime import datetime, timezone
+import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user, require_admin
+from backend.server.queue.manager import _utcnow_sql
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,9 @@ class HeartbeatRequest(BaseModel):
     current_file: Optional[str] = None
     current_phase: Optional[str] = None
     pool_size: int = 0
+    resources: Optional[dict] = None
+    throttle_level: Optional[str] = None  # normal/warning/danger/critical
+    worker_state: Optional[str] = None    # active/idle/resting
 
 
 class DisconnectRequest(BaseModel):
@@ -69,7 +73,7 @@ def worker_connect(
     db: SQLiteDB = Depends(get_db),
 ):
     """Register a new worker session."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = _utcnow_sql()
     cursor = db.conn.cursor()
 
     # Mark any stale sessions from this user as offline
@@ -113,7 +117,7 @@ def worker_heartbeat(
     db: SQLiteDB = Depends(get_db),
 ):
     """Periodic heartbeat from worker. Returns pending commands."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = _utcnow_sql()
     cursor = db.conn.cursor()
 
     # Verify session ownership + read overrides
@@ -137,7 +141,12 @@ def worker_heartbeat(
     if session_status == "blocked":
         return {"ok": True, "command": "block", "pool_hint": 0}
 
-    # Update metrics
+    # Update metrics (merge throttle_level + worker_state into resources JSON)
+    resources_data = dict(req.resources) if req.resources else {}
+    if req.throttle_level:
+        resources_data["throttle_level"] = req.throttle_level
+    if req.worker_state:
+        resources_data["worker_state"] = req.worker_state
     cursor.execute(
         """UPDATE worker_sessions
            SET last_heartbeat = ?,
@@ -146,10 +155,12 @@ def worker_heartbeat(
                current_job_id = ?,
                current_file = ?,
                current_phase = ?,
+               resources_json = ?,
                pending_command = NULL
            WHERE id = ?""",
         (now, req.jobs_completed, req.jobs_failed,
          req.current_job_id, req.current_file, req.current_phase,
+         json.dumps(resources_data) if resources_data else None,
          req.session_id)
     )
     db.conn.commit()
@@ -158,11 +169,22 @@ def worker_heartbeat(
     processing_mode = mode_override or _get_global_processing_mode()
     effective_batch = batch_override or batch_capacity
 
+    # Resource-aware batch_hint: throttle down based on worker resource pressure
+    throttle = resources_data.get("throttle_level", "normal") if resources_data else "normal"
+    if throttle == "critical":
+        resource_batch_hint = 0
+    elif throttle == "danger":
+        resource_batch_hint = 1
+    elif throttle == "warning":
+        resource_batch_hint = max(1, int(effective_batch * 0.5))
+    else:
+        resource_batch_hint = effective_batch
+
     return {
         "ok": True,
         "command": pending_cmd,
-        "pool_hint": effective_batch * 2,
-        "batch_hint": effective_batch,
+        "pool_hint": resource_batch_hint * 2,
+        "batch_hint": resource_batch_hint,
         "processing_mode": processing_mode,
     }
 
@@ -174,7 +196,7 @@ def worker_disconnect(
     db: SQLiteDB = Depends(get_db),
 ):
     """Worker graceful disconnect."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = _utcnow_sql()
     cursor = db.conn.cursor()
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
@@ -251,7 +273,8 @@ def admin_list_workers(
                   ws.current_file, ws.current_phase,
                   ws.last_heartbeat, ws.connected_at, ws.disconnected_at,
                   ws.pending_command, u.username, ws.user_id,
-                  ws.processing_mode_override, ws.batch_capacity_override
+                  ws.processing_mode_override, ws.batch_capacity_override,\
+                  ws.resources_json
            FROM worker_sessions ws
            JOIN users u ON ws.user_id = u.id
            ORDER BY
@@ -261,48 +284,89 @@ def admin_list_workers(
     )
     rows = cursor.fetchall()
 
-    # Per-worker throughput: completed jobs by worker_session_id (preferred),
-    # falling back to assigned_to (user_id) for legacy jobs without session tracking
-    cursor.execute(
-        """SELECT worker_session_id, COUNT(*) FROM job_queue
-           WHERE status = 'completed'
-             AND completed_at IS NOT NULL
-             AND datetime(completed_at) > datetime('now', '-5 minutes')
-             AND worker_session_id IS NOT NULL
-           GROUP BY worker_session_id"""
-    )
-    session_recent_5m = dict(cursor.fetchall())
+    # Per-worker throughput: mode-aware timestamp selection
+    # mc_only: use mc_completed_at (worker MC speed, not EmbedAhead MV speed)
+    # full:    use completed_at (full pipeline completion)
+    processing_mode = _get_global_processing_mode()
 
-    cursor.execute(
-        """SELECT worker_session_id, COUNT(*) FROM job_queue
-           WHERE status = 'completed'
-             AND completed_at IS NOT NULL
-             AND datetime(completed_at) > datetime('now', '-1 minute')
-             AND worker_session_id IS NOT NULL
-           GROUP BY worker_session_id"""
-    )
-    session_recent_1m = dict(cursor.fetchall())
+    if processing_mode == "mc_only":
+        cursor.execute(
+            """SELECT worker_session_id, COUNT(*) FROM job_queue
+               WHERE mc_completed_at IS NOT NULL
+                 AND datetime(mc_completed_at) > datetime('now', '-5 minutes')
+                 AND worker_session_id IS NOT NULL
+               GROUP BY worker_session_id"""
+        )
+        session_recent_5m = dict(cursor.fetchall())
 
-    # Fallback: per-user throughput for jobs without worker_session_id
-    cursor.execute(
-        """SELECT assigned_to, COUNT(*) FROM job_queue
-           WHERE status = 'completed'
-             AND completed_at IS NOT NULL
-             AND datetime(completed_at) > datetime('now', '-5 minutes')
-             AND worker_session_id IS NULL
-           GROUP BY assigned_to"""
-    )
-    user_recent_5m = dict(cursor.fetchall())
+        cursor.execute(
+            """SELECT worker_session_id, COUNT(*) FROM job_queue
+               WHERE mc_completed_at IS NOT NULL
+                 AND datetime(mc_completed_at) > datetime('now', '-1 minute')
+                 AND worker_session_id IS NOT NULL
+               GROUP BY worker_session_id"""
+        )
+        session_recent_1m = dict(cursor.fetchall())
 
-    cursor.execute(
-        """SELECT assigned_to, COUNT(*) FROM job_queue
-           WHERE status = 'completed'
-             AND completed_at IS NOT NULL
-             AND datetime(completed_at) > datetime('now', '-1 minute')
-             AND worker_session_id IS NULL
-           GROUP BY assigned_to"""
-    )
-    user_recent_1m = dict(cursor.fetchall())
+        # Fallback: per-user throughput for jobs without worker_session_id
+        cursor.execute(
+            """SELECT assigned_to, COUNT(*) FROM job_queue
+               WHERE mc_completed_at IS NOT NULL
+                 AND datetime(mc_completed_at) > datetime('now', '-5 minutes')
+                 AND worker_session_id IS NULL
+               GROUP BY assigned_to"""
+        )
+        user_recent_5m = dict(cursor.fetchall())
+
+        cursor.execute(
+            """SELECT assigned_to, COUNT(*) FROM job_queue
+               WHERE mc_completed_at IS NOT NULL
+                 AND datetime(mc_completed_at) > datetime('now', '-1 minute')
+                 AND worker_session_id IS NULL
+               GROUP BY assigned_to"""
+        )
+        user_recent_1m = dict(cursor.fetchall())
+    else:
+        cursor.execute(
+            """SELECT worker_session_id, COUNT(*) FROM job_queue
+               WHERE status = 'completed'
+                 AND completed_at IS NOT NULL
+                 AND datetime(completed_at) > datetime('now', '-5 minutes')
+                 AND worker_session_id IS NOT NULL
+               GROUP BY worker_session_id"""
+        )
+        session_recent_5m = dict(cursor.fetchall())
+
+        cursor.execute(
+            """SELECT worker_session_id, COUNT(*) FROM job_queue
+               WHERE status = 'completed'
+                 AND completed_at IS NOT NULL
+                 AND datetime(completed_at) > datetime('now', '-1 minute')
+                 AND worker_session_id IS NOT NULL
+               GROUP BY worker_session_id"""
+        )
+        session_recent_1m = dict(cursor.fetchall())
+
+        # Fallback: per-user throughput for jobs without worker_session_id
+        cursor.execute(
+            """SELECT assigned_to, COUNT(*) FROM job_queue
+               WHERE status = 'completed'
+                 AND completed_at IS NOT NULL
+                 AND datetime(completed_at) > datetime('now', '-5 minutes')
+                 AND worker_session_id IS NULL
+               GROUP BY assigned_to"""
+        )
+        user_recent_5m = dict(cursor.fetchall())
+
+        cursor.execute(
+            """SELECT assigned_to, COUNT(*) FROM job_queue
+               WHERE status = 'completed'
+                 AND completed_at IS NOT NULL
+                 AND datetime(completed_at) > datetime('now', '-1 minute')
+                 AND worker_session_id IS NULL
+               GROUP BY assigned_to"""
+        )
+        user_recent_1m = dict(cursor.fetchall())
 
     workers = []
     for row in rows:
@@ -331,8 +395,12 @@ def admin_list_workers(
             "throughput": throughput,
             "processing_mode_override": row[15],
             "batch_capacity_override": row[16],
+            "resources": json.loads(row[17]) if row[17] else None,
         })
-    return {"workers": workers}
+    return {
+        "workers": workers,
+        "global_processing_mode": _get_global_processing_mode(),
+    }
 
 
 @router.post("/admin/workers/{session_id}/stop")
@@ -362,7 +430,7 @@ def admin_block_worker(
     db: SQLiteDB = Depends(get_db),
 ):
     """Block a worker — it will be forced to disconnect (admin only)."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = _utcnow_sql()
     cursor = db.conn.cursor()
     cursor.execute(
         """UPDATE worker_sessions
@@ -403,10 +471,16 @@ def admin_update_worker_config(
 @router.patch("/admin/workers/global-config")
 def admin_update_global_config(
     req: GlobalModeUpdate,
+    request: Request,
     admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db),
 ):
-    """Change processing mode for ALL online workers."""
+    """Change processing mode for ALL online workers.
+
+    Also dynamically starts/stops EmbedAheadPool and updates
+    ParseAheadPool's processing_mode based on the new mode.
+    """
+
     cursor = db.conn.cursor()
     cursor.execute(
         """UPDATE worker_sessions
@@ -416,5 +490,52 @@ def admin_update_global_config(
     )
     db.conn.commit()
     affected = cursor.rowcount
+
+    # Persist to config so heartbeat reads the updated global mode
+    try:
+        from backend.utils.config import get_config
+        cfg = get_config()
+        cfg._set_dotted("server.processing_mode", req.processing_mode)
+    except Exception as e:
+        logger.warning(f"Failed to persist global processing_mode: {e}")
+
+    # Dynamically manage server-side pools based on new mode
+    try:
+        app = request.app
+
+        if app:
+            # Update ParseAheadPool's processing_mode (for VV embedding decision)
+            if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
+                app.state.parse_ahead._processing_mode = req.processing_mode
+                logger.info(f"ParseAheadPool mode updated: {req.processing_mode}")
+
+            if req.processing_mode == "mc_only":
+                # Bootstrap demand signal so ParseAheadPool starts
+                # pre-parsing immediately without waiting for next worker claim.
+                # session_id=-1 is a sentinel for "system bootstrap".
+                try:
+                    from backend.server.queue.base_ahead_pool import BaseAheadPool
+                    BaseAheadPool.record_claim(session_id=-1, count=10)
+                    logger.info("Bootstrap demand seeded for ParseAheadPool (mc_only switch)")
+                except Exception:
+                    pass
+
+                # Start EmbedAheadPool if not running
+                if not (hasattr(app.state, "embed_ahead") and app.state.embed_ahead
+                        and app.state.embed_ahead._thread
+                        and app.state.embed_ahead._thread.is_alive()):
+                    from backend.server.queue.embed_ahead import EmbedAheadPool
+                    app.state.embed_ahead = EmbedAheadPool(db)
+                    app.state.embed_ahead.start()
+                    logger.info("EmbedAheadPool started dynamically (mc_only mode)")
+            else:
+                # Stop EmbedAheadPool if running
+                if hasattr(app.state, "embed_ahead") and app.state.embed_ahead:
+                    app.state.embed_ahead.stop()
+                    app.state.embed_ahead = None
+                    logger.info("EmbedAheadPool stopped (full mode)")
+    except Exception as e:
+        logger.warning(f"Pool management on mode switch failed: {e}")
+
     logger.info(f"Admin set global processing mode: {req.processing_mode} ({affected} workers)")
     return {"ok": True, "affected": affected}

@@ -139,6 +139,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                     }
 
                     const minPhase = Math.min(myStats.mc, myStats.vv, myStats.mv);
+                    const maxPhase = Math.max(myStats.mc, myStats.vv, myStats.mv);
                     const ratio = minPhase / myStats.total;
                     // fully done (or within rounding: 98%+)
                     if (ratio >= 0.98) {
@@ -148,8 +149,8 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                             </span>
                         );
                     }
-                    // partially processed
-                    if (minPhase > 0) {
+                    // partially processed — any phase has started
+                    if (maxPhase > 0) {
                         const incomplete = myStats.total - minPhase;
                         return (
                             <span className="flex items-center flex-shrink-0 mr-1" title={`${incomplete}/${myStats.total} remaining`}>

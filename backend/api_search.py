@@ -125,6 +125,25 @@ def _get_searcher() -> SqliteVectorSearch:
     return _searcher
 
 
+def _resolve_thumbnail_path(result: dict) -> str:
+    """Resolve thumbnail path: DB value or infer from file_name on disk."""
+    thumb = result.get("thumbnail_url") or ""
+    if thumb:
+        return thumb
+    # Infer from file_name: output/thumbnails/{stem}_thumb.png
+    file_name = result.get("file_name", "")
+    if file_name:
+        stem = Path(file_name).stem
+        inferred = _PROJECT_ROOT / "output" / "thumbnails" / f"{stem}_thumb.png"
+        if inferred.exists():
+            return str(inferred)
+    return ""
+
+
+# Project root for thumbnail inference
+_PROJECT_ROOT = Path(__file__).parent.parent
+
+
 def format_result(result: dict) -> dict:
     """Format a single search result for the frontend."""
     metadata = result.get("metadata", {})
@@ -148,7 +167,7 @@ def format_result(result: dict) -> dict:
         "structure_score": result.get("structure_score", result.get("structural_similarity")),  # X: DINOv2 structure
         "combined_score": result.get("rrf_score", result.get("similarity", 0)),
         "metadata": metadata,
-        "thumbnail_path": result.get("thumbnail_url", ""),
+        "thumbnail_path": _resolve_thumbnail_path(result),
         "format": result.get("format", ""),
         "width": result.get("width", 0),
         "height": result.get("height", 0),

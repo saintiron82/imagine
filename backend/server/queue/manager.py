@@ -4,6 +4,7 @@ Job queue manager — work distribution for distributed processing.
 
 import json
 import logging
+import unicodedata
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -12,17 +13,43 @@ from backend.db.sqlite_client import SQLiteDB
 logger = logging.getLogger(__name__)
 
 
+def _utcnow_sql() -> str:
+    """Return current UTC time in SQLite-native format: YYYY-MM-DD HH:MM:SS.
+
+    Using this format (no 'T' separator, no timezone suffix, no microseconds)
+    ensures correct lexicographic comparison with SQLite datetime() results.
+    Python's isoformat() produces '2026-02-23T04:22:25.505000+00:00' which
+    compares incorrectly as raw string ('T' > ' ').
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 class JobQueueManager:
     """Manages the job queue for distributed file processing."""
 
     def __init__(self, db: SQLiteDB):
         self.db = db
 
+    def _get_processing_mode(self) -> str:
+        """Get server processing mode from config (always fresh).
+
+        No caching — config.get() reads from an in-memory dict, so it's cheap.
+        This ensures runtime mode changes via Admin API propagate immediately.
+        """
+        try:
+            from backend.utils.config import get_config
+            return get_config().get("server.processing_mode", "full")
+        except Exception:
+            return "full"
+
     def create_jobs(self, file_ids: List[int], file_paths: List[str], priority: int = 0) -> int:
         """Create pending jobs for files. Returns count of jobs created."""
         cursor = self.db.conn.cursor()
         created = 0
         for fid, fpath in zip(file_ids, file_paths):
+            # Normalize to NFC — macOS filesystem returns NFD (decomposed Korean),
+            # but files table stores NFC (via upsert_metadata). Must match.
+            fpath = unicodedata.normalize('NFC', fpath)
             try:
                 cursor.execute(
                     """INSERT INTO job_queue (file_id, file_path, status, priority)
@@ -45,9 +72,34 @@ class JobQueueManager:
         downloading the full original file.
 
         Uses serialized access (SQLite single-writer) to avoid race conditions.
+        Resource-aware: throttle_level from worker session limits claim count.
         """
         cursor = self.db.conn.cursor()
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utcnow_sql()
+
+        # Resource-aware claim throttling: check worker's throttle_level
+        if worker_session_id is not None:
+            cursor.execute(
+                "SELECT resources_json FROM worker_sessions WHERE id = ?",
+                (worker_session_id,)
+            )
+            session_row = cursor.fetchone()
+            if session_row and session_row[0]:
+                try:
+                    resources = json.loads(session_row[0])
+                    throttle = resources.get("throttle_level", "normal")
+                    if throttle == "critical":
+                        logger.info(
+                            f"Claim denied for session {worker_session_id}: "
+                            f"throttle_level=critical"
+                        )
+                        return []
+                    elif throttle == "danger":
+                        count = min(count, 1)
+                    elif throttle == "warning":
+                        count = max(1, int(count * 0.5))
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         # 1) Prefer pre-parsed jobs (server already ran Phase P)
         cursor.execute(
@@ -61,7 +113,10 @@ class JobQueueManager:
         rows = list(cursor.fetchall())
 
         # 2) Fill remainder with unparsed jobs (fallback)
-        if len(rows) < count:
+        # In mc_only mode, skip unparsed fallback — complete_mc() requires
+        # ParseAhead to have already upserted file metadata into files table.
+        processing_mode = self._get_processing_mode()
+        if processing_mode != "mc_only" and len(rows) < count:
             remainder = count - len(rows)
             claimed_ids = [r[0] for r in rows]
             if claimed_ids:
@@ -87,6 +142,20 @@ class JobQueueManager:
                     (remainder,)
                 )
             rows.extend(cursor.fetchall())
+
+        # Signal demand to ParseAheadPool BEFORE early return.
+        # Uses requested count (not actual claimed count) — represents
+        # "workers want N jobs" regardless of what's available.
+        # This prevents the chicken-and-egg deadlock in mc_only mode where
+        # 0 pre-parsed jobs → no record_claim → no demand → no pre-parsing.
+        if worker_session_id is not None:
+            try:
+                from backend.server.queue.base_ahead_pool import BaseAheadPool
+                BaseAheadPool.record_claim(
+                    session_id=worker_session_id, count=count
+                )
+            except ImportError:
+                pass
 
         if not rows:
             return []
@@ -128,6 +197,7 @@ class JobQueueManager:
             f"User {user_id} claimed {len(claimed)} jobs "
             f"({pre_parsed_count} pre-parsed, {len(claimed) - pre_parsed_count} unparsed)"
         )
+
         return claimed
 
     def update_progress(self, job_id: int, user_id: int, phase: str) -> bool:
@@ -147,7 +217,7 @@ class JobQueueManager:
         if phase in phases:
             phases[phase] = True
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utcnow_sql()
         cursor.execute(
             """UPDATE job_queue
                SET phase_completed = ?, status = 'processing', started_at = COALESCE(started_at, ?)
@@ -160,7 +230,7 @@ class JobQueueManager:
     def complete_job(self, job_id: int, user_id: int) -> bool:
         """Mark a job as completed."""
         cursor = self.db.conn.cursor()
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utcnow_sql()
         cursor.execute(
             """UPDATE job_queue
                SET status = 'completed', completed_at = ?,
@@ -248,22 +318,46 @@ class JobQueueManager:
         cursor.execute("SELECT COUNT(*) FROM job_queue")
         total = cursor.fetchone()[0]
 
-        # Throughput: completed jobs in sliding windows
-        cursor.execute("""
-            SELECT COUNT(*) FROM job_queue
-            WHERE status = 'completed'
-              AND completed_at IS NOT NULL
-              AND datetime(completed_at) > datetime('now', '-5 minutes')
-        """)
-        recent_5min = cursor.fetchone()[0]
+        # Determine processing mode for throughput calculation
+        try:
+            from backend.utils.config import get_config
+            processing_mode = get_config().get("server.processing_mode", "full")
+        except Exception:
+            processing_mode = "full"
 
-        cursor.execute("""
-            SELECT COUNT(*) FROM job_queue
-            WHERE status = 'completed'
-              AND completed_at IS NOT NULL
-              AND datetime(completed_at) > datetime('now', '-1 minute')
-        """)
-        recent_1min = cursor.fetchone()[0]
+        # Throughput: sliding windows
+        # mc_only: use mc_completed_at (worker MC speed, not EmbedAhead MV speed)
+        # full:    use completed_at (full pipeline completion)
+        if processing_mode == "mc_only":
+            cursor.execute("""
+                SELECT COUNT(*) FROM job_queue
+                WHERE mc_completed_at IS NOT NULL
+                  AND datetime(mc_completed_at) > datetime('now', '-5 minutes')
+            """)
+            recent_5min = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*) FROM job_queue
+                WHERE mc_completed_at IS NOT NULL
+                  AND datetime(mc_completed_at) > datetime('now', '-1 minute')
+            """)
+            recent_1min = cursor.fetchone()[0]
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) FROM job_queue
+                WHERE status = 'completed'
+                  AND completed_at IS NOT NULL
+                  AND datetime(completed_at) > datetime('now', '-5 minutes')
+            """)
+            recent_5min = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*) FROM job_queue
+                WHERE status = 'completed'
+                  AND completed_at IS NOT NULL
+                  AND datetime(completed_at) > datetime('now', '-1 minute')
+            """)
+            recent_1min = cursor.fetchone()[0]
 
         # Use 1-min window if active, otherwise 5-min average
         if recent_1min > 0:
@@ -272,6 +366,26 @@ class JobQueueManager:
             throughput = round(recent_5min / 5.0, 1)
         else:
             throughput = 0.0
+
+        # Phase-level progress counts
+        phase_stats = {}
+        try:
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN json_extract(phase_completed, '$.parse') = 1 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN json_extract(phase_completed, '$.vision') = 1 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN json_extract(phase_completed, '$.embed') = 1 THEN 1 ELSE 0 END)
+                FROM job_queue
+                WHERE status IN ('pending', 'assigned', 'processing', 'completed')
+            """)
+            phase_row = cursor.fetchone()
+            phase_stats = {
+                "phase_parse_done": phase_row[0] or 0,
+                "phase_vision_done": phase_row[1] or 0,
+                "phase_embed_done": phase_row[2] or 0,
+            }
+        except Exception:
+            pass
 
         # Parse-ahead stats
         parse_ahead_stats = {}
@@ -290,16 +404,28 @@ class JobQueueManager:
         except Exception:
             pass
 
+        # ETA: estimated seconds to complete remaining jobs
+        pending = status_counts.get("pending", 0)
+        assigned = status_counts.get("assigned", 0)
+        processing = status_counts.get("processing", 0)
+        remaining = pending + assigned + processing
+        if throughput > 0 and remaining > 0:
+            eta_seconds = round((remaining / throughput) * 60)
+        else:
+            eta_seconds = None
+
         return {
             "total": total,
-            "pending": status_counts.get("pending", 0),
-            "assigned": status_counts.get("assigned", 0),
-            "processing": status_counts.get("processing", 0),
+            "pending": pending,
+            "assigned": assigned,
+            "processing": processing,
             "completed": status_counts.get("completed", 0),
             "failed": status_counts.get("failed", 0),
             "throughput": throughput,
             "recent_1min": recent_1min,
             "recent_5min": recent_5min,
+            "eta_seconds": eta_seconds,
+            **phase_stats,
             **parse_ahead_stats,
         }
 
@@ -366,12 +492,20 @@ class JobQueueManager:
         return success
 
     def retry_failed_jobs(self) -> int:
-        """Retry all failed jobs by resetting them to pending."""
+        """Retry all failed jobs by resetting them to pending.
+
+        Also resets parse_status='failed' back to NULL so ParseAhead
+        can re-attempt pre-parsing (prevents permanent parse deadlock).
+        """
         cursor = self.db.conn.cursor()
         cursor.execute(
             """UPDATE job_queue
                SET status = 'pending', retry_count = 0,
-                   error_message = NULL, assigned_to = NULL, assigned_at = NULL
+                   error_message = NULL, assigned_to = NULL, assigned_at = NULL,
+                   parse_status = CASE
+                       WHEN parse_status = 'failed' THEN NULL
+                       ELSE parse_status
+                   END
                WHERE status = 'failed'"""
         )
         self.db.conn.commit()

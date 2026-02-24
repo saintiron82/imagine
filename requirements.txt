@@ -40,6 +40,9 @@ deep-translator>=1.11.0
 # Environment Configuration
 python-dotenv>=1.0.0
 
+# System Monitoring (worker resource metrics)
+psutil>=5.9.0
+
 # MLX (Apple Silicon native acceleration, macOS only)
 mlx>=0.18.0; sys_platform == 'darwin'
 mlx-vlm>=0.1.0; sys_platform == 'darwin'

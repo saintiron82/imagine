@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
     current_job_id INTEGER,
     current_file TEXT,
     current_phase TEXT,
+    -- Resource metrics (JSON blob from resource_monitor.collect_metrics())
+    resources_json TEXT DEFAULT NULL,
     -- Command queue (server → worker, consumed on heartbeat)
     pending_command TEXT DEFAULT NULL
         CHECK (pending_command IN (NULL, 'stop', 'pause', 'block')),
@@ -103,6 +105,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
     assigned_at TEXT,
     started_at TEXT,
     completed_at TEXT,
+    mc_completed_at TEXT,          -- MC(Vision) completion timestamp (mc_only throughput measurement)
 
     -- Phase-level tracking (JSON)
     phase_completed TEXT DEFAULT '{"parse":false,"vision":false,"embed":false}',
@@ -146,3 +149,5 @@ CREATE INDEX IF NOT EXISTS idx_worker_sessions_user ON worker_sessions(user_id, 
 CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
     ON job_queue(parse_status, priority DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed
+    ON job_queue(mc_completed_at);

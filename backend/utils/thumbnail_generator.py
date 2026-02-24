@@ -97,7 +97,7 @@ def process_single(file_path: str, size: int = DEFAULT_SIZE, return_paths: bool 
                     img = None
         else:
             img = Image.open(file_path)
-        
+
         # v3.1: Keep RGBA for disk storage (transparency preservation)
         # Composite to RGB will be done in-memory during indexing
         if img.mode == 'P':

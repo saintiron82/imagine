@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2, Download, Copy, CheckCircle, Monitor, Cpu, Sliders, Zap } from 'lucide-react';
+import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2, Download, Copy, CheckCircle, Monitor, Cpu, Sliders, Zap, CalendarClock } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { apiClient, isElectron, getServerUrl, getAccessToken, getRefreshToken } from '../api/client';
 import { getJobStats } from '../api/worker';
@@ -294,6 +294,214 @@ export function PerformanceLimits({ t }) {
 }
 
 
+const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const DAY_ISO = [1, 2, 3, 4, 5, 6, 7]; // ISO weekday
+
+function WorkerScheduleSettings({ t }) {
+  const [processingMode, setProcessingMode] = useState('full');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [activeDays, setActiveDays] = useState([1, 2, 3, 4, 5, 6, 7]);
+  const [idleTimeout, setIdleTimeout] = useState(10);
+  const [saved, setSaved] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!isElectron) { setLoaded(true); return; }
+    const load = async () => {
+      try {
+        const result = await window.electron?.pipeline?.getConfig();
+        if (result?.success) {
+          const w = result.config?.worker || {};
+          if (w.processing_mode) setProcessingMode(w.processing_mode);
+          if (w.idle_unload_minutes != null) setIdleTimeout(w.idle_unload_minutes);
+          if (w.schedule) {
+            const sched = w.schedule;
+            if (sched.active_hours) {
+              const parts = sched.active_hours.split('-');
+              if (parts.length === 2) {
+                setStartTime(parts[0].trim());
+                setEndTime(parts[1].trim());
+              }
+            }
+            if (sched.active_days && Array.isArray(sched.active_days)) {
+              setActiveDays(sched.active_days);
+            }
+          }
+        }
+      } catch (e) { console.error('Failed to load schedule config:', e); }
+      setLoaded(true);
+    };
+    load();
+  }, []);
+
+  const saveSetting = useCallback(async (key, value) => {
+    if (!isElectron) return;
+    try {
+      await window.electron.pipeline.updateConfig(key, value);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e) { console.error('Failed to save schedule setting:', e); }
+  }, []);
+
+  const toggleDay = (day) => {
+    const newDays = activeDays.includes(day)
+      ? activeDays.filter(d => d !== day)
+      : [...activeDays, day].sort();
+    // All days selected = empty array (every day)
+    const toSave = newDays.length === 7 ? [] : newDays;
+    setActiveDays(newDays);
+    saveSetting('worker.schedule.active_days', toSave);
+  };
+
+  const updateHours = (start, end) => {
+    if (!start && !end) {
+      saveSetting('worker.schedule.active_hours', '');
+    } else if (start && end) {
+      saveSetting('worker.schedule.active_hours', `${start}-${end}`);
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+      <h3 className="text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
+        <CalendarClock size={14} className="text-cyan-400" />
+        {t('worker.schedule_title')}
+        {saved && <span className="text-xs text-green-400 ml-auto">{t('worker.schedule_saved')}</span>}
+      </h3>
+      <p className="text-xs text-gray-500 mb-4">{t('worker.schedule_desc')}</p>
+
+      <div className="space-y-5">
+        {/* Processing Mode */}
+        <div>
+          <label className="text-xs text-gray-400 mb-2 block">{t('worker.mode_title')}</label>
+          <div className="flex rounded-lg overflow-hidden border border-gray-600 w-fit">
+            <button
+              onClick={() => { setProcessingMode('full'); saveSetting('worker.processing_mode', 'full'); }}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                processingMode === 'full'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {t('worker.mode_full')}
+            </button>
+            <button
+              onClick={() => { setProcessingMode('mc_only'); saveSetting('worker.processing_mode', 'mc_only'); }}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                processingMode === 'mc_only'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {t('worker.mode_mc_only')}
+            </button>
+          </div>
+          <div className="text-[10px] text-gray-500 mt-1">
+            {processingMode === 'full' ? t('worker.mode_full_desc') : t('worker.mode_mc_only_desc')}
+          </div>
+        </div>
+
+        {/* Active Hours */}
+        <div>
+          <label className="text-xs text-gray-400 mb-2 block">{t('worker.schedule_active_hours')}</label>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-500">{t('worker.schedule_start')}</span>
+              <input
+                type="time"
+                value={startTime}
+                onChange={(e) => {
+                  setStartTime(e.target.value);
+                  updateHours(e.target.value, endTime);
+                }}
+                className="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-300 focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
+            <span className="text-gray-600">—</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-500">{t('worker.schedule_end')}</span>
+              <input
+                type="time"
+                value={endTime}
+                onChange={(e) => {
+                  setEndTime(e.target.value);
+                  updateHours(startTime, e.target.value);
+                }}
+                className="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-300 focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
+            {(startTime || endTime) && (
+              <button
+                onClick={() => {
+                  setStartTime('');
+                  setEndTime('');
+                  updateHours('', '');
+                }}
+                className="text-xs text-gray-500 hover:text-gray-300"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          <div className="text-[10px] text-gray-600 mt-1">{t('worker.schedule_hours_desc')}</div>
+        </div>
+
+        {/* Active Days */}
+        <div>
+          <label className="text-xs text-gray-400 mb-2 block">{t('worker.schedule_active_days')}</label>
+          <div className="flex gap-1.5">
+            {DAY_KEYS.map((key, i) => {
+              const iso = DAY_ISO[i];
+              const active = activeDays.includes(iso);
+              return (
+                <button
+                  key={key}
+                  onClick={() => toggleDay(iso)}
+                  className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                    active
+                      ? 'bg-cyan-600 text-white'
+                      : 'bg-gray-700 text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  {t(`worker.schedule_day_${key}`)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Idle Unload Timeout */}
+        <div>
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-xs text-gray-400">{t('worker.schedule_idle_timeout')}</label>
+            <span className="text-xs font-mono text-cyan-300">
+              {idleTimeout <= 0 ? t('worker.schedule_idle_off') : t('worker.schedule_idle_value', { minutes: idleTimeout })}
+            </span>
+          </div>
+          <input
+            type="range" min="0" max="60" step="5" value={idleTimeout}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setIdleTimeout(v);
+              saveSetting('worker.idle_unload_minutes', v);
+            }}
+            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+          />
+          <div className="flex justify-between text-[10px] text-gray-600 mt-0.5">
+            <span>{t('worker.schedule_idle_off')}</span>
+            <span className="text-gray-500">{t('worker.schedule_idle_desc')}</span>
+            <span>60</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function WorkerPage({ appMode }) {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
@@ -524,6 +732,9 @@ function WorkerPage({ appMode }) {
 
         {/* Performance Limits (Electron only) */}
         {isElectron && <PerformanceLimits t={t} />}
+
+        {/* Schedule Settings (Electron only) */}
+        {isElectron && <WorkerScheduleSettings t={t} />}
 
         {/* My Workers (server mode only) */}
         {appMode === 'server' && <MyWorkersSection />}

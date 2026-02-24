@@ -56,7 +56,7 @@ class PSDParser(BaseParser):
             return ParseResult(success=False, errors=[error_msg])
         
         try:
-            # Open PSD file
+            # Open PSD file (psd-tools reads entire file into memory, no handle held)
             psd = PSDImage.open(file_path)
             width, height = psd.width, psd.height
 
@@ -98,7 +98,7 @@ class PSDParser(BaseParser):
                 modified_at=datetime.fromtimestamp(file_stats.st_mtime),
                 thumbnail_url=str(thumbnail_path) if thumbnail_path else None
             )
-            
+
             # Save JSON
             self._save_json(asset_meta, file_path)
             logger.info(f"Parsed PSD: {file_path.name} ({width}x{height}, {layer_count} layers)")
@@ -108,7 +108,7 @@ class PSDParser(BaseParser):
                 asset_meta=asset_meta,
                 warnings=warnings
             )
-            
+
         except Exception as e:
             logger.exception(f"Failed to parse PSD: {file_path}")
             errors.append(f"Failed to parse {file_path}: {str(e)}")

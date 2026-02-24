@@ -94,6 +94,16 @@ async function refreshAccessToken() {
   return _refreshPromise;
 }
 
+/** Check if JWT is expiring within bufferSeconds (decode payload without verification). */
+function _isTokenExpiringSoon(token, bufferSeconds = 60) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return Date.now() > (payload.exp * 1000) - (bufferSeconds * 1000);
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Core fetch wrapper with auth and retry.
  */
@@ -111,7 +121,14 @@ async function request(method, path, { body, params, raw } = {}) {
   }
 
   const headers = {};
-  const token = getAccessToken();
+  let token = getAccessToken();
+
+  // Proactive refresh: renew token before it expires to avoid 401 console errors
+  if (token && _isTokenExpiringSoon(token)) {
+    const newToken = await refreshAccessToken();
+    if (newToken) token = newToken;
+  }
+
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   let fetchOpts = { method, headers };

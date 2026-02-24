@@ -135,22 +135,25 @@ class ResultUploader:
                 f"{self.base}/api/v1/upload/download/{file_id}",
                 stream=True,
             )
-            if resp.status_code != 200:
-                logger.error(f"Download failed for file {file_id}: {resp.status_code}")
-                return None
+            try:
+                if resp.status_code != 200:
+                    logger.error(f"Download failed for file {file_id}: {resp.status_code}")
+                    return None
 
-            # Extract filename from Content-Disposition or use file_id
-            filename = f"file_{file_id}"
-            cd = resp.headers.get("content-disposition", "")
-            if "filename=" in cd:
-                filename = cd.split("filename=")[-1].strip('" ')
+                # Extract filename from Content-Disposition or use file_id
+                filename = f"file_{file_id}"
+                cd = resp.headers.get("content-disposition", "")
+                if "filename=" in cd:
+                    filename = cd.split("filename=")[-1].strip('" ')
 
-            dest = Path(dest_dir) / filename
-            dest.parent.mkdir(parents=True, exist_ok=True)
+                dest = Path(dest_dir) / filename
+                dest.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(dest, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            finally:
+                resp.close()
 
             logger.info(f"Downloaded file {file_id} -> {dest}")
             return str(dest)
@@ -165,16 +168,19 @@ class ResultUploader:
                 f"{self.base}/api/v1/upload/download/thumbnail/{file_id}",
                 stream=True,
             )
-            if resp.status_code != 200:
-                logger.warning(f"Thumbnail download failed for file {file_id}: {resp.status_code}")
-                return None
+            try:
+                if resp.status_code != 200:
+                    logger.warning(f"Thumbnail download failed for file {file_id}: {resp.status_code}")
+                    return None
 
-            dest = Path(dest_dir) / f"thumb_{file_id}.png"
-            dest.parent.mkdir(parents=True, exist_ok=True)
+                dest = Path(dest_dir) / f"thumb_{file_id}.png"
+                dest.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(dest, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            finally:
+                resp.close()
 
             size_kb = dest.stat().st_size / 1024
             logger.info(f"Downloaded thumbnail for file {file_id} ({size_kb:.0f}KB)")

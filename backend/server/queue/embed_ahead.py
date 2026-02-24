@@ -10,18 +10,16 @@ The MV model (Qwen3-Embedding) is loaded once and stays resident.
 
 import json
 import logging
-import threading
 import time
 import traceback
-from datetime import datetime, timezone
-from typing import Optional
 
-from backend.db.sqlite_client import SQLiteDB
+from backend.server.queue.base_ahead_pool import BaseAheadPool
+from backend.server.queue.manager import _utcnow_sql
 
 logger = logging.getLogger(__name__)
 
 
-class EmbedAheadPool:
+class EmbedAheadPool(BaseAheadPool):
     """Server-side MV embedder that runs after workers upload MC.
 
     In mc_only mode:
@@ -32,40 +30,12 @@ class EmbedAheadPool:
     The Qwen3-Embedding model is loaded once and stays resident.
     """
 
-    def __init__(self, db: SQLiteDB):
-        self.db = db
-        self._thread: Optional[threading.Thread] = None
-        self._running = False
-        self._lock = threading.Lock()
+    def __init__(self, db):
+        super().__init__(db)
         self._mv_provider = None  # Lazy-loaded, stays resident
 
-    def start(self):
-        """Start the background embed-ahead daemon thread."""
-        if self._thread is not None and self._thread.is_alive():
-            logger.warning("EmbedAheadPool already running")
-            return
-
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._embed_loop,
-            name="EmbedAheadPool",
-            daemon=True,
-        )
-        self._thread.start()
-        logger.info("EmbedAheadPool started")
-
-    def stop(self):
-        """Gracefully stop the embed-ahead daemon thread."""
-        self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout=30)
-            if self._thread.is_alive():
-                logger.warning("EmbedAheadPool thread did not stop within timeout")
-            else:
-                logger.info("EmbedAheadPool stopped")
-        self._thread = None
-
-        # Unload MV provider
+    def _unload_models(self):
+        """Unload MV provider if loaded."""
         if self._mv_provider is not None:
             try:
                 if hasattr(self._mv_provider, 'unload'):
@@ -75,7 +45,7 @@ class EmbedAheadPool:
                 logger.warning(f"EmbedAheadPool: MV provider unload error: {e}")
             self._mv_provider = None
 
-    def _embed_loop(self):
+    def _loop(self):
         """Main loop: find MC-completed jobs and run MV embedding."""
         logger.info("EmbedAheadPool loop started")
         poll_interval_s = self._get_config_value("server.embed_ahead.poll_interval_s", 2)
@@ -144,6 +114,7 @@ class EmbedAheadPool:
         # Collect MC text from DB for each job
         texts = []
         valid_jobs = []
+        failed_job_ids = []
         cursor = self.db.conn.cursor()
 
         for job_id, file_id, file_path in jobs:
@@ -155,7 +126,8 @@ class EmbedAheadPool:
             )
             row = cursor.fetchone()
             if row is None:
-                logger.warning(f"EmbedAhead: file not found for job {job_id}: {file_path}")
+                logger.warning(f"EmbedAhead: file record missing for job {job_id}: {file_path}")
+                failed_job_ids.append(job_id)
                 continue
 
             stored_file_id, mc_caption, ai_tags, image_type, art_style, scene_type = row
@@ -180,10 +152,30 @@ class EmbedAheadPool:
             doc_text = build_document_text(mc_caption, tags, facts=facts)
             if not doc_text.strip():
                 logger.warning(f"EmbedAhead: empty document text for job {job_id}")
+                failed_job_ids.append(job_id)
                 continue
 
             texts.append(doc_text)
             valid_jobs.append((job_id, stored_file_id, file_path))
+
+        # Mark unrecoverable jobs as failed to prevent infinite re-polling
+        if failed_job_ids:
+            now = _utcnow_sql()
+            for fid in failed_job_ids:
+                try:
+                    cursor.execute(
+                        """UPDATE job_queue
+                           SET status = 'failed', completed_at = ?
+                           WHERE id = ?""",
+                        (now, fid),
+                    )
+                except Exception as e:
+                    logger.error(f"EmbedAhead: failed to mark job {fid} as failed: {e}")
+            try:
+                self.db.conn.commit()
+            except Exception:
+                pass
+            logger.info(f"EmbedAhead: marked {len(failed_job_ids)} unrecoverable jobs as failed")
 
         if not texts:
             return
@@ -196,7 +188,7 @@ class EmbedAheadPool:
             return
 
         # Store vectors + mark jobs completed
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utcnow_sql()
         completed_phase = json.dumps({"parse": True, "vision": True, "embed": True})
 
         for (job_id, stored_file_id, file_path), mv_vec in zip(valid_jobs, mv_vecs):
@@ -219,14 +211,6 @@ class EmbedAheadPool:
             logger.error(f"EmbedAhead: commit failed: {e}")
 
         logger.info(f"EmbedAhead: processed {len(valid_jobs)} jobs (MV batch)")
-
-    def _get_config_value(self, dotted_key: str, default):
-        """Read a value from config.yaml by dotted key."""
-        try:
-            from backend.utils.config import get_config
-            return get_config().get(dotted_key, default)
-        except Exception:
-            return default
 
     def get_stats(self) -> dict:
         """Get current embed-ahead pool statistics."""

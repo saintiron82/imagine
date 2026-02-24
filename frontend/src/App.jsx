@@ -72,9 +72,11 @@ function App() {
     phaseIndex: 0,          // 1-based progress within current phase
     phaseCount: 0,          // total files in current phase
     currentFile: '',
-    completed: 0,
+    completed: 0, failed: 0,
     totalQueue: 0, pending: 0,
     etaMs: null, throughput: 0,  // overall items/min
+    processingMode: 'full',     // "full" | "mc_only" — controls phase pill dimming
+    workerState: 'active',      // "active" | "idle" | "resting" — from state machine
     // Per-phase speed (files/min) — updated on phase_complete
     phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
     // Per-phase elapsed (seconds) — updated on phase_complete
@@ -113,21 +115,61 @@ function App() {
     loadConfig();
   }, []);
 
-  const handleSetupComplete = (mode, serverUrl) => {
+  const handleSetupComplete = (mode) => {
     setAppMode(mode);
     setUseLocalBackend(mode === 'server');
 
     if (mode === 'server') {
       setServerUrl(`http://localhost:${serverPort}`);
-    } else if (mode === 'client' && serverUrl) {
-      setServerUrl(serverUrl);
     }
+    // client mode: URL is entered in LoginPage, not here
 
     // Switch auth: server → local bypass, client → JWT required
     configureAuth(mode);
   };
 
-  const handleModeReset = () => {
+  const handleModeReset = async () => {
+    // Stop ALL running backend processes before returning to SetupPage
+    // The app screen must reflect the actual state — no hidden background work.
+    if (isWorkerRunning) {
+      try { await window.electron?.worker?.stop(); } catch { /* ignore */ }
+      setIsWorkerRunning(false);
+      setWorkerProgress({
+        batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
+        currentFile: '', completed: 0, failed: 0, totalQueue: 0, pending: 0,
+        etaMs: null, throughput: 0, processingMode: 'full', workerState: 'active',
+        phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+        phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
+      });
+      workerThroughputRef.current = { windowTimes: [] };
+    }
+    if (serverRunning) {
+      try { await window.electron?.server?.stop(); } catch { /* ignore */ }
+      setServerRunning(false);
+      setServerLanUrl(null);
+      setServerLanAddresses([]);
+      clearTokens();
+    }
+    if (isProcessing) {
+      window.electron?.pipeline?.stop();
+      setIsProcessing(false);
+      setProcessProgress({ processed: 0, total: 0, currentFile: '', etaMs: null, skipped: 0, cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0, activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '' });
+      setFileStep({ step: 0, totalSteps: 5, stepName: '' });
+      etaRef.current = { startTime: null, lastFileTime: null, emaMs: null };
+    }
+    if (isDiscovering) {
+      window.electron?.pipeline?.stop();
+      setIsDiscovering(false);
+      setDiscoverProgress({
+        processed: 0, total: 0, skipped: 0, currentFile: '', folderPath: '',
+        cumParse: 0, cumMC: 0, cumVV: 0, cumMV: 0,
+        activePhase: 0, phaseSubCount: 0, phaseSubTotal: 0, batchInfo: '',
+        etaMs: null
+      });
+      discoverEtaRef.current = { phase: -1, startTime: null, startCount: 0 };
+      discoverQueueRef.current = { folders: [], index: 0, scanning: false };
+    }
+
     setAppMode(null); // Show SetupPage
     setUseLocalBackend(false);
     configureAuth(null); // Reset to local bypass
@@ -430,25 +472,6 @@ function App() {
     return () => clearTimeout(timer);
   }, [appMode, serverPort, serverRunning]);
 
-  // Auto-login to local server for API access (JWT) in server mode
-  useEffect(() => {
-    if (!isElectron || appMode !== 'server' || !serverRunning) return;
-
-    const autoLogin = async () => {
-      try {
-        const url = `http://localhost:${serverPort}`;
-        setServerUrl(url);
-        if (getAccessToken()) return; // already have token
-        await login({ username: 'admin', password: 'admin', serverUrl: url });
-      } catch (e) {
-        console.warn('Server auto-login failed:', e);
-      }
-    };
-
-    const timer = setTimeout(autoLogin, 1000);
-    return () => clearTimeout(timer);
-  }, [serverRunning, appMode, serverPort, login]);
-
   // Worker IPC event listeners (Electron client mode)
   useEffect(() => {
     if (!isElectron || appMode !== 'client') return;
@@ -456,7 +479,11 @@ function App() {
     if (!w) return;
 
     const onStatus = (data) => {
-      setIsWorkerRunning(data.status === 'running');
+      if (data.status === 'error') {
+        setIsWorkerRunning(false);
+      } else {
+        setIsWorkerRunning(data.status === 'running');
+      }
     };
 
     const onBatchStart = (data) => {
@@ -507,7 +534,10 @@ function App() {
     };
 
     const onJobDone = (data) => {
-      if (!data.success) return;
+      if (!data.success) {
+        setWorkerProgress(prev => ({ ...prev, failed: prev.failed + 1 }));
+        return;
+      }
       const now = Date.now();
       const ref = workerThroughputRef.current;
       ref.windowTimes.push(now);
@@ -530,6 +560,14 @@ function App() {
       });
     };
 
+    const onProcessingMode = (data) => {
+      setWorkerProgress(prev => ({ ...prev, processingMode: data.mode || 'full' }));
+    };
+
+    const onWorkerState = (data) => {
+      setWorkerProgress(prev => ({ ...prev, workerState: data.state || 'active' }));
+    };
+
     w.onStatus(onStatus);
     w.onBatchStart?.(onBatchStart);
     w.onBatchPhaseStart?.(onBatchPhaseStart);
@@ -537,6 +575,8 @@ function App() {
     w.onBatchPhaseComplete?.(onBatchPhaseComplete);
     w.onBatchComplete?.(onBatchComplete);
     w.onJobDone(onJobDone);
+    w.onProcessingMode?.(onProcessingMode);
+    w.onWorkerState?.(onWorkerState);
 
     return () => {
       w.offStatus();
@@ -546,6 +586,8 @@ function App() {
       w.offBatchPhaseComplete?.();
       w.offBatchComplete?.();
       w.offJobDone();
+      w.offProcessingMode?.();
+      w.offWorkerState?.();
     };
   }, [appMode]);
 
@@ -560,6 +602,9 @@ function App() {
             ...prev,
             totalQueue: data.total || 0,
             pending: (data.pending || 0) + (data.assigned || 0) + (data.processing || 0),
+            failed: data.failed || prev.failed,
+            etaMs: data.eta_seconds != null ? data.eta_seconds * 1000 : prev.etaMs,
+            throughput: data.throughput || prev.throughput,
           }));
         }
       } catch { /* ignore */ }
@@ -641,8 +686,8 @@ function App() {
       setIsWorkerRunning(false);
       setWorkerProgress({
         batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
-        currentFile: '', completed: 0, totalQueue: 0, pending: 0,
-        etaMs: null, throughput: 0,
+        currentFile: '', completed: 0, failed: 0, totalQueue: 0, pending: 0,
+        etaMs: null, throughput: 0, processingMode: 'full', workerState: 'active',
         phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
         phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
       });
@@ -659,7 +704,8 @@ function App() {
       setServerRunning(false);
       setServerLanUrl(null);
       setServerLanAddresses([]);
-      clearTokens(); // clean up JWT when server stops
+      clearTokens();
+      logout(); // reset user state → LoginPage reappears
     } else {
       const result = await window.electron.server.start({ port: serverPort });
       if (result.success) {
@@ -925,7 +971,11 @@ function App() {
     if (showDownloadPage) {
       return <DownloadPage onBack={() => setShowDownloadPage(false)} />;
     }
-    return <LoginPage onShowDownload={() => setShowDownloadPage(true)} />;
+    return <LoginPage
+      onShowDownload={() => setShowDownloadPage(true)}
+      serverRunning={serverRunning}
+      serverPort={serverPort}
+    />;
   }
 
   // Download page overlay (web mode, authenticated)
@@ -1206,7 +1256,7 @@ function App() {
                 <span>{user.username}</span>
               </div>
               <button
-                onClick={logout}
+                onClick={() => { if (isWorkerRunning) handleWorkerStop(); logout(); }}
                 className="flex items-center space-x-1 px-2 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-red-400 hover:bg-gray-700/50 transition-colors"
                 title={t('auth.logout')}
               >

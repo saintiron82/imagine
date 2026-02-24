@@ -1,7 +1,7 @@
 /**
  * AuthContext — manages authentication state.
  *
- * - Electron server mode: auth bypassed (local admin)
+ * - Electron server mode: JWT auth required (local server login screen)
  * - Electron client mode: JWT auth required (remote server)
  * - Web mode: JWT auth required
  *
@@ -22,6 +22,9 @@ export function AuthProvider({ children }) {
 
   // null = undetermined, true = bypass, false = JWT required
   const [skipAuth, setSkipAuth] = useState(null);
+
+  // 'server' | 'client' | null — lets LoginPage adapt its UI
+  const [authMode, setAuthMode] = useState(null);
 
   useEffect(() => {
     // Web mode: always require JWT
@@ -50,14 +53,17 @@ export function AuthProvider({ children }) {
    * Called by App.jsx when user picks server or client mode.
    */
   const configureAuth = useCallback(async (mode) => {
-    if (mode === 'client') {
+    setAuthMode(mode);
+    if (mode === 'server') {
+      // Server mode: require login via LoginPage
       setSkipAuth(false);
-      // Always require fresh login in client mode so that
-      // credentials are captured in memory for the worker.
+      setUser(null);
+    } else if (mode === 'client') {
+      setSkipAuth(false);
       clearWorkerCredentials();
       setUser(null);
     } else {
-      // Server mode or reset: local admin bypass
+      // Reset (null): local admin bypass for SetupPage display
       setSkipAuth(true);
       setUser({ id: 0, username: 'local', role: 'admin' });
     }
@@ -106,6 +112,7 @@ export function AuthProvider({ children }) {
     isAuthenticated: !!user,
     isAdmin: user?.role === 'admin',
     skipAuth,
+    authMode,
     login,
     register,
     logout,

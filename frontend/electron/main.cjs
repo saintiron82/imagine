@@ -7,6 +7,60 @@ const isDev = process.env.NODE_ENV === 'development';
 // Suppress EPIPE errors from console.log when parent pipe is closed (background launch)
 process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 process.stderr?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+
+// ---------- File-based crash/error logging ----------
+// Logs to <userData>/logs/main.log (survives crashes, rotated at 5MB)
+const LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const logDir = path.join(app.getPath('userData'), 'logs');
+try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* ignore */ }
+const logFilePath = path.join(logDir, 'main.log');
+
+function _rotateLogIfNeeded() {
+    try {
+        const stat = fs.statSync(logFilePath);
+        if (stat.size > LOG_MAX_BYTES) {
+            const prev = logFilePath + '.1';
+            try { fs.unlinkSync(prev); } catch { /* ok */ }
+            fs.renameSync(logFilePath, prev);
+        }
+    } catch { /* file doesn't exist yet */ }
+}
+
+function writeLog(level, ...args) {
+    const ts = new Date().toISOString();
+    const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+    const line = `${ts} [${level}] ${msg}\n`;
+    try {
+        _rotateLogIfNeeded();
+        fs.appendFileSync(logFilePath, line, 'utf8');
+    } catch { /* best effort */ }
+}
+
+// Crash handlers — log to file before process dies
+process.on('uncaughtException', (err) => {
+    writeLog('FATAL', 'uncaughtException:', err.stack || err.message || String(err));
+    console.error('[FATAL] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+    writeLog('ERROR', 'unhandledRejection:', String(reason));
+    console.error('[ERROR] unhandledRejection:', reason);
+});
+
+// V8 heap monitoring — warn before OOM
+let _heapWarnedAt = 0;
+const HEAP_CHECK_INTERVAL = 30_000; // 30s
+const HEAP_WARN_THRESHOLD = 1.5 * 1024 * 1024 * 1024; // 1.5 GB
+setInterval(() => {
+    const mem = process.memoryUsage();
+    if (mem.heapUsed > HEAP_WARN_THRESHOLD && Date.now() - _heapWarnedAt > 60_000) {
+        _heapWarnedAt = Date.now();
+        const mb = (mem.heapUsed / 1024 / 1024).toFixed(0);
+        writeLog('WARN', `V8 heap high: ${mb} MB (rss: ${(mem.rss / 1024 / 1024).toFixed(0)} MB)`);
+        console.warn(`[HEAP] V8 heap: ${mb} MB`);
+    }
+}, HEAP_CHECK_INTERVAL);
+
+writeLog('INFO', `Imagine starting (pid: ${process.pid}, electron: ${process.versions.electron}, node: ${process.versions.node})`);
 // Resolve project root where backend/ and config.yaml live.
 // In dev mode: two levels up from electron/ directory.
 // In built mode: first check resourcesPath (bundled production), then traverse
@@ -45,10 +99,13 @@ const userSettingsPath = path.join(app.getPath('userData'), 'user-settings.yaml'
 // Keys that belong to user-settings.yaml (personal, per-user)
 const USER_SETTING_PREFIXES = [
     'ai_mode.override', 'ai_mode.auto_detect',
+    'ai_mode.vlm_backend',
     'batch_processing.enabled', 'batch_processing.adaptive',
     'registered_folders', 'last_session',
     'worker.claim_batch_size', 'worker.gpu_memory_percent',
     'worker.cpu_cores', 'worker.batch_capacity',
+    'worker.schedule', 'worker.idle_unload_minutes',
+    'worker.processing_mode',
 ];
 
 function isUserSetting(key) {
@@ -1666,6 +1723,12 @@ function processWorkerOutput() {
             } else if (evt === 'batch_complete') {
                 console.log('[Worker:batch] COMPLETE', parsed.count, 'files in', parsed.elapsed_s, 's', parsed.files_per_min, '/min');
                 sendWorkerEvent('worker-batch-complete', parsed);
+            } else if (evt === 'processing_mode') {
+                console.log('[Worker] Processing mode:', parsed.mode);
+                sendWorkerEvent('worker-processing-mode', parsed);
+            } else if (evt === 'worker_state') {
+                console.log('[Worker] State:', parsed.state);
+                sendWorkerEvent('worker-state', parsed);
             }
         } catch (e) {
             console.error('[Worker] JSON parse error:', e, line);
@@ -1692,17 +1755,37 @@ function killWorkerProc() {
 
 // IPC Handler: Start worker daemon
 ipcMain.handle('worker-start', async (event, opts) => {
+    const accessToken = opts.accessToken || '';
+    const refreshToken = opts.refreshToken || '';
+    const startCmd = {
+        cmd: 'start',
+        server_url: opts.serverUrl || 'http://localhost:8000',
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        username: opts.username || '',
+        password: opts.password || '',
+    };
+
+    // If process is alive, send start command directly (restart after stop)
     if (workerProc) {
-        return { success: false, error: 'Worker already running' };
+        console.log('[Worker] Process alive — sending start command to existing process');
+        try {
+            workerProc.stdin.write(JSON.stringify(startCmd) + '\n');
+            return { success: true };
+        } catch (e) {
+            console.error('[Worker] Failed to write to existing process:', e);
+            // Process is dead, fall through to spawn new one
+            workerProc = null;
+        }
     }
 
     const finalPython = resolvePython();
-    const scriptPath = getWorkerScriptPath();
 
     // Store window reference for relaying events
     workerMainWindow = BrowserWindow.fromWebContents(event.sender);
 
     console.log('[Worker] Starting worker_ipc.py...');
+    console.log(`[Worker] Auth: access=${accessToken ? accessToken.substring(0, 20) + '...' : '(none)'}, refresh=${refreshToken ? refreshToken.substring(0, 16) + '...' : '(none)'}`);
 
     workerProc = spawn(finalPython, ['-u', '-m', 'backend.worker.worker_ipc'], {
         cwd: projectRoot,
@@ -1711,18 +1794,7 @@ ipcMain.handle('worker-start', async (event, opts) => {
     });
 
     // Queue the start command — will be sent after 'ready' event
-    // Supports token mode (from existing session) or credential mode
-    const accessToken = opts.accessToken || '';
-    const refreshToken = opts.refreshToken || '';
-    console.log(`[Worker] Auth: access=${accessToken ? accessToken.substring(0, 20) + '...' : '(none)'}, refresh=${refreshToken ? refreshToken.substring(0, 16) + '...' : '(none)'}`);
-    workerStartCmd = {
-        cmd: 'start',
-        server_url: opts.serverUrl || 'http://localhost:8000',
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        username: opts.username || '',
-        password: opts.password || '',
-    };
+    workerStartCmd = startCmd;
 
     workerProc.stdout.on('data', (chunk) => {
         workerBuffer += chunk.toString();
@@ -1865,29 +1937,50 @@ async function startEmbeddedServer(port = 8000) {
         stdio: ['pipe', 'pipe', 'pipe'],
     });
 
+    // Throttled server log forwarding: max 20 IPC messages/sec to renderer
+    // Prevents OOM when server outputs high-volume warnings (e.g., EmbedAhead loops)
+    let _serverLogCount = 0;
+    let _serverLogWindowStart = Date.now();
+    const SERVER_LOG_MAX_PER_SEC = 20;
+    let _serverLogDropped = 0;
+
+    function throttledServerLog(msg, type) {
+        const now = Date.now();
+        if (now - _serverLogWindowStart > 1000) {
+            if (_serverLogDropped > 0) {
+                writeLog('WARN', `Server log throttled: ${_serverLogDropped} messages dropped in last window`);
+            }
+            _serverLogCount = 0;
+            _serverLogDropped = 0;
+            _serverLogWindowStart = now;
+        }
+        _serverLogCount++;
+        if (_serverLogCount > SERVER_LOG_MAX_PER_SEC) {
+            _serverLogDropped++;
+            return; // drop excess messages
+        }
+        try {
+            if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                serverMainWindow.webContents.send('server-log', { message: msg, type });
+            }
+        } catch (e) { /* window may be closed */ }
+    }
+
     serverProc.stdout.on('data', (chunk) => {
         const msg = chunk.toString().trim();
         if (msg) {
-            console.log('[Server:stdout]', msg);
-            try {
-                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
-                    serverMainWindow.webContents.send('server-log', { message: msg, type: 'info' });
-                }
-            } catch (e) { /* window may be closed */ }
+            writeLog('INFO', '[Server:stdout]', msg);
+            throttledServerLog(msg, 'info');
         }
     });
 
     serverProc.stderr.on('data', (chunk) => {
         const msg = chunk.toString().trim();
         if (msg) {
-            console.log('[Server:stderr]', msg);
-            try {
-                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
-                    // uvicorn logs to stderr by default
-                    const type = /\bERROR\b|Traceback|Exception:/i.test(msg) ? 'error' : 'info';
-                    serverMainWindow.webContents.send('server-log', { message: msg, type });
-                }
-            } catch (e) { /* window may be closed */ }
+            writeLog('INFO', '[Server:stderr]', msg);
+            // uvicorn logs to stderr by default
+            const type = /\bERROR\b|Traceback|Exception:/i.test(msg) ? 'error' : 'info';
+            throttledServerLog(msg, type);
         }
     });
 

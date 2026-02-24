@@ -12,13 +12,14 @@ import {
   browseFolders, scanFolder,
   listWorkerTokens, createWorkerToken, revokeWorkerToken,
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
+  updateWorkerConfig, updateGlobalProcessingMode,
 } from '../api/admin';
 import {
   Users, Key, Activity, FolderSearch, Terminal, Server,
   Shield, ShieldOff, Trash2, Copy, Plus, Square, Ban,
   RefreshCw, CheckCircle, XCircle, AlertTriangle,
   Folder, FolderOpen, ChevronRight, ArrowUp, Play, Loader2,
-  Tag, ChevronDown,
+  Tag, ChevronDown, Pencil, AlertOctagon,
 } from 'lucide-react';
 import { listDomains, getDomainDetail, getActiveDomainConfig, setActiveDomain, saveDomainYaml } from '../services/bridge';
 
@@ -72,17 +73,150 @@ export default function AdminPage() {
 }
 
 
+// ── Resource Metrics Display ─────────────────────────────
+
+/**
+ * Compact resource metrics cell for the workers table.
+ * Shows GPU memory bar + temperature, CPU %, and RAM % in a stacked layout.
+ * Gracefully handles null/missing data.
+ */
+function ResourceMetrics({ resources, t }) {
+  if (!resources) {
+    return <span className="text-gray-600 text-xs">{t('admin.worker_no_metrics')}</span>;
+  }
+
+  const {
+    gpu_type,
+    gpu_memory_used_gb,
+    gpu_memory_total_gb,
+    gpu_memory_percent,
+    gpu_temperature_c,
+    cpu_percent,
+    memory_percent,
+    memory_used_gb,
+    memory_total_gb,
+  } = resources;
+
+  const hasGpu = gpu_type != null;
+  const hasGpuMem = gpu_memory_used_gb != null && gpu_memory_total_gb != null;
+  const hasCpu = cpu_percent != null;
+  const hasRam = memory_percent != null;
+
+  // Color based on percentage thresholds
+  const pctColor = (pct) => {
+    if (pct == null) return 'text-gray-500';
+    if (pct >= 90) return 'text-red-400';
+    if (pct >= 70) return 'text-yellow-400';
+    return 'text-emerald-400';
+  };
+
+  const barColor = (pct) => {
+    if (pct == null) return 'bg-gray-600';
+    if (pct >= 90) return 'bg-red-500';
+    if (pct >= 70) return 'bg-yellow-500';
+    return 'bg-emerald-500';
+  };
+
+  const tempColor = (temp) => {
+    if (temp == null) return 'text-gray-500';
+    if (temp >= 85) return 'text-red-400';
+    if (temp >= 70) return 'text-yellow-400';
+    return 'text-emerald-400';
+  };
+
+  return (
+    <div className="flex flex-col gap-1 min-w-[140px]">
+      {/* GPU row */}
+      {hasGpu && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-500 w-7 flex-shrink-0 uppercase">
+            {gpu_type === 'cuda' ? t('admin.worker_gpu_type_cuda') : t('admin.worker_gpu_type_mps')}
+          </span>
+          {hasGpuMem ? (
+            <>
+              <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden min-w-[40px]">
+                <div
+                  className={`h-full rounded-full transition-all ${barColor(gpu_memory_percent)}`}
+                  style={{ width: `${Math.min(gpu_memory_percent || 0, 100)}%` }}
+                />
+              </div>
+              <span className={`text-[10px] font-mono w-[52px] text-right flex-shrink-0 ${pctColor(gpu_memory_percent)}`}>
+                {gpu_memory_used_gb.toFixed(1)}/{gpu_memory_total_gb.toFixed(0)}G
+              </span>
+            </>
+          ) : (
+            <span className="text-[10px] text-gray-500">-</span>
+          )}
+          {gpu_temperature_c != null && (
+            <span className={`text-[10px] font-mono flex-shrink-0 ${tempColor(gpu_temperature_c)}`} title="GPU Temperature">
+              {gpu_temperature_c}°
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* CPU row */}
+      {hasCpu && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-500 w-7 flex-shrink-0">{t('admin.worker_cpu')}</span>
+          <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden min-w-[40px]">
+            <div
+              className={`h-full rounded-full transition-all ${barColor(cpu_percent)}`}
+              style={{ width: `${Math.min(cpu_percent, 100)}%` }}
+            />
+          </div>
+          <span className={`text-[10px] font-mono w-[52px] text-right flex-shrink-0 ${pctColor(cpu_percent)}`}>
+            {cpu_percent.toFixed(0)}%
+          </span>
+        </div>
+      )}
+
+      {/* RAM row */}
+      {hasRam && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-500 w-7 flex-shrink-0">{t('admin.worker_memory')}</span>
+          <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden min-w-[40px]">
+            <div
+              className={`h-full rounded-full transition-all ${barColor(memory_percent)}`}
+              style={{ width: `${Math.min(memory_percent, 100)}%` }}
+            />
+          </div>
+          <span className={`text-[10px] font-mono w-[52px] text-right flex-shrink-0 ${pctColor(memory_percent)}`}>
+            {memory_used_gb != null && memory_total_gb != null
+              ? `${memory_used_gb.toFixed(0)}/${memory_total_gb.toFixed(0)}G`
+              : `${memory_percent.toFixed(0)}%`
+            }
+          </span>
+        </div>
+      )}
+
+      {/* No data at all */}
+      {!hasGpu && !hasCpu && !hasRam && (
+        <span className="text-gray-600 text-xs">{t('admin.worker_no_metrics')}</span>
+      )}
+    </div>
+  );
+}
+
+
 // ── Workers Panel ────────────────────────────────────────
 
 function WorkersPanel() {
   const { t } = useLocale();
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [globalMode, setGlobalMode] = useState('full');
+  const [editingCapacity, setEditingCapacity] = useState(null); // { id, value }
 
   const load = useCallback(async () => {
     try {
       const data = await listWorkerSessions();
-      setWorkers((data.workers || []).filter(w => w.status === 'online'));
+      const all = data.workers || [];
+      setWorkers(all.filter(w => w.status === 'online'));
+      // Infer global mode from server response or first worker
+      if (data.global_processing_mode) {
+        setGlobalMode(data.global_processing_mode);
+      }
     } catch (e) {
       console.error('Failed to load workers:', e);
     }
@@ -115,19 +249,67 @@ function WorkersPanel() {
     }
   };
 
+  const handleGlobalMode = async (mode) => {
+    try {
+      await updateGlobalProcessingMode(mode);
+      setGlobalMode(mode);
+      load();
+    } catch (e) {
+      console.error('Failed to update global mode:', e);
+    }
+  };
+
+  const handleModeChange = async (sessionId, mode) => {
+    try {
+      await updateWorkerConfig(sessionId, { processing_mode: mode || null });
+      load();
+    } catch (e) {
+      console.error('Failed to update worker mode:', e);
+    }
+  };
+
+  const handleCapacitySave = async (sessionId) => {
+    if (!editingCapacity) return;
+    try {
+      await updateWorkerConfig(sessionId, { batch_capacity: editingCapacity.value });
+      setEditingCapacity(null);
+      load();
+    } catch (e) {
+      console.error('Failed to update capacity:', e);
+    }
+  };
+
   const onlineCount = workers.filter(w => w.status === 'online').length;
   const totalThroughput = workers.reduce((sum, w) => sum + (w.throughput || 0), 0);
   const totalCompleted = workers.reduce((sum, w) => sum + (w.jobs_completed || 0), 0);
 
-  const statusBadge = (status) => {
-    const map = {
-      online: 'bg-green-900/50 text-green-300',
-      offline: 'bg-gray-700 text-gray-400',
-      blocked: 'bg-red-900/50 text-red-300',
+  // Combined state badge: online/offline/blocked + worker_state + throttle_level
+  const stateBadge = (w) => {
+    if (w.status === 'blocked') {
+      return <span className="px-2 py-0.5 rounded text-xs bg-red-900/50 text-red-300">{t('admin.worker_status_blocked')}</span>;
+    }
+    if (w.status === 'offline') {
+      return <span className="px-2 py-0.5 rounded text-xs bg-gray-700 text-gray-400">{t('admin.worker_status_offline')}</span>;
+    }
+    const workerState = w.resources?.worker_state || 'active';
+    const throttle = w.resources?.throttle_level || 'normal';
+    const stateMap = {
+      active: { bg: 'bg-green-900/50', text: 'text-green-300', dot: 'bg-green-400', label: t('admin.worker_state_active') },
+      idle: { bg: 'bg-blue-900/50', text: 'text-blue-300', dot: 'bg-blue-400', label: t('admin.worker_state_idle') },
+      resting: { bg: 'bg-yellow-900/50', text: 'text-yellow-300', dot: 'bg-yellow-400', label: t('admin.worker_state_resting') },
     };
+    const s = stateMap[workerState] || stateMap.active;
+    const showThrottle = throttle === 'warning' || throttle === 'danger';
     return (
-      <span className={`px-2 py-0.5 rounded text-xs ${map[status] || 'bg-gray-700 text-gray-400'}`}>
-        {t(`admin.worker_status_${status}`)}
+      <span className="flex items-center gap-1">
+        <span className={`px-2 py-0.5 rounded text-xs ${s.bg} ${s.text} flex items-center gap-1`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+          {s.label}
+        </span>
+        {showThrottle && (
+          <AlertOctagon size={12} className={throttle === 'danger' ? 'text-red-400' : 'text-yellow-400'}
+            title={t(`admin.worker_throttle_${throttle}`)} />
+        )}
       </span>
     );
   };
@@ -159,6 +341,44 @@ function WorkersPanel() {
         </button>
       </div>
 
+      {/* Global Processing Mode */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-gray-300">{t('admin.worker_global_mode')}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{t('admin.worker_global_mode_desc')}</div>
+          </div>
+          <div className="flex rounded-lg overflow-hidden border border-gray-600">
+            <button
+              onClick={() => handleGlobalMode('full')}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                globalMode === 'full'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {t('admin.worker_mode_full')}
+            </button>
+            <button
+              onClick={() => handleGlobalMode('mc_only')}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                globalMode === 'mc_only'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {t('admin.worker_mode_mc_only')}
+            </button>
+          </div>
+        </div>
+        {globalMode === 'mc_only' && (
+          <div className="text-xs text-amber-400/70 mt-2">{t('admin.worker_mode_mc_only_desc')}</div>
+        )}
+        {globalMode === 'full' && (
+          <div className="text-xs text-blue-400/70 mt-2">{t('admin.worker_mode_full_desc')}</div>
+        )}
+      </div>
+
       {/* Aggregate stats */}
       {onlineCount > 0 && (
         <div className="grid grid-cols-3 gap-3 mb-4">
@@ -186,9 +406,11 @@ function WorkersPanel() {
             <tr className="border-b border-gray-700 text-gray-400">
               <th className="text-left px-4 py-3">{t('admin.worker_name')}</th>
               <th className="text-left px-4 py-3">{t('auth.username')}</th>
-              <th className="text-left px-4 py-3">Status</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_state')}</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_mode')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_capacity')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_speed')}</th>
+              <th className="text-left px-4 py-3">{t('admin.worker_resources')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_jobs_done')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_current_task')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_last_heartbeat')}</th>
@@ -203,9 +425,44 @@ function WorkersPanel() {
                   {w.hostname && <div className="text-xs text-gray-500">{w.hostname}</div>}
                 </td>
                 <td className="px-4 py-3 text-gray-400">{w.username}</td>
-                <td className="px-4 py-3">{statusBadge(w.status)}</td>
+                <td className="px-4 py-3">{stateBadge(w)}</td>
                 <td className="px-4 py-3">
-                  <span className="font-mono text-yellow-300">B:{w.batch_capacity}</span>
+                  <select
+                    value={w.processing_mode_override || ''}
+                    onChange={(e) => handleModeChange(w.id, e.target.value)}
+                    className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-300 cursor-pointer focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="">{t('admin.worker_mode_global')}</option>
+                    <option value="full">{t('admin.worker_mode_full')}</option>
+                    <option value="mc_only">{t('admin.worker_mode_mc_only')}</option>
+                  </select>
+                </td>
+                <td className="px-4 py-3">
+                  {editingCapacity?.id === w.id ? (
+                    <input
+                      type="number"
+                      min={1}
+                      max={32}
+                      value={editingCapacity.value}
+                      onChange={(e) => setEditingCapacity({ id: w.id, value: Math.max(1, Math.min(32, Number(e.target.value))) })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleCapacitySave(w.id);
+                        if (e.key === 'Escape') setEditingCapacity(null);
+                      }}
+                      onBlur={() => handleCapacitySave(w.id)}
+                      autoFocus
+                      className="w-14 bg-gray-900 border border-blue-500 rounded px-2 py-0.5 text-xs font-mono text-yellow-300 focus:outline-none"
+                    />
+                  ) : (
+                    <span
+                      className="font-mono text-yellow-300 cursor-pointer hover:text-yellow-200 flex items-center gap-1 group"
+                      onClick={() => setEditingCapacity({ id: w.id, value: w.batch_capacity_override || w.batch_capacity })}
+                      title={t('admin.worker_edit_capacity')}
+                    >
+                      B:{w.batch_capacity_override || w.batch_capacity}
+                      <Pencil size={10} className="text-gray-600 group-hover:text-yellow-300" />
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {w.throughput > 0 ? (
@@ -213,6 +470,9 @@ function WorkersPanel() {
                   ) : (
                     <span className="text-gray-600">-</span>
                   )}
+                </td>
+                <td className="px-4 py-3">
+                  <ResourceMetrics resources={w.resources} t={t} />
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-green-400">{w.jobs_completed}</span>
@@ -1066,6 +1326,57 @@ function QueuePanel() {
           <div className="text-2xl font-bold text-blue-400">{stats?.total ?? 0}</div>
         </div>
       </div>
+
+      {/* Phase Progress */}
+      {stats && stats.total > 0 && (stats.phase_parse_done > 0 || stats.phase_vision_done > 0 || stats.phase_embed_done > 0) && (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
+          <div className="text-xs text-gray-400 mb-3 font-medium">{t('admin.queue_phase_progress')}</div>
+          <div className="space-y-2">
+            {[
+              { key: 'phase_parse_done', label: t('admin.queue_phase_parse'), color: 'bg-green-500', textColor: 'text-green-400' },
+              { key: 'phase_vision_done', label: t('admin.queue_phase_vision'), color: 'bg-purple-500', textColor: 'text-purple-400' },
+              { key: 'phase_embed_done', label: t('admin.queue_phase_embed'), color: 'bg-blue-500', textColor: 'text-blue-400' },
+            ].map(({ key, label, color, textColor }) => {
+              const done = stats[key] || 0;
+              const pct = stats.total > 0 ? (done / stats.total) * 100 : 0;
+              return (
+                <div key={key} className="flex items-center gap-3">
+                  <span className={`text-xs w-24 flex-shrink-0 ${textColor}`}>{label}</span>
+                  <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${color}`}
+                      style={{ width: `${Math.min(pct, 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-gray-400 font-mono w-24 text-right flex-shrink-0">
+                    {done}/{stats.total}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Server Pools (ParseAhead) */}
+      {stats && (stats.parse_ahead_parsed > 0 || stats.parse_ahead_parsing > 0 || stats.parse_ahead_failed > 0) && (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
+          <div className="text-xs text-gray-400 mb-2 font-medium">{t('admin.queue_parse_ahead')}</div>
+          <div className="flex items-center gap-4 text-xs">
+            <span className="text-green-400">
+              {t('admin.queue_parse_ahead_parsed')}: <span className="font-mono">{stats.parse_ahead_parsed || 0}</span>
+            </span>
+            <span className="text-cyan-400">
+              {t('admin.queue_parse_ahead_parsing')}: <span className="font-mono">{stats.parse_ahead_parsing || 0}</span>
+            </span>
+            {(stats.parse_ahead_failed || 0) > 0 && (
+              <span className="text-red-400">
+                {t('admin.queue_parse_ahead_failed')}: <span className="font-mono">{stats.parse_ahead_failed}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Progress bar */}
       {stats && stats.total > 0 && (

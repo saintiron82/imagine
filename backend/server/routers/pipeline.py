@@ -5,6 +5,7 @@ Pipeline router — job queue management, work distribution, result upload.
 import base64
 import json
 import logging
+import unicodedata
 from typing import Optional, List, Dict, Any
 
 import numpy as np
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user, require_admin
-from backend.server.queue.manager import JobQueueManager
+from backend.server.queue.manager import JobQueueManager, _utcnow_sql
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,10 @@ def complete_job(
 
     file_id, file_path, parse_status = row
 
+    # Normalize to NFC — job_queue may store NFD (macOS filesystem),
+    # but files table stores NFC (via upsert_metadata).
+    file_path = unicodedata.normalize('NFC', file_path)
+
     # Store metadata
     meta = req.metadata
     if "file_path" not in meta:
@@ -208,6 +213,10 @@ def complete_mc(
 
     file_id, file_path = row
 
+    # Normalize to NFC — job_queue may store NFD (macOS filesystem),
+    # but files table stores NFC (via upsert_metadata).
+    file_path = unicodedata.normalize('NFC', file_path)
+
     # Look up stored file_id (pre-parsed by ParseAhead)
     cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
     existing = cursor.fetchone()
@@ -227,12 +236,13 @@ def complete_mc(
         db.update_vision_fields(file_path, vision_fields)
 
     # Update job: mark vision done, keep status='processing' for EmbedAhead to finish MV
-    now = json.dumps({"parse": True, "vision": True, "embed": False})
+    phase_json = json.dumps({"parse": True, "vision": True, "embed": False})
+    mc_now = _utcnow_sql()
     cursor.execute(
         """UPDATE job_queue
-           SET phase_completed = ?, status = 'processing'
+           SET phase_completed = ?, status = 'processing', mc_completed_at = ?
            WHERE id = ? AND assigned_to = ?""",
-        (now, job_id, user["id"])
+        (phase_json, mc_now, job_id, user["id"])
     )
     db.conn.commit()
 
@@ -316,7 +326,8 @@ def scan_folder(
     skipped = 0
 
     for file_path, folder_str, depth, folder_tags in discovered:
-        fpath_str = str(file_path)
+        # Normalize to NFC — macOS filesystem returns NFD for Korean paths
+        fpath_str = unicodedata.normalize('NFC', str(file_path))
 
         # Check if job already exists for this file (avoid duplicates)
         cursor.execute(

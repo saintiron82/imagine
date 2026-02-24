@@ -27,9 +27,10 @@ import sys
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 # Ensure project root is in path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -45,7 +46,10 @@ from backend.worker.config import (
     get_batch_capacity,
     get_heartbeat_interval,
 )
+from backend.utils.meta_helpers import meta_to_dict
 from backend.worker.result_uploader import ResultUploader
+from backend.worker.schedule import is_active_now
+from backend.worker.worker_state import WorkerStateMachine, WorkerState
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,6 +129,24 @@ class WorkerDaemon:
         self._current_job_id = None
         self._current_file = None
         self._current_phase = None
+
+        # Stop signal — set by IPC controller to interrupt batch mid-flight
+        self._stop_requested = False
+
+        # Throttle state
+        self._throttle_level = "normal"
+        self._original_batch_capacity = self.batch_capacity  # preserved for restore
+
+        # Background download pool (overlap download with GPU processing)
+        self._download_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dl")
+        self._download_cache: Dict[int, Future] = {}  # file_id -> Future<local_path>
+
+        # State machine (schedule + throttle driven)
+        self._state_machine = WorkerStateMachine(
+            on_enter_idle=self._on_enter_idle,
+            on_enter_active=self._on_enter_active,
+            on_enter_resting=self._on_enter_resting,
+        )
 
         logger.info(
             f"Worker initialized: server={self.server_url}, mode={self.storage_mode}, "
@@ -246,8 +268,8 @@ class WorkerDaemon:
 
     # ── Session Management ─────────────────────────────────────
 
-    def _connect_session(self):
-        """Register worker session with server."""
+    def _connect_session(self) -> bool:
+        """Register worker session with server. Returns True on success."""
         try:
             resp = self._authed_request(
                 "post",
@@ -268,10 +290,13 @@ class WorkerDaemon:
                 if data.get("processing_mode"):
                     self.processing_mode = data["processing_mode"]
                 logger.info(f"Session registered: id={self.session_id}, pool_hint={self.pool_size}, batch={self.batch_capacity}, mode={self.processing_mode}")
+                return True
             else:
-                logger.warning(f"Session connect failed: {resp.status_code}")
+                logger.error(f"Session connect failed: {resp.status_code} {resp.text[:200]}")
+                return False
         except Exception as e:
-            logger.warning(f"Session connect error: {e}")
+            logger.error(f"Session connect error: {e}")
+            return False
 
     def _heartbeat(self) -> dict:
         """Send heartbeat and receive server commands."""
@@ -280,6 +305,14 @@ class WorkerDaemon:
         try:
             with self._pool_lock:
                 pool_sz = len(self._job_pool)
+            # Collect system resource metrics + throttle level
+            try:
+                from backend.worker.resource_monitor import collect_metrics, get_throttle_level
+                resources = collect_metrics()
+                throttle_level = get_throttle_level(resources)
+            except Exception:
+                resources = None
+                throttle_level = "normal"
             resp = self._authed_request(
                 "post",
                 f"{self.server_url}/api/v1/workers/heartbeat",
@@ -291,6 +324,9 @@ class WorkerDaemon:
                     "current_file": self._current_file,
                     "current_phase": self._current_phase,
                     "pool_size": pool_sz,
+                    "resources": resources,
+                    "throttle_level": throttle_level,
+                    "worker_state": self._state_machine.state_name,
                 },
             )
             if resp.status_code == 200:
@@ -528,14 +564,17 @@ class WorkerDaemon:
                 f"{self.server_url}/api/v1/upload/download/thumbnail/{file_id}",
                 stream=True,
             )
-            if resp.status_code != 200:
-                logger.warning(f"Thumbnail download failed: HTTP {resp.status_code}")
-                return None
+            try:
+                if resp.status_code != 200:
+                    logger.warning(f"Thumbnail download failed: HTTP {resp.status_code}")
+                    return None
 
-            dest = Path(self.tmp_dir) / f"thumb_{file_id}.png"
-            with open(dest, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                dest = Path(self.tmp_dir) / f"thumb_{file_id}.png"
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            finally:
+                resp.close()
 
             size_kb = dest.stat().st_size / 1024
             logger.info(f"Downloaded thumbnail for file_id={file_id} ({size_kb:.0f}KB)")
@@ -545,12 +584,52 @@ class WorkerDaemon:
             logger.error(f"Thumbnail download failed for file_id={file_id}: {e}")
             return None
 
+    # ── Background Download (overlap with GPU processing) ─────
+
+    def _prefetch_downloads(self, jobs: list):
+        """Submit download tasks for upcoming jobs in background threads.
+
+        Called right after claim_jobs() so files download in parallel
+        while the current batch is being processed on GPU.
+        """
+        if self.storage_mode == "shared_fs":
+            return  # No network download needed — instant local access
+
+        for job in jobs:
+            file_id = job.get("file_id")
+            if file_id is not None and file_id not in self._download_cache:
+                future = self._download_pool.submit(self._resolve_file, job)
+                self._download_cache[file_id] = future
+
+    def _get_downloaded(self, job: dict) -> Optional[str]:
+        """Get downloaded file path, waiting if download is still in progress.
+
+        If the file was prefetched, returns the cached result.
+        Otherwise falls back to synchronous _resolve_file().
+        """
+        file_id = job.get("file_id")
+        future = self._download_cache.pop(file_id, None) if file_id is not None else None
+        if future:
+            try:
+                return future.result(timeout=300)  # 5 min max wait
+            except Exception as e:
+                logger.error(f"[PREFETCH] Download failed for file_id={file_id}: {e}")
+                return None
+        # Fallback: not prefetched (e.g. shared_fs or cache miss)
+        return self._resolve_file(job)
+
+    def _clear_download_cache(self):
+        """Cancel pending downloads and clear the cache."""
+        for file_id, future in list(self._download_cache.items()):
+            future.cancel()
+        self._download_cache.clear()
+
     # ── Pipeline Phases (reusing existing backend code) ────────
 
     def _run_parse(self, file_path: Path):
         """Phase P: Parse file and extract metadata."""
         try:
-            from backend.pipeline.ingest_engine import ParserFactory, _build_mc_raw, _set_tier_metadata
+            from backend.pipeline.ingest_engine import ParserFactory, _build_mc_raw, _set_tier_metadata, _normalize_paths
 
             parser = ParserFactory.get_parser(file_path)
             if not parser:
@@ -581,6 +660,9 @@ class WorkerDaemon:
             # Tier metadata
             _set_tier_metadata(meta)
 
+            # Normalize storage_root and relative_path (required for folder stats)
+            _normalize_paths(meta, file_path)
+
             # Resolve thumbnail
             thumb_path = None
             if meta.thumbnail_url:
@@ -589,7 +671,7 @@ class WorkerDaemon:
                     thumb_path = str(tp)
 
             # Build metadata dict for API upload
-            metadata = self._meta_to_dict(meta)
+            metadata = meta_to_dict(meta)
             metadata["file_path"] = str(file_path)
 
             return metadata, thumb_path, meta
@@ -617,21 +699,30 @@ class WorkerDaemon:
             from PIL import Image
 
             analyzer = get_vision_analyzer()
-            thumb_img = Image.open(thumb_path)
+            raw_img = Image.open(thumb_path)
 
             # Composite to RGB
-            if thumb_img.mode == "RGBA":
-                bg = Image.new("RGB", thumb_img.size, (255, 255, 255))
-                bg.paste(thumb_img, mask=thumb_img.split()[3])
-                thumb_img = bg
-            elif thumb_img.mode != "RGB":
-                thumb_img = thumb_img.convert("RGB")
+            try:
+                if raw_img.mode == "RGBA":
+                    thumb_img = Image.new("RGB", raw_img.size, (255, 255, 255))
+                    thumb_img.paste(raw_img, mask=raw_img.split()[3])
+                elif raw_img.mode != "RGB":
+                    thumb_img = raw_img.convert("RGB")
+                else:
+                    thumb_img = raw_img
+                    raw_img = None  # avoid double close
+            finally:
+                if raw_img is not None:
+                    raw_img.close()
 
             # Use pre-built mc_raw if provided (pre-parsed mode), otherwise build from meta
             mc_raw = mc_raw_override if mc_raw_override else _build_mc_raw(meta)
 
             # Run 2-Stage vision
-            vision_result = analyzer.analyze(thumb_img, mc_raw)
+            try:
+                vision_result = analyzer.analyze(thumb_img, mc_raw)
+            finally:
+                thumb_img.close()
 
             fields = {}
             if vision_result:
@@ -676,10 +767,13 @@ class WorkerDaemon:
                     WorkerDaemon._vv_encoder = SigLIP2Encoder()
                 encoder = WorkerDaemon._vv_encoder
                 img = Image.open(thumb_path).convert("RGB")
-                vv_vec = encoder.encode_image(img)
+                try:
+                    vv_vec = encoder.encode_image(img)
 
-                if hasattr(encoder, 'encode_structure'):
-                    structure_vec = encoder.encode_structure(img)
+                    if hasattr(encoder, 'encode_structure'):
+                        structure_vec = encoder.encode_structure(img)
+                finally:
+                    img.close()
 
             except Exception as e:
                 logger.warning(f"VV encoding failed: {e}")
@@ -709,31 +803,59 @@ class WorkerDaemon:
 
         return mv_vec
 
-    def _meta_to_dict(self, meta) -> dict:
-        """Convert AssetMeta dataclass to dict for API submission."""
-        from dataclasses import asdict
-        try:
-            d = asdict(meta)
-            # Remove None values and non-serializable types
-            clean = {}
-            for k, v in d.items():
-                if v is None:
-                    continue
-                if isinstance(v, (str, int, float, bool)):
-                    clean[k] = v
-                elif isinstance(v, (list, dict)):
-                    clean[k] = v
-                elif isinstance(v, Path):
-                    clean[k] = str(v)
-            return clean
-        except Exception:
-            # Fallback: manually extract key fields
-            return {
-                "file_name": getattr(meta, "file_name", ""),
-                "file_path": getattr(meta, "file_path", ""),
-                "format": getattr(meta, "format", ""),
-                "file_size": getattr(meta, "file_size", 0),
-            }
+    # ── Phase Helpers ────────────────────────────────────────────
+
+    def _run_vision_phase(self, active: list, progress_callback=None) -> float:
+        """Run Vision (VLM) phase on active job contexts.
+
+        Iterates over each context, runs VLM to generate MC (caption/tags),
+        and updates context metadata and vision_fields.
+
+        For pre-parsed jobs, uses mc_raw from server instead of building from
+        meta_obj. For full-pipeline jobs, checks the pre_parsed flag first.
+
+        Args:
+            active: List of _JobContext with resolved files.
+            progress_callback: Optional progress callback.
+
+        Returns:
+            Elapsed time in seconds.
+        """
+        t_phase = time.perf_counter()
+        _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
+
+        for i, ctx in enumerate(active):
+            # Check stop signal between files within Vision phase
+            if self._stop_requested:
+                logger.info(f"Stop requested during Vision phase ({i}/{len(active)})")
+                break
+
+            self._current_phase = "vision"
+            self._current_file = Path(ctx.job["file_path"]).name
+            self.uploader.report_progress(ctx.job["job_id"], "vision")
+
+            mc_raw_override = ctx.job.get("mc_raw") if ctx.job.get("pre_parsed") else None
+            vision_fields = self._run_vision(
+                Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
+                mc_raw_override=mc_raw_override,
+            )
+            if vision_fields:
+                if ctx.metadata:
+                    ctx.metadata.update(vision_fields)
+                ctx.vision_fields = vision_fields
+
+            _notify(progress_callback, "file_done", {
+                "phase": "vision", "file_name": self._current_file,
+                "index": i + 1, "count": len(active), "success": True,
+            })
+
+        elapsed = time.perf_counter() - t_phase
+        fpm = (len(active) / elapsed * 60) if elapsed > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "vision", "count": len(active),
+            "elapsed_s": round(elapsed, 2), "files_per_min": round(fpm, 1),
+        })
+        return elapsed
 
     # ── Batch Processing (Phase-Level with Sub-Batch Inference) ──
 
@@ -760,16 +882,24 @@ class WorkerDaemon:
         if self.processing_mode == "mc_only":
             return self._process_batch_mc_only(jobs, progress_callback)
 
-        # Build job contexts and resolve file access
+        t_batch = time.perf_counter()
+
+        # Build job contexts and resolve file access (uses prefetched downloads)
         contexts = []
         for job in jobs:
             ctx = _JobContext(job=job)
 
             if job.get("pre_parsed"):
                 # Server already ran Phase P — use claim metadata directly
-                ctx.local_path = self._resolve_file(job)
+                ctx.local_path = self._get_downloaded(job)
                 ctx.metadata = dict(job.get("metadata", {}))
-                ctx.thumb_path = ctx.local_path  # Downloaded thumbnail IS the thumb
+                # Use server-generated thumbnail if available (shared_fs mode
+                # returns original file path, not thumbnail)
+                server_thumb = job.get("thumb_path")
+                if server_thumb and Path(server_thumb).exists():
+                    ctx.thumb_path = server_thumb
+                else:
+                    ctx.thumb_path = ctx.local_path
                 ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
@@ -780,7 +910,7 @@ class WorkerDaemon:
                         "error": ctx.error,
                     })
             else:
-                ctx.local_path = self._resolve_file(job)
+                ctx.local_path = self._get_downloaded(job)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
                     ctx.error = f"Cannot access file: {job['file_path']} (file_id={job.get('file_id')})"
@@ -831,37 +961,22 @@ class WorkerDaemon:
 
         active = [c for c in contexts if not c.failed]
 
+        # Check stop signal between phases
+        if self._stop_requested:
+            logger.info("Stop requested after Parse phase — aborting batch")
+            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
+
         # ── Phase V: Vision (VLM, 1-by-1 — MLX batch_size=1) ──
-        t_phase = time.perf_counter()
-        _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
-        for i, ctx in enumerate(active):
-            self._current_phase = "vision"
-            self._current_file = Path(ctx.job["file_path"]).name
-            self.uploader.report_progress(ctx.job["job_id"], "vision")
-
-            # For pre-parsed jobs, use mc_raw from server instead of building from meta_obj
-            mc_raw_override = ctx.job.get("mc_raw") if ctx.job.get("pre_parsed") else None
-            vision_fields = self._run_vision(
-                Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
-                mc_raw_override=mc_raw_override,
-            )
-            if vision_fields:
-                ctx.metadata.update(vision_fields)
-                ctx.vision_fields = vision_fields
-
-            _notify(progress_callback, "file_done", {
-                "phase": "vision", "file_name": self._current_file,
-                "index": i + 1, "count": len(active), "success": True,
-            })
-        elapsed_vision = time.perf_counter() - t_phase
+        elapsed_vision = self._run_vision_phase(active, progress_callback)
         fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
-        _notify(progress_callback, "phase_complete", {
-            "phase": "vision", "count": len(active),
-            "elapsed_s": round(elapsed_vision, 2), "files_per_min": round(fpm_vision, 1),
-        })
 
         # Unload VLM to free GPU memory for embedding phases
         self._unload_vlm()
+
+        # Check stop signal between phases
+        if self._stop_requested:
+            logger.info("Stop requested after Vision phase — aborting batch")
+            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
 
         # ── Phase VV: SigLIP2 (real batch via encode_image_batch) ──
         t_phase = time.perf_counter()
@@ -906,7 +1021,10 @@ class WorkerDaemon:
                             chunk_valid[j].vv_vec = encoder.encode_image(img)
                         except Exception:
                             pass
-                del images
+                finally:
+                    for img in images:
+                        img.close()
+                    del images
 
             processed_vv += len(chunk)
             self._current_phase = "embed"
@@ -928,6 +1046,11 @@ class WorkerDaemon:
 
         # Unload SigLIP2 to free GPU memory for MV phase
         self._unload_vv()
+
+        # Check stop signal between phases
+        if self._stop_requested:
+            logger.info("Stop requested after VV phase — aborting batch")
+            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
 
         # ── Phase MV: Qwen3-Embedding (real batch via encode_batch) ──
         t_phase = time.perf_counter()
@@ -1074,6 +1197,51 @@ class WorkerDaemon:
 
         return results
 
+    def _finalize_batch(
+        self, contexts, progress_callback, t_batch, interrupted=False
+    ) -> list:
+        """Finalize a batch — upload completed results, fail the rest.
+
+        Called on normal completion or when stop is requested mid-batch.
+        Already-completed phase results are uploaded; incomplete jobs are
+        released back to the queue so other workers can pick them up.
+        """
+        results = []
+        for ctx in contexts:
+            job_id = ctx.job["job_id"]
+            if ctx.failed or (interrupted and not ctx.metadata):
+                # No useful work done — fail the job so it returns to queue
+                self.uploader.fail_job(
+                    job_id, ctx.error or "Interrupted by stop request"
+                )
+                self._total_failed += 1
+                results.append((job_id, False))
+            elif interrupted:
+                # Partial work done — fail to return to queue for re-processing
+                self.uploader.fail_job(job_id, "Interrupted by stop request")
+                self._total_failed += 1
+                results.append((job_id, False))
+            else:
+                results.append((job_id, True))
+
+        _notify(progress_callback, "batch_complete", {
+            "count": len(contexts),
+            "elapsed_s": round(time.perf_counter() - t_batch, 2),
+            "files_per_min": 0,
+            "interrupted": interrupted,
+        })
+
+        self._clear_current()
+        gc.collect()
+        self._try_empty_gpu_cache()
+
+        if interrupted:
+            logger.info(
+                f"Batch interrupted: {len(results)} jobs returned to queue"
+            )
+
+        return results
+
     def _process_batch_mc_only(self, jobs: list, progress_callback=None) -> list:
         """MC-only mode: VLM stays loaded, only generate MC (caption/tags).
 
@@ -1082,17 +1250,23 @@ class WorkerDaemon:
 
         VLM is NOT unloaded between batches — stays resident for speed.
         """
-        import time as _time
-
         # Build job contexts — all jobs should be pre-parsed in mc_only mode
         contexts = []
         for job in jobs:
             ctx = _JobContext(job=job)
-            ctx.local_path = self._resolve_file(job)
+            ctx.local_path = self._get_downloaded(job)
             ctx.metadata = dict(job.get("metadata", {}))
-            ctx.thumb_path = ctx.local_path  # Pre-parsed thumbnail
 
-            if not ctx.local_path or not Path(ctx.local_path).exists():
+            # Use server-generated thumbnail if available (shared_fs mode).
+            # Without this, shared_fs returns the original file path and VLM
+            # processes at full resolution (~2x slower than thumbnail).
+            server_thumb = job.get("thumb_path")
+            if server_thumb and Path(server_thumb).exists():
+                ctx.thumb_path = server_thumb
+            else:
+                ctx.thumb_path = ctx.local_path
+
+            if not ctx.thumb_path or not Path(ctx.thumb_path).exists():
                 ctx.failed = True
                 ctx.error = f"MC-only: thumbnail unavailable: {job['file_path']}"
                 logger.error(f"[RESOLVE] {ctx.error}")
@@ -1105,38 +1279,12 @@ class WorkerDaemon:
         active = [c for c in contexts if not c.failed]
 
         # ── Phase V: Vision/MC only (VLM, 1-by-1) ──
-        t_phase = _time.perf_counter()
-        _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
-
-        for i, ctx in enumerate(active):
-            self._current_phase = "vision"
-            self._current_file = Path(ctx.job["file_path"]).name
-            self.uploader.report_progress(ctx.job["job_id"], "vision")
-
-            mc_raw_override = ctx.job.get("mc_raw")
-            vision_fields = self._run_vision(
-                Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
-                mc_raw_override=mc_raw_override,
-            )
-            if vision_fields:
-                ctx.vision_fields = vision_fields
-
-            _notify(progress_callback, "file_done", {
-                "phase": "vision", "file_name": self._current_file,
-                "index": i + 1, "count": len(active), "success": True,
-            })
-
-        elapsed_vision = _time.perf_counter() - t_phase
-        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
-        _notify(progress_callback, "phase_complete", {
-            "phase": "vision", "count": len(active),
-            "elapsed_s": round(elapsed_vision, 2), "files_per_min": round(fpm_vision, 1),
-        })
+        elapsed_vision = self._run_vision_phase(active, progress_callback)
 
         # NOTE: VLM is NOT unloaded in mc_only mode — stays resident
 
         # ── Upload MC results (vision fields only, no vectors) ──
-        t_upload = _time.perf_counter()
+        t_upload = time.perf_counter()
         results = []
         for ctx in contexts:
             job_id = ctx.job["job_id"]
@@ -1166,9 +1314,10 @@ class WorkerDaemon:
                 except Exception:
                     pass
 
-        elapsed_upload = _time.perf_counter() - t_upload
+        elapsed_upload = time.perf_counter() - t_upload
         total_elapsed = elapsed_vision + elapsed_upload
         total_fpm = (len(contexts) / total_elapsed * 60) if total_elapsed > 0 else 0
+        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
 
         _notify(progress_callback, "batch_complete", {
             "count": len(contexts),
@@ -1224,7 +1373,7 @@ class WorkerDaemon:
         logger.info("MV embedder unloaded")
 
     def _try_empty_gpu_cache(self):
-        """Helper to clear GPU memory cache."""
+        """Helper to clear GPU memory cache (CUDA, MPS, and MLX Metal)."""
         try:
             import torch
             if torch.cuda.is_available():
@@ -1233,6 +1382,118 @@ class WorkerDaemon:
                 torch.mps.empty_cache()
         except ImportError:
             pass
+        # MLX uses its own Metal buffer allocator, separate from torch.mps
+        try:
+            import mlx.core as mx
+            mx.clear_cache()
+        except Exception:
+            pass
+
+    # ── State Machine Callbacks ─────────────────────────────────
+
+    def _on_enter_idle(self):
+        """Called when transitioning to IDLE (schedule inactive).
+        Unload all models to free GPU memory during off-hours."""
+        logger.info("Entering IDLE: unloading all models for off-schedule period")
+        self._clear_download_cache()
+        self._unload_vlm()
+        self._unload_vv()
+        self._unload_mv()
+
+    def _on_enter_active(self):
+        """Called when transitioning to ACTIVE.
+        Models will reload lazily on first use — no explicit preload needed."""
+        logger.info("Entering ACTIVE: ready to process jobs (models load on demand)")
+
+    def _on_enter_resting(self):
+        """Called when transitioning to RESTING (throttle critical).
+        Models should already be unloaded by the throttle handler."""
+        logger.info("Entering RESTING: resource pressure critical, waiting for recovery")
+
+    # ── Throttle Logic ────────────────────────────────────────
+
+    def _check_throttle(self) -> str:
+        """Collect metrics and determine current throttle level.
+
+        Returns:
+            One of 'normal', 'warning', 'danger', 'critical'.
+        """
+        try:
+            from backend.worker.resource_monitor import collect_metrics, get_throttle_level
+            metrics = collect_metrics()
+            level = get_throttle_level(metrics)
+        except Exception:
+            level = "normal"
+
+        if level != self._throttle_level:
+            logger.info(f"Throttle level changed: {self._throttle_level} → {level}")
+        self._throttle_level = level
+        return level
+
+    def _apply_throttle(self, level: str) -> bool:
+        """Apply throttle actions based on the current level.
+
+        Args:
+            level: Throttle level from _check_throttle().
+
+        Returns:
+            True if processing should proceed, False if this iteration
+            should be skipped (danger pause or critical halt).
+        """
+        if level == "normal":
+            # Restore original batch capacity if it was reduced
+            if self.batch_capacity < self._original_batch_capacity:
+                self.batch_capacity = self._original_batch_capacity
+                logger.info(f"Throttle normal: batch_capacity restored to {self.batch_capacity}")
+            return True
+
+        if level == "warning":
+            # Reduce batch capacity to ~50% (minimum 1)
+            reduced = max(1, self._original_batch_capacity // 2)
+            if self.batch_capacity != reduced:
+                logger.warning(f"Throttle warning: batch_capacity {self.batch_capacity} → {reduced}")
+                self.batch_capacity = reduced
+            return True
+
+        if level == "danger":
+            # Pause for N seconds, then allow retry
+            try:
+                from backend.utils.config import get_config
+                cfg = get_config()
+                wait_s = cfg.get("worker", {}).get("throttle", {}).get("danger_wait_seconds", 30)
+            except Exception:
+                wait_s = 30
+            logger.warning(f"Throttle danger: pausing {wait_s}s before retry")
+            for _ in range(wait_s):
+                if _shutdown:
+                    return False
+                time.sleep(1)
+            return False  # Skip this iteration, re-check on next loop
+
+        if level == "critical":
+            # Stop processing, unload all models, wait for recovery
+            logger.error("Throttle critical: unloading all models, waiting for recovery")
+            self._unload_vlm()
+            self._unload_vv()
+            self._unload_mv()
+            # Wait in 10-second intervals, re-checking level
+            for _ in range(6):  # Up to 60 seconds
+                if _shutdown:
+                    return False
+                time.sleep(10)
+                try:
+                    from backend.worker.resource_monitor import collect_metrics, get_throttle_level
+                    m = collect_metrics()
+                    new_level = get_throttle_level(m)
+                    if new_level != "critical":
+                        logger.info(f"Throttle recovered from critical → {new_level}")
+                        self._throttle_level = new_level
+                        return False  # Re-enter loop to apply new level
+                except Exception:
+                    pass
+            return False  # Still critical after 60s — skip this iteration
+
+        return True
 
     # ── Main Loop ─────────────────────────────────────────────
 
@@ -1257,6 +1518,39 @@ class WorkerDaemon:
 
         while not _shutdown:
             try:
+                # ── Schedule + State Machine check ──
+                scheduled_active = is_active_now()
+                throttle = self._check_throttle()
+
+                # Determine if there are pending jobs (pool + server)
+                with self._pool_lock:
+                    pool_count = len(self._job_pool)
+                has_pending = pool_count > 0
+
+                self._state_machine.update(
+                    is_scheduled_active=scheduled_active,
+                    throttle_level=throttle,
+                    has_pending_jobs=has_pending,
+                )
+
+                current_state = self._state_machine.state
+                if current_state in (WorkerState.IDLE, WorkerState.RESTING):
+                    # Not active — skip job processing, just heartbeat and wait
+                    if time.time() - last_heartbeat >= heartbeat_interval:
+                        hb = self._heartbeat()
+                        last_heartbeat = time.time()
+                        cmd = hb.get("command")
+                        if cmd in ("stop", "block"):
+                            logger.info(f"Server command received: {cmd}")
+                            break
+                    state_label = current_state.value
+                    logger.debug(f"Worker {state_label}: waiting {poll_interval}s")
+                    for _ in range(poll_interval):
+                        if _shutdown:
+                            break
+                        time.sleep(1)
+                    continue
+
                 # Heartbeat check
                 if time.time() - last_heartbeat >= heartbeat_interval:
                     hb = self._heartbeat()
@@ -1300,13 +1594,27 @@ class WorkerDaemon:
 
                 consecutive_empty = 0
 
+                # ── Throttle check before processing ──
+                throttle = self._check_throttle()
+                if not self._apply_throttle(throttle):
+                    # Put jobs back into pool (not lost)
+                    with self._pool_lock:
+                        self._job_pool.extendleft(reversed(batch))
+                    logger.info(f"Throttle ({throttle}): {len(batch)} jobs returned to pool")
+                    continue
+
                 # Start background refill while processing
                 refill_thread = threading.Thread(target=self._fill_pool, daemon=True)
                 refill_thread.start()
 
+                # Prefetch file downloads for this batch
+                self._prefetch_downloads(batch)
+
                 # Phase-level batch processing (all files through each phase)
                 if not _shutdown:
                     self.process_batch_phased(batch)
+                    # Record job activity to reset idle timeout timer
+                    self._state_machine.record_job_activity()
 
                 # Wait for refill to complete
                 refill_thread.join(timeout=30)
@@ -1318,6 +1626,8 @@ class WorkerDaemon:
                 time.sleep(poll_interval)
 
         # Graceful shutdown
+        self._clear_download_cache()
+        self._download_pool.shutdown(wait=False)
         self._disconnect_session()
         logger.info(f"Worker daemon shutting down. (completed={self._total_completed}, failed={self._total_failed})")
         # Cleanup temp directory
