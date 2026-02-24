@@ -200,6 +200,16 @@ export async function setActiveDomain(domainId) {
   return apiClient.put('/api/v1/admin/classification/active', { domain_id: domainId });
 }
 
+export async function saveDomainYaml(domainId, yamlContent) {
+  if (_useLocalBackend) {
+    return window.electron.pipeline.saveDomainYaml(domainId, yamlContent);
+  }
+  return apiClient.post('/api/v1/admin/classification/domains', {
+    domain_id: domainId,
+    yaml_content: yamlContent,
+  });
+}
+
 
 // ── File Download ────────────────────────────────────────────
 

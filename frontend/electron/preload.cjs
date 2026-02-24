@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('electron', {
         // Classification Domains
         listDomains: () => ipcRenderer.invoke('list-domains'),
         getDomainDetail: (domainId) => ipcRenderer.invoke('get-domain-detail', domainId),
+        saveDomainYaml: (domainId, yamlContent) => ipcRenderer.invoke('save-domain-yaml', domainId, yamlContent),
 
         // Registered Folders
         getRegisteredFolders: () => ipcRenderer.invoke('get-registered-folders'),

@@ -127,3 +127,10 @@ export async function getClassificationDomainDetail(domainId) {
 export async function setActiveClassificationDomain(domainId) {
   return apiClient.put('/api/v1/admin/classification/active', { domain_id: domainId });
 }
+
+export async function createClassificationDomain(domainId, yamlContent) {
+  return apiClient.post('/api/v1/admin/classification/domains', {
+    domain_id: domainId,
+    yaml_content: yamlContent,
+  });
+}

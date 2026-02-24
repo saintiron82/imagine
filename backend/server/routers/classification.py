@@ -56,6 +56,11 @@ class SetActiveDomainRequest(BaseModel):
     domain_id: str
 
 
+class CreateDomainRequest(BaseModel):
+    domain_id: str
+    yaml_content: str
+
+
 # ── Endpoints ────────────────────────────────────────────────
 
 @router.get("/domains", response_model=List[DomainSummary])
@@ -145,3 +150,67 @@ def set_active(
     except Exception as e:
         logger.error(f"Failed to update active domain: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save config: {str(e)}")
+
+
+@router.post("/domains", status_code=201)
+def create_domain(
+    req: CreateDomainRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Create a new domain profile from raw YAML content."""
+    import re
+
+    # 1. Validate domain_id format
+    if not re.match(r'^[a-z][a-z0-9_]*$', req.domain_id):
+        raise HTTPException(400, "Invalid domain ID: must be lowercase snake_case")
+
+    # 2. Check if already exists
+    domains_dir = _PROJECT_ROOT / "backend" / "vision" / "domains"
+    target_path = domains_dir / f"{req.domain_id}.yaml"
+    if target_path.exists():
+        raise HTTPException(409, f"Domain '{req.domain_id}' already exists")
+
+    # 3. Parse YAML
+    try:
+        parsed = yaml.safe_load(req.yaml_content)
+    except yaml.YAMLError as e:
+        raise HTTPException(400, f"YAML parse error: {str(e)}")
+
+    # 4. Structural validation
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, "YAML must be a valid object")
+
+    domain_meta = parsed.get("domain")
+    if not domain_meta or not domain_meta.get("id"):
+        raise HTTPException(400, "Missing required field: domain.id")
+
+    if domain_meta["id"] != req.domain_id:
+        raise HTTPException(
+            400,
+            f"domain.id mismatch: expected '{req.domain_id}', got '{domain_meta['id']}'",
+        )
+
+    image_types = parsed.get("image_types")
+    if not isinstance(image_types, list) or len(image_types) == 0:
+        raise HTTPException(400, "image_types must be a non-empty array")
+
+    if not isinstance(parsed.get("type_hints", {}), dict):
+        raise HTTPException(400, "type_hints must be an object")
+
+    # 5. Write file
+    try:
+        domains_dir.mkdir(parents=True, exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            yaml.dump(
+                parsed, f,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
+
+        logger.info(f"Domain '{req.domain_id}' created by admin '{admin['username']}'")
+        return {"success": True, "domain_id": req.domain_id}
+
+    except Exception as e:
+        logger.error(f"Failed to save domain: {e}")
+        raise HTTPException(500, f"Failed to save domain: {str(e)}")

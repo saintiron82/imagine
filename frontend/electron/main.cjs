@@ -1433,6 +1433,68 @@ ipcMain.handle('get-domain-detail', async (_, domainId) => {
     }
 });
 
+// IPC Handler: Save new domain YAML file
+ipcMain.handle('save-domain-yaml', async (_, domainId, yamlContent) => {
+    try {
+        const yaml = require('js-yaml');
+
+        // 1. Validate domainId format
+        if (!/^[a-z][a-z0-9_]*$/.test(domainId)) {
+            return { success: false, error: 'Invalid domain ID: must be lowercase snake_case' };
+        }
+
+        // 2. Check if domain already exists
+        const domainsDir = path.join(configRoot, 'backend', 'vision', 'domains');
+        const targetPath = path.join(domainsDir, `${domainId}.yaml`);
+        if (fs.existsSync(targetPath)) {
+            return { success: false, error: `Domain '${domainId}' already exists` };
+        }
+
+        // 3. Parse YAML to validate structure
+        let parsed;
+        try {
+            parsed = yaml.load(yamlContent);
+        } catch (parseErr) {
+            return { success: false, error: `YAML parse error: ${parseErr.message}` };
+        }
+
+        // 4. Structural validation
+        if (!parsed || typeof parsed !== 'object') {
+            return { success: false, error: 'YAML must be a valid object' };
+        }
+        if (!parsed.domain || !parsed.domain.id) {
+            return { success: false, error: 'Missing required field: domain.id' };
+        }
+        if (parsed.domain.id !== domainId) {
+            return { success: false, error: `domain.id mismatch: expected '${domainId}', got '${parsed.domain.id}'` };
+        }
+        if (!Array.isArray(parsed.image_types) || parsed.image_types.length === 0) {
+            return { success: false, error: 'image_types must be a non-empty array' };
+        }
+        if (!parsed.type_hints || typeof parsed.type_hints !== 'object') {
+            return { success: false, error: 'type_hints must be an object' };
+        }
+
+        // 5. Ensure domains directory exists
+        if (!fs.existsSync(domainsDir)) {
+            fs.mkdirSync(domainsDir, { recursive: true });
+        }
+
+        // 6. Write file with consistent formatting
+        const formattedYaml = yaml.dump(parsed, {
+            lineWidth: -1,
+            noRefs: true,
+            sortKeys: false,
+        });
+        fs.writeFileSync(targetPath, formattedYaml, 'utf8');
+
+        return { success: true };
+    } catch (err) {
+        console.error('[Save Domain YAML Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
 // IPC Handler: Get config (system config.yaml merged with user-settings.yaml)
 ipcMain.handle('get-config', async () => {
     try {
