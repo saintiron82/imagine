@@ -38,8 +38,10 @@ class ParseAheadPool(BaseAheadPool):
 
     def __init__(self, db):
         super().__init__(db)
-        self._processing_mode = self._get_config_value("server.processing_mode", "full")
+        from backend.server.queue.manager import get_processing_mode
+        self._processing_mode = get_processing_mode()
         self._vv_encoder = None  # Lazy-loaded SigLIP2, stays resident in mc_only mode
+        logger.info(f"ParseAheadPool initialized (processing_mode={self._processing_mode})")
 
     def _unload_models(self):
         """Unload VV encoder if loaded (mc_only mode)."""
@@ -303,7 +305,8 @@ class ParseAheadPool(BaseAheadPool):
 
         # 10. mc_only mode: Phase VV — encode image with SigLIP2
         # Re-check processing_mode dynamically (may change via Admin API at runtime)
-        current_mode = self._get_config_value("server.processing_mode", "full")
+        from backend.server.queue.manager import get_processing_mode
+        current_mode = get_processing_mode()
         if current_mode == "mc_only":
             try:
                 self._run_vv_embedding(stored_file_id, file_p, server_thumb_path)

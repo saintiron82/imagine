@@ -88,7 +88,9 @@ async def startup():
 
     # Embed-ahead pool: mc_only mode — server-side Phase MV after workers upload MC
     try:
-        processing_mode = cfg.get("server.processing_mode", "full")
+        from backend.server.queue.manager import get_processing_mode
+        processing_mode = get_processing_mode()
+        logger.info(f"Processing mode: {processing_mode}")
         if processing_mode == "mc_only":
             from backend.server.queue.embed_ahead import EmbedAheadPool
             from backend.server.deps import get_db
@@ -96,6 +98,8 @@ async def startup():
             app.state.embed_ahead = EmbedAheadPool(db)
             app.state.embed_ahead.start()
             logger.info("Embed-ahead pool started (mc_only mode)")
+        else:
+            logger.info("Embed-ahead pool skipped (processing_mode='full')")
     except Exception as e:
         logger.warning(f"Embed-ahead pool failed to start: {e}")
 

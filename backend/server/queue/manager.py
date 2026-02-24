@@ -13,6 +13,24 @@ from backend.db.sqlite_client import SQLiteDB
 logger = logging.getLogger(__name__)
 
 
+def get_processing_mode() -> str:
+    """Get effective processing mode from config.
+
+    Checks server.processing_mode first (set by Admin API at runtime),
+    then falls back to worker.processing_mode (set by WorkerPage UI,
+    stored in user-settings.yaml). Defaults to "full".
+
+    This resolves the config path mismatch where WorkerPage saves to
+    'worker.processing_mode' but the server reads 'server.processing_mode'.
+    """
+    try:
+        from backend.utils.config import get_config
+        cfg = get_config()
+        return cfg.get("server.processing_mode") or cfg.get("worker.processing_mode") or "full"
+    except Exception:
+        return "full"
+
+
 def _utcnow_sql() -> str:
     """Return current UTC time in SQLite-native format: YYYY-MM-DD HH:MM:SS.
 
@@ -36,11 +54,7 @@ class JobQueueManager:
         No caching — config.get() reads from an in-memory dict, so it's cheap.
         This ensures runtime mode changes via Admin API propagate immediately.
         """
-        try:
-            from backend.utils.config import get_config
-            return get_config().get("server.processing_mode", "full")
-        except Exception:
-            return "full"
+        return get_processing_mode()
 
     def create_jobs(self, file_ids: List[int], file_paths: List[str], priority: int = 0) -> int:
         """Create pending jobs for files. Returns count of jobs created."""
@@ -319,11 +333,7 @@ class JobQueueManager:
         total = cursor.fetchone()[0]
 
         # Determine processing mode for throughput calculation
-        try:
-            from backend.utils.config import get_config
-            processing_mode = get_config().get("server.processing_mode", "full")
-        except Exception:
-            processing_mode = "full"
+        processing_mode = get_processing_mode()
 
         # Throughput: sliding windows
         # mc_only: use mc_completed_at (worker MC speed, not EmbedAhead MV speed)

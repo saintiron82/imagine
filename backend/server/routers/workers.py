@@ -56,12 +56,13 @@ class GlobalModeUpdate(BaseModel):
 
 
 def _get_global_processing_mode() -> str:
-    """Read global processing_mode from config (cached singleton)."""
-    try:
-        from backend.utils.config import get_config
-        return get_config().get("server.processing_mode", "full")
-    except Exception:
-        return "full"
+    """Read global processing_mode from config (cached singleton).
+
+    Checks server.processing_mode first (Admin API), then falls back
+    to worker.processing_mode (WorkerPage UI in user-settings.yaml).
+    """
+    from backend.server.queue.manager import get_processing_mode
+    return get_processing_mode()
 
 
 # ── Worker → Server endpoints ────────────────────────────────
