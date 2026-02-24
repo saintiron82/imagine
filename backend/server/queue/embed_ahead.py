@@ -12,6 +12,7 @@ import json
 import logging
 import time
 import traceback
+import unicodedata
 
 from backend.server.queue.base_ahead_pool import BaseAheadPool
 from backend.server.queue.manager import _utcnow_sql
@@ -118,6 +119,10 @@ class EmbedAheadPool(BaseAheadPool):
         cursor = self.db.conn.cursor()
 
         for job_id, file_id, file_path in jobs:
+            # Normalize to NFC — job_queue may store NFD (macOS filesystem),
+            # but files table stores NFC (via upsert_metadata). Must match.
+            file_path = unicodedata.normalize('NFC', file_path)
+
             # Look up file_id from files table (file_id in job_queue may be stale)
             cursor.execute(
                 "SELECT id, mc_caption, ai_tags, image_type, art_style, scene_type "

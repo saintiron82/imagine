@@ -16,6 +16,7 @@ import logging
 import shutil
 import time
 import traceback
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -260,10 +261,13 @@ class ParseAheadPool(BaseAheadPool):
 
         # 6. Upsert metadata to files table
         meta_dict = meta_to_dict(meta)
-        meta_dict["file_path"] = str(file_p)
+        # Normalize to NFC — macOS Path may preserve NFD from filesystem,
+        # but files table must store NFC for consistent lookups.
+        nfc_path = unicodedata.normalize('NFC', str(file_p))
+        meta_dict["file_path"] = nfc_path
 
         try:
-            stored_file_id = self.db.upsert_metadata(str(file_p), meta_dict)
+            stored_file_id = self.db.upsert_metadata(nfc_path, meta_dict)
             logger.debug(f"ParseAhead: metadata upserted, file_id={stored_file_id}")
         except Exception as e:
             logger.error(f"ParseAhead: metadata upsert failed: {e}")
