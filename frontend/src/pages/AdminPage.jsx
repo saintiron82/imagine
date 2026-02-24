@@ -40,12 +40,12 @@ export default function AdminPage() {
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white">
       {/* Tab bar */}
-      <div className="flex border-b border-gray-700 px-4 pt-2">
+      <div className="flex overflow-x-auto border-b border-gray-700 px-4 pt-2">
         {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setActiveTab(id)}
-            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap flex-shrink-0 ${
               activeTab === id
                 ? 'border-blue-500 text-white'
                 : 'border-transparent text-gray-400 hover:text-white'
