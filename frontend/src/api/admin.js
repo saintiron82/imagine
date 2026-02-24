@@ -114,6 +114,12 @@ export async function registerWorker() {
   return apiClient.post('/api/v1/worker/register');
 }
 
+// ── Database Management ─────────────────────────────────
+
+export async function resetDatabase(password) {
+  return apiClient.post('/api/v1/admin/database/reset', { password });
+}
+
 // ── Classification Domains ──────────────────────────────
 
 export async function listClassificationDomains() {

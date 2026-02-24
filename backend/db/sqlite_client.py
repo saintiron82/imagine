@@ -1206,6 +1206,50 @@ class SQLiteDB:
         cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
         self.conn.commit()
         return cursor.rowcount > 0
+
+    def reset_file_data(self) -> dict:
+        """
+        Delete all file data while preserving auth tables and thumbnails.
+
+        Clears: files, layers, vec_files, vec_text, vec_structure, files_fts, job_queue
+        Preserves: users, invite_codes, worker_tokens, worker_sessions, system_meta (reset values)
+        """
+        cursor = self.conn.cursor()
+        try:
+            # Count before delete (for reporting)
+            file_count = cursor.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            vec_count = (
+                cursor.execute("SELECT COUNT(*) FROM vec_files").fetchone()[0]
+                + cursor.execute("SELECT COUNT(*) FROM vec_text").fetchone()[0]
+            )
+            job_count = 0
+            if self._table_exists('job_queue'):
+                job_count = cursor.execute("SELECT COUNT(*) FROM job_queue").fetchone()[0]
+
+            # Delete order: FTS → vectors → layers → files → jobs
+            cursor.execute("DELETE FROM files_fts")
+            cursor.execute("DELETE FROM vec_files")
+            cursor.execute("DELETE FROM vec_text")
+            if self._table_exists('vec_structure'):
+                cursor.execute("DELETE FROM vec_structure")
+            cursor.execute("DELETE FROM layers")
+            cursor.execute("DELETE FROM files")
+            if self._table_exists('job_queue'):
+                cursor.execute("DELETE FROM job_queue")
+
+            # Reset system meta
+            self._set_system_meta(self._META_KEY_DATA_BUILD_LEVEL, "0", commit=False)
+            self._set_system_meta(self._META_KEY_FTS_INDEX_VERSION, "0", commit=False)
+            self._set_system_meta(self._META_KEY_LAST_REBUILD_AT, "", commit=False)
+
+            self.conn.commit()
+            logger.info(f"Database reset: {file_count} files, {vec_count} vectors, {job_count} jobs cleared")
+            return {"success": True, "files": file_count, "vectors": vec_count, "jobs": job_count}
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Database reset failed: {e}")
+            return {"success": False, "error": str(e)}
+
     def insert_file(
         self,
         file_path: str,

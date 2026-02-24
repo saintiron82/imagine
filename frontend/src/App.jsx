@@ -11,14 +11,14 @@ import AdminPage from './pages/AdminPage';
 import SetupPage from './pages/SetupPage';
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
-import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor, Wifi, Info } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Server, Power, Copy, Monitor, Wifi, Info, Trash2 } from 'lucide-react';
 import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
 import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
-import { registerPaths, scanFolder, getJobStats } from './api/admin';
+import { registerPaths, scanFolder, getJobStats, resetDatabase } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
 
 function App() {
@@ -59,6 +59,10 @@ function App() {
   const [queueReloadSignal, setQueueReloadSignal] = useState(0);
   const [showDownloadPage, setShowDownloadPage] = useState(false);
   const [showDomainSelect, setShowDomainSelect] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState('');
 
   // Worker progress state (client mode)
   const [isWorkerRunning, setIsWorkerRunning] = useState(false);
@@ -868,6 +872,26 @@ function App() {
     }
   };
 
+  const handleResetDb = async () => {
+    if (!resetPassword) return;
+    setResetLoading(true);
+    setResetError('');
+    try {
+      const result = await resetDatabase(resetPassword);
+      appendLog({
+        message: t('reset_db.success', { files: result.files, vectors: result.vectors, jobs: result.jobs }),
+        type: 'success',
+      });
+      setShowResetDialog(false);
+      setResetPassword('');
+      setFolderStatsVersion(v => v + 1);
+    } catch (e) {
+      setResetError(e.message || 'Reset failed');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   const handleImportProcessNew = (folderPath) => {
     handleProcessFolder(folderPath);
   };
@@ -929,6 +953,55 @@ function App() {
 
       {showDomainSelect && (
         <DomainSelectModal onClose={() => setShowDomainSelect(false)} />
+      )}
+
+      {showResetDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+            <h2 className="text-lg font-semibold text-red-400 mb-3">
+              {t('reset_db.title')}
+            </h2>
+            <p className="text-sm text-neutral-300 mb-4">
+              {t('reset_db.warning')}
+            </p>
+            <label className="block text-sm text-neutral-400 mb-1.5">
+              {t('reset_db.password_label')}
+            </label>
+            <input
+              type="password"
+              value={resetPassword}
+              onChange={(e) => { setResetPassword(e.target.value); setResetError(''); }}
+              placeholder={t('reset_db.password_placeholder')}
+              className="w-full px-3 py-2 bg-neutral-800 border border-neutral-600 rounded-lg text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-red-500 mb-2"
+              onKeyDown={(e) => e.key === 'Enter' && handleResetDb()}
+              autoFocus
+            />
+            {resetError && (
+              <p className="text-xs text-red-400 mb-2">{t('reset_db.error', { error: resetError })}</p>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => { setShowResetDialog(false); setResetPassword(''); setResetError(''); }}
+                className="px-4 py-2 text-sm text-neutral-400 hover:text-white transition-colors"
+                disabled={resetLoading}
+              >
+                {t('import.cancel_btn')}
+              </button>
+              <button
+                onClick={handleResetDb}
+                disabled={!resetPassword || resetLoading}
+                className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 disabled:bg-neutral-700 disabled:text-neutral-500 text-white rounded-lg transition-colors"
+              >
+                {resetLoading ? (
+                  <span className="flex items-center gap-2">
+                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    {t('reset_db.confirm')}
+                  </span>
+                ) : t('reset_db.confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Header Bar */}
@@ -1042,6 +1115,18 @@ function App() {
                     <Upload size={14} />
                     {t('action.import_db')}
                   </button>
+                  {isAdmin && (
+                    <>
+                      <div className="border-t border-gray-600 my-1" />
+                      <button
+                        onClick={() => { setShowDbMenu(false); setShowResetDialog(true); }}
+                        className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                        {t('action.reset_db')}
+                      </button>
+                    </>
+                  )}
                 </div>
               </>
             )}

@@ -502,5 +502,13 @@
   "domain_select.select": "Select",
   "domain_select.skip": "Skip for now",
   "domain_select.types_count": "{count} image types",
-  "domain_select.selected": "Selected!"
+  "domain_select.selected": "Selected!",
+  "action.reset_db": "Reset DB",
+  "reset_db.title": "Reset Database",
+  "reset_db.warning": "This will permanently delete all file data, vectors, and job queue. Thumbnails and user accounts will be preserved.",
+  "reset_db.password_label": "Enter admin password to confirm",
+  "reset_db.password_placeholder": "Admin password",
+  "reset_db.confirm": "Reset",
+  "reset_db.success": "Database reset complete. {files} files, {vectors} vectors, {jobs} jobs cleared.",
+  "reset_db.error": "Reset failed: {error}"
 }

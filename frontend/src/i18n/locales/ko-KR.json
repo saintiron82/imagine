@@ -502,5 +502,13 @@
   "domain_select.select": "선택",
   "domain_select.skip": "나중에 설정",
   "domain_select.types_count": "{count}개 이미지 타입",
-  "domain_select.selected": "선택됨!"
+  "domain_select.selected": "선택됨!",
+  "action.reset_db": "DB 초기화",
+  "reset_db.title": "데이터베이스 초기화",
+  "reset_db.warning": "모든 파일 데이터, 벡터, 작업 큐가 영구 삭제됩니다. 썸네일과 사용자 계정은 유지됩니다.",
+  "reset_db.password_label": "확인을 위해 관리자 비밀번호를 입력하세요",
+  "reset_db.password_placeholder": "관리자 비밀번호",
+  "reset_db.confirm": "초기화",
+  "reset_db.success": "DB 초기화 완료. 파일 {files}개, 벡터 {vectors}개, 작업 {jobs}개 삭제됨.",
+  "reset_db.error": "초기화 실패: {error}"
 }

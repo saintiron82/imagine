@@ -140,6 +140,7 @@ from backend.server.routers.workers import router as workers_router
 from backend.server.routers.app_download import router as app_download_router
 from backend.server.routers.sync import router as sync_router
 from backend.server.routers.classification import router as classification_router
+from backend.server.routers.database import router as database_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -153,6 +154,7 @@ app.include_router(workers_router, prefix="/api/v1")
 app.include_router(app_download_router, prefix="/api/v1")
 app.include_router(sync_router, prefix="/api/v1")
 app.include_router(classification_router, prefix="/api/v1")
+app.include_router(database_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")
