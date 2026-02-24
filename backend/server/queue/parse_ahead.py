@@ -7,8 +7,9 @@ so that workers receive thumbnails (~200KB) instead of raw files (~500MB).
 The pool runs as a background daemon thread, continuously maintaining
 a buffer of pre-parsed jobs proportional to worker demand.
 
-mc_only mode: Also runs Phase VV (SigLIP2) on parsed jobs since VV only
-needs the image (independent of MC). SigLIP2 stays loaded for the session.
+mc_only mode: Also runs Phase VV (SigLIP2 + DINOv2) on parsed jobs since
+VV/Structure only need the image (independent of MC). Both encoders stay
+loaded for the session.
 """
 
 import json
@@ -33,8 +34,9 @@ class ParseAheadPool(BaseAheadPool):
     Monitors connected workers' total capacity and pre-parses
     pending jobs to have thumbnails + metadata ready before claim.
 
-    In mc_only mode, also runs Phase VV (SigLIP2 visual embedding)
-    since VV only needs the image pixel data, not MC text.
+    In mc_only mode, also runs Phase VV (SigLIP2 visual embedding +
+    DINOv2 structure embedding) since both only need the image pixel
+    data, not MC text.
     """
 
     def __init__(self, db):
@@ -42,10 +44,11 @@ class ParseAheadPool(BaseAheadPool):
         from backend.server.queue.manager import get_processing_mode
         self._processing_mode = get_processing_mode()
         self._vv_encoder = None  # Lazy-loaded SigLIP2, stays resident in mc_only mode
+        self._structure_encoder = None  # Lazy-loaded DINOv2, stays resident in mc_only mode
         logger.info(f"ParseAheadPool initialized (processing_mode={self._processing_mode})")
 
     def _unload_models(self):
-        """Unload VV encoder if loaded (mc_only mode)."""
+        """Unload VV and Structure encoders if loaded (mc_only mode)."""
         if self._vv_encoder is not None:
             try:
                 self._vv_encoder.unload()
@@ -53,6 +56,13 @@ class ParseAheadPool(BaseAheadPool):
             except Exception as e:
                 logger.warning(f"ParseAheadPool: VV encoder unload error: {e}")
             self._vv_encoder = None
+        if self._structure_encoder is not None:
+            try:
+                self._structure_encoder.unload()
+                logger.info("ParseAheadPool: DINOv2 Structure encoder unloaded")
+            except Exception as e:
+                logger.warning(f"ParseAheadPool: DINOv2 Structure encoder unload error: {e}")
+            self._structure_encoder = None
 
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
@@ -322,9 +332,9 @@ class ParseAheadPool(BaseAheadPool):
         return True
 
     def _run_vv_embedding(self, file_id: int, file_path: Path, thumb_path: Optional[Path] = None):
-        """Run SigLIP2 VV embedding on a single image (mc_only mode).
+        """Run SigLIP2 VV + DINOv2 Structure embedding on a single image (mc_only mode).
 
-        Loads SigLIP2 once and keeps it resident for the session.
+        Loads SigLIP2 and DINOv2 once and keeps them resident for the session.
         Uses thumbnail if available, falls back to original file.
         """
         from PIL import Image
@@ -333,6 +343,11 @@ class ParseAheadPool(BaseAheadPool):
             from backend.vector.siglip2_encoder import SigLIP2Encoder
             self._vv_encoder = SigLIP2Encoder()
             logger.info("ParseAheadPool: SigLIP2 VV encoder loaded (mc_only mode, will stay resident)")
+
+        if self._structure_encoder is None:
+            from backend.vector.dinov2_encoder import DinoV2Encoder
+            self._structure_encoder = DinoV2Encoder()
+            logger.info("ParseAheadPool: DINOv2 Structure encoder loaded (mc_only mode, will stay resident)")
 
         # Prefer thumbnail (smaller, faster), fall back to original
         img_source = thumb_path if thumb_path and thumb_path.exists() else file_path
@@ -344,10 +359,16 @@ class ParseAheadPool(BaseAheadPool):
 
         try:
             vv_vec = self._vv_encoder.encode_image(img)
+            # DINOv2 Structure vector (same image)
+            structure_vec = None
+            try:
+                structure_vec = self._structure_encoder.encode_image(img)
+            except Exception as e:
+                logger.warning(f"ParseAhead Structure: DINOv2 encoding failed for file_id={file_id}: {e}")
         finally:
             img.close()
-        self.db.upsert_vectors(file_id, vv_vec=vv_vec)
-        logger.debug(f"ParseAhead VV: file_id={file_id} embedded OK")
+        self.db.upsert_vectors(file_id, vv_vec=vv_vec, structure_vec=structure_vec)
+        logger.debug(f"ParseAhead VV+Structure: file_id={file_id} embedded OK")
 
     def _get_thumbnail_dir(self) -> Path:
         """Get server thumbnail directory (same logic as upload.py)."""
