@@ -136,7 +136,13 @@ class EmbedAheadPool(BaseAheadPool):
                 continue
 
             stored_file_id, mc_caption, ai_tags, image_type, art_style, scene_type = row
-            mc_caption = mc_caption or ""
+            if not mc_caption:
+                logger.warning(
+                    f"EmbedAhead: mc_caption is NULL for job {job_id} (file_id={stored_file_id}) "
+                    f"— VLM may have failed, skipping MV"
+                )
+                failed_job_ids.append(job_id)
+                continue
             ai_tags = ai_tags or "[]"
 
             # Parse ai_tags

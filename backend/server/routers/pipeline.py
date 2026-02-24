@@ -232,8 +232,18 @@ def complete_mc(
         "structured_meta", "perceptual_hash", "dup_group_id", "caption_model",
     ]
     vision_fields = {k: v for k, v in req.vision_fields.items() if k in vision_keys and v is not None}
-    if vision_fields:
-        db.update_vision_fields(file_path, vision_fields)
+
+    # mc_caption is required — EmbedAhead needs it to build MV.
+    # If VLM failed and worker sent empty fields, reject rather than
+    # marking vision=true with no MC data (which causes EmbedAhead failure).
+    if not vision_fields or "mc_caption" not in vision_fields:
+        logger.warning(f"MC-only job {job_id}: empty or missing mc_caption in vision_fields")
+        raise HTTPException(
+            status_code=422,
+            detail="mc_caption is required in vision_fields — VLM may have failed"
+        )
+
+    db.update_vision_fields(file_path, vision_fields)
 
     # Update job: mark vision done, keep status='processing' for EmbedAhead to finish MV
     phase_json = json.dumps({"parse": True, "vision": True, "embed": False})

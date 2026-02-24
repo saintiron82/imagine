@@ -839,14 +839,20 @@ class WorkerDaemon:
                 Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
                 mc_raw_override=mc_raw_override,
             )
-            if vision_fields:
+            if vision_fields and vision_fields.get("mc_caption"):
                 if ctx.metadata:
                     ctx.metadata.update(vision_fields)
                 ctx.vision_fields = vision_fields
+            elif not vision_fields or not vision_fields.get("mc_caption"):
+                # VLM failed to generate MC — mark as failed so worker
+                # calls fail_job() instead of complete_mc() with empty data.
+                ctx.failed = True
+                ctx.error = f"VLM failed to generate MC for {self._current_file}"
+                logger.warning(ctx.error)
 
             _notify(progress_callback, "file_done", {
                 "phase": "vision", "file_name": self._current_file,
-                "index": i + 1, "count": len(active), "success": True,
+                "index": i + 1, "count": len(active), "success": not ctx.failed,
             })
 
         elapsed = time.perf_counter() - t_phase
