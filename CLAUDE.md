@@ -97,7 +97,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ### 현재 버전
 
 ```
-v0.5.1
+v0.6.0
 ```
 
 ### 형식
@@ -817,6 +817,11 @@ for layer in psd.descendants():
 | `backend/server/routers/workers.py` | **워커 세션 API** (connect/heartbeat/admin) |
 | `backend/server/routers/pipeline.py` | 파이프라인 API (업로드/claim/완료) |
 | `backend/server/routers/worker_setup.py` | 워커 토큰 + 원클릭 셋업 API |
+| `backend/server/routers/classification.py` | 분류 도메인 관리 API (CRUD + active 설정) |
+| `backend/server/routers/database.py` | DB 관리 API (reset + admin 비밀번호 재검증) |
+| `backend/vision/domain_loader.py` | 도메인 YAML 로더 (프롬프트/스키마 동적 구성) |
+| `backend/vision/domains/` | 도메인 프리셋 YAML 파일 (`_base`, `game_asset`, `illustration`, `stock_photo`) |
+| `frontend/src/components/DomainSelectModal.jsx` | 첫 실행 시 도메인 선택 모달 |
 | `backend/server/queue/manager.py` | **작업 큐 관리자** (Job 생성/claim/완료) |
 | `backend/worker/worker_daemon.py` | **워커 데몬** (prefetch 풀 + 배치 처리 + 하트비트) |
 | `backend/worker/worker_ipc.py` | **워커 IPC 브리지** (Electron ↔ Python JSON 프로토콜) |
@@ -1003,6 +1008,38 @@ Phase S (Summary) → 완료 확인 ([OK] emit, 프론트엔드 카운트용, �
 - **각 Phase는 서브배치 단위로 즉시 저장**. 1000개 파일이라도 배치(2~16개)씩 처리→저장→다음 배치. 중간 크래시 시 이미 저장된 파일은 Smart Skip으로 건너뜀.
 - Phase S는 별도 저장이 아닌 **요약 단계** (모든 데이터는 P/V/E에서 이미 저장 완료).
 - Tier 메타데이터(mode_tier, embedding_model 등)는 Phase V 전에 설정되므로 Vision 실패와 무관하게 항상 기록됨.
+
+### 도메인 분류 시스템 (v0.6.0)
+
+**YAML 기반 도메인 프리셋으로 VLM 분류 프롬프트와 스키마를 동적으로 구성합니다.**
+
+| 구성요소 | 파일 | 설명 |
+|---------|------|------|
+| 도메인 YAML | `backend/vision/domains/*.yaml` | 분류 타입/태그/프롬프트 정의 |
+| 도메인 로더 | `backend/vision/domain_loader.py` | YAML 파싱 + 프롬프트/스키마 빌드 |
+| 분류 API | `backend/server/routers/classification.py` | 도메인 CRUD + active 도메인 설정 |
+| DB 초기화 API | `backend/server/routers/database.py` | admin 비밀번호 재검증 + 파일 데이터 전체 삭제 |
+| 선택 모달 | `frontend/src/components/DomainSelectModal.jsx` | 첫 실행 시 도메인 선택 UI |
+| Admin UI | `frontend/src/pages/AdminPage.jsx` | Classification 패널 (도메인 목록/상세/AI 생성) |
+
+**도메인 프리셋 구조** (`_base.yaml` 상속):
+```yaml
+domain_id: game_asset
+image_types:            # VLM 분류 선택지 (character, background, ui, ...)
+  - id: character
+    name: Character
+    tags: [full_body, bust, ...]
+classification_prompt:  # VLM에 전달되는 분류 프롬프트
+tag_prompt:             # VLM에 전달되는 태그 프롬프트
+```
+
+**동작 흐름**: 활성 도메인 설정 → Phase V에서 `domain_loader`가 해당 도메인 YAML 로드 → VLM 프롬프트에 도메인별 `image_types`/`tags` 주입 → 분류 결과가 `files.image_type`, `files.ai_tags`에 저장
+
+**DB 초기화 (Reset)**:
+- 헤더 DB 메뉴 → "Reset DB" (admin 전용, 빨간색)
+- 확인 모달에서 admin 비밀번호 재입력 필수
+- **삭제**: `files`, `layers`, `vec_files`, `vec_text`, `vec_structure`, `files_fts`, `job_queue`, `system_meta` 값 리셋
+- **유지**: `users`, `invite_codes`, `worker_tokens`, `worker_sessions`, 썸네일 (`output/thumbnails/`)
 
 ### Adaptive Batch Controller
 

@@ -1,8 +1,8 @@
 # Imagine — Project Report
 
-**Version**: v0.5.0
-**Date**: 2026-02-21
-**Status**: Phase 4.6 Complete (Active Development)
+**Version**: v0.6.0
+**Date**: 2026-02-24
+**Status**: Phase 4.7 Complete (Active Development)
 
 ---
 
@@ -201,6 +201,26 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 - Design rationale documentation (9 architectural decisions)
 - Troubleshooting documentation (MC data loss, MV import, IPC session, GPU contention)
 
+### Phase 4.7: Domain Classification + DB Management
+
+#### Domain-Aware Classification System
+- YAML-based domain presets (`backend/vision/domains/`) with inheritance (`_base.yaml`)
+- Built-in presets: `game_asset` (10 image types, 59 tags), `illustration` (7 types, 35 tags), `stock_photo` (6 types, 22 tags)
+- `domain_loader.py`: Dynamic prompt/schema builder from YAML — injects domain-specific `image_types` and `tags` into VLM classification prompts
+- All VLM adapters updated (analyzer.py, mlx_adapter.py, ollama_adapter.py, vllm_adapter.py) to accept domain-aware prompts
+- Classification API (`/api/v1/admin/classification/`) — list domains, get detail, set active, create from YAML
+- Admin Classification Panel — domain list, detail view (image types + tags), YAML editor, AI domain YAML generator
+- Electron IPC bridge for domain operations (`listDomains`, `setActiveDomain`, `getActiveDomainConfig`)
+- Domain selection modal on first launch when no domain configured (`DomainSelectModal.jsx`)
+- 40+ i18n keys added (en-US + ko-KR) for classification and domain UI
+
+#### Database Reset Feature
+- `reset_file_data()` method in `sqlite_client.py` — clears files, layers, vectors, FTS, job queue while preserving auth tables and thumbnails
+- `POST /api/v1/admin/database/reset` endpoint with dual auth: JWT admin check + bcrypt password re-verification
+- Header DB dropdown: admin-only "Reset DB" button (red, separated)
+- Confirmation modal with password input, loading spinner, error display
+- Reset reports count of deleted files/vectors/jobs, refreshes folder stats UI
+
 ---
 
 ## 6. Remaining Phases
@@ -275,8 +295,20 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 | `backend/server/app.py` | FastAPI server entry |
 | `backend/server/auth/router.py` | JWT auth API |
 | `backend/server/routers/workers.py` | Worker session API |
+| `backend/server/routers/classification.py` | Domain classification admin API |
+| `backend/server/routers/database.py` | Database reset API (admin password re-verification) |
 | `backend/server/queue/manager.py` | Job queue manager |
 | `backend/worker/worker_daemon.py` | Worker daemon (prefetch pool) |
+
+### Domain Classification
+
+| File | Purpose |
+|------|---------|
+| `backend/vision/domain_loader.py` | Domain YAML loader + prompt/schema builder |
+| `backend/vision/domains/_base.yaml` | Base domain preset (inherited by all) |
+| `backend/vision/domains/game_asset.yaml` | Game asset preset (10 types, 59 tags) |
+| `backend/vision/domains/illustration.yaml` | Illustration preset (7 types, 35 tags) |
+| `backend/vision/domains/stock_photo.yaml` | Stock photo preset (6 types, 22 tags) |
 
 ### Frontend
 
@@ -284,7 +316,9 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 |------|---------|
 | `frontend/src/App.jsx` | Main application component |
 | `frontend/src/api/client.js` | API client (JWT, isElectron) |
+| `frontend/src/api/admin.js` | Admin API (users, jobs, classification, DB reset) |
 | `frontend/src/services/bridge.js` | Electron/Web mode bridge |
+| `frontend/src/components/DomainSelectModal.jsx` | First-launch domain selection modal |
 | `frontend/electron/main.cjs` | Electron main process |
 | `frontend/electron/preload.cjs` | IPC bridge definitions |
 
