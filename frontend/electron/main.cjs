@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execSync } = require('child_process');
+const { autoUpdater } = require('electron-updater');
 const isDev = process.env.NODE_ENV === 'development';
 
 // Suppress EPIPE errors from console.log when parent pipe is closed (background launch)
@@ -411,7 +412,122 @@ function killSearchDaemon() {
     }, 2000);
 }
 
+// ── Auto Updater ─────────────────────────────────────────────────
+
+function sendUpdateEvent(channel, data) {
+    try {
+        const windows = BrowserWindow.getAllWindows();
+        for (const win of windows) {
+            if (!win.isDestroyed()) {
+                win.webContents.send(channel, data);
+            }
+        }
+    } catch (e) { /* window may be closed */ }
+}
+
+function initAutoUpdater() {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.allowPrerelease = false;
+
+    autoUpdater.logger = {
+        info: (...args) => writeLog('INFO', '[AutoUpdater]', ...args),
+        warn: (...args) => writeLog('WARN', '[AutoUpdater]', ...args),
+        error: (...args) => writeLog('ERROR', '[AutoUpdater]', ...args),
+        debug: () => {}, // suppress verbose debug
+    };
+
+    autoUpdater.on('checking-for-update', () => {
+        writeLog('INFO', '[AutoUpdater] Checking for update...');
+        sendUpdateEvent('update-checking', {});
+    });
+
+    autoUpdater.on('update-available', (info) => {
+        writeLog('INFO', '[AutoUpdater] Update available:', info.version);
+        sendUpdateEvent('update-available', {
+            version: info.version,
+            releaseDate: info.releaseDate,
+            releaseNotes: typeof info.releaseNotes === 'string'
+                ? info.releaseNotes
+                : (info.releaseNotes || []).map(n => n.note || '').filter(Boolean).join('\n'),
+        });
+    });
+
+    autoUpdater.on('update-not-available', (info) => {
+        writeLog('INFO', '[AutoUpdater] No update available (current:', info.version, ')');
+        sendUpdateEvent('update-not-available', { version: info.version });
+    });
+
+    autoUpdater.on('download-progress', (progress) => {
+        sendUpdateEvent('update-download-progress', {
+            percent: Math.round(progress.percent),
+            bytesPerSecond: progress.bytesPerSecond,
+            transferred: progress.transferred,
+            total: progress.total,
+        });
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+        writeLog('INFO', '[AutoUpdater] Update downloaded:', info.version);
+        sendUpdateEvent('update-downloaded', {
+            version: info.version,
+            releaseDate: info.releaseDate,
+        });
+    });
+
+    autoUpdater.on('error', (err) => {
+        writeLog('ERROR', '[AutoUpdater] Error:', err.message);
+        sendUpdateEvent('update-error', { message: err.message });
+    });
+
+    // Initial check after 5 seconds (avoid blocking startup)
+    setTimeout(() => {
+        if (!isDev) {
+            autoUpdater.checkForUpdates().catch(err => {
+                writeLog('WARN', '[AutoUpdater] Initial check failed:', err.message);
+            });
+        }
+    }, 5000);
+
+    // Periodic check every 4 hours
+    setInterval(() => {
+        if (!isDev) {
+            autoUpdater.checkForUpdates().catch(err => {
+                writeLog('WARN', '[AutoUpdater] Periodic check failed:', err.message);
+            });
+        }
+    }, 4 * 60 * 60 * 1000);
+}
+
 // ── IPC Handlers (global scope — registered once) ────────────────
+
+// Auto Update IPC
+ipcMain.handle('updater-check', async () => {
+    if (isDev) return { available: false, reason: 'dev-mode' };
+    try {
+        const result = await autoUpdater.checkForUpdates();
+        return { available: !!result?.updateInfo, info: result?.updateInfo };
+    } catch (err) {
+        return { available: false, error: err.message };
+    }
+});
+
+ipcMain.handle('updater-download', async () => {
+    try {
+        await autoUpdater.downloadUpdate();
+        return { success: true };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.on('updater-quit-and-install', () => {
+    autoUpdater.quitAndInstall(false, true);
+});
+
+ipcMain.handle('updater-get-version', () => {
+    return app.getVersion();
+});
 
 // IPC Handler: Open Folder Dialog
 ipcMain.handle('open-folder-dialog', async () => {
@@ -2332,6 +2448,9 @@ app.whenReady().then(async () => {
 
     // Do NOT start search daemon here — it starts lazily on first search
     createWindow();
+
+    // Initialize auto-updater (after window is ready to receive events)
+    initAutoUpdater();
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {

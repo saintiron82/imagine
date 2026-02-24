@@ -11,6 +11,8 @@ import AdminPage from './pages/AdminPage';
 import SetupPage from './pages/SetupPage';
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
+import UpdateNotification from './components/UpdateNotification';
+import EolBanner from './components/EolBanner';
 import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2 } from 'lucide-react';
 import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
@@ -985,6 +987,12 @@ function App() {
 
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden flex-col">
+      {/* EOL Warning Banner */}
+      <EolBanner />
+
+      {/* Update Notification Toast (top-right overlay) */}
+      <UpdateNotification />
+
       {/* Resume Dialog */}
       {showResumeDialog && (
         <ResumeDialog

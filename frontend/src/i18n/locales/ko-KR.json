@@ -500,5 +500,22 @@
   "worker.schedule_idle_desc": "N분간 작업 없으면 모델 언로드",
   "worker.schedule_idle_off": "끄기",
   "worker.schedule_idle_value": "{minutes}분",
-  "worker.schedule_saved": "저장됨"
+  "worker.schedule_saved": "저장됨",
+  "update.checking": "업데이트 확인 중...",
+  "update.available": "v{version} 업데이트 사용 가능",
+  "update.available_desc": "새 버전을 다운로드할 수 있습니다.",
+  "update.download": "다운로드",
+  "update.later": "나중에",
+  "update.downloading": "업데이트 다운로드 중...",
+  "update.download_percent": "{percent}%",
+  "update.downloaded": "업데이트 설치 준비 완료",
+  "update.downloaded_desc": "앱을 재시작하면 업데이트가 적용됩니다.",
+  "update.restart_now": "지금 재시작",
+  "update.restart_later": "나중에",
+  "update.error": "업데이트 실패",
+  "update.error_retry": "재시도",
+  "update.check_now": "업데이트 확인",
+  "update.up_to_date": "최신 버전입니다",
+  "update.eol_warning": "이 버전(v{version})은 오래되었습니다. 최적의 사용을 위해 v{latest}로 업데이트해 주세요.",
+  "update.eol_dismiss": "닫기"
 }

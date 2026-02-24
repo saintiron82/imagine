@@ -9,4 +9,8 @@ export default defineConfig({
     port: 9274,
     strictPort: true,
   },
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version || '0.6.0'),
+    __BUILD_ID__: JSON.stringify('20260225_01'),
+  },
 })

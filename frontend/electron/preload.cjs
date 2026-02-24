@@ -203,5 +203,26 @@ contextBridge.exposeInMainWorld('electron', {
         offProcessingMode: () => ipcRenderer.removeAllListeners('worker-processing-mode'),
         onWorkerState: (cb) => ipcRenderer.on('worker-state', (_, data) => cb(data)),
         offWorkerState: () => ipcRenderer.removeAllListeners('worker-state'),
-    }
+    },
+
+    // Auto-Updater
+    updater: {
+        check: () => ipcRenderer.invoke('updater-check'),
+        download: () => ipcRenderer.invoke('updater-download'),
+        quitAndInstall: () => ipcRenderer.send('updater-quit-and-install'),
+        getVersion: () => ipcRenderer.invoke('updater-get-version'),
+
+        onChecking: (cb) => ipcRenderer.on('update-checking', (_, data) => cb(data)),
+        offChecking: () => ipcRenderer.removeAllListeners('update-checking'),
+        onAvailable: (cb) => ipcRenderer.on('update-available', (_, data) => cb(data)),
+        offAvailable: () => ipcRenderer.removeAllListeners('update-available'),
+        onNotAvailable: (cb) => ipcRenderer.on('update-not-available', (_, data) => cb(data)),
+        offNotAvailable: () => ipcRenderer.removeAllListeners('update-not-available'),
+        onProgress: (cb) => ipcRenderer.on('update-download-progress', (_, data) => cb(data)),
+        offProgress: () => ipcRenderer.removeAllListeners('update-download-progress'),
+        onDownloaded: (cb) => ipcRenderer.on('update-downloaded', (_, data) => cb(data)),
+        offDownloaded: () => ipcRenderer.removeAllListeners('update-downloaded'),
+        onError: (cb) => ipcRenderer.on('update-error', (_, data) => cb(data)),
+        offError: () => ipcRenderer.removeAllListeners('update-error'),
+    },
 });

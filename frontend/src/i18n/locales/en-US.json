@@ -500,5 +500,22 @@
   "worker.schedule_idle_desc": "Unload models after no jobs for N min",
   "worker.schedule_idle_off": "Off",
   "worker.schedule_idle_value": "{minutes} min",
-  "worker.schedule_saved": "Saved"
+  "worker.schedule_saved": "Saved",
+  "update.checking": "Checking for updates...",
+  "update.available": "Update v{version} available",
+  "update.available_desc": "A new version is ready to download.",
+  "update.download": "Download",
+  "update.later": "Later",
+  "update.downloading": "Downloading update...",
+  "update.download_percent": "{percent}%",
+  "update.downloaded": "Update ready to install",
+  "update.downloaded_desc": "Restart the app to apply the update.",
+  "update.restart_now": "Restart Now",
+  "update.restart_later": "Later",
+  "update.error": "Update failed",
+  "update.error_retry": "Retry",
+  "update.check_now": "Check for Updates",
+  "update.up_to_date": "You're up to date",
+  "update.eol_warning": "This version (v{version}) is outdated. Please update to v{latest} for the best experience.",
+  "update.eol_dismiss": "Dismiss"
 }
