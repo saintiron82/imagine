@@ -429,6 +429,11 @@ def main():
         stream=sys.stderr,  # Logs go to stderr, events go to stdout
     )
 
+    # Send ready signal EARLY so the UI can stop showing "connecting..."
+    # The start command from Electron will be buffered in stdin until
+    # the read loop begins after pre-loading.
+    _emit({"event": "ready"})
+
     # Pre-import heavy modules in main thread to avoid DLL loading deadlock
     # on Windows when background threads try to import numpy/torch/etc.
     # (Windows LoadLibrary + Python import lock = hang in background threads)
@@ -458,7 +463,6 @@ def main():
     sys.stderr.flush()
 
     controller = WorkerIPCController()
-    _emit({"event": "ready"})
 
     # Platform-aware stdin reader:
     # - Windows: Win32 PeekNamedPipe (non-blocking, avoids CRT I/O lock deadlock)
