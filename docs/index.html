@@ -174,9 +174,7 @@ nav {
   border-radius: 16px; padding: 32px 24px;
   text-align: center; transition: all 0.3s;
   cursor: pointer;
-  opacity: 0; transform: translateY(20px);
 }
-.download-card.visible { opacity: 1; transform: translateY(0); }
 .download-card:hover {
   border-color: rgba(56, 189, 248, 0.3);
   box-shadow: 0 0 30px rgba(56, 189, 248, 0.1);
@@ -275,13 +273,13 @@ footer a:hover { color: #38bdf8; }
     <h2 class="section-title"><span class="gradient-text" data-i18n="dl.title">Download</span></h2>
     <div id="release-info" class="release-info"></div>
     <div class="download-grid">
-      <div class="download-card" data-anim id="dl-mac" onclick="handleDownload('mac')">
+      <div class="download-card" id="dl-mac" onclick="handleDownload('mac')">
         <div class="os-icon">&#63743;</div>
         <h3>macOS</h3>
         <p class="dl-meta">.dmg &middot; Universal</p>
         <button class="dl-btn" data-i18n="dl.coming_soon">Coming Soon</button>
       </div>
-      <div class="download-card" data-anim id="dl-win" onclick="handleDownload('win')">
+      <div class="download-card" id="dl-win" onclick="handleDownload('win')">
         <div class="os-icon">
           <svg width="38" height="38" viewBox="0 0 24 24" fill="#e0e0ee"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
         </div>
@@ -289,7 +287,7 @@ footer a:hover { color: #38bdf8; }
         <p class="dl-meta">.exe &middot; Installer</p>
         <button class="dl-btn" data-i18n="dl.coming_soon">Coming Soon</button>
       </div>
-      <div class="download-card" data-anim id="dl-linux" onclick="handleDownload('linux')">
+      <div class="download-card" id="dl-linux" onclick="handleDownload('linux')">
         <div class="os-icon">
           <svg width="38" height="38" viewBox="0 0 24 24" fill="#e0e0ee"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.368 1.884 1.368.39 0 .739-.134 1.107-.467 1.001 1.005 2.642 1.203 3.253-.199.096-.28.142-.467.106-.668-.148-.838-1.056-1.134-1.687-1.467a3.914 3.914 0 01-.37-.2c-.5-.333-.808-.667-.908-1.202-.1-.468 0-1.068.36-1.935a7.49 7.49 0 00.252-.806l.01-.028c.215-.82.044-1.639-.34-2.356a6.48 6.48 0 00-.68-.937l-.002-.002c-.442-.466-.668-.87-.757-1.134-.09-.226-.067-.393.016-.468.06-.06.103-.07.174-.07h.002c.122 0 .305.098.463.166.16.067.37.133.602.2l.003.001c.397.067.8.067 1.2-.064.04-.014.09-.033.14-.06a.85.85 0 00.373-.36.74.74 0 00.035-.533c-.135-.4-.47-.6-.867-.737a13.878 13.878 0 00-.467-.133c-.27-.067-.533-.133-.738-.233-.734-.4-1.16-1.266-1.328-2.333-.065-.267-.065-.533-.065-.8v-.266c0-.933-.2-2.004-.535-2.737-.335-.933-.888-1.538-1.588-1.671-.467-.067-.87.066-1.2.4-.322.268-.535.668-.668 1.068-.6-.267-1.267-.4-1.933-.4L12.504 0z"/></svg>
         </div>
