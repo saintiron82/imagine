@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Releases — Imagine</title>
+<meta name="description" content="Imagine release history — changelogs, downloads, and version notes.">
+<meta name="theme-color" content="#0a0a1a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css">
+<style>
+.release-wrap {
+  max-width: 860px; margin: 0 auto;
+  padding: 100px 24px 80px;
+  min-height: calc(100vh - 64px);
+}
+.release-header {
+  margin-bottom: 32px;
+}
+.release-header h1 {
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 700; margin-bottom: 8px;
+}
+.release-header p {
+  color: #6b7280; font-size: 0.95rem;
+}
+.release-list {
+  display: flex; flex-direction: column; gap: 20px;
+}
+.release-card {
+  padding: 24px; border-radius: 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  transition: border-color 0.2s;
+}
+.release-card:hover { border-color: rgba(56,189,248,0.2); }
+.release-card-head {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px; flex-wrap: wrap;
+}
+.release-tag {
+  font-size: 1.1rem; font-weight: 700; color: #38bdf8;
+}
+.release-badge {
+  font-size: 0.7rem; font-weight: 600; padding: 3px 10px;
+  border-radius: 20px; text-transform: uppercase;
+}
+.release-badge.latest {
+  background: rgba(52,211,153,0.15); color: #34d399;
+}
+.release-badge.prerelease {
+  background: rgba(251,191,36,0.15); color: #fbbf24;
+}
+.release-date {
+  font-size: 0.8rem; color: #6b7280; margin-left: auto;
+}
+.release-body {
+  font-size: 0.9rem; color: #d1d5e0; line-height: 1.7;
+}
+.release-assets {
+  margin-top: 16px; padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.release-assets-title {
+  font-size: 0.8rem; font-weight: 600; color: #9ca3bf;
+  margin-bottom: 8px;
+}
+.asset-list {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.asset-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 8px;
+  background: rgba(56,189,248,0.08);
+  border: 1px solid rgba(56,189,248,0.2);
+  color: #38bdf8; font-size: 0.8rem; font-weight: 500;
+  transition: all 0.2s; text-decoration: none;
+}
+.asset-link:hover {
+  background: rgba(56,189,248,0.15);
+  border-color: rgba(56,189,248,0.4);
+}
+.asset-link small { color: #6b7280; }
+</style>
+</head>
+<body>
+
+<div class="ambient"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">
+      <img src="icon.svg" alt="Imagine">
+      <span>Imagine</span>
+    </a>
+    <div class="nav-links">
+      <a href="board.html" class="nav-page-link" data-i18n="nav.board">Board</a>
+      <a href="release.html" class="nav-page-link" data-i18n="nav.release">Release</a>
+      <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" onclick="setLang('ko')">KO</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- Releases -->
+<div class="release-wrap">
+  <div class="release-header">
+    <h1><span class="gradient-text" data-i18n="release.title">Releases</span></h1>
+    <p data-i18n="release.subtitle">Version history and changelogs</p>
+  </div>
+  <div id="release-content">
+    <div class="loading" data-i18n="common.loading">Loading...</div>
+  </div>
+</div>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>&copy; 2026 Imagine &middot; Open Source &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<!-- Firebase SDK (auth only for nav) -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="common.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+
+<script>
+/* ── Page i18n ───────────────────────────────────────── */
+registerPageI18n({
+  en: {
+    "release.title": "Releases",
+    "release.subtitle": "Version history and changelogs",
+    "release.empty": "No releases yet",
+    "release.assets": "Downloads",
+    "release.source": "Source code"
+  },
+  ko: {
+    "release.title": "\ub9b4\ub9ac\uc988",
+    "release.subtitle": "\ubc84\uc804 \uc774\ub825 \ubc0f \ubcc0\uacbd \ub0b4\uc5ed",
+    "release.empty": "\uc544\uc9c1 \ub9b4\ub9ac\uc988\uac00 \uc5c6\uc2b5\ub2c8\ub2e4",
+    "release.assets": "\ub2e4\uc6b4\ub85c\ub4dc",
+    "release.source": "\uc18c\uc2a4 \ucf54\ub4dc"
+  }
+});
+
+/* ── Config ──────────────────────────────────────────── */
+const GITHUB_REPO = 'saintiron82/imagine';
+
+/* ── Load Releases ───────────────────────────────────── */
+async function loadReleases() {
+  const container = document.getElementById('release-content');
+
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases`);
+    if (!resp.ok) throw new Error('GitHub API error: ' + resp.status);
+
+    const releases = await resp.json();
+
+    if (!releases || releases.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="icon">&#128230;</div><p>' + t('release.empty') + '</p></div>';
+      return;
+    }
+
+    let html = '<div class="release-list">';
+    releases.forEach((rel, idx) => {
+      const date = new Date(rel.published_at || rel.created_at).toLocaleDateString();
+      const badge = rel.prerelease
+        ? `<span class="release-badge prerelease">Pre-release</span>`
+        : (idx === 0 ? `<span class="release-badge latest">Latest</span>` : '');
+
+      const body = (typeof marked !== 'undefined' && rel.body)
+        ? marked.parse(rel.body)
+        : (rel.body || '').replace(/\n/g, '<br>');
+
+      html += `
+        <div class="release-card">
+          <div class="release-card-head">
+            <span class="release-tag">${escHtml(rel.tag_name || rel.name || '')}</span>
+            ${badge}
+            <span class="release-date">${date}</span>
+          </div>`;
+
+      if (rel.body) {
+        html += `<div class="release-body md-content">${body}</div>`;
+      }
+
+      // Download assets
+      const assets = (rel.assets || []).filter(a => a.browser_download_url);
+      if (assets.length > 0 || rel.zipball_url) {
+        html += `<div class="release-assets">
+          <div class="release-assets-title">${t('release.assets')}</div>
+          <div class="asset-list">`;
+
+        assets.forEach(a => {
+          const size = a.size ? ` <small>(${formatSize(a.size)})</small>` : '';
+          html += `<a href="${escAttr(a.browser_download_url)}" class="asset-link">&#11015; ${escHtml(a.name)}${size}</a>`;
+        });
+
+        if (rel.zipball_url) {
+          html += `<a href="${escAttr(rel.zipball_url)}" class="asset-link">&#128230; ${t('release.source')} (.zip)</a>`;
+        }
+
+        html += '</div></div>';
+      }
+
+      html += '</div>';
+    });
+    html += '</div>';
+
+    container.innerHTML = html;
+  } catch (err) {
+    console.error('Failed to load releases:', err);
+    container.innerHTML = '<div class="empty-state"><div class="icon">&#128230;</div><p>' + t('release.empty') + '</p></div>';
+  }
+}
+
+/* ── Helpers ─────────────────────────────────────────── */
+function formatSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+function escHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+function escAttr(str) {
+  return (str || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function onLangChange() { loadReleases(); }
+
+/* ── Init ────────────────────────────────────────────── */
+loadReleases();
+</script>
+</body>
+</html>

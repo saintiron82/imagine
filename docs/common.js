@@ -113,6 +113,7 @@ function authGateSignIn() {
 const commonI18n = {
   en: {
     "nav.board": "Board",
+    "nav.release": "Release",
     "nav.download": "Download",
     "nav.signin": "Sign in",
     "nav.signout": "Sign out",
@@ -122,6 +123,7 @@ const commonI18n = {
   },
   ko: {
     "nav.board": "\uAC8C\uC2DC\uD310",
+    "nav.release": "\uB9B4\uB9AC\uC988",
     "nav.download": "\uB2E4\uC6B4\uB85C\uB4DC",
     "nav.signin": "\uB85C\uADF8\uC778",
     "nav.signout": "\uB85C\uADF8\uC544\uC6C3",
