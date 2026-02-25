@@ -299,18 +299,6 @@ function viewPost(postId) {
       </div>
       <div class="post-body md-content">${htmlContent}</div>`;
 
-  if (post.attachments && post.attachments.length > 0) {
-    html += '<div class="post-attachments">';
-    post.attachments.forEach(a => {
-      if (a.type && a.type.startsWith('image/')) {
-        html += `<a href="${escAttr(a.url)}" target="_blank" class="attachment-img-link"><img src="${escAttr(a.url)}" alt="${escAttr(a.name)}" class="attachment-img"></a>`;
-      } else {
-        html += `<a href="${escAttr(a.url)}" target="_blank" class="attachment-file">${escHtml(a.name)} <small>(${formatFileSize(a.size)})</small></a>`;
-      }
-    });
-    html += '</div>';
-  }
-
   if (canEdit) {
     html += `
       <div class="post-actions">
@@ -356,22 +344,12 @@ function showWriteForm(postId) {
       </div>`;
   }
 
-  // Attachment UI
-  let existingHtml = '';
-  if (post && post.attachments && post.attachments.length > 0) {
-    existingHtml = post.attachments.map((a, i) => `
-      <div class="file-item" data-idx="${i}">
-        <span class="file-item-name">${escHtml(a.name)}</span>
-        <span class="file-item-size">${formatFileSize(a.size)}</span>
-        <button class="file-item-remove" onclick="removeExistingAttachment(${i})">${t('attach.remove')}</button>
-      </div>`).join('');
-  }
+  // Inline file upload button (uploads immediately, inserts Markdown)
   html += `
       <div class="form-group">
         <label>${t('attach.label')}</label>
         <div class="file-upload-area">
-          <input type="file" id="post-files" multiple accept="image/jpeg,image/png,image/gif,image/webp,.pdf" onchange="onFileSelect(this, 5)">
-          <div class="file-list" id="existing-files">${existingHtml}</div>
+          <input type="file" id="post-files" multiple accept="image/jpeg,image/png,image/gif,image/webp,.pdf" onchange="insertPostFiles(this)">
         </div>
         <small class="file-hint">${t('attach.hint')}</small>
       </div>`;
@@ -384,7 +362,6 @@ function showWriteForm(postId) {
     </div>`;
 
   container.innerHTML = html;
-  _pendingExistingAttachments = (post && post.attachments) ? [...post.attachments] : [];
 }
 
 /* ── Save Post ───────────────────────────────────────── */
@@ -409,25 +386,6 @@ async function savePost(postId) {
 
   const user = getUser();
   if (!user) { showToast('Please sign in first', 'error'); return; }
-
-  // Handle file attachments
-  const fileInput = document.getElementById('post-files');
-  const newFiles = fileInput ? fileInput.files : [];
-  let attachments = [..._pendingExistingAttachments];
-
-  if (newFiles.length > 0) {
-    if (attachments.length + newFiles.length > 5) {
-      showToast(t('attach.too_many'), 'error'); return;
-    }
-    showToast(t('attach.uploading'), 'success');
-    try {
-      const uploaded = await uploadFiles(newFiles, 'posts/' + (postId || Date.now()));
-      attachments = [...attachments, ...uploaded];
-    } catch (uploadErr) {
-      showToast(uploadErr.message, 'error'); return;
-    }
-  }
-  data.attachments = attachments;
 
   try {
     if (postId) {
@@ -657,22 +615,46 @@ function formatFileSize(bytes) {
 }
 
 function onFileSelect(input, maxFiles) {
-  if (input.files.length + _pendingExistingAttachments.length > maxFiles) {
+  if (input.files.length > maxFiles) {
     showToast(t('attach.too_many'), 'error');
     input.value = '';
   }
 }
 
-function removeExistingAttachment(idx) {
-  _pendingExistingAttachments.splice(idx, 1);
-  const list = document.getElementById('existing-files');
-  if (list) {
-    list.innerHTML = _pendingExistingAttachments.map((a, i) => `
-      <div class="file-item" data-idx="${i}">
-        <span class="file-item-name">${escHtml(a.name)}</span>
-        <span class="file-item-size">${formatFileSize(a.size)}</span>
-        <button class="file-item-remove" onclick="removeExistingAttachment(${i})">${t('attach.remove')}</button>
-      </div>`).join('');
+/* Upload immediately on file select, insert Markdown into textarea */
+async function insertPostFiles(input) {
+  const files = input.files;
+  if (!files || files.length === 0) return;
+
+  const textarea = document.getElementById('post-content');
+  if (!textarea) return;
+
+  input.disabled = true;
+  showToast(t('attach.uploading'), 'success');
+
+  try {
+    const uploaded = await uploadFiles(files, 'posts/' + Date.now());
+    let md = '';
+    uploaded.forEach(a => {
+      if (a.type && a.type.startsWith('image/')) {
+        md += `![${a.name}](${a.url})\n`;
+      } else {
+        md += `[${a.name} (${formatFileSize(a.size)})](${a.url})\n`;
+      }
+    });
+
+    // Insert at cursor position
+    const pos = textarea.selectionStart || textarea.value.length;
+    const before = textarea.value.substring(0, pos);
+    const after = textarea.value.substring(pos);
+    const sep = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+    textarea.value = before + sep + md + after;
+    textarea.focus();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    input.value = '';
+    input.disabled = false;
   }
 }
 
