@@ -1719,17 +1719,9 @@ class SQLiteDB:
             db_level = 0
 
         # Legacy quality gaps that require rebuild/reprocess
+        # vec_structure (DINOv2) is experimental and excluded from standard checks.
         vector_extension_available = True
-        try:
-            missing_structure = cursor.execute("""
-                SELECT COUNT(*) FROM files f
-                WHERE EXISTS(SELECT 1 FROM vec_files vf WHERE vf.file_id = f.id)
-                  AND NOT EXISTS(SELECT 1 FROM vec_structure vs WHERE vs.file_id = f.id)
-            """).fetchone()[0]
-        except Exception:
-            # sqlite-vec extension not loaded in this runtime; avoid failing status API
-            missing_structure = 0
-            vector_extension_available = False
+        missing_structure = 0
 
         missing_relative = cursor.execute("""
             SELECT COUNT(*) FROM files
@@ -1793,12 +1785,13 @@ class SQLiteDB:
         stats['avg_layers_per_file'] = int(result) if result else 0
 
         # Fully archived (MC + VV + MV all done)
+        # vec_structure is excluded — it's experimental and not part of
+        # the standard Triaxis pipeline (VV + MV + FTS).
         try:
             cursor.execute("""
                 SELECT COUNT(*) FROM files f
                 WHERE (mc_caption IS NOT NULL AND mc_caption != '')
                   AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
-                  AND EXISTS(SELECT 1 FROM vec_structure WHERE file_id = f.id)
                   AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
             """)
             stats['fully_archived'] = cursor.fetchone()[0]
@@ -1829,10 +1822,9 @@ class SQLiteDB:
                 f.storage_root,
                 COUNT(*) as total,
                 COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
-                COUNT(CASE 
-                    WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) 
-                     AND EXISTS(SELECT 1 FROM vec_structure WHERE file_id = f.id) 
-                    THEN 1 
+                COUNT(CASE
+                    WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                    THEN 1
                 END) as vv,
                 COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 END) as mv
             FROM files f
@@ -1888,19 +1880,13 @@ class SQLiteDB:
                     {effective_root_expr} as effective_root,
                     COUNT(*) as total,
                     COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
-                    -- VV now requires BOTH Visual (SigLIP) and Structure (DINOv2) vectors
                     COUNT(CASE
                         WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
-                         AND EXISTS(SELECT 1 FROM vec_structure WHERE file_id = f.id)
                         THEN 1
                     END) as vv,
                     COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 END) as mv,
                     COUNT(CASE WHEN f.relative_path IS NULL OR TRIM(f.relative_path) = '' THEN 1 END) as missing_relative,
-                    COUNT(CASE
-                        WHEN EXISTS(SELECT 1 FROM vec_files vf WHERE vf.file_id = f.id)
-                         AND NOT EXISTS(SELECT 1 FROM vec_structure vs WHERE vs.file_id = f.id)
-                        THEN 1
-                    END) as missing_structure
+                    0 as missing_structure
                 FROM files f
                 WHERE f.file_path LIKE ? || '%'
                 GROUP BY effective_root
