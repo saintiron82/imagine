@@ -136,9 +136,9 @@ jobs:
           echo "---" >> release_notes.md
           echo "*Windows: built by GitHub Actions / macOS: upload with \`gh release upload ${TAG} ./file.dmg\`*" >> release_notes.md
 
-      - name: List artifacts
+      - name: List release files
         shell: bash
-        run: find artifacts/ -type f | head -20
+        run: find artifacts/win -maxdepth 1 -type f || true
 
       - name: Create GitHub Release
         env:
@@ -147,10 +147,16 @@ jobs:
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
+          # collect distributable files only (not unpacked dirs)
           FILES=()
-          for f in artifacts/win/*.{exe,zip,msi}; do
+          for f in artifacts/win/*.{exe,zip,msi,dmg,blockmap,yml,yaml}; do
             [ -f "$f" ] && FILES+=("$f")
           done
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "WARNING: No distributable files found"
+            find artifacts/win -maxdepth 1 -type f || true
+          fi
 
           gh release create "$TAG" \
             --title "Imagine $TAG" \
