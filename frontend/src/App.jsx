@@ -77,7 +77,7 @@ function App() {
     completed: 0, failed: 0,
     totalQueue: 0, pending: 0,
     etaMs: null, throughput: 0,  // overall items/min
-    processingMode: 'full',     // "full" | "mc_only" — controls phase pill dimming
+    processingMode: 'full',     // "full" | "mc_only" | "embed_only" — controls phase pill dimming
     workerState: 'active',      // "active" | "idle" | "resting" — from state machine
     // Per-phase speed (files/min) — updated on phase_complete
     phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
