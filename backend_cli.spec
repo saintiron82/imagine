@@ -27,13 +27,16 @@ if sys.platform == 'win32':
 elif sys.platform == 'darwin':
     platform_excludes += ['vllm']
 
-# Collect data files
+# Collect data files (skip missing files for CI builds)
 datas = [
-    ('config.yaml', '.'),
     ('backend/vision/domains', 'backend/vision/domains'),
     ('backend/db/sqlite_schema.sql', 'backend/db'),
     ('backend/db/sqlite_schema_auth.sql', 'backend/db'),
 ]
+
+# config.yaml is optional (gitignored, generated at runtime if missing)
+if os.path.exists('config.yaml'):
+    datas.append(('config.yaml', '.'))
 
 # Add migrations if they exist
 if os.path.exists('backend/db/migrations'):
