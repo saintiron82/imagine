@@ -373,10 +373,6 @@ footer a:hover { color: #38bdf8; }
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         <span data-i18n="hero.download">Download</span>
       </a>
-      <a href="https://github.com/saintiron82/imagine" target="_blank" rel="noopener" class="btn btn-secondary">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        <span>GitHub</span>
-      </a>
     </div>
   </div>
 </section>
@@ -545,9 +541,9 @@ footer a:hover { color: #38bdf8; }
 <footer>
   <div class="container">
     <div class="footer-links">
-      <a href="https://github.com/saintiron82/imagine" target="_blank" rel="noopener">GitHub</a>
-      <a href="https://github.com/saintiron82/imagine/issues" target="_blank" rel="noopener" data-i18n="footer.issues">Issues</a>
-      <a href="https://github.com/saintiron82/imagine/releases" target="_blank" rel="noopener" data-i18n="footer.releases">Releases</a>
+      <a href="#features" data-i18n="nav.features">Features</a>
+      <a href="#download" data-i18n="nav.download">Download</a>
+      <a href="#start" data-i18n="nav.start">Get Started</a>
     </div>
     <p>&copy; 2026 Imagine &middot; Open Source &middot; Apache 2.0</p>
   </div>
@@ -601,8 +597,6 @@ const i18n = {
     "tier.std": "Laptops, integrated GPU",
     "tier.pro": "Apple M-series, RTX 3060+",
     "tier.ultra": "RTX 4090, studio servers",
-    "footer.issues": "Issues",
-    "footer.releases": "Releases",
     "release.latest": "Latest release",
     "release.none": "No releases yet"
   },
@@ -651,8 +645,6 @@ const i18n = {
     "tier.std": "\uB178\uD2B8\uBD81, \uB0B4\uC7A5 GPU",
     "tier.pro": "Apple M-\uC2DC\uB9AC\uC988, RTX 3060+",
     "tier.ultra": "RTX 4090, \uC2A4\uD29C\uB514\uC624 \uC11C\uBC84",
-    "footer.issues": "\uC774\uC288",
-    "footer.releases": "\uB9B4\uB9AC\uC2A4",
     "release.latest": "\uCD5C\uC2E0 \uB9B4\uB9AC\uC2A4",
     "release.none": "\uC544\uC9C1 \uB9B4\uB9AC\uC2A4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4"
   }
@@ -733,8 +725,6 @@ function handleDownload(platform) {
   const card = document.getElementById('dl-' + platform);
   if (card && card.dataset.url) {
     window.open(card.dataset.url, '_blank');
-  } else {
-    window.open('https://github.com/saintiron82/imagine/releases', '_blank');
   }
 }
 
