@@ -128,7 +128,7 @@ jobs:
             git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" \
               --no-merges \
               | grep -E "^- (feat|fix|refactor|perf)" \
-              | head -50 >> release_notes.md
+              | head -50 >> release_notes.md || true
             echo "" >> release_notes.md
           fi
 
