@@ -104,6 +104,8 @@ const commonI18n = {
   en: {
     "nav.board": "Board",
     "nav.download": "Download",
+    "nav.signin": "Sign in",
+    "nav.signout": "Sign out",
     "common.loading": "Loading...",
     "common.empty": "No content yet",
     "common.error": "Failed to load content"
@@ -111,6 +113,8 @@ const commonI18n = {
   ko: {
     "nav.board": "\uAC8C\uC2DC\uD310",
     "nav.download": "\uB2E4\uC6B4\uB85C\uB4DC",
+    "nav.signin": "\uB85C\uADF8\uC778",
+    "nav.signout": "\uB85C\uADF8\uC544\uC6C3",
     "common.loading": "\uB85C\uB529 \uC911...",
     "common.empty": "\uC544\uC9C1 \uCF58\uD150\uCE20\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4",
     "common.error": "\uCF58\uD150\uCE20 \uB85C\uB4DC \uC2E4\uD328"
@@ -187,12 +191,41 @@ function initActiveNavLink() {
   });
 }
 
+/* ── Nav Auth State ──────────────────────────────────── */
+function initNavAuth() {
+  const authObj = getAuth();
+  if (!authObj) return;
+
+  authObj.onAuthStateChanged(user => {
+    const existing = document.querySelector('.nav-user');
+    if (existing) existing.remove();
+
+    const navLinks = document.querySelector('.nav-links');
+    if (!navLinks) return;
+
+    const div = document.createElement('div');
+    div.className = 'nav-user';
+
+    if (user) {
+      const photo = user.photoURL
+        ? `<img src="${user.photoURL}" alt="" class="nav-user-avatar" onerror="this.style.display='none'">`
+        : '';
+      div.innerHTML = `${photo}<button class="nav-signout" onclick="getAuth().signOut()">${t('nav.signout')}</button>`;
+    } else {
+      div.innerHTML = `<button class="nav-signin-btn" onclick="authGateSignIn()">${t('nav.signin')}</button>`;
+    }
+
+    navLinks.appendChild(div);
+  });
+}
+
 /* ── Page Init ───────────────────────────────────────── */
 function initCommon() {
   initFirebase();
   initActiveNavLink();
   initLang();
   initScrollAnimations();
+  initNavAuth();
 }
 
 // Auto-init on DOMContentLoaded
