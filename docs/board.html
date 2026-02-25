@@ -92,7 +92,8 @@ registerPageI18n({
     "board.saved": "Saved",
     "board.deleted": "Deleted",
     "board.title_placeholder": "Enter title",
-    "board.content_placeholder": "Write in Markdown..."
+    "board.content_placeholder": "Write in Markdown...",
+    "board.post_count": "{count} posts"
   },
   ko: {
     "board.notice": "\uacf5\uc9c0",
@@ -113,7 +114,8 @@ registerPageI18n({
     "board.saved": "\uc800\uc7a5\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
     "board.deleted": "\uc0ad\uc81c\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
     "board.title_placeholder": "\uc81c\ubaa9\uc744 \uc785\ub825\ud558\uc138\uc694",
-    "board.content_placeholder": "Markdown\uc73c\ub85c \uc791\uc131\ud558\uc138\uc694..."
+    "board.content_placeholder": "Markdown\uc73c\ub85c \uc791\uc131\ud558\uc138\uc694...",
+    "board.post_count": "{count}\uac1c\uc758 \uae00"
   }
 });
 
@@ -154,7 +156,7 @@ function updateTabs() {
 async function loadPosts() {
   const content = document.getElementById('board-content');
   const db = getDb();
-  if (!db) { renderEmpty(content); return; }
+  if (!db) { renderPostList([], content); return; }
 
   content.innerHTML = '<div class="loading">' + t('common.loading') + '</div>';
 
@@ -190,7 +192,7 @@ function renderPostList(posts, container) {
   const canWrite = currentCategory !== 'notice' || isAdmin(currentUser);
 
   let html = '<div class="board-header">';
-  html += '<span class="board-count">' + posts.length + ' posts</span>';
+  html += '<span class="board-count">' + t('board.post_count').replace('{count}', posts.length) + '</span>';
   if (canWrite) {
     html += '<button class="btn-write" onclick="showWriteForm()">' + t('board.write') + '</button>';
   }
