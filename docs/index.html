@@ -9,83 +9,9 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css">
 <style>
-/* ── Reset & Base ────────────────────────────────────── */
-*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-html { scroll-behavior: smooth; scroll-padding-top: 80px; }
-body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  background: #06060f;
-  color: #e0e0ee;
-  line-height: 1.6;
-  overflow-x: hidden;
-}
-a { color: inherit; text-decoration: none; }
-
-/* ── Ambient Background ──────────────────────────────── */
-.ambient {
-  position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(56, 189, 248, 0.06), transparent 60%),
-    radial-gradient(ellipse 70% 50% at 80% 80%, rgba(99, 102, 241, 0.07), transparent 60%),
-    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(139, 92, 246, 0.04), transparent 50%);
-}
-
-/* ── Utility ─────────────────────────────────────────── */
-.container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
-.gradient-text {
-  background: linear-gradient(135deg, #38bdf8, #818cf8, #a78bfa);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.section { padding: 100px 0; }
-.section-title {
-  font-size: clamp(1.8rem, 4vw, 2.6rem);
-  font-weight: 700;
-  text-align: center;
-  margin-bottom: 16px;
-}
-.section-sub {
-  text-align: center;
-  color: #9ca3bf;
-  font-size: 1.05rem;
-  max-width: 600px;
-  margin: 0 auto 56px;
-}
-
-/* ── Nav ─────────────────────────────────────────────── */
-nav {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-  background: rgba(6, 6, 15, 0.75);
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-  transition: background 0.3s;
-}
-.nav-inner {
-  max-width: 1120px; margin: 0 auto; padding: 0 24px;
-  display: flex; align-items: center; justify-content: space-between;
-  height: 64px;
-}
-.nav-brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 1.1rem; }
-.nav-brand img { width: 32px; height: 32px; }
-.nav-links { display: flex; align-items: center; gap: 28px; font-size: 0.9rem; }
-.nav-links a { color: #9ca3bf; transition: color 0.2s; }
-.nav-links a:hover { color: #e0e0ee; }
-.lang-toggle {
-  display: flex; background: rgba(255,255,255,0.06); border-radius: 8px;
-  overflow: hidden; border: 1px solid rgba(255,255,255,0.08);
-}
-.lang-btn {
-  background: none; border: none; color: #9ca3bf; padding: 6px 12px;
-  font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: all 0.2s;
-  font-family: inherit;
-}
-.lang-btn.active {
-  background: rgba(56, 189, 248, 0.15); color: #38bdf8;
-}
-
 /* ── Hero ────────────────────────────────────────────── */
 .hero {
   min-height: 100vh; display: flex; align-items: center;
@@ -128,33 +54,6 @@ nav {
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(24px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-/* ── Buttons ─────────────────────────────────────────── */
-.btn {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 14px 28px; border-radius: 12px; font-weight: 600;
-  font-size: 0.95rem; transition: all 0.25s; cursor: pointer;
-  border: none; font-family: inherit;
-}
-.btn-primary {
-  background: linear-gradient(135deg, #38bdf8, #818cf8);
-  color: #fff;
-  box-shadow: 0 0 24px rgba(56, 189, 248, 0.25), 0 4px 12px rgba(0,0,0,0.3);
-}
-.btn-primary:hover {
-  box-shadow: 0 0 40px rgba(56, 189, 248, 0.4), 0 6px 20px rgba(0,0,0,0.4);
-  transform: translateY(-2px);
-}
-.btn-secondary {
-  background: rgba(255,255,255,0.06);
-  color: #e0e0ee;
-  border: 1px solid rgba(255,255,255,0.1);
-}
-.btn-secondary:hover {
-  background: rgba(255,255,255,0.1);
-  border-color: rgba(255,255,255,0.2);
-  transform: translateY(-2px);
 }
 
 /* ── Download ────────────────────────────────────────── */
@@ -207,27 +106,14 @@ nav {
 }
 .release-info .version { color: #38bdf8; font-weight: 600; }
 
-/* ── Footer ──────────────────────────────────────────── */
-footer {
-  padding: 48px 0;
-  border-top: 1px solid rgba(255,255,255,0.04);
-  text-align: center; color: #6b7280; font-size: 0.85rem;
-}
-footer a { color: #9ca3bf; transition: color 0.2s; }
-footer a:hover { color: #38bdf8; }
-
-/* ── Responsive ──────────────────────────────────────── */
+/* ── Responsive (page-specific) ──────────────────────── */
 @media (max-width: 768px) {
-  .section { padding: 72px 0; }
-  .nav-links a:not(.lang-toggle):not(.lang-btn) { display: none; }
   .hero-logo { width: 72px; height: 72px; }
-  .features-grid { grid-template-columns: 1fr; }
   .download-grid { grid-template-columns: 1fr; max-width: 320px; }
 }
 @media (max-width: 480px) {
   .hero-buttons { flex-direction: column; align-items: center; }
   .btn { width: 100%; justify-content: center; max-width: 280px; }
-  .steps-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -235,15 +121,18 @@ footer a:hover { color: #38bdf8; }
 
 <div class="ambient"></div>
 
-<!-- ═══ Nav ═══ -->
+<!-- Nav -->
 <nav>
   <div class="nav-inner">
-    <a href="#" class="nav-brand">
+    <a href="index.html" class="nav-brand">
       <img src="icon.svg" alt="Imagine">
       <span>Imagine</span>
     </a>
     <div class="nav-links">
-      <a href="#download" data-i18n="nav.download">Download</a>
+      <a href="releases.html" class="nav-page-link" data-i18n="nav.releases">Releases</a>
+      <a href="guide.html" class="nav-page-link" data-i18n="nav.guide">Guide</a>
+      <a href="qna.html" class="nav-page-link" data-i18n="nav.qna">Q&A</a>
+      <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
       <div class="lang-toggle">
         <button class="lang-btn active" onclick="setLang('en')">EN</button>
         <button class="lang-btn" onclick="setLang('ko')">KO</button>
@@ -252,7 +141,7 @@ footer a:hover { color: #38bdf8; }
   </div>
 </nav>
 
-<!-- ═══ Hero ═══ -->
+<!-- Hero -->
 <section class="hero">
   <div class="container hero-content">
     <img src="icon.svg" alt="Imagine" class="hero-logo">
@@ -267,7 +156,7 @@ footer a:hover { color: #38bdf8; }
   </div>
 </section>
 
-<!-- ═══ Download ═══ -->
+<!-- Download -->
 <section id="download" class="section download-section">
   <div class="container">
     <h2 class="section-title"><span class="gradient-text" data-i18n="dl.title">Download</span></h2>
@@ -299,18 +188,18 @@ footer a:hover { color: #38bdf8; }
   </div>
 </section>
 
-<!-- ═══ Footer ═══ -->
+<!-- Footer -->
 <footer>
   <div class="container">
     <p>&copy; 2026 Imagine &middot; Open Source &middot; Apache 2.0</p>
   </div>
 </footer>
 
+<script src="common.js"></script>
 <script>
-/* ── i18n ─────────────────────────────────────────────── */
-const i18n = {
+/* ── Page i18n ───────────────────────────────────────── */
+registerPageI18n({
   en: {
-    "nav.download": "Download",
     "hero.tagline": "Image Archive",
     "hero.download": "Download",
     "dl.title": "Download",
@@ -320,86 +209,63 @@ const i18n = {
     "release.none": "No releases yet"
   },
   ko: {
-    "nav.download": "\uB2E4\uC6B4\uB85C\uB4DC",
     "hero.tagline": "\uc774\ubbf8\uc9c0 \uc544\uce74\uc774\ube0c",
-    "hero.download": "\uB2E4\uC6B4\uB85C\uB4DC",
-    "dl.title": "\uB2E4\uC6B4\uB85C\uB4DC",
+    "hero.download": "\ub2e4\uc6b4\ub85c\ub4dc",
+    "dl.title": "\ub2e4\uc6b4\ub85c\ub4dc",
     "dl.coming_soon": "Coming Soon",
-    "dl.get": "\uB2E4\uC6B4\uB85C\uB4DC",
-    "release.latest": "\uCD5C\uC2E0 \uB9B4\uB9AC\uC2A4",
-    "release.none": "\uC544\uC9C1 \uB9B4\uB9AC\uC2A4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4"
+    "dl.get": "\ub2e4\uc6b4\ub85c\ub4dc",
+    "release.latest": "\ucd5c\uc2e0 \ub9b4\ub9ac\uc2a4",
+    "release.none": "\uc544\uc9c1 \ub9b4\ub9ac\uc2a4\uac00 \uc5c6\uc2b5\ub2c8\ub2e4"
   }
-};
-
-let currentLang = 'en';
-
-function setLang(lang) {
-  currentLang = lang;
-  const strings = i18n[lang];
-  document.querySelectorAll('[data-i18n]').forEach(el => {
-    const key = el.dataset.i18n;
-    if (strings[key]) el.textContent = strings[key];
-  });
-  document.querySelectorAll('.lang-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.textContent.trim().toLowerCase() === lang);
-  });
-  document.documentElement.lang = lang === 'ko' ? 'ko' : 'en';
-  localStorage.setItem('imagine-lang', lang);
-  fetchRelease(); // re-render release info in new language
-}
-
-// Auto-detect language
-(function initLang() {
-  const saved = localStorage.getItem('imagine-lang');
-  if (saved && i18n[saved]) { setLang(saved); return; }
-  const browserLang = (navigator.language || '').toLowerCase();
-  if (browserLang.startsWith('ko')) setLang('ko');
-})();
+});
 
 /* ── GitHub Releases ─────────────────────────────────── */
 let releaseData = null;
 
+function onLangChange() { fetchRelease(); }
+
 function fetchRelease() {
   const infoEl = document.getElementById('release-info');
-  const t = i18n[currentLang];
+  const lang = getCurrentLang();
+  const strings = { ...commonI18n[lang], ...pageI18n[lang] };
 
   if (releaseData) {
-    renderRelease(releaseData, infoEl, t);
+    renderRelease(releaseData, infoEl, strings);
     return;
   }
 
   fetch('https://api.github.com/repos/saintiron82/imagine/releases/latest')
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(data => { releaseData = data; renderRelease(data, infoEl, t); })
-    .catch(() => { infoEl.textContent = t['release.none'] || 'No releases yet'; });
+    .then(data => { releaseData = data; renderRelease(data, infoEl, strings); })
+    .catch(() => { infoEl.textContent = strings['release.none'] || 'No releases yet'; });
 }
 
-function renderRelease(release, infoEl, t) {
+function renderRelease(release, infoEl, strings) {
   const tag = release.tag_name || '';
   const date = release.published_at ? new Date(release.published_at).toLocaleDateString() : '';
-  infoEl.innerHTML = `${t['release.latest'] || 'Latest release'}: <span class="version">${tag}</span> ${date ? '&middot; ' + date : ''}`;
+  infoEl.innerHTML = `${strings['release.latest'] || 'Latest release'}: <span class="version">${tag}</span> ${date ? '&middot; ' + date : ''}`;
 
   const assets = release.assets || [];
   const macAsset = assets.find(a => /\.dmg$/i.test(a.name));
   const winAsset = assets.find(a => /\.exe$/i.test(a.name));
   const linuxAsset = assets.find(a => /\.AppImage$/i.test(a.name));
 
-  updateDownloadCard('dl-mac', macAsset, t);
-  updateDownloadCard('dl-win', winAsset, t);
-  updateDownloadCard('dl-linux', linuxAsset, t);
+  updateDownloadCard('dl-mac', macAsset, strings);
+  updateDownloadCard('dl-win', winAsset, strings);
+  updateDownloadCard('dl-linux', linuxAsset, strings);
 }
 
-function updateDownloadCard(id, asset, t) {
+function updateDownloadCard(id, asset, strings) {
   const card = document.getElementById(id);
   if (!card) return;
   const btn = card.querySelector('.dl-btn');
   if (asset) {
-    btn.textContent = t['dl.get'] || 'Download';
+    btn.textContent = strings['dl.get'] || 'Download';
     btn.removeAttribute('data-i18n');
     btn.classList.remove('disabled');
     card.dataset.url = asset.browser_download_url;
   } else {
-    btn.textContent = t['dl.coming_soon'] || 'Coming Soon';
+    btn.textContent = strings['dl.coming_soon'] || 'Coming Soon';
     btn.classList.add('disabled');
   }
 }
@@ -412,23 +278,6 @@ function handleDownload(platform) {
 }
 
 fetchRelease();
-
-/* ── Scroll Animations ───────────────────────────────── */
-const observer = new IntersectionObserver((entries) => {
-  entries.forEach(entry => {
-    if (entry.isIntersecting) {
-      entry.target.classList.add('visible');
-      observer.unobserve(entry.target);
-    }
-  });
-}, { threshold: 0.15, rootMargin: '0px 0px -40px 0px' });
-
-document.querySelectorAll('[data-anim]').forEach((el, i) => {
-  el.style.transitionDelay = `${i % 4 * 80}ms`;
-  el.style.transitionDuration = '0.6s';
-  el.style.transitionTimingFunction = 'cubic-bezier(0.16, 1, 0.3, 1)';
-  observer.observe(el);
-});
 </script>
 </body>
 </html>
