@@ -73,6 +73,9 @@
       "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false
     },
+    "asar": true,
+    "asarUnpack": "**/*.node",
+    "electronLanguages": ["en-US", "ko"],
     "linux": {
       "target": "AppImage",
       "icon": "public/icon-512.png"

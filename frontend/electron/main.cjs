@@ -2,8 +2,20 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execSync } = require('child_process');
-const { autoUpdater } = require('electron-updater');
 const isDev = process.env.NODE_ENV === 'development';
+
+// Desktop startup log (visible even if app fails to start)
+try {
+    const _deskLog = path.join(app.getPath('desktop'), 'imagine-startup.log');
+    fs.writeFileSync(_deskLog, `[${new Date().toISOString()}] Imagine starting...\nargv: ${process.argv.join(' ')}\nexecPath: ${process.execPath}\ncwd: ${process.cwd()}\nplatform: ${process.platform}\narch: ${process.arch}\n`);
+    process.on('uncaughtException', (err) => {
+        try { fs.appendFileSync(_deskLog, `[CRASH] ${err.stack || err}\n`); } catch {}
+    });
+} catch {}
+
+// electron-updater (optional — skip if not available)
+let autoUpdater = null;
+try { autoUpdater = require('electron-updater').autoUpdater; } catch {}
 
 // Suppress EPIPE errors from console.log when parent pipe is closed (background launch)
 process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
@@ -426,6 +438,7 @@ function sendUpdateEvent(channel, data) {
 }
 
 function initAutoUpdater() {
+    if (!autoUpdater) { writeLog('WARN', 'electron-updater not available, skipping auto-update'); return; }
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.allowPrerelease = false;
@@ -503,7 +516,7 @@ function initAutoUpdater() {
 
 // Auto Update IPC
 ipcMain.handle('updater-check', async () => {
-    if (isDev) return { available: false, reason: 'dev-mode' };
+    if (isDev || !autoUpdater) return { available: false, reason: 'dev-mode' };
     try {
         const result = await autoUpdater.checkForUpdates();
         return { available: !!result?.updateInfo, info: result?.updateInfo };
@@ -513,6 +526,7 @@ ipcMain.handle('updater-check', async () => {
 });
 
 ipcMain.handle('updater-download', async () => {
+    if (!autoUpdater) return { success: false, error: 'updater not available' };
     try {
         await autoUpdater.downloadUpdate();
         return { success: true };
@@ -522,7 +536,7 @@ ipcMain.handle('updater-download', async () => {
 });
 
 ipcMain.on('updater-quit-and-install', () => {
-    autoUpdater.quitAndInstall(false, true);
+    if (autoUpdater) autoUpdater.quitAndInstall(false, true);
 });
 
 ipcMain.handle('updater-get-version', () => {
@@ -2417,9 +2431,17 @@ ipcMain.handle('tunnel-status', async () => {
 // ── Window creation (pure UI — no IPC registration) ──────────────
 
 function createWindow() {
+    const _deskLog = path.join(app.getPath('desktop'), 'imagine-startup.log');
+    try { fs.appendFileSync(_deskLog, `[createWindow] start\n`); } catch {}
+
     const iconPath = isDev
         ? path.join(__dirname, '../public/icon-512.png')
         : path.join(__dirname, '../dist/icon-512.png');
+
+    try { fs.appendFileSync(_deskLog, `[createWindow] icon: ${iconPath} exists: ${fs.existsSync(iconPath)}\n`); } catch {}
+
+    const preloadPath = path.join(__dirname, 'preload.cjs');
+    try { fs.appendFileSync(_deskLog, `[createWindow] preload: ${preloadPath} exists: ${fs.existsSync(preloadPath)}\n`); } catch {}
 
     const mainWindow = new BrowserWindow({
         title: 'Imagine',
@@ -2427,7 +2449,7 @@ function createWindow() {
         width: 1280,
         height: 800,
         webPreferences: {
-            preload: path.join(__dirname, 'preload.cjs'),
+            preload: preloadPath,
             nodeIntegration: false,
             contextIsolation: true,
             webSecurity: false,
@@ -2435,12 +2457,25 @@ function createWindow() {
         },
     });
 
+    try { fs.appendFileSync(_deskLog, `[createWindow] BrowserWindow created\n`); } catch {}
+
     if (isDev) {
         mainWindow.loadURL('http://localhost:9274');
         mainWindow.webContents.openDevTools();
     } else {
-        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+        const htmlPath = path.join(__dirname, '../dist/index.html');
+        try { fs.appendFileSync(_deskLog, `[createWindow] loadFile: ${htmlPath} exists: ${fs.existsSync(htmlPath)}\n`); } catch {}
+        mainWindow.loadFile(htmlPath);
     }
+
+    mainWindow.webContents.on('did-finish-load', () => {
+        try { fs.appendFileSync(_deskLog, `[createWindow] page loaded OK\n`); } catch {}
+    });
+    mainWindow.webContents.on('did-fail-load', (e, code, desc) => {
+        try { fs.appendFileSync(_deskLog, `[createWindow] LOAD FAILED: ${code} ${desc}\n`); } catch {}
+    });
+
+    try { fs.appendFileSync(_deskLog, `[createWindow] done\n`); } catch {}
 }
 
 // ── App lifecycle ────────────────────────────────────────────────
@@ -2448,8 +2483,14 @@ function createWindow() {
 app.setName('Imagine');
 
 app.whenReady().then(async () => {
+    const _deskLog = path.join(app.getPath('desktop'), 'imagine-startup.log');
+    try { fs.appendFileSync(_deskLog, `[ready] app.whenReady fired\n`); } catch {}
+
     // Migrate personal settings from config.yaml to user-settings.yaml (first run only)
-    migrateUserSettings();
+    try { migrateUserSettings(); } catch (e) {
+        try { fs.appendFileSync(_deskLog, `[ready] migrateUserSettings error: ${e.message}\n`); } catch {}
+    }
+    try { fs.appendFileSync(_deskLog, `[ready] migrateUserSettings done\n`); } catch {}
 
     // Set macOS dock icon
     if (process.platform === 'darwin' && app.dock) {
@@ -2462,8 +2503,11 @@ app.whenReady().then(async () => {
         }
     }
 
-    // Kill any orphaned search daemons from previous crashed sessions
-    cleanupOrphanDaemons();
+    // Kill any residual search daemons from previous crashed sessions
+    try { cleanupOrphanDaemons(); } catch (e) {
+        try { fs.appendFileSync(_deskLog, `[ready] cleanupOrphanDaemons error: ${e.message}\n`); } catch {}
+    }
+    try { fs.appendFileSync(_deskLog, `[ready] cleanup done, calling createWindow\n`); } catch {}
 
     // Server is started by the React app via IPC (window.electron.server.start)
     // when user selects "관리" mode on SetupPage. No config.yaml auto-start.
@@ -2473,6 +2517,7 @@ app.whenReady().then(async () => {
 
     // Initialize auto-updater (after window is ready to receive events)
     initAutoUpdater();
+    try { fs.appendFileSync(_deskLog, `[ready] initAutoUpdater done\n`); } catch {}
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
