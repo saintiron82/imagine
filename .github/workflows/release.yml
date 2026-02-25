@@ -2,8 +2,12 @@ name: Build & Release
 
 on:
   push:
+    branches:
+      - main
+      - 'release/**'
     tags:
       - 'v*'
+  workflow_dispatch:  # manual trigger from GitHub UI
 
 permissions:
   contents: write
@@ -21,10 +25,6 @@ jobs:
             platform: mac
             python-version: '3.12'
             torch-extra: ''
-          - os: ubuntu-latest
-            platform: linux
-            python-version: '3.12'
-            torch-extra: '--index-url https://download.pytorch.org/whl/cpu'
 
     runs-on: ${{ matrix.os }}
 
@@ -74,8 +74,24 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Build Electron & publish to GitHub Releases
+      # tag push → GitHub Releases에 자동 업로드
+      # branch push → 빌드만 확인 (artifact 저장)
+      - name: Build Electron (publish on tag)
         working-directory: frontend
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --publish always
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            npx electron-builder --publish always
+          else
+            npx electron-builder --publish never
+          fi
+        shell: bash
+
+      - name: Upload build artifact
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: Imagine-${{ matrix.platform }}
+          path: frontend/dist-electron/*
+          retention-days: 7
