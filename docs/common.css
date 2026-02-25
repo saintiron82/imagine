@@ -222,6 +222,174 @@ footer a:hover { color: #38bdf8; }
 }
 .nav-signout:hover { color: #f87171; }
 
+/* ── Board Tabs ──────────────────────────────────────── */
+.board-tabs {
+  display: flex; gap: 4px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 12px; padding: 4px;
+  margin-bottom: 24px;
+}
+.board-tab {
+  flex: 1; padding: 10px 0; border: none; background: none;
+  color: #6b7280; font-size: 0.9rem; font-weight: 600;
+  font-family: inherit; cursor: pointer;
+  border-radius: 8px; transition: all 0.2s;
+  text-align: center;
+}
+.board-tab:hover { color: #e0e0ee; background: rgba(255,255,255,0.04); }
+.board-tab.active {
+  color: #38bdf8; background: rgba(56, 189, 248, 0.1);
+}
+
+/* ── Board Header ───────────────────────────────────── */
+.board-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 16px;
+}
+.board-count { font-size: 0.85rem; color: #6b7280; }
+.btn-write {
+  padding: 8px 20px; border-radius: 8px; font-size: 0.85rem;
+  font-weight: 600; font-family: inherit; cursor: pointer;
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  color: #fff; border: none; transition: all 0.2s;
+}
+.btn-write:hover { transform: translateY(-1px); box-shadow: 0 0 16px rgba(56,189,248,0.3); }
+
+/* ── Post List ──────────────────────────────────────── */
+.post-list {
+  display: flex; flex-direction: column; gap: 2px;
+}
+.post-row {
+  display: grid; grid-template-columns: 1fr auto auto;
+  align-items: center; gap: 16px;
+  padding: 14px 16px; border-radius: 10px; cursor: pointer;
+  transition: background 0.2s;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.post-row:hover { background: rgba(255,255,255,0.04); }
+.post-row-title {
+  font-size: 0.95rem; color: #e0e0ee;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.post-row-author { font-size: 0.8rem; color: #6b7280; white-space: nowrap; }
+.post-row-date { font-size: 0.8rem; color: #4b5563; white-space: nowrap; }
+.badge-private {
+  display: inline-block; font-size: 0.7rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 4px; margin-right: 6px;
+  background: rgba(248, 113, 113, 0.15); color: #f87171;
+}
+.badge-notice {
+  display: inline-block; font-size: 0.7rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 4px; margin-right: 6px;
+  background: rgba(56, 189, 248, 0.15); color: #38bdf8;
+}
+
+/* ── Post Detail ────────────────────────────────────── */
+.post-detail { max-width: 800px; }
+.post-detail-title {
+  font-size: clamp(1.4rem, 3vw, 1.8rem);
+  font-weight: 700; margin-bottom: 12px; color: #e0e0ee;
+}
+.post-meta {
+  font-size: 0.85rem; color: #6b7280;
+  padding-bottom: 20px; margin-bottom: 24px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.post-body { margin-bottom: 32px; }
+.post-actions {
+  display: flex; gap: 8px; padding-top: 20px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.btn-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 0; font-size: 0.85rem; color: #6b7280;
+  background: none; border: none; cursor: pointer;
+  font-family: inherit; transition: color 0.2s; margin-bottom: 24px;
+}
+.btn-back:hover { color: #38bdf8; }
+
+/* ── Post Form ──────────────────────────────────────── */
+.post-form { max-width: 800px; }
+.post-form .form-group { margin-bottom: 20px; }
+.post-form label {
+  display: block; font-size: 0.85rem; font-weight: 600;
+  color: #9ca3bf; margin-bottom: 6px;
+}
+.post-form input[type="text"],
+.post-form textarea,
+.post-form select {
+  width: 100%; padding: 12px 14px; border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #e0e0ee; font-size: 0.95rem; font-family: inherit;
+  transition: border-color 0.2s;
+}
+.post-form input:focus,
+.post-form textarea:focus,
+.post-form select:focus {
+  outline: none; border-color: rgba(56, 189, 248, 0.5);
+}
+.post-form textarea { min-height: 240px; resize: vertical; }
+.post-form .checkbox-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.9rem; color: #9ca3bf;
+}
+.post-form .checkbox-row input[type="checkbox"] {
+  width: 18px; height: 18px; accent-color: #38bdf8;
+}
+.post-form .form-actions {
+  display: flex; gap: 10px; margin-top: 24px;
+}
+.btn-save {
+  padding: 10px 28px; border-radius: 10px; font-size: 0.9rem;
+  font-weight: 600; font-family: inherit; cursor: pointer;
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  color: #fff; border: none; transition: all 0.2s;
+}
+.btn-save:hover { transform: translateY(-1px); box-shadow: 0 0 16px rgba(56,189,248,0.3); }
+.btn-cancel {
+  padding: 10px 28px; border-radius: 10px; font-size: 0.9rem;
+  font-weight: 600; font-family: inherit; cursor: pointer;
+  background: rgba(255,255,255,0.06); color: #9ca3bf;
+  border: 1px solid rgba(255,255,255,0.1); transition: all 0.2s;
+}
+.btn-cancel:hover { background: rgba(255,255,255,0.1); }
+.btn-danger {
+  padding: 10px 28px; border-radius: 10px; font-size: 0.9rem;
+  font-weight: 600; font-family: inherit; cursor: pointer;
+  background: rgba(248, 113, 113, 0.15); color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.3); transition: all 0.2s;
+}
+.btn-danger:hover { background: rgba(248, 113, 113, 0.25); }
+
+/* ── Preview Toggle ─────────────────────────────────── */
+.preview-toggle {
+  font-size: 0.8rem; color: #6b7280; background: none;
+  border: none; cursor: pointer; font-family: inherit;
+  margin-bottom: 8px; transition: color 0.2s;
+}
+.preview-toggle:hover { color: #38bdf8; }
+.preview-box {
+  display: none; padding: 16px; border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  margin-top: 8px;
+}
+.preview-box.open { display: block; }
+
+/* ── Toast ──────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 24px; right: 24px; z-index: 200;
+  padding: 12px 24px; border-radius: 10px; font-size: 0.9rem;
+  font-weight: 500; color: #fff; animation: toastIn 0.3s ease-out;
+}
+.toast.success { background: rgba(52, 211, 153, 0.9); }
+.toast.error { background: rgba(248, 113, 113, 0.9); }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Responsive ──────────────────────────────────────── */
 @media (max-width: 768px) {
   .section { padding: 72px 0; }
