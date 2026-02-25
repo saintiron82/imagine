@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Releases — Imagine</title>
+<meta name="description" content="Imagine release notes and changelog.">
+<meta name="theme-color" content="#0a0a1a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css">
+<style>
+/* ── Page Layout ─────────────────────────────────────── */
+.page-header {
+  padding-top: 120px; padding-bottom: 40px;
+  text-align: center;
+}
+.page-header h1 {
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 700; margin-bottom: 8px;
+}
+.page-header p {
+  color: #9ca3bf; font-size: 1.05rem;
+}
+
+/* ── Timeline ────────────────────────────────────────── */
+.timeline {
+  max-width: 800px; margin: 0 auto;
+  padding: 0 24px 100px;
+  position: relative;
+}
+.timeline::before {
+  content: ''; position: absolute;
+  left: 24px; top: 0; bottom: 0; width: 2px;
+  background: linear-gradient(180deg, rgba(56,189,248,0.3), rgba(99,102,241,0.1), transparent);
+}
+
+/* ── Release Card ────────────────────────────────────── */
+.release-card {
+  position: relative;
+  margin-bottom: 40px;
+  padding-left: 48px;
+}
+.release-card::before {
+  content: ''; position: absolute;
+  left: 18px; top: 8px;
+  width: 14px; height: 14px;
+  border-radius: 50%; border: 2px solid;
+  background: #06060f;
+}
+.release-card.major::before { border-color: #f87171; box-shadow: 0 0 12px rgba(248,113,113,0.4); }
+.release-card.minor::before { border-color: #38bdf8; box-shadow: 0 0 12px rgba(56,189,248,0.4); }
+.release-card.patch::before { border-color: #34d399; box-shadow: 0 0 12px rgba(52,211,153,0.4); }
+
+.release-head {
+  display: flex; align-items: center; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 12px;
+}
+.release-version {
+  font-size: 1.2rem; font-weight: 700; color: #e0e0ee;
+}
+.release-tag {
+  font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+  padding: 3px 10px; border-radius: 20px; letter-spacing: 0.05em;
+}
+.release-tag.major { background: rgba(248,113,113,0.15); color: #f87171; }
+.release-tag.minor { background: rgba(56,189,248,0.15); color: #38bdf8; }
+.release-tag.patch { background: rgba(52,211,153,0.15); color: #34d399; }
+
+.release-date {
+  font-size: 0.85rem; color: #6b7280;
+}
+.release-title {
+  font-size: 1.05rem; font-weight: 600; color: #c4c9d8;
+  margin-bottom: 12px;
+}
+.release-body {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px; padding: 20px;
+}
+
+/* ── Responsive ──────────────────────────────────────── */
+@media (max-width: 600px) {
+  .timeline { padding-left: 0; }
+  .timeline::before { left: 12px; }
+  .release-card { padding-left: 36px; }
+  .release-card::before { left: 6px; }
+}
+</style>
+</head>
+<body>
+
+<div class="ambient"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">
+      <img src="icon.svg" alt="Imagine">
+      <span>Imagine</span>
+    </a>
+    <div class="nav-links">
+      <a href="releases.html" class="nav-page-link" data-i18n="nav.releases">Releases</a>
+      <a href="guide.html" class="nav-page-link" data-i18n="nav.guide">Guide</a>
+      <a href="qna.html" class="nav-page-link" data-i18n="nav.qna">Q&A</a>
+      <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" onclick="setLang('ko')">KO</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- Header -->
+<div class="page-header container">
+  <h1><span class="gradient-text" data-i18n="releases.title">Release Notes</span></h1>
+  <p data-i18n="releases.subtitle">Changelog and version history</p>
+</div>
+
+<!-- Timeline -->
+<div class="timeline" id="timeline">
+  <div class="loading" data-i18n="common.loading">Loading...</div>
+</div>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>&copy; 2026 Imagine &middot; Open Source &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<!-- Firebase SDK (compat) -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="common.js"></script>
+<!-- Marked.js for Markdown rendering -->
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+
+<script>
+/* ── Page i18n ───────────────────────────────────────── */
+registerPageI18n({
+  en: {
+    "releases.title": "Release Notes",
+    "releases.subtitle": "Changelog and version history",
+    "releases.empty": "No releases published yet",
+    "releases.error": "Failed to load releases"
+  },
+  ko: {
+    "releases.title": "\ub9b4\ub9ac\uc2a4 \ub178\ud2b8",
+    "releases.subtitle": "\ubcc0\uacbd \uc774\ub825 \ubc0f \ubc84\uc804 \uae30\ub85d",
+    "releases.empty": "\uc544\uc9c1 \ubc1c\ud589\ub41c \ub9b4\ub9ac\uc2a4\uac00 \uc5c6\uc2b5\ub2c8\ub2e4",
+    "releases.error": "\ub9b4\ub9ac\uc2a4 \ub85c\ub4dc \uc2e4\ud328"
+  }
+});
+
+/* ── Load & Render Releases ──────────────────────────── */
+let releasesData = [];
+
+async function loadReleases() {
+  const timeline = document.getElementById('timeline');
+  const db = getDb();
+
+  if (!db) {
+    timeline.innerHTML = '<div class="empty-state"><div class="icon">&#128230;</div><p data-i18n="releases.empty">' + t('releases.empty') + '</p></div>';
+    return;
+  }
+
+  try {
+    const snapshot = await db.collection('releases').orderBy('order', 'asc').get();
+    releasesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    renderReleases();
+  } catch (err) {
+    console.error('Failed to load releases:', err);
+    timeline.innerHTML = '<div class="empty-state"><div class="icon">&#9888;</div><p data-i18n="releases.error">' + t('releases.error') + '</p></div>';
+  }
+}
+
+function renderReleases() {
+  const timeline = document.getElementById('timeline');
+  const lang = getCurrentLang();
+
+  if (releasesData.length === 0) {
+    timeline.innerHTML = '<div class="empty-state"><div class="icon">&#128230;</div><p>' + t('releases.empty') + '</p></div>';
+    return;
+  }
+
+  timeline.innerHTML = releasesData.map(rel => {
+    const title = lang === 'ko' ? (rel.title_ko || rel.title_en) : rel.title_en;
+    const content = lang === 'ko' ? (rel.content_ko || rel.content_en) : rel.content_en;
+    const typeClass = rel.type || 'minor';
+    const htmlContent = typeof marked !== 'undefined' ? marked.parse(content || '') : (content || '').replace(/\n/g, '<br>');
+
+    return `
+      <div class="release-card ${typeClass}">
+        <div class="release-head">
+          <span class="release-version">${rel.version || ''}</span>
+          <span class="release-tag ${typeClass}">${typeClass}</span>
+          <span class="release-date">${rel.date || ''}</span>
+        </div>
+        <div class="release-title">${title || ''}</div>
+        <div class="release-body md-content">${htmlContent}</div>
+      </div>`;
+  }).join('');
+}
+
+function onLangChange() { renderReleases(); }
+
+loadReleases();
+</script>
+</body>
+</html>
