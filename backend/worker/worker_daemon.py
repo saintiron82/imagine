@@ -123,7 +123,7 @@ class WorkerDaemon:
 
         # Session tracking
         self.session_id = None
-        self.processing_mode = "full"  # "full" or "mc_only" — set by server on connect/heartbeat
+        self.processing_mode = "full"  # "full" | "mc_only" | "embed_only" — set by server on connect/heartbeat
         self._total_completed = 0
         self._total_failed = 0
         self._current_job_id = None
@@ -271,6 +271,14 @@ class WorkerDaemon:
     def _connect_session(self) -> bool:
         """Register worker session with server. Returns True on success."""
         try:
+            # Collect GPU resources at connect time so server can immediately
+            # determine processing_mode (full/embed_only) without waiting for heartbeat.
+            try:
+                from backend.worker.resource_monitor import collect_metrics
+                connect_resources = collect_metrics()
+            except Exception:
+                connect_resources = None
+
             resp = self._authed_request(
                 "post",
                 f"{self.server_url}/api/v1/workers/connect",
@@ -278,6 +286,7 @@ class WorkerDaemon:
                     "worker_name": f"{socket.gethostname()}-worker",
                     "hostname": socket.gethostname(),
                     "batch_capacity": self.batch_capacity,
+                    "resources": connect_resources,
                 },
             )
             if resp.status_code == 200:
@@ -874,8 +883,13 @@ class WorkerDaemon:
         - VV (SigLIP2): real batch via encode_image_batch()
         - MV (Qwen3-Embedding): real batch via encode_batch()
 
-        In mc_only mode, only Vision (VLM/MC) phase runs — VLM stays loaded.
-        Server handles Parse (ParseAhead), VV (ParseAhead), and MV (EmbedAhead).
+        Mode routing:
+        - "mc_only":    Only Vision (VLM/MC) phase. VLM stays loaded.
+                        Server handles Parse (ParseAhead), VV (ParseAhead), MV (EmbedAhead).
+        - "embed_only": Only VV + MV phases. No Parse, no Vision.
+                        Server or full workers handle Parse + Vision.
+                        Worker VRAM insufficient for server-tier VLM.
+        - "full":       All phases P→V→VV→MV.
 
         Each phase tracks elapsed time and reports files/min.
 
@@ -887,6 +901,9 @@ class WorkerDaemon:
         """
         if self.processing_mode == "mc_only":
             return self._process_batch_mc_only(jobs, progress_callback)
+
+        if self.processing_mode == "embed_only":
+            return self._process_batch_embed_only(jobs, progress_callback)
 
         t_batch = time.perf_counter()
 
@@ -1339,6 +1356,244 @@ class WorkerDaemon:
         })
 
         self._clear_current()
+        return results
+
+    def _process_batch_embed_only(self, jobs: list, progress_callback=None) -> list:
+        """Embed-only mode: VV+MV only. Server or full workers handle Parse+Vision.
+
+        Claims jobs where vision (MC) is complete but embed (VV/MV) is not.
+        Worker only runs Phase VV (SigLIP2) + Phase MV (Qwen3-Embedding).
+        mc_caption for MV comes from job["vision_data"] (pre-fetched by server from files table).
+        """
+        t_batch = time.perf_counter()
+
+        # Build job contexts — all jobs should have thumbnail from ParseAhead
+        contexts = []
+        for job in jobs:
+            ctx = _JobContext(job=job)
+            file_id = job["file_id"]
+            server_thumb = job.get("thumb_path")
+
+            if self.storage_mode == "shared_fs":
+                if server_thumb and Path(server_thumb).exists():
+                    ctx.thumb_path = server_thumb
+                else:
+                    ctx.failed = True
+                    ctx.error = f"Embed-only: thumbnail unavailable: {job['file_path']}"
+            else:
+                # server_upload: download thumbnail only (no need for full file)
+                if server_thumb and Path(server_thumb).exists():
+                    ctx.thumb_path = server_thumb
+                else:
+                    thumb = self.uploader.download_thumbnail(file_id, self.tmp_dir)
+                    if thumb:
+                        ctx.thumb_path = thumb
+                    else:
+                        ctx.failed = True
+                        ctx.error = f"Embed-only: thumbnail download failed: {job['file_path']}"
+
+            # Metadata for MV: mc_caption from vision_data (fetched by server from files table)
+            vision_data = job.get("vision_data", {})
+            ctx.metadata = {
+                "mc_caption": vision_data.get("mc_caption", ""),
+                "ai_tags": vision_data.get("ai_tags", []),
+                "image_type": vision_data.get("image_type"),
+                "scene_type": vision_data.get("scene_type"),
+                "art_style": vision_data.get("art_style"),
+            }
+            ctx.local_path = ctx.thumb_path  # no full file download needed
+
+            if ctx.failed:
+                logger.error(f"[RESOLVE] {ctx.error}")
+                _notify(progress_callback, "file_error", {
+                    "file_name": Path(job["file_path"]).name,
+                    "error": ctx.error,
+                })
+            contexts.append(ctx)
+
+        active = [c for c in contexts if not c.failed]
+
+        # ── Phase VV: SigLIP2 batch ──────────────────────────
+        t_vv = time.perf_counter()
+        vv_batch_size = 8
+        _notify(progress_callback, "phase_start", {"phase": "embed_vv", "count": len(active)})
+
+        from backend.vector.siglip2_encoder import SigLIP2Encoder
+        from PIL import Image as PILImage
+        if WorkerDaemon._vv_encoder is None:
+            WorkerDaemon._vv_encoder = SigLIP2Encoder()
+        encoder = WorkerDaemon._vv_encoder
+
+        processed_vv = 0
+        for chunk_start in range(0, len(active), vv_batch_size):
+            if self._stop_requested:
+                break
+            chunk = active[chunk_start:chunk_start + vv_batch_size]
+            images = []
+            chunk_valid = []
+
+            for ctx in chunk:
+                if ctx.thumb_path and Path(ctx.thumb_path).exists():
+                    try:
+                        img = PILImage.open(ctx.thumb_path).convert("RGB")
+                        images.append(img)
+                        chunk_valid.append(ctx)
+                    except Exception as e:
+                        logger.warning(f"VV load failed: {ctx.job['file_path']}: {e}")
+
+            if images:
+                try:
+                    vv_vectors = encoder.encode_image_batch(images)
+                    for j, vec in enumerate(vv_vectors):
+                        chunk_valid[j].vv_vec = vec
+                except Exception as e:
+                    logger.warning(f"VV batch encode failed: {e}, falling back")
+                    for j, img in enumerate(images):
+                        try:
+                            chunk_valid[j].vv_vec = encoder.encode_image(img)
+                        except Exception:
+                            pass
+                finally:
+                    for img in images:
+                        img.close()
+                    del images
+
+            processed_vv += len(chunk)
+            self._current_phase = "embed"
+            last_name = Path(chunk[-1].job["file_path"]).name if chunk else ""
+            self._current_file = last_name
+            _notify(progress_callback, "file_done", {
+                "phase": "embed_vv", "file_name": last_name,
+                "index": processed_vv, "count": len(active),
+                "success": True, "batch_size": len(chunk),
+            })
+            gc.collect()
+
+        elapsed_vv = time.perf_counter() - t_vv
+        fpm_vv = (len(active) / elapsed_vv * 60) if elapsed_vv > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "embed_vv", "count": len(active),
+            "elapsed_s": round(elapsed_vv, 2), "files_per_min": round(fpm_vv, 1),
+        })
+        self._unload_vv()
+
+        # ── Phase MV: Qwen3-Embedding batch ─────────────────
+        t_mv = time.perf_counter()
+        mv_batch_size = 16
+        _notify(progress_callback, "phase_start", {"phase": "embed_mv", "count": len(active)})
+
+        from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
+        mv_provider = get_text_embedding_provider()
+
+        mv_items = []  # (active_index, text)
+        for i, ctx in enumerate(active):
+            mc_caption = ctx.metadata.get("mc_caption", "")
+            ai_tags = ctx.metadata.get("ai_tags", [])
+            facts = {
+                "image_type": ctx.metadata.get("image_type"),
+                "scene_type": ctx.metadata.get("scene_type"),
+                "art_style": ctx.metadata.get("art_style"),
+            }
+            doc_text = build_document_text(mc_caption, ai_tags, facts=facts)
+            if doc_text:
+                mv_items.append((i, doc_text))
+
+        processed_mv = 0
+        for chunk_start in range(0, len(mv_items), mv_batch_size):
+            if self._stop_requested:
+                break
+            chunk = mv_items[chunk_start:chunk_start + mv_batch_size]
+            texts = [text for _, text in chunk]
+
+            try:
+                if hasattr(mv_provider, 'encode_batch'):
+                    vecs = mv_provider.encode_batch(texts)
+                else:
+                    vecs = [mv_provider.encode(t) for t in texts]
+
+                for j, vec in enumerate(vecs):
+                    ctx_idx = chunk[j][0]
+                    active[ctx_idx].mv_vec = vec
+            except Exception as e:
+                logger.warning(f"MV batch encode failed: {e}, falling back")
+                for j, (ctx_idx, text) in enumerate(chunk):
+                    try:
+                        active[ctx_idx].mv_vec = mv_provider.encode(text)
+                    except Exception:
+                        pass
+
+            processed_mv += len(chunk)
+            self._current_phase = "embed"
+            last_name = Path(active[chunk[-1][0]].job["file_path"]).name if chunk else ""
+            self._current_file = last_name
+            _notify(progress_callback, "file_done", {
+                "phase": "embed_mv", "file_name": last_name,
+                "index": processed_mv, "count": len(mv_items),
+                "success": True, "batch_size": len(chunk),
+            })
+            gc.collect()
+
+        elapsed_mv = time.perf_counter() - t_mv
+        fpm_mv = (len(mv_items) / elapsed_mv * 60) if elapsed_mv > 0 else 0
+        _notify(progress_callback, "phase_complete", {
+            "phase": "embed_mv", "count": len(mv_items),
+            "elapsed_s": round(elapsed_mv, 2), "files_per_min": round(fpm_mv, 1),
+        })
+        self._unload_mv()
+
+        # ── Upload results ────────────────────────────────────
+        t_upload = time.perf_counter()
+        results = []
+        for ctx in contexts:
+            job_id = ctx.job["job_id"]
+
+            if ctx.failed:
+                self.uploader.fail_job(job_id, ctx.error)
+                self._total_failed += 1
+                results.append((job_id, False))
+                continue
+
+            success = self.uploader.complete_embed(job_id, vv_vec=ctx.vv_vec, mv_vec=ctx.mv_vec)
+            if success:
+                self._total_completed += 1
+            else:
+                self._total_failed += 1
+            results.append((job_id, success))
+
+            _notify(progress_callback, "job_upload", {
+                "job_id": job_id, "success": success,
+                "file_name": Path(ctx.job["file_path"]).name,
+            })
+
+            # Cleanup downloaded temp thumbnails
+            if (self.storage_mode == "server_upload" and ctx.thumb_path
+                    and ctx.thumb_path.startswith(self.tmp_dir)):
+                try:
+                    Path(ctx.thumb_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        elapsed_upload = time.perf_counter() - t_upload
+        total_elapsed = elapsed_vv + elapsed_mv + elapsed_upload
+        total_fpm = (len(contexts) / total_elapsed * 60) if total_elapsed > 0 else 0
+
+        _notify(progress_callback, "batch_complete", {
+            "count": len(contexts),
+            "elapsed_s": round(total_elapsed, 2),
+            "files_per_min": round(total_fpm, 1),
+            "phase_times": {
+                "embed_vv": round(elapsed_vv, 2),
+                "embed_mv": round(elapsed_mv, 2),
+                "upload": round(elapsed_upload, 2),
+            },
+            "phase_fpm": {
+                "embed_vv": round(fpm_vv, 1),
+                "embed_mv": round(fpm_mv, 1),
+            },
+        })
+
+        self._clear_current()
+        gc.collect()
         return results
 
     # ── Model Unload Helpers ──────────────────────────────────

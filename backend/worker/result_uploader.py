@@ -91,6 +91,32 @@ class ResultUploader:
             logger.warning(f"Fail report failed for job {job_id}: {e}")
             return False
 
+    def complete_embed(self, job_id: int, vv_vec=None, mv_vec=None) -> bool:
+        """Embed-only mode: upload VV+MV vectors for vision-complete jobs.
+
+        Server has already run Parse+Vision. Worker only generates VV+MV vectors.
+        """
+        vectors = {}
+        if vv_vec is not None:
+            vectors["vv"] = _encode_vector(vv_vec)
+        if mv_vec is not None:
+            vectors["mv"] = _encode_vector(mv_vec)
+
+        try:
+            resp = self.session.patch(
+                f"{self.base}/api/v1/jobs/{job_id}/complete_embed",
+                json={"vectors": vectors},
+            )
+            if resp.status_code == 200:
+                logger.info(f"Embed-only job {job_id} completed successfully")
+                return True
+            else:
+                logger.error(f"Embed-only job {job_id} failed: {resp.status_code} {resp.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Embed-only job {job_id} request failed: {e}")
+            return False
+
     def complete_mc(self, job_id: int, vision_fields: Dict[str, Any]) -> bool:
         """MC-only mode: upload vision fields without vectors.
 

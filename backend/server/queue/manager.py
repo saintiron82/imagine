@@ -81,81 +81,119 @@ class JobQueueManager:
     def claim_jobs(self, user_id: int, count: int = 10, worker_session_id: int = None) -> List[Dict[str, Any]]:
         """Claim up to N pending jobs for a worker.
 
-        Pre-parsed jobs (parse_status='parsed') are preferred — they contain
-        metadata + thumbnail so the worker can skip Phase P and avoid
-        downloading the full original file.
+        Job selection is routed based on the worker's effective processing_mode:
+        - "full":       Prefer pre-parsed jobs, fall back to unparsed. Worker does P→V→VV→MV.
+        - "mc_only":    Pre-parsed jobs only. Worker does Phase V (VLM/MC). Server runs ParseAhead+EmbedAhead.
+        - "embed_only": Vision-complete jobs only (vision=true, embed=false). Worker does Phase VV+MV.
 
-        Uses serialized access (SQLite single-writer) to avoid race conditions.
+        Per-worker processing_mode_override takes precedence over global config.
         Resource-aware: throttle_level from worker session limits claim count.
         """
         cursor = self.db.conn.cursor()
         now = _utcnow_sql()
 
-        # Resource-aware claim throttling: check worker's throttle_level
+        # Determine effective processing mode for this specific worker.
+        # Per-worker override (auto-detected or admin-set) > global config.
+        processing_mode = self._get_processing_mode()
         if worker_session_id is not None:
             cursor.execute(
-                "SELECT resources_json FROM worker_sessions WHERE id = ?",
+                "SELECT resources_json, processing_mode_override FROM worker_sessions WHERE id = ?",
                 (worker_session_id,)
             )
             session_row = cursor.fetchone()
-            if session_row and session_row[0]:
-                try:
-                    resources = json.loads(session_row[0])
-                    throttle = resources.get("throttle_level", "normal")
-                    if throttle == "critical":
-                        logger.info(
-                            f"Claim denied for session {worker_session_id}: "
-                            f"throttle_level=critical"
-                        )
-                        return []
-                    elif throttle == "danger":
-                        count = min(count, 1)
-                    elif throttle == "warning":
-                        count = max(1, int(count * 0.5))
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            if session_row:
+                mode_override = session_row[1]
+                if mode_override:
+                    processing_mode = mode_override
 
-        # 1) Prefer pre-parsed jobs (server already ran Phase P)
-        cursor.execute(
-            """SELECT id, file_id, file_path, priority, parsed_metadata
-               FROM job_queue
-               WHERE status = 'pending' AND parse_status = 'parsed'
-               ORDER BY priority DESC, created_at ASC
-               LIMIT ?""",
-            (count,)
-        )
-        rows = list(cursor.fetchall())
+                # Resource-aware throttling
+                if session_row[0]:
+                    try:
+                        resources = json.loads(session_row[0])
+                        throttle = resources.get("throttle_level", "normal")
+                        if throttle == "critical":
+                            logger.info(
+                                f"Claim denied for session {worker_session_id}: "
+                                f"throttle_level=critical (mode={processing_mode})"
+                            )
+                            return []
+                        elif throttle == "danger":
+                            count = min(count, 1)
+                        elif throttle == "warning":
+                            count = max(1, int(count * 0.5))
+                    except (json.JSONDecodeError, TypeError):
+                        pass
 
-        # 2) Fill remainder with unparsed jobs (fallback)
-        # In mc_only mode, skip unparsed fallback — complete_mc() requires
-        # ParseAhead to have already upserted file metadata into files table.
-        processing_mode = self._get_processing_mode()
-        if processing_mode != "mc_only" and len(rows) < count:
-            remainder = count - len(rows)
-            claimed_ids = [r[0] for r in rows]
-            if claimed_ids:
-                placeholders = ",".join("?" * len(claimed_ids))
-                cursor.execute(
-                    f"""SELECT id, file_id, file_path, priority, parsed_metadata
-                        FROM job_queue
-                        WHERE status = 'pending'
-                          AND (parse_status IS NULL OR parse_status = 'pending' OR parse_status = 'failed')
-                          AND id NOT IN ({placeholders})
-                        ORDER BY priority DESC, created_at ASC
-                        LIMIT ?""",
-                    (*claimed_ids, remainder)
-                )
-            else:
-                cursor.execute(
-                    """SELECT id, file_id, file_path, priority, parsed_metadata
-                       FROM job_queue
-                       WHERE status = 'pending'
-                         AND (parse_status IS NULL OR parse_status = 'pending' OR parse_status = 'failed')
-                       ORDER BY priority DESC, created_at ASC
-                       LIMIT ?""",
-                    (remainder,)
-                )
-            rows.extend(cursor.fetchall())
+        if processing_mode == "embed_only":
+            # embed_only workers: claim jobs where vision (MC) is done but embed (VV/MV) is not.
+            # These arise when a full worker completes Phase V then fails before embed,
+            # or when Phase-splitting is explicitly used in mixed-worker scenarios.
+            cursor.execute(
+                """SELECT id, file_id, file_path, priority, parsed_metadata
+                   FROM job_queue
+                   WHERE status = 'pending'
+                     AND json_extract(phase_completed, '$.vision') = 1
+                     AND (json_extract(phase_completed, '$.embed') IS NULL
+                          OR json_extract(phase_completed, '$.embed') = 0)
+                   ORDER BY priority DESC, created_at ASC
+                   LIMIT ?""",
+                (count,)
+            )
+            rows = list(cursor.fetchall())
+
+        elif processing_mode == "mc_only":
+            # mc_only workers: only claim pre-parsed jobs (Phase P done by ParseAhead).
+            # complete_mc() requires file metadata already upserted by ParseAhead.
+            cursor.execute(
+                """SELECT id, file_id, file_path, priority, parsed_metadata
+                   FROM job_queue
+                   WHERE status = 'pending' AND parse_status = 'parsed'
+                   ORDER BY priority DESC, created_at ASC
+                   LIMIT ?""",
+                (count,)
+            )
+            rows = list(cursor.fetchall())
+
+        else:
+            # full workers: prefer pre-parsed jobs (skip Phase P), fallback to unparsed.
+            # 1) Prefer pre-parsed jobs (server already ran Phase P)
+            cursor.execute(
+                """SELECT id, file_id, file_path, priority, parsed_metadata
+                   FROM job_queue
+                   WHERE status = 'pending' AND parse_status = 'parsed'
+                   ORDER BY priority DESC, created_at ASC
+                   LIMIT ?""",
+                (count,)
+            )
+            rows = list(cursor.fetchall())
+
+            # 2) Fill remainder with unparsed jobs
+            if len(rows) < count:
+                remainder = count - len(rows)
+                claimed_ids = [r[0] for r in rows]
+                if claimed_ids:
+                    placeholders = ",".join("?" * len(claimed_ids))
+                    cursor.execute(
+                        f"""SELECT id, file_id, file_path, priority, parsed_metadata
+                            FROM job_queue
+                            WHERE status = 'pending'
+                              AND (parse_status IS NULL OR parse_status = 'pending' OR parse_status = 'failed')
+                              AND id NOT IN ({placeholders})
+                            ORDER BY priority DESC, created_at ASC
+                            LIMIT ?""",
+                        (*claimed_ids, remainder)
+                    )
+                else:
+                    cursor.execute(
+                        """SELECT id, file_id, file_path, priority, parsed_metadata
+                           FROM job_queue
+                           WHERE status = 'pending'
+                             AND (parse_status IS NULL OR parse_status = 'pending' OR parse_status = 'failed')
+                           ORDER BY priority DESC, created_at ASC
+                           LIMIT ?""",
+                        (remainder,)
+                    )
+                rows.extend(cursor.fetchall())
 
         # Signal demand to ParseAheadPool BEFORE early return.
         # Uses requested count (not actual claimed count) — represents
@@ -173,6 +211,32 @@ class JobQueueManager:
 
         if not rows:
             return []
+
+        # For embed_only mode: pre-fetch vision fields from files table.
+        # mc_caption, ai_tags etc. are stored in files by Phase V but NOT in
+        # parsed_metadata (which only contains Phase P output). Embed workers
+        # need these fields to build the MV (text embedding) input.
+        embed_vision_map = {}
+        if processing_mode == "embed_only":
+            file_paths_nfc = [unicodedata.normalize('NFC', r[2]) for r in rows]
+            placeholders = ",".join("?" * len(file_paths_nfc))
+            cursor.execute(
+                f"""SELECT file_path, mc_caption, ai_tags, image_type, scene_type, art_style
+                    FROM files WHERE file_path IN ({placeholders})""",
+                file_paths_nfc
+            )
+            for frow in cursor.fetchall():
+                try:
+                    ai_tags = json.loads(frow[2]) if frow[2] else []
+                except (json.JSONDecodeError, TypeError):
+                    ai_tags = []
+                embed_vision_map[frow[0]] = {
+                    "mc_caption": frow[1],
+                    "ai_tags": ai_tags,
+                    "image_type": frow[3],
+                    "scene_type": frow[4],
+                    "art_style": frow[5],
+                }
 
         claimed = []
         for row in rows:
@@ -202,6 +266,13 @@ class JobQueueManager:
                         job_data["thumb_path"] = pm.get("thumb_path")
                     except (json.JSONDecodeError, TypeError):
                         job_data["pre_parsed"] = False
+
+                # Attach vision data for embed_only mode (mc_caption needed for MV)
+                if processing_mode == "embed_only":
+                    nfc_path = unicodedata.normalize('NFC', file_path)
+                    vision = embed_vision_map.get(nfc_path)
+                    if vision:
+                        job_data["vision_data"] = vision
 
                 claimed.append(job_data)
 

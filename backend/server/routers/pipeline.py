@@ -49,6 +49,10 @@ class MCCompleteRequest(BaseModel):
     vision_fields: Dict[str, Any]  # mc_caption, ai_tags, image_type, etc.
 
 
+class EmbedCompleteRequest(BaseModel):
+    vectors: Dict[str, str]  # {"vv": base64, "mv": base64}
+
+
 class RegisterPathsRequest(BaseModel):
     file_paths: List[str]
     priority: int = 0
@@ -257,6 +261,53 @@ def complete_mc(
     db.conn.commit()
 
     logger.info(f"MC-only job {job_id} vision done by {user['username']}: {file_path}")
+    return {"success": True, "file_id": stored_file_id}
+
+
+@router.patch("/api/v1/jobs/{job_id}/complete_embed")
+def complete_embed(
+    job_id: int,
+    req: EmbedCompleteRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Embed-only worker: store VV+MV vectors and mark job complete.
+
+    In embed_only mode, workers only generate VV (SigLIP2) and MV (Qwen3-Embedding).
+    Server or full workers handle Parse + Vision (MC). Job must already have vision=true.
+    """
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT file_id, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
+        (job_id, user["id"])
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
+
+    file_id, file_path = row
+    file_path = unicodedata.normalize('NFC', file_path)
+
+    # Look up stored file_id (vision must have already been completed)
+    cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
+    existing = cursor.fetchone()
+    if existing is None:
+        raise HTTPException(
+            status_code=404,
+            detail="File not found in DB — vision phase may not have completed"
+        )
+    stored_file_id = existing[0]
+
+    # Store VV + MV vectors
+    vv_vec = _decode_vector(req.vectors.get("vv"))
+    mv_vec = _decode_vector(req.vectors.get("mv"))
+    db.upsert_vectors(stored_file_id, vv_vec=vv_vec, mv_vec=mv_vec)
+
+    # Mark job fully complete
+    queue = _get_queue(db)
+    queue.complete_job(job_id, user["id"])
+
+    logger.info(f"Embed-only job {job_id} completed by {user['username']}: {file_path}")
     return {"success": True, "file_id": stored_file_id}
 
 
