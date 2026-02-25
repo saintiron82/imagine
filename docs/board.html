@@ -124,7 +124,12 @@ let currentCategory = 'notice';
 let currentUser = null;
 let postsCache = {};
 
+function getUser() {
+  return currentUser || (getAuth() && getAuth().currentUser) || null;
+}
+
 /* ── Init ────────────────────────────────────────────── */
+initFirebase(); // Ensure Firebase is ready before requireAuth
 requireAuth().then(user => {
   if (!user) return;
   currentUser = user;
@@ -170,10 +175,11 @@ async function loadPosts() {
 
     // Filter private inquiry posts (client-side)
     if (currentCategory === 'inquiry') {
+      const u = getUser();
       posts = posts.filter(p =>
         !p.is_private
-        || p.author_email === currentUser.email
-        || isAdmin(currentUser)
+        || (u && p.author_email === u.email)
+        || isAdmin(u)
       );
     }
 
@@ -183,7 +189,7 @@ async function loadPosts() {
     renderPostList(posts, content);
   } catch (err) {
     console.error('Failed to load posts:', err);
-    const canWrite = currentCategory !== 'notice' || isAdmin(currentUser);
+    const canWrite = currentCategory !== 'notice' || isAdmin(getUser());
     let html = '<div class="board-header">';
     html += '<span class="board-count"></span>';
     if (canWrite) {
@@ -197,7 +203,7 @@ async function loadPosts() {
 
 /* ── Render Post List ────────────────────────────────── */
 function renderPostList(posts, container) {
-  const canWrite = currentCategory !== 'notice' || isAdmin(currentUser);
+  const canWrite = currentCategory !== 'notice' || isAdmin(getUser());
 
   let html = '<div class="board-header">';
   html += '<span class="board-count">' + t('board.post_count').replace('{count}', posts.length) + '</span>';
@@ -244,7 +250,8 @@ function viewPost(postId) {
     ? (post.created_at.toDate ? post.created_at.toDate() : new Date(post.created_at)).toLocaleDateString()
     : '';
 
-  const canEdit = post.author_email === currentUser.email || isAdmin(currentUser);
+  const u = getUser();
+  const canEdit = u && (post.author_email === u.email || isAdmin(u));
 
   let html = `
     <button class="btn-back" onclick="loadPosts()">${t('board.back')}</button>
@@ -329,12 +336,15 @@ async function savePost(postId) {
     updated_at: firebase.firestore.FieldValue.serverTimestamp()
   };
 
+  const user = getUser();
+  if (!user) { showToast('Please sign in first', 'error'); return; }
+
   try {
     if (postId) {
       await db.collection('posts').doc(postId).update(data);
     } else {
-      data.author_email = currentUser.email;
-      data.author_name = currentUser.displayName || currentUser.email.split('@')[0];
+      data.author_email = user.email;
+      data.author_name = user.displayName || user.email.split('@')[0];
       data.created_at = firebase.firestore.FieldValue.serverTimestamp();
       await db.collection('posts').add(data);
     }
