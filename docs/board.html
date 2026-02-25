@@ -183,7 +183,15 @@ async function loadPosts() {
     renderPostList(posts, content);
   } catch (err) {
     console.error('Failed to load posts:', err);
-    content.innerHTML = '<div class="empty-state"><div class="icon">&#9888;</div><p>' + t('common.error') + '</p></div>';
+    const canWrite = currentCategory !== 'notice' || isAdmin(currentUser);
+    let html = '<div class="board-header">';
+    html += '<span class="board-count"></span>';
+    if (canWrite) {
+      html += '<button class="btn-write" onclick="showWriteForm()">' + t('board.write') + '</button>';
+    }
+    html += '</div>';
+    html += '<div class="empty-state"><div class="icon">&#9888;</div><p>' + t('common.error') + '</p></div>';
+    content.innerHTML = html;
   }
 }
 
