@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user
+from backend.server.rate_limit import check_login_rate, check_register_rate
 from backend.server.auth.schemas import (
     RegisterRequest, LoginRequest, RefreshRequest,
     TokenResponse, UserResponse, WorkerTokenExchange,
@@ -36,7 +37,8 @@ def _verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
-@router.post("/register", response_model=TokenResponse)
+@router.post("/register", response_model=TokenResponse,
+              dependencies=[Depends(check_register_rate)])
 def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
     """Register a new user with an invite code."""
     cursor = db.conn.cursor()
@@ -110,7 +112,8 @@ def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
     )
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse,
+              dependencies=[Depends(check_login_rate)])
 def login(req: LoginRequest, db: SQLiteDB = Depends(get_db)):
     """Login with username or email and password."""
     cursor = db.conn.cursor()

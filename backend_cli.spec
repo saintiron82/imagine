@@ -103,6 +103,7 @@ a = Analysis(
         'backend.server.auth.router',
         'backend.server.auth.jwt',
         'backend.server.auth.schemas',
+        'backend.server.rate_limit',
         'backend.server.routers.workers',
         'backend.server.routers.pipeline',
         'backend.server.routers.worker_setup',
