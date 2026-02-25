@@ -23,8 +23,8 @@ let auth = null;
 function initFirebase() {
   if (typeof firebase === 'undefined') return;
   firebase.initializeApp(firebaseConfig);
-  db = firebase.firestore();
-  auth = firebase.auth();
+  if (typeof firebase.firestore === 'function') db = firebase.firestore();
+  if (typeof firebase.auth === 'function') auth = firebase.auth();
 }
 
 function getDb() { return db; }
