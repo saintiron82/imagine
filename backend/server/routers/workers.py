@@ -27,6 +27,7 @@ class ConnectRequest(BaseModel):
     worker_name: str
     hostname: Optional[str] = None
     batch_capacity: int = 5
+    resources: Optional[dict] = None  # GPU info for immediate mode detection at connect time
 
 
 class HeartbeatRequest(BaseModel):
@@ -65,11 +66,101 @@ def _get_global_processing_mode() -> str:
     return get_processing_mode()
 
 
+def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
+    """워커 resources_json에서 GPU 정보를 읽어 processing_mode 자동 결정.
+
+    서버의 현재 활성 tier를 기준으로 워커가 VLM을 실행할 수 있는지 판단한다.
+
+    Returns:
+        "full" or "embed_only", or None if detection fails
+    """
+    try:
+        from backend.utils.gpu_detect import determine_worker_mode
+        from backend.utils.tier_config import get_active_tier
+        server_tier, _ = get_active_tier()
+        return determine_worker_mode(resources, server_tier)
+    except Exception as e:
+        logger.warning(f"Auto mode detection failed: {e}")
+        return None
+
+
+def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
+    """온라인 워커 모드를 분석하여 서버 사이드 풀을 자동 활성화/비활성화.
+
+    - mc_only 워커 있음  → ParseAhead(P+VV) + EmbedAhead(MV) 활성화
+    - embed_only 워커 있음 → ParseAhead(P) 활성화, EmbedAhead 불필요 (워커가 MV 처리)
+    - full 워커만 있음   → 풀 최소화 (ParseAhead pre-parse만)
+    - 워커 없음          → 서버 IPC 워커(full)가 전체 처리
+    """
+    if not app:
+        return
+
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT processing_mode_override FROM worker_sessions WHERE status = 'online'"
+    )
+    rows = cursor.fetchall()
+
+    global_mode = _get_global_processing_mode()
+    modes = [(row[0] if row[0] else global_mode) for row in rows]
+
+    has_mc_only = any(m == "mc_only" for m in modes)
+    has_embed_only = any(m == "embed_only" for m in modes)
+    needs_embed_ahead = has_mc_only  # embed_only 워커는 MV를 자체 처리하므로 EmbedAhead 불필요
+
+    # ParseAheadPool 모드 업데이트
+    if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
+        if has_mc_only:
+            app.state.parse_ahead._processing_mode = "mc_only"
+        elif has_embed_only:
+            app.state.parse_ahead._processing_mode = "embed_only"
+        else:
+            app.state.parse_ahead._processing_mode = global_mode
+
+        # mc_only/embed_only 워커가 있으면 ParseAhead에 demand seed
+        if has_mc_only or has_embed_only:
+            try:
+                from backend.server.queue.base_ahead_pool import BaseAheadPool
+                BaseAheadPool.record_claim(session_id=-1, count=10)
+            except Exception:
+                pass
+
+    # EmbedAheadPool 관리
+    embed_ahead_running = (
+        hasattr(app.state, "embed_ahead")
+        and app.state.embed_ahead
+        and app.state.embed_ahead._thread
+        and app.state.embed_ahead._thread.is_alive()
+    )
+
+    if needs_embed_ahead and not embed_ahead_running:
+        try:
+            from backend.server.queue.embed_ahead import EmbedAheadPool
+            app.state.embed_ahead = EmbedAheadPool(db)
+            app.state.embed_ahead.start()
+            logger.info("EmbedAheadPool started (mc_only workers online)")
+        except Exception as e:
+            logger.warning(f"Failed to start EmbedAheadPool: {e}")
+    elif not needs_embed_ahead and embed_ahead_running:
+        try:
+            app.state.embed_ahead.stop()
+            app.state.embed_ahead = None
+            logger.info("EmbedAheadPool stopped (no mc_only workers)")
+        except Exception as e:
+            logger.warning(f"Failed to stop EmbedAheadPool: {e}")
+
+    logger.debug(
+        f"Pool recalculated: modes={modes}, mc_only={has_mc_only}, "
+        f"embed_only={has_embed_only}, embed_ahead={needs_embed_ahead}"
+    )
+
+
 # ── Worker → Server endpoints ────────────────────────────────
 
 @router.post("/workers/connect")
 def worker_connect(
     req: ConnectRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db),
 ):
@@ -91,7 +182,29 @@ def worker_connect(
         (user["id"], req.worker_name, req.hostname, req.batch_capacity, now, now)
     )
     session_id = cursor.lastrowid
+
+    # Auto-detect processing_mode from resources provided at connect time.
+    # Only set if no manual override already exists (admin pre-configuration).
+    auto_mode = None
+    if req.resources:
+        auto_mode = _auto_detect_mode_from_resources(req.resources)
+        if auto_mode:
+            cursor.execute(
+                """UPDATE worker_sessions
+                   SET processing_mode_override = ?, resources_json = ?
+                   WHERE id = ?""",
+                (auto_mode, json.dumps(req.resources), session_id)
+            )
+            logger.info(
+                f"Worker {req.worker_name} auto-detected mode: {auto_mode} "
+                f"(VRAM={req.resources.get('gpu_memory_total_gb', 0):.1f}GB, "
+                f"GPU={req.resources.get('gpu_type', 'none')})"
+            )
+
     db.conn.commit()
+
+    # Recalculate server pools with the new worker included
+    _recalculate_server_pools(request.app, db)
 
     # Per-worker override > global config fallback
     cursor.execute(
@@ -114,6 +227,7 @@ def worker_connect(
 @router.post("/workers/heartbeat")
 def worker_heartbeat(
     req: HeartbeatRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db),
 ):
@@ -166,6 +280,28 @@ def worker_heartbeat(
     )
     db.conn.commit()
 
+    # Auto-detect mode on first heartbeat when:
+    #   - worker reports resources (GPU info available)
+    #   - no manual override is set (NULL = never auto-detected or admin-configured)
+    pool_needs_recalc = False
+    if req.resources and not mode_override:
+        detected_mode = _auto_detect_mode_from_resources(req.resources)
+        if detected_mode:
+            cursor.execute(
+                "UPDATE worker_sessions SET processing_mode_override = ? WHERE id = ?",
+                (detected_mode, req.session_id)
+            )
+            db.conn.commit()
+            mode_override = detected_mode
+            pool_needs_recalc = True
+            logger.info(
+                f"Worker session {req.session_id} auto-detected mode: {detected_mode} "
+                f"(VRAM={req.resources.get('gpu_memory_total_gb', 0):.1f}GB)"
+            )
+
+    if pool_needs_recalc:
+        _recalculate_server_pools(request.app, db)
+
     # Per-worker override > global config fallback
     processing_mode = mode_override or _get_global_processing_mode()
     effective_batch = batch_override or batch_capacity
@@ -193,6 +329,7 @@ def worker_heartbeat(
 @router.post("/workers/disconnect")
 def worker_disconnect(
     req: DisconnectRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db),
 ):
@@ -206,6 +343,10 @@ def worker_disconnect(
     )
     db.conn.commit()
     logger.info(f"Worker disconnected: session={req.session_id}")
+
+    # Recalculate pools after worker leaves (may deactivate EmbedAhead if last mc_only)
+    _recalculate_server_pools(request.app, db)
+
     return {"ok": True}
 
 
@@ -450,6 +591,7 @@ def admin_block_worker(
 def admin_update_worker_config(
     session_id: int,
     req: WorkerConfigUpdate,
+    request: Request,
     admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db),
 ):
@@ -466,6 +608,13 @@ def admin_update_worker_config(
         raise HTTPException(status_code=404, detail="Session not found or not online")
     db.conn.commit()
     logger.info(f"Admin updated worker config: session={session_id}, mode={req.processing_mode}, batch={req.batch_capacity}")
+
+    # Recalculate pools with the updated worker mode
+    try:
+        _recalculate_server_pools(request.app, db)
+    except Exception as e:
+        logger.warning(f"Pool recalculation after config update failed: {e}")
+
     return {"ok": True}
 
 
@@ -500,43 +649,11 @@ def admin_update_global_config(
     except Exception as e:
         logger.warning(f"Failed to persist global processing_mode: {e}")
 
-    # Dynamically manage server-side pools based on new mode
+    # Recalculate server-side pools based on updated worker modes
     try:
-        app = request.app
-
-        if app:
-            # Update ParseAheadPool's processing_mode (for VV embedding decision)
-            if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
-                app.state.parse_ahead._processing_mode = req.processing_mode
-                logger.info(f"ParseAheadPool mode updated: {req.processing_mode}")
-
-            if req.processing_mode == "mc_only":
-                # Bootstrap demand signal so ParseAheadPool starts
-                # pre-parsing immediately without waiting for next worker claim.
-                # session_id=-1 is a sentinel for "system bootstrap".
-                try:
-                    from backend.server.queue.base_ahead_pool import BaseAheadPool
-                    BaseAheadPool.record_claim(session_id=-1, count=10)
-                    logger.info("Bootstrap demand seeded for ParseAheadPool (mc_only switch)")
-                except Exception:
-                    pass
-
-                # Start EmbedAheadPool if not running
-                if not (hasattr(app.state, "embed_ahead") and app.state.embed_ahead
-                        and app.state.embed_ahead._thread
-                        and app.state.embed_ahead._thread.is_alive()):
-                    from backend.server.queue.embed_ahead import EmbedAheadPool
-                    app.state.embed_ahead = EmbedAheadPool(db)
-                    app.state.embed_ahead.start()
-                    logger.info("EmbedAheadPool started dynamically (mc_only mode)")
-            else:
-                # Stop EmbedAheadPool if running
-                if hasattr(app.state, "embed_ahead") and app.state.embed_ahead:
-                    app.state.embed_ahead.stop()
-                    app.state.embed_ahead = None
-                    logger.info("EmbedAheadPool stopped (full mode)")
+        _recalculate_server_pools(request.app, db)
     except Exception as e:
-        logger.warning(f"Pool management on mode switch failed: {e}")
+        logger.warning(f"Pool recalculation on global mode switch failed: {e}")
 
     logger.info(f"Admin set global processing mode: {req.processing_mode} ({affected} workers)")
     return {"ok": True, "affected": affected}

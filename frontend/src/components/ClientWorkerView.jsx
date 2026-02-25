@@ -225,6 +225,7 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
           const perMin = wp.throughput || 0;
 
           const isMcOnly = wp.processingMode === 'mc_only';
+          const isEmbedOnly = wp.processingMode === 'embed_only';
           const phaseOrder = ['parse', 'vision', 'embed_vv', 'embed_mv'];
           const phaseConfig = {
             parse:    { label: t('status.phase.parse'), color: 'bg-cyan-500',   textColor: 'text-cyan-400' },
@@ -232,8 +233,12 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
             embed_vv: { label: 'VV',                    color: 'bg-purple-500', textColor: 'text-purple-400' },
             embed_mv: { label: 'MV',                    color: 'bg-green-500',  textColor: 'text-green-400' },
           };
-          // In mc_only mode, server handles P/VV/MV — worker only does MC
-          const serverPhases = isMcOnly ? new Set(['parse', 'embed_vv', 'embed_mv']) : new Set();
+          // Server-handled phases per mode — shown as dimmed "SVR" pills
+          const serverPhases = isMcOnly
+            ? new Set(['parse', 'embed_vv', 'embed_mv'])   // mc_only: worker does MC only
+            : isEmbedOnly
+            ? new Set(['parse', 'vision'])                  // embed_only: worker does VV+MV only
+            : new Set();
           const currentIdx = phaseOrder.indexOf(wp.currentPhase);
 
           return (

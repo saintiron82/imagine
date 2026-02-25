@@ -10,6 +10,71 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
+def determine_worker_mode(resources: Dict[str, Any], server_tier: str) -> str:
+    """서버 tier 기준으로 워커의 processing_mode를 결정.
+
+    워커 자체의 GPU 등급을 정하는 것이 아니라, 서버가 지정한 tier의 VLM을
+    해당 워커가 실행할 수 있는지 판단하여 역할을 부여한다.
+
+    Args:
+        resources: 워커의 resources_json 딕셔너리
+                   (gpu_type: "cuda"/"mps"/None, gpu_memory_total_gb: float 등)
+        server_tier: 서버 활성 tier ("standard" / "pro" / "ultra")
+
+    Returns:
+        "full"       - 서버 tier VLM 실행 가능 → 전체 Phase P→V→VV→MV 처리
+        "embed_only" - VLM 실행 불가 (VRAM 부족 또는 CPU-only) → Phase VV+MV만 처리
+
+    Decision logic:
+        1. gpu_type이 None (CPU-only) → embed_only
+        2. 워커 VRAM ≥ 서버 tier vram_min → full
+        3. 워커 VRAM < 서버 tier vram_min → embed_only
+
+    Examples:
+        # 서버 tier = pro (vram_min = 8192 MB)
+        determine_worker_mode({"gpu_type": "cuda", "gpu_memory_total_gb": 12.0}, "pro")
+        # → "full"   (12GB ≥ 8GB)
+
+        determine_worker_mode({"gpu_type": "cuda", "gpu_memory_total_gb": 6.0}, "pro")
+        # → "embed_only"  (6GB < 8GB)
+
+        determine_worker_mode({"gpu_type": None}, "pro")
+        # → "embed_only"  (CPU-only)
+
+        determine_worker_mode({"gpu_type": "mps", "gpu_memory_total_gb": 16.0}, "pro")
+        # → "full"   (M2 16GB ≥ 8GB)
+    """
+    from backend.utils.config import get_config
+
+    gpu_type = resources.get("gpu_type")  # "cuda" / "mps" / None
+
+    # GPU 없음 → VLM 실행 불가
+    if not gpu_type:
+        logger.info("Worker has no GPU (CPU-only) → embed_only mode")
+        return "embed_only"
+
+    worker_vram_mb = int(resources.get("gpu_memory_total_gb", 0) * 1024)
+
+    # 서버 tier의 최소 VRAM 요구사항 조회
+    cfg = get_config()
+    tiers = cfg.get("ai_mode.tiers", {})
+    tier_cfg = tiers.get(server_tier, {})
+    vram_min_mb = tier_cfg.get("vram_min", 0)  # standard=없음(0), pro=8192, ultra=20480
+
+    if worker_vram_mb >= vram_min_mb:
+        logger.info(
+            f"Worker VRAM {worker_vram_mb} MB ≥ {server_tier} tier min {vram_min_mb} MB"
+            f" → full mode"
+        )
+        return "full"
+
+    logger.info(
+        f"Worker VRAM {worker_vram_mb} MB < {server_tier} tier min {vram_min_mb} MB"
+        f" → embed_only mode"
+    )
+    return "embed_only"
+
+
 def get_gpu_vram_mb() -> int:
     """
     GPU VRAM 용량을 MB 단위로 반환.

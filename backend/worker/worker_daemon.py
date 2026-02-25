@@ -600,6 +600,9 @@ class WorkerDaemon:
 
         Called right after claim_jobs() so files download in parallel
         while the current batch is being processed on GPU.
+
+        embed_only mode: only the thumbnail is needed (VV is computed from it),
+        so we skip full file download to save bandwidth.
         """
         if self.storage_mode == "shared_fs":
             return  # No network download needed — instant local access
@@ -607,7 +610,11 @@ class WorkerDaemon:
         for job in jobs:
             file_id = job.get("file_id")
             if file_id is not None and file_id not in self._download_cache:
-                future = self._download_pool.submit(self._resolve_file, job)
+                if self.processing_mode == "embed_only":
+                    # Only thumbnail needed — skip ~500MB full file download
+                    future = self._download_pool.submit(self._resolve_thumbnail, job)
+                else:
+                    future = self._download_pool.submit(self._resolve_file, job)
                 self._download_cache[file_id] = future
 
     def _get_downloaded(self, job: dict) -> Optional[str]:

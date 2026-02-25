@@ -254,10 +254,15 @@ const StatusBar = ({
                     const failedCount = wp.failed || 0;
                     const totalQ = wp.totalQueue || 0;
                     const isMcOnly = wp.processingMode === 'mc_only';
+                    const isEmbedOnly = wp.processingMode === 'embed_only';
                     const phaseLabels = { parse: 'P', vision: 'MC', embed_vv: 'VV', embed_mv: 'MV', uploading: 'UP', starting: '...' };
                     const phaseColors = { parse: 'text-cyan-400', vision: 'text-blue-400', embed_vv: 'text-purple-400', embed_mv: 'text-green-400', uploading: 'text-yellow-400', starting: 'text-gray-400' };
-                    // In mc_only mode, P/VV/MV are handled by server — dim them
-                    const dimmedPhases = isMcOnly ? new Set(['parse', 'embed_vv', 'embed_mv']) : new Set();
+                    // Dim server-handled phases based on mode
+                    const dimmedPhases = isMcOnly
+                        ? new Set(['parse', 'embed_vv', 'embed_mv'])
+                        : isEmbedOnly
+                        ? new Set(['parse', 'vision'])
+                        : new Set();
                     const perMin = wp.throughput || 0;
 
                     // Phase-level speed (from latest batch)
@@ -275,9 +280,12 @@ const StatusBar = ({
                                 <Loader2 className="animate-spin text-emerald-400" size={14} />
                             )}
 
-                            {/* MC Only mode indicator */}
+                            {/* Mode indicator */}
                             {isMcOnly && (
                                 <span className="text-[9px] font-mono text-amber-400/80 bg-amber-900/30 px-1 rounded">MC</span>
+                            )}
+                            {isEmbedOnly && (
+                                <span className="text-[9px] font-mono text-violet-400/80 bg-violet-900/30 px-1 rounded">EMB</span>
                             )}
 
                             {/* Current phase + progress within phase */}
@@ -301,13 +309,15 @@ const StatusBar = ({
                                 </span>
                             )}
 
-                            {/* Per-phase speeds (compact) — dim server-handled phases in mc_only */}
+                            {/* Per-phase speeds (compact) — skip server-handled phases */}
                             {(pFpm.parse > 0 || pFpm.vision > 0 || pFpm.embed_vv > 0 || pFpm.embed_mv > 0) && (
                                 <span className="font-mono text-[9px] text-gray-400">
-                                    {pFpm.parse > 0 && <span className={dimmedPhases.has('parse') ? 'text-gray-600' : 'text-cyan-400'}>P:{pFpm.parse.toFixed(0)} </span>}
-                                    {pFpm.vision > 0 && <span className="text-blue-400">MC:{isMcOnly ? `${(60 / pFpm.vision).toFixed(1)}s` : `${pFpm.vision.toFixed(1)}/m`} </span>}
-                                    {pFpm.embed_vv > 0 && <span className={dimmedPhases.has('embed_vv') ? 'text-gray-600' : 'text-purple-400'}>VV:{pFpm.embed_vv.toFixed(0)} </span>}
-                                    {pFpm.embed_mv > 0 && <span className={dimmedPhases.has('embed_mv') ? 'text-gray-600' : 'text-green-400'}>MV:{pFpm.embed_mv.toFixed(0)}</span>}
+                                    {pFpm.parse > 0 && !dimmedPhases.has('parse') && <span className="text-cyan-400">P:{pFpm.parse.toFixed(0)} </span>}
+                                    {pFpm.vision > 0 && !dimmedPhases.has('vision') && (
+                                        <span className="text-blue-400">MC:{isMcOnly ? `${(60 / pFpm.vision).toFixed(1)}s` : `${pFpm.vision.toFixed(1)}/m`} </span>
+                                    )}
+                                    {pFpm.embed_vv > 0 && !dimmedPhases.has('embed_vv') && <span className="text-purple-400">VV:{pFpm.embed_vv.toFixed(0)} </span>}
+                                    {pFpm.embed_mv > 0 && !dimmedPhases.has('embed_mv') && <span className="text-green-400">MV:{pFpm.embed_mv.toFixed(0)}</span>}
                                 </span>
                             )}
 
