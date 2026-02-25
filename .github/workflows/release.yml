@@ -39,12 +39,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
+      - name: Install torch (CPU-only on Windows)
+        if: matrix.torch-extra != ''
+        run: pip install torch ${{ matrix.torch-extra }}
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install uvicorn fastapi python-jose passlib python-multipart
-          pip install -r requirements.txt ${{ matrix.torch-extra }}
+          pip install -r requirements.txt
 
       - name: Build backend (PyInstaller)
         run: python -m PyInstaller backend_cli.spec --noconfirm
