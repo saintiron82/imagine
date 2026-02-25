@@ -231,6 +231,38 @@ footer a:hover { color: #38bdf8; }
   background: rgba(56, 189, 248, 0.2); border-color: rgba(56, 189, 248, 0.4);
 }
 
+/* ── Board Search ──────────────────────────────────── */
+.board-search {
+  position: relative; margin-bottom: 12px;
+}
+.board-search input {
+  width: 100%; padding: 10px 40px 10px 14px;
+  border-radius: 10px; font-size: 0.9rem;
+  font-family: inherit; color: #e0e0ee;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  transition: border-color 0.2s;
+}
+.board-search input:focus {
+  outline: none; border-color: rgba(56,189,248,0.5);
+}
+.board-search input::placeholder { color: #6b7280; }
+.search-clear {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: #6b7280; font-size: 1.2rem;
+  cursor: pointer; padding: 4px 8px; line-height: 1; font-family: inherit;
+  transition: color 0.2s;
+}
+.search-clear:hover { color: #e0e0ee; }
+
+/* ── Category Badge (search results) ─────────────────── */
+.badge-cat {
+  display: inline-block; font-size: 0.65rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 4px; margin-right: 6px;
+  background: rgba(129,140,248,0.15); color: #818cf8;
+  vertical-align: middle;
+}
+
 /* ── Board Tabs ──────────────────────────────────────── */
 .board-tabs {
   display: flex; gap: 4px;

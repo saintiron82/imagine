@@ -44,6 +44,12 @@
 
 <!-- Board -->
 <div class="board-wrap">
+  <!-- Search -->
+  <div class="board-search" id="board-search">
+    <input type="text" id="search-input" data-i18n-placeholder="search.placeholder" placeholder="Search posts..." oninput="onSearchInput(this.value)">
+    <button class="search-clear" id="search-clear" onclick="clearSearch()" style="display:none">&times;</button>
+  </div>
+
   <!-- Tabs -->
   <div class="board-tabs" id="board-tabs">
     <button class="board-tab active" onclick="switchCategory('notice')" data-cat="notice" data-i18n="board.notice">Notice</button>
@@ -112,7 +118,10 @@ registerPageI18n({
     "attach.remove": "Remove",
     "attach.download": "Download",
     "attach.too_large": "File too large (max 5MB)",
-    "attach.too_many": "Too many files"
+    "attach.too_many": "Too many files",
+    "search.placeholder": "Search posts...",
+    "search.results": "Search results ({count})",
+    "search.no_results": "No posts found"
   },
   ko: {
     "board.notice": "\uacf5\uc9c0",
@@ -151,7 +160,10 @@ registerPageI18n({
     "attach.remove": "\uc81c\uac70",
     "attach.download": "\ub2e4\uc6b4\ub85c\ub4dc",
     "attach.too_large": "\ud30c\uc77c\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4 (\ucd5c\ub300 5MB)",
-    "attach.too_many": "\ud30c\uc77c\uc774 \ub108\ubb34 \ub9ce\uc2b5\ub2c8\ub2e4"
+    "attach.too_many": "\ud30c\uc77c\uc774 \ub108\ubb34 \ub9ce\uc2b5\ub2c8\ub2e4",
+    "search.placeholder": "\uac8c\uc2dc\uae00 \uac80\uc0c9...",
+    "search.results": "\uac80\uc0c9 \uacb0\uacfc ({count}\uac1c)",
+    "search.no_results": "\uac80\uc0c9 \uacb0\uacfc\uac00 \uc5c6\uc2b5\ub2c8\ub2e4"
   }
 });
 
@@ -160,6 +172,8 @@ let currentCategory = 'notice';
 let currentUser = null;
 let postsCache = {};
 let _pendingExistingAttachments = [];
+let _searchTimer = null;
+let _isSearchMode = false;
 
 function getUser() {
   return currentUser || (getAuth() && getAuth().currentUser) || null;
@@ -183,6 +197,11 @@ requireAuth().then(user => {
 /* ── Category Switching ──────────────────────────────── */
 function switchCategory(cat) {
   currentCategory = cat;
+  _isSearchMode = false;
+  const input = document.getElementById('search-input');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('search-clear');
+  if (clearBtn) clearBtn.style.display = 'none';
   history.replaceState(null, '', '#' + cat);
   updateTabs();
   loadPosts();
@@ -192,6 +211,103 @@ function updateTabs() {
   document.querySelectorAll('.board-tab').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.cat === currentCategory);
   });
+}
+
+/* ── Search ──────────────────────────────────────────── */
+function onSearchInput(value) {
+  const clearBtn = document.getElementById('search-clear');
+  if (clearBtn) clearBtn.style.display = value ? 'block' : 'none';
+
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    if (value.trim()) {
+      searchPosts(value.trim());
+    } else {
+      clearSearch();
+    }
+  }, 300);
+}
+
+function clearSearch() {
+  _isSearchMode = false;
+  const input = document.getElementById('search-input');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('search-clear');
+  if (clearBtn) clearBtn.style.display = 'none';
+  document.getElementById('board-tabs').style.display = '';
+  loadPosts();
+}
+
+async function searchPosts(query) {
+  const content = document.getElementById('board-content');
+  const db = getDb();
+  if (!db) return;
+
+  _isSearchMode = true;
+  document.getElementById('board-tabs').style.display = 'none';
+  content.innerHTML = '<div class="loading">' + t('common.loading') + '</div>';
+
+  try {
+    // Load all posts across all categories
+    const snap = await db.collection('posts')
+      .orderBy('created_at', 'desc')
+      .get();
+
+    const q = query.toLowerCase();
+    const u = getUser();
+
+    let results = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(p => {
+        // Skip private inquiries from others
+        if (p.category === 'inquiry' && p.is_private) {
+          if (!u || (p.author_email !== u.email && !isAdmin(u))) return false;
+        }
+        // Match title or content
+        const title = (p.title || '').toLowerCase();
+        const body = (p.content || '').toLowerCase();
+        const author = (p.author_name || '').toLowerCase();
+        return title.includes(q) || body.includes(q) || author.includes(q);
+      });
+
+    postsCache = {};
+    results.forEach(p => { postsCache[p.id] = p; });
+
+    renderSearchResults(results, content, query);
+  } catch (err) {
+    console.error('Search failed:', err);
+    content.innerHTML = '<div class="empty-state"><div class="icon">&#9888;</div><p>' + t('common.error') + '</p></div>';
+  }
+}
+
+function renderSearchResults(posts, container, query) {
+  let html = '<div class="board-header">';
+  html += '<span class="board-count">' + t('search.results').replace('{count}', posts.length) + '</span>';
+  html += '</div>';
+
+  if (posts.length === 0) {
+    html += '<div class="empty-state"><div class="icon">&#128269;</div><p>' + t('search.no_results') + '</p></div>';
+    container.innerHTML = html;
+    return;
+  }
+
+  html += '<div class="post-list">';
+  posts.forEach(p => {
+    const date = p.created_at
+      ? (p.created_at.toDate ? p.created_at.toDate() : new Date(p.created_at)).toLocaleDateString()
+      : '';
+    const privateBadge = p.is_private ? '<span class="badge-private">&#128274;</span>' : '';
+    const catLabel = t('board.' + p.category) || p.category;
+    html += `
+      <div class="post-row" onclick="viewPost('${p.id}')">
+        <div class="post-row-title"><span class="badge-cat">${escHtml(catLabel)}</span>${privateBadge}${escHtml(p.title || '')}</div>
+        <div class="post-row-author">${escHtml(p.author_name || '')}</div>
+        <div class="post-row-date">${date}</div>
+      </div>`;
+  });
+  html += '</div>';
+
+  container.innerHTML = html;
 }
 
 /* ── Load Posts ──────────────────────────────────────── */
@@ -574,7 +690,13 @@ function showToast(message, type) {
 
 /* ── Language Change ─────────────────────────────────── */
 function onLangChange() {
-  loadPosts();
+  const input = document.getElementById('search-input');
+  if (input) input.placeholder = t('search.placeholder');
+  if (_isSearchMode && input && input.value.trim()) {
+    searchPosts(input.value.trim());
+  } else {
+    loadPosts();
+  }
 }
 
 /* ── Hash Change ─────────────────────────────────────── */
