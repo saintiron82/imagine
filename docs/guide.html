@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guide — Imagine</title>
+<meta name="description" content="Imagine documentation and user guide.">
+<meta name="theme-color" content="#0a0a1a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css">
+<style>
+/* ── Layout ──────────────────────────────────────────── */
+.guide-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 40px;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 100px 24px 80px;
+  min-height: calc(100vh - 64px);
+}
+
+/* ── Sidebar ─────────────────────────────────────────── */
+.sidebar {
+  position: sticky; top: 88px; align-self: start;
+  max-height: calc(100vh - 120px); overflow-y: auto;
+}
+.sidebar-title {
+  font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+  color: #6b7280; letter-spacing: 0.08em; margin-bottom: 12px;
+  padding: 0 12px;
+}
+.sidebar-category {
+  margin-bottom: 20px;
+}
+.sidebar-category-name {
+  font-size: 0.85rem; font-weight: 600; color: #9ca3bf;
+  padding: 8px 12px; cursor: default;
+}
+.sidebar-link {
+  display: block;
+  padding: 6px 12px 6px 24px;
+  font-size: 0.85rem; color: #6b7280;
+  border-left: 2px solid transparent;
+  transition: all 0.2s; cursor: pointer;
+  border-radius: 0 6px 6px 0;
+}
+.sidebar-link:hover {
+  color: #e0e0ee; background: rgba(255,255,255,0.03);
+}
+.sidebar-link.active {
+  color: #38bdf8; border-left-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.06);
+}
+
+/* ── Mobile sidebar toggle ───────────────────────────── */
+.mobile-sidebar-toggle {
+  display: none;
+  width: 100%; padding: 12px 16px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px; color: #e0e0ee;
+  font-family: inherit; font-size: 0.9rem;
+  cursor: pointer; margin-bottom: 20px;
+  text-align: left;
+}
+.mobile-sidebar-toggle::after {
+  content: ' \u25BC'; font-size: 0.7rem; float: right;
+}
+
+/* ── Content ─────────────────────────────────────────── */
+.guide-content {
+  min-width: 0;
+}
+.guide-content .page-title {
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 700; margin-bottom: 8px;
+}
+.guide-content .page-meta {
+  font-size: 0.85rem; color: #6b7280; margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.guide-body {
+  max-width: 720px;
+}
+
+/* ── Responsive ──────────────────────────────────────── */
+@media (max-width: 768px) {
+  .guide-layout {
+    grid-template-columns: 1fr;
+    padding-top: 80px; gap: 0;
+  }
+  .sidebar {
+    position: static; max-height: none;
+    display: none;
+  }
+  .sidebar.open { display: block; margin-bottom: 24px; }
+  .mobile-sidebar-toggle { display: block; }
+}
+</style>
+</head>
+<body>
+
+<div class="ambient"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">
+      <img src="icon.svg" alt="Imagine">
+      <span>Imagine</span>
+    </a>
+    <div class="nav-links">
+      <a href="releases.html" class="nav-page-link" data-i18n="nav.releases">Releases</a>
+      <a href="guide.html" class="nav-page-link" data-i18n="nav.guide">Guide</a>
+      <a href="qna.html" class="nav-page-link" data-i18n="nav.qna">Q&A</a>
+      <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" onclick="setLang('ko')">KO</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- Guide Layout -->
+<div class="guide-layout">
+  <!-- Mobile toggle -->
+  <button class="mobile-sidebar-toggle" onclick="toggleSidebar()" data-i18n="guide.menu">Documentation Menu</button>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-title" data-i18n="guide.docs">DOCUMENTATION</div>
+    <div id="sidebar-content">
+      <div class="loading" data-i18n="common.loading">Loading...</div>
+    </div>
+  </aside>
+
+  <!-- Content -->
+  <main class="guide-content" id="guide-content">
+    <div class="loading" data-i18n="common.loading">Loading...</div>
+  </main>
+</div>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>&copy; 2026 Imagine &middot; Open Source &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="common.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+
+<script>
+/* ── Page i18n ───────────────────────────────────────── */
+registerPageI18n({
+  en: {
+    "guide.docs": "DOCUMENTATION",
+    "guide.menu": "Documentation Menu",
+    "guide.empty": "No documentation available yet",
+    "guide.select": "Select an article from the sidebar",
+    "guide.error": "Failed to load documentation",
+    "guide.updated": "Updated"
+  },
+  ko: {
+    "guide.docs": "\ubb38\uc11c",
+    "guide.menu": "\ubb38\uc11c \uba54\ub274",
+    "guide.empty": "\uc544\uc9c1 \ubb38\uc11c\uac00 \uc5c6\uc2b5\ub2c8\ub2e4",
+    "guide.select": "\uc0ac\uc774\ub4dc\ubc14\uc5d0\uc11c \ubb38\uc11c\ub97c \uc120\ud0dd\ud558\uc138\uc694",
+    "guide.error": "\ubb38\uc11c \ub85c\ub4dc \uc2e4\ud328",
+    "guide.updated": "\uc5c5\ub370\uc774\ud2b8"
+  }
+});
+
+/* ── State ───────────────────────────────────────────── */
+let categories = [];
+let articles = [];
+let activeArticleId = null;
+
+/* ── Load Data ───────────────────────────────────────── */
+async function loadGuide() {
+  const db = getDb();
+  if (!db) {
+    showEmpty();
+    return;
+  }
+
+  try {
+    const [catSnap, artSnap] = await Promise.all([
+      db.collection('guide_categories').orderBy('order', 'asc').get(),
+      db.collection('guide_articles').orderBy('order', 'asc').get()
+    ]);
+
+    categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    articles = artSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    if (categories.length === 0) {
+      showEmpty();
+      return;
+    }
+
+    renderSidebar();
+
+    // Check URL hash for direct link
+    const hash = window.location.hash.slice(1);
+    const target = hash ? articles.find(a => a.id === hash) : null;
+    if (target) {
+      selectArticle(target.id);
+    } else if (articles.length > 0) {
+      selectArticle(articles[0].id);
+    }
+  } catch (err) {
+    console.error('Failed to load guide:', err);
+    document.getElementById('guide-content').innerHTML =
+      '<div class="empty-state"><div class="icon">&#9888;</div><p>' + t('guide.error') + '</p></div>';
+    document.getElementById('sidebar-content').innerHTML = '';
+  }
+}
+
+/* ── Render Sidebar ──────────────────────────────────── */
+function renderSidebar() {
+  const lang = getCurrentLang();
+  const container = document.getElementById('sidebar-content');
+
+  container.innerHTML = categories.map(cat => {
+    const catTitle = lang === 'ko' ? (cat.title_ko || cat.title_en) : cat.title_en;
+    const catArticles = articles.filter(a => a.category_id === cat.id);
+
+    return `
+      <div class="sidebar-category">
+        <div class="sidebar-category-name">${catTitle}</div>
+        ${catArticles.map(art => {
+          const artTitle = lang === 'ko' ? (art.title_ko || art.title_en) : art.title_en;
+          return `<a class="sidebar-link ${art.id === activeArticleId ? 'active' : ''}"
+                     onclick="selectArticle('${art.id}')">${artTitle}</a>`;
+        }).join('')}
+      </div>`;
+  }).join('');
+}
+
+/* ── Select Article ──────────────────────────────────── */
+function selectArticle(articleId) {
+  activeArticleId = articleId;
+  const lang = getCurrentLang();
+  const article = articles.find(a => a.id === articleId);
+
+  if (!article) return;
+
+  // Update URL hash
+  history.replaceState(null, '', '#' + articleId);
+
+  // Update sidebar active state
+  document.querySelectorAll('.sidebar-link').forEach(link => {
+    link.classList.toggle('active', link.textContent.trim() ===
+      (lang === 'ko' ? (article.title_ko || article.title_en) : article.title_en));
+  });
+  renderSidebar(); // re-render for accurate active state
+
+  // Render content
+  const title = lang === 'ko' ? (article.title_ko || article.title_en) : article.title_en;
+  const content = lang === 'ko' ? (article.content_ko || article.content_en) : article.content_en;
+  const htmlContent = typeof marked !== 'undefined' ? marked.parse(content || '') : (content || '').replace(/\n/g, '<br>');
+
+  const updatedAt = article.updated_at
+    ? (article.updated_at.toDate ? article.updated_at.toDate() : new Date(article.updated_at))
+    : null;
+  const metaText = updatedAt ? `${t('guide.updated')}: ${updatedAt.toLocaleDateString()}` : '';
+
+  document.getElementById('guide-content').innerHTML = `
+    <h1 class="page-title">${title}</h1>
+    ${metaText ? `<div class="page-meta">${metaText}</div>` : ''}
+    <div class="guide-body md-content">${htmlContent}</div>`;
+
+  // Close mobile sidebar
+  document.getElementById('sidebar').classList.remove('open');
+}
+
+/* ── Empty State ─────────────────────────────────────── */
+function showEmpty() {
+  document.getElementById('sidebar-content').innerHTML = '';
+  document.getElementById('guide-content').innerHTML =
+    '<div class="empty-state"><div class="icon">&#128218;</div><p>' + t('guide.empty') + '</p></div>';
+}
+
+/* ── Mobile Sidebar ──────────────────────────────────── */
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+/* ── Language Change Handler ─────────────────────────── */
+function onLangChange() {
+  renderSidebar();
+  if (activeArticleId) selectArticle(activeArticleId);
+}
+
+/* ── Hash Change ─────────────────────────────────────── */
+window.addEventListener('hashchange', () => {
+  const hash = window.location.hash.slice(1);
+  if (hash && articles.find(a => a.id === hash)) {
+    selectArticle(hash);
+  }
+});
+
+loadGuide();
+</script>
+</body>
+</html>
