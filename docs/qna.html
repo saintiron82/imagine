@@ -120,6 +120,8 @@
   </div>
 </footer>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="common.js"></script>
 
 <script>
@@ -196,7 +198,10 @@ function onLangChange() {
   loadGiscus();
 }
 
-loadGiscus();
+// Auth gate — require login before loading
+requireAuth().then(user => {
+  if (user) loadGiscus();
+});
 </script>
 </body>
 </html>

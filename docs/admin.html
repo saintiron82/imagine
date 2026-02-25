@@ -375,6 +375,16 @@ function initAuth() {
   auth.onAuthStateChanged(user => {
     currentUser = user;
     if (user) {
+      if (!isAdmin(user)) {
+        // Not admin — show permission denied
+        document.getElementById('login-section').style.display = 'flex';
+        document.getElementById('admin-dashboard').style.display = 'none';
+        document.querySelector('#login-section h2').textContent = t('admin.no_permission');
+        document.querySelector('#login-section p').textContent = user.email;
+        document.querySelector('#login-section .google-btn').textContent = t('admin.sign_out');
+        document.querySelector('#login-section .google-btn').onclick = signOut;
+        return;
+      }
       document.getElementById('login-section').style.display = 'none';
       document.getElementById('admin-dashboard').style.display = 'block';
       document.getElementById('user-avatar').src = user.photoURL || '';

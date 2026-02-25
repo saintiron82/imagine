@@ -136,6 +136,7 @@
 <!-- Firebase SDK (compat) -->
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="common.js"></script>
 <!-- Marked.js for Markdown rendering -->
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
@@ -209,7 +210,10 @@ function renderReleases() {
 
 function onLangChange() { renderReleases(); }
 
-loadReleases();
+// Auth gate — require login before loading
+requireAuth().then(user => {
+  if (user) loadReleases();
+});
 </script>
 </body>
 </html>
