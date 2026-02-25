@@ -2,9 +2,6 @@ name: Build & Release
 
 on:
   push:
-    branches:
-      - main
-      - 'release/**'
     tags:
       - 'v*'
   workflow_dispatch:  # manual trigger from GitHub UI
@@ -13,20 +10,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            platform: win
-            python-version: '3.12'
-            torch-extra: '--index-url https://download.pytorch.org/whl/cpu'
-          - os: macos-latest
-            platform: mac
-            python-version: '3.12'
-            torch-extra: ''
-
-    runs-on: ${{ matrix.os }}
+  # ── Windows build (CI only — macOS is built locally) ─────────
+  build-win:
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -36,12 +22,11 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.12'
           cache: 'pip'
 
-      - name: Install torch (CPU-only on Windows)
-        if: matrix.torch-extra != ''
-        run: pip install torch ${{ matrix.torch-extra }}
+      - name: Install torch (CPU-only)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install Python dependencies
         run: |
@@ -55,12 +40,7 @@ jobs:
 
       - name: Verify backend build
         shell: bash
-        run: |
-          if [ "${{ matrix.platform }}" = "win" ]; then
-            ls -la dist/backend_cli/backend_cli.exe
-          else
-            ls -la dist/backend_cli/backend_cli
-          fi
+        run: ls -la dist/backend_cli/backend_cli.exe
 
       # ── Electron frontend build ─────────────────────────────────
       - name: Setup Node.js
@@ -78,7 +58,6 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      # 항상 --publish never → release 잡에서 통합 업로드
       - name: Build Electron app
         working-directory: frontend
         env:
@@ -88,13 +67,15 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Imagine-${{ matrix.platform }}
+          name: Imagine-win
           path: frontend/dist-electron/*
           retention-days: 7
 
   # ── Release (tag push only) ──────────────────────────────────
+  # Windows: CI artifact
+  # macOS: manually uploaded via `gh release upload` after local build
   release:
-    needs: build
+    needs: build-win
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
 
@@ -102,12 +83,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # full history for release notes
+          fetch-depth: 0
 
-      - name: Download all artifacts
+      - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: Imagine-win
+          path: artifacts/win
 
       - name: Extract version info
         id: version
@@ -116,56 +98,47 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          # previous tag for changelog range
           PREV_TAG=$(git tag --sort=-v:refname | grep '^v' | sed -n '2p')
           echo "prev_tag=${PREV_TAG:-}" >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
-        id: notes
         shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          VERSION="${{ steps.version.outputs.version }}"
           PREV_TAG="${{ steps.version.outputs.prev_tag }}"
 
-          cat > release_notes.md << 'HEADER'
-          ## Imagine $TAG
+          cat > release_notes.md << HEADER
+          ## Imagine ${TAG}
 
           ### Downloads
 
-          | Platform | File |
-          |----------|------|
-          | Windows | `Imagine-*-win.zip` |
-          | macOS | `Imagine-*-mac.dmg` / `Imagine-*-mac.zip` |
+          | Platform | File | Note |
+          |----------|------|------|
+          | Windows | \`Imagine-*-win.zip\` | CI 자동 빌드 |
+          | macOS | \`Imagine-*-mac.dmg\` | 수동 업로드 (없으면 준비 중) |
 
           > Python 설치 불필요 — 백엔드가 바이너리로 포함되어 있습니다.
           > AI 모델은 첫 실행 시 자동 다운로드됩니다.
 
           HEADER
 
-          # replace $TAG / $VERSION placeholders
-          sed -i "s/\$TAG/$TAG/g" release_notes.md
-          sed -i "s/\$VERSION/$VERSION/g" release_notes.md
-
-          # auto-generate changelog from commits
           if [ -n "$PREV_TAG" ]; then
-            echo "### Changes since $PREV_TAG" >> release_notes.md
+            echo "### Changes since ${PREV_TAG}" >> release_notes.md
             echo "" >> release_notes.md
             git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" \
               --no-merges \
-              --grep="^feat" --grep="^fix" --grep="^refactor" --grep="^perf" \
-              --all-match=false \
+              | grep -E "^- (feat|fix|refactor|perf)" \
               | head -50 >> release_notes.md
             echo "" >> release_notes.md
           fi
 
           echo "" >> release_notes.md
           echo "---" >> release_notes.md
-          echo "*Built automatically by GitHub Actions*" >> release_notes.md
+          echo "*Windows: built by GitHub Actions / macOS: upload with \`gh release upload ${TAG} ./file.dmg\`*" >> release_notes.md
 
       - name: List artifacts
         shell: bash
-        run: find artifacts/ -type f | head -30
+        run: find artifacts/ -type f | head -20
 
       - name: Create GitHub Release
         env:
@@ -174,9 +147,8 @@ jobs:
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          # collect release files (installers/archives only)
           FILES=()
-          for f in artifacts/Imagine-win/*.{exe,zip,msi} artifacts/Imagine-mac/*.{dmg,zip}; do
+          for f in artifacts/win/*.{exe,zip,msi}; do
             [ -f "$f" ] && FILES+=("$f")
           done
 
