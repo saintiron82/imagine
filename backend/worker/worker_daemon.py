@@ -271,6 +271,14 @@ class WorkerDaemon:
     def _connect_session(self) -> bool:
         """Register worker session with server. Returns True on success."""
         try:
+            # Collect GPU resources at connect time so server can immediately
+            # determine processing_mode (full/embed_only) without waiting for heartbeat.
+            try:
+                from backend.worker.resource_monitor import collect_metrics
+                connect_resources = collect_metrics()
+            except Exception:
+                connect_resources = None
+
             resp = self._authed_request(
                 "post",
                 f"{self.server_url}/api/v1/workers/connect",
@@ -278,6 +286,7 @@ class WorkerDaemon:
                     "worker_name": f"{socket.gethostname()}-worker",
                     "hostname": socket.gethostname(),
                     "batch_capacity": self.batch_capacity,
+                    "resources": connect_resources,
                 },
             )
             if resp.status_code == 200:
