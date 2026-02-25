@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Board — Imagine</title>
+<meta name="description" content="Imagine community board — notices, discussions, and inquiries.">
+<meta name="theme-color" content="#0a0a1a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css">
+<style>
+.board-wrap {
+  max-width: 860px; margin: 0 auto;
+  padding: 100px 24px 80px;
+  min-height: calc(100vh - 64px);
+}
+</style>
+</head>
+<body>
+
+<div class="ambient"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">
+      <img src="icon.svg" alt="Imagine">
+      <span>Imagine</span>
+    </a>
+    <div class="nav-links">
+      <a href="board.html" class="nav-page-link" data-i18n="nav.board">Board</a>
+      <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" onclick="setLang('ko')">KO</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- Board -->
+<div class="board-wrap">
+  <!-- Tabs -->
+  <div class="board-tabs" id="board-tabs">
+    <button class="board-tab active" onclick="switchCategory('notice')" data-cat="notice" data-i18n="board.notice">Notice</button>
+    <button class="board-tab" onclick="switchCategory('free')" data-cat="free" data-i18n="board.free">Free</button>
+    <button class="board-tab" onclick="switchCategory('inquiry')" data-cat="inquiry" data-i18n="board.inquiry">Inquiry</button>
+  </div>
+
+  <!-- Content area (list / detail / form) -->
+  <div id="board-content">
+    <div class="loading" data-i18n="common.loading">Loading...</div>
+  </div>
+</div>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>&copy; 2026 Imagine &middot; Open Source &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="common.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+
+<script>
+/* ── Page i18n ───────────────────────────────────────── */
+registerPageI18n({
+  en: {
+    "board.notice": "Notice",
+    "board.free": "Free",
+    "board.inquiry": "Inquiry",
+    "board.write": "+ Write",
+    "board.empty": "No posts yet",
+    "board.back": "\u2190 Back to list",
+    "board.edit": "Edit",
+    "board.delete": "Delete",
+    "board.confirm_delete": "Delete this post?",
+    "board.title_label": "Title",
+    "board.content_label": "Content",
+    "board.private_label": "Private (only you and admin can see)",
+    "board.save": "Save",
+    "board.cancel": "Cancel",
+    "board.preview": "Preview",
+    "board.saved": "Saved",
+    "board.deleted": "Deleted",
+    "board.title_placeholder": "Enter title",
+    "board.content_placeholder": "Write in Markdown..."
+  },
+  ko: {
+    "board.notice": "\uacf5\uc9c0",
+    "board.free": "\uc790\uc720",
+    "board.inquiry": "\ubb38\uc758",
+    "board.write": "+ \uae00\uc4f0\uae30",
+    "board.empty": "\uc544\uc9c1 \uae00\uc774 \uc5c6\uc2b5\ub2c8\ub2e4",
+    "board.back": "\u2190 \ubaa9\ub85d\uc73c\ub85c",
+    "board.edit": "\uc218\uc815",
+    "board.delete": "\uc0ad\uc81c",
+    "board.confirm_delete": "\uc774 \uae00\uc744 \uc0ad\uc81c\ud558\uc2dc\uaca0\uc2b5\ub2c8\uae4c?",
+    "board.title_label": "\uc81c\ubaa9",
+    "board.content_label": "\ub0b4\uc6a9",
+    "board.private_label": "\ube44\uacf5\uac1c (\ubcf8\uc778\uacfc \uad00\ub9ac\uc790\ub9cc \ubcfc \uc218 \uc788\uc74c)",
+    "board.save": "\uc800\uc7a5",
+    "board.cancel": "\ucde8\uc18c",
+    "board.preview": "\ubbf8\ub9ac\ubcf4\uae30",
+    "board.saved": "\uc800\uc7a5\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
+    "board.deleted": "\uc0ad\uc81c\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
+    "board.title_placeholder": "\uc81c\ubaa9\uc744 \uc785\ub825\ud558\uc138\uc694",
+    "board.content_placeholder": "Markdown\uc73c\ub85c \uc791\uc131\ud558\uc138\uc694..."
+  }
+});
+
+/* ── State ───────────────────────────────────────────── */
+let currentCategory = 'notice';
+let currentUser = null;
+let postsCache = {};
+
+/* ── Init ────────────────────────────────────────────── */
+requireAuth().then(user => {
+  if (!user) return;
+  currentUser = user;
+
+  // Restore category from hash
+  const hash = window.location.hash.slice(1);
+  if (['notice', 'free', 'inquiry'].includes(hash)) {
+    currentCategory = hash;
+  }
+  updateTabs();
+  loadPosts();
+});
+
+/* ── Category Switching ──────────────────────────────── */
+function switchCategory(cat) {
+  currentCategory = cat;
+  history.replaceState(null, '', '#' + cat);
+  updateTabs();
+  loadPosts();
+}
+
+function updateTabs() {
+  document.querySelectorAll('.board-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.cat === currentCategory);
+  });
+}
+
+/* ── Load Posts ──────────────────────────────────────── */
+async function loadPosts() {
+  const content = document.getElementById('board-content');
+  const db = getDb();
+  if (!db) { renderEmpty(content); return; }
+
+  content.innerHTML = '<div class="loading">' + t('common.loading') + '</div>';
+
+  try {
+    const snap = await db.collection('posts')
+      .where('category', '==', currentCategory)
+      .orderBy('created_at', 'desc')
+      .get();
+
+    let posts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Filter private inquiry posts (client-side)
+    if (currentCategory === 'inquiry') {
+      posts = posts.filter(p =>
+        !p.is_private
+        || p.author_email === currentUser.email
+        || isAdmin(currentUser)
+      );
+    }
+
+    postsCache = {};
+    posts.forEach(p => { postsCache[p.id] = p; });
+
+    renderPostList(posts, content);
+  } catch (err) {
+    console.error('Failed to load posts:', err);
+    content.innerHTML = '<div class="empty-state"><div class="icon">&#9888;</div><p>' + t('common.error') + '</p></div>';
+  }
+}
+
+/* ── Render Post List ────────────────────────────────── */
+function renderPostList(posts, container) {
+  const canWrite = currentCategory !== 'notice' || isAdmin(currentUser);
+
+  let html = '<div class="board-header">';
+  html += '<span class="board-count">' + posts.length + ' posts</span>';
+  if (canWrite) {
+    html += '<button class="btn-write" onclick="showWriteForm()">' + t('board.write') + '</button>';
+  }
+  html += '</div>';
+
+  if (posts.length === 0) {
+    html += '<div class="empty-state"><div class="icon">&#128196;</div><p>' + t('board.empty') + '</p></div>';
+    container.innerHTML = html;
+    return;
+  }
+
+  html += '<div class="post-list">';
+  posts.forEach(p => {
+    const date = p.created_at
+      ? (p.created_at.toDate ? p.created_at.toDate() : new Date(p.created_at)).toLocaleDateString()
+      : '';
+    const privateBadge = p.is_private ? '<span class="badge-private">&#128274;</span>' : '';
+    html += `
+      <div class="post-row" onclick="viewPost('${p.id}')">
+        <div class="post-row-title">${privateBadge}${escHtml(p.title || '')}</div>
+        <div class="post-row-author">${escHtml(p.author_name || '')}</div>
+        <div class="post-row-date">${date}</div>
+      </div>`;
+  });
+  html += '</div>';
+
+  container.innerHTML = html;
+}
+
+/* ── View Post ───────────────────────────────────────── */
+function viewPost(postId) {
+  const post = postsCache[postId];
+  if (!post) return;
+
+  const container = document.getElementById('board-content');
+  const htmlContent = typeof marked !== 'undefined'
+    ? marked.parse(post.content || '')
+    : (post.content || '').replace(/\n/g, '<br>');
+
+  const date = post.created_at
+    ? (post.created_at.toDate ? post.created_at.toDate() : new Date(post.created_at)).toLocaleDateString()
+    : '';
+
+  const canEdit = post.author_email === currentUser.email || isAdmin(currentUser);
+
+  let html = `
+    <button class="btn-back" onclick="loadPosts()">${t('board.back')}</button>
+    <div class="post-detail">
+      <h1 class="post-detail-title">${escHtml(post.title || '')}</h1>
+      <div class="post-meta">
+        ${escHtml(post.author_name || '')} &middot; ${date}
+        ${post.is_private ? ' &middot; <span class="badge-private">&#128274;</span>' : ''}
+      </div>
+      <div class="post-body md-content">${htmlContent}</div>`;
+
+  if (canEdit) {
+    html += `
+      <div class="post-actions">
+        <button class="btn-cancel" onclick="showWriteForm('${post.id}')">${t('board.edit')}</button>
+        <button class="btn-danger" onclick="deletePost('${post.id}')">${t('board.delete')}</button>
+      </div>`;
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+/* ── Write / Edit Form ───────────────────────────────── */
+function showWriteForm(postId) {
+  const post = postId ? postsCache[postId] : null;
+  const container = document.getElementById('board-content');
+  const isInquiry = currentCategory === 'inquiry';
+
+  let html = `
+    <button class="btn-back" onclick="loadPosts()">${t('board.cancel')}</button>
+    <div class="post-form">
+      <div class="form-group">
+        <label>${t('board.title_label')}</label>
+        <input type="text" id="post-title" placeholder="${t('board.title_placeholder')}" value="${escAttr(post ? post.title : '')}">
+      </div>
+      <div class="form-group">
+        <label>${t('board.content_label')}</label>
+        <button class="preview-toggle" onclick="togglePreview()">${t('board.preview')}</button>
+        <textarea id="post-content" placeholder="${t('board.content_placeholder')}">${escHtml(post ? post.content : '')}</textarea>
+        <div class="preview-box" id="preview-box"></div>
+      </div>`;
+
+  if (isInquiry) {
+    const checked = post && post.is_private ? 'checked' : '';
+    html += `
+      <div class="form-group">
+        <div class="checkbox-row">
+          <input type="checkbox" id="post-private" ${checked}>
+          <label for="post-private">${t('board.private_label')}</label>
+        </div>
+      </div>`;
+  }
+
+  html += `
+      <div class="form-actions">
+        <button class="btn-save" onclick="savePost('${postId || ''}')">${t('board.save')}</button>
+        <button class="btn-cancel" onclick="loadPosts()">${t('board.cancel')}</button>
+      </div>
+    </div>`;
+
+  container.innerHTML = html;
+}
+
+/* ── Save Post ───────────────────────────────────────── */
+async function savePost(postId) {
+  const title = document.getElementById('post-title').value.trim();
+  const content = document.getElementById('post-content').value.trim();
+  const privateEl = document.getElementById('post-private');
+  const isPrivate = privateEl ? privateEl.checked : false;
+
+  if (!title) { document.getElementById('post-title').focus(); return; }
+
+  const db = getDb();
+  if (!db) return;
+
+  const data = {
+    category: currentCategory,
+    title: title,
+    content: content,
+    is_private: isPrivate,
+    updated_at: firebase.firestore.FieldValue.serverTimestamp()
+  };
+
+  try {
+    if (postId) {
+      await db.collection('posts').doc(postId).update(data);
+    } else {
+      data.author_email = currentUser.email;
+      data.author_name = currentUser.displayName || currentUser.email.split('@')[0];
+      data.created_at = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection('posts').add(data);
+    }
+    showToast(t('board.saved'), 'success');
+    loadPosts();
+  } catch (err) {
+    console.error('Save failed:', err);
+    showToast(err.message, 'error');
+  }
+}
+
+/* ── Delete Post ─────────────────────────────────────── */
+async function deletePost(postId) {
+  if (!confirm(t('board.confirm_delete'))) return;
+
+  const db = getDb();
+  if (!db) return;
+
+  try {
+    await db.collection('posts').doc(postId).delete();
+    showToast(t('board.deleted'), 'success');
+    loadPosts();
+  } catch (err) {
+    console.error('Delete failed:', err);
+    showToast(err.message, 'error');
+  }
+}
+
+/* ── Preview Toggle ──────────────────────────────────── */
+function togglePreview() {
+  const box = document.getElementById('preview-box');
+  const textarea = document.getElementById('post-content');
+  box.classList.toggle('open');
+  if (box.classList.contains('open') && typeof marked !== 'undefined') {
+    box.innerHTML = '<div class="md-content">' + marked.parse(textarea.value || '') + '</div>';
+  }
+}
+
+/* ── Toast ───────────────────────────────────────────── */
+function showToast(message, type) {
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type || 'success');
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+/* ── Language Change ─────────────────────────────────── */
+function onLangChange() {
+  loadPosts();
+}
+
+/* ── Hash Change ─────────────────────────────────────── */
+window.addEventListener('hashchange', () => {
+  const hash = window.location.hash.slice(1);
+  if (['notice', 'free', 'inquiry'].includes(hash)) {
+    switchCategory(hash);
+  }
+});
+
+/* ── Utilities ───────────────────────────────────────── */
+function escHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+function escAttr(str) {
+  return (str || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+</script>
+</body>
+</html>
