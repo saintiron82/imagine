@@ -19,13 +19,20 @@ const firebaseConfig = {
 /* ── Firebase Init (compat mode for CDN) ─────────────── */
 let db = null;
 let auth = null;
+let _firebaseInitialized = false;
 
 function initFirebase() {
+  if (_firebaseInitialized) return;
   if (typeof firebase === 'undefined') return;
+  _firebaseInitialized = true;
   firebase.initializeApp(firebaseConfig);
   if (typeof firebase.firestore === 'function') db = firebase.firestore();
   if (typeof firebase.auth === 'function') auth = firebase.auth();
 }
+
+// Initialize Firebase immediately (before DOMContentLoaded)
+// so that requireAuth() in page scripts can access auth
+initFirebase();
 
 function getDb() { return db; }
 function getAuth() { return auth; }
