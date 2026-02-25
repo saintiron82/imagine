@@ -95,6 +95,7 @@ class SQLiteDB:
                 self._migrate_worker_session_overrides()
                 self._migrate_worker_resources_json()
                 self._migrate_mc_completed_at()
+                self._migrate_backfill_parse_status()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -107,6 +108,7 @@ class SQLiteDB:
                 self._migrate_worker_session_overrides()
                 self._migrate_worker_resources_json()
                 self._migrate_mc_completed_at()
+                self._migrate_backfill_parse_status()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -263,6 +265,33 @@ class SQLiteDB:
             self.conn.execute("ALTER TABLE worker_sessions ADD COLUMN resources_json TEXT DEFAULT NULL")
             self.conn.commit()
             logger.info("✅ resources_json column added to worker_sessions")
+
+    def _migrate_backfill_parse_status(self):
+        """Extend parse_status CHECK constraint to allow 'backfill' value.
+
+        SQLite CHECK constraints cannot be altered with ALTER TABLE,
+        so we use PRAGMA writable_schema to modify the schema SQL directly.
+        """
+        if not self._table_exists('job_queue'):
+            return
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='job_queue'"
+        ).fetchone()
+        if not row or "'backfill'" in row[0]:
+            return  # Already includes 'backfill' or table missing
+
+        logger.info("Migrating: extending parse_status CHECK to include 'backfill'...")
+        self.conn.execute("PRAGMA writable_schema = ON")
+        self.conn.execute("""
+            UPDATE sqlite_master
+            SET sql = REPLACE(sql,
+                "'pending', 'parsing', 'parsed', 'failed')",
+                "'pending', 'parsing', 'parsed', 'failed', 'backfill')")
+            WHERE type = 'table' AND name = 'job_queue'
+        """)
+        self.conn.execute("PRAGMA writable_schema = OFF")
+        self.conn.commit()
+        logger.info("✅ parse_status CHECK extended to include 'backfill'")
 
     def _migrate_mc_completed_at(self):
         """Add mc_completed_at column to job_queue for mc_only throughput measurement."""

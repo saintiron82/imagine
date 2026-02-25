@@ -534,6 +534,66 @@ class JobQueueManager:
             logger.info(f"Cleared {count} completed jobs")
         return count
 
+    def queue_backfill(self) -> Dict[str, int]:
+        """Detect files with incomplete vector data and auto-create backfill jobs.
+
+        Scans for files that have VV (vec_files) but are missing Structure
+        (vec_structure) vectors. Creates jobs with parse_status='backfill'
+        so ParseAheadPool can process them (DINOv2 only, skip full parse).
+
+        Skips files that already have an active backfill job in the queue.
+
+        Returns:
+            Dict with counts of created jobs by type, e.g. {"structure": 5}.
+        """
+        cursor = self.db.conn.cursor()
+        created = {"structure": 0}
+
+        # Files with VV but no Structure vector, no active backfill job
+        try:
+            cursor.execute("""
+                SELECT f.id, f.file_path
+                FROM files f
+                WHERE EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                  AND NOT EXISTS(SELECT 1 FROM vec_structure WHERE file_id = f.id)
+                  AND NOT EXISTS(
+                      SELECT 1 FROM job_queue jq
+                      WHERE jq.file_id = f.id
+                        AND jq.parse_status = 'backfill'
+                        AND jq.status IN ('pending', 'assigned', 'processing')
+                  )
+            """)
+            rows = cursor.fetchall()
+        except Exception as e:
+            logger.warning(f"Backfill scan failed: {e}")
+            return created
+
+        if not rows:
+            return created
+
+        now = _utcnow_sql()
+        for file_id, file_path in rows:
+            try:
+                cursor.execute(
+                    """INSERT INTO job_queue
+                       (file_id, file_path, status, parse_status,
+                        phase_completed, parsed_metadata, created_at)
+                       VALUES (?, ?, 'pending', 'backfill',
+                               '{"parse":true,"vision":true,"embed":false}',
+                               '{"backfill":"structure"}', ?)""",
+                    (file_id, file_path, now),
+                )
+                if cursor.rowcount > 0:
+                    created["structure"] += 1
+            except Exception as e:
+                logger.warning(f"Backfill job creation failed for file_id={file_id}: {e}")
+
+        self.db.conn.commit()
+        total = sum(created.values())
+        if total > 0:
+            logger.info(f"Backfill: queued {total} jobs (structure={created['structure']})")
+        return created
+
     def get_user_jobs(self, user_id: int) -> List[Dict[str, Any]]:
         """Get jobs assigned to or completed by a user."""
         cursor = self.db.conn.cursor()

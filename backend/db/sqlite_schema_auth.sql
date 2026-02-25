@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
 
     -- Parse-ahead (server-side pre-parsing for worker optimization)
     parse_status TEXT DEFAULT NULL
-        CHECK (parse_status IN (NULL, 'pending', 'parsing', 'parsed', 'failed')),
+        CHECK (parse_status IN (NULL, 'pending', 'parsing', 'parsed', 'failed', 'backfill')),
     parsed_metadata TEXT DEFAULT NULL,   -- Phase P result JSON (metadata + thumb_path + mc_raw)
     parsed_at TEXT DEFAULT NULL,
 

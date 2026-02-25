@@ -85,12 +85,24 @@ class ParseAheadPool(BaseAheadPool):
         poll_interval_s = self._get_config_value("server.parse_ahead.poll_interval_s", 2)
         last_retry_reset = 0.0  # timestamp of last parse_status='failed' reset
 
+        # Auto-queue backfill jobs on startup
+        try:
+            from backend.server.queue.manager import JobQueueManager
+            mgr = JobQueueManager(self.db)
+            backfill_counts = mgr.queue_backfill()
+            total = sum(backfill_counts.values())
+            if total > 0:
+                logger.info(f"ParseAheadPool: auto-queued {total} backfill jobs: {backfill_counts}")
+        except Exception as e:
+            logger.warning(f"ParseAheadPool: backfill queue scan failed: {e}")
+
         try:
             while self._running:
                 try:
+                    # Process backfill jobs during idle (no demand or buffer full)
                     target = self._calculate_buffer_target()
                     if target <= 0:
-                        # No demand or no active workers — sleep longer
+                        self._process_backfill_batch()
                         time.sleep(5)
                         continue
 
@@ -104,6 +116,7 @@ class ParseAheadPool(BaseAheadPool):
                     deficit = target - current_parsed
 
                     if deficit <= 0:
+                        self._process_backfill_batch()
                         time.sleep(poll_interval_s)
                         continue
 
@@ -135,6 +148,7 @@ class ParseAheadPool(BaseAheadPool):
                                     f"jobs for retry"
                                 )
                             last_retry_reset = now
+                        self._process_backfill_batch()
                         time.sleep(poll_interval_s)
                         continue
 
@@ -369,6 +383,103 @@ class ParseAheadPool(BaseAheadPool):
             img.close()
         self.db.upsert_vectors(file_id, vv_vec=vv_vec, structure_vec=structure_vec)
         logger.debug(f"ParseAhead VV+Structure: file_id={file_id} embedded OK")
+
+    def _process_backfill_batch(self, batch_size: int = 8) -> int:
+        """Process queued backfill jobs (DINOv2 structure vector only).
+
+        Picks up jobs with parse_status='backfill', generates the missing
+        structure vector, and marks them completed. Runs during idle time
+        without interfering with normal parsing.
+
+        Returns:
+            Number of jobs processed.
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """SELECT id, file_id, file_path FROM job_queue
+               WHERE status = 'pending' AND parse_status = 'backfill'
+               ORDER BY created_at ASC
+               LIMIT ?""",
+            (batch_size,),
+        )
+        jobs = cursor.fetchall()
+        if not jobs:
+            return 0
+
+        # Lazy load DINOv2
+        if self._structure_encoder is None:
+            from backend.vector.dinov2_encoder import DinoV2Encoder
+            self._structure_encoder = DinoV2Encoder()
+            logger.info("ParseAheadPool: DINOv2 loaded for structure backfill")
+
+        from PIL import Image
+
+        processed = 0
+        for job_id, file_id, file_path in jobs:
+            if not self._running:
+                break
+
+            # Atomically claim
+            cursor.execute(
+                "UPDATE job_queue SET status = 'processing' WHERE id = ? AND status = 'pending'",
+                (job_id,),
+            )
+            self.db.conn.commit()
+            if cursor.rowcount == 0:
+                continue
+
+            # Find best image source (thumbnail preferred)
+            cursor.execute(
+                "SELECT thumbnail_url FROM files WHERE id = ?", (file_id,)
+            )
+            row = cursor.fetchone()
+            thumb_url = row[0] if row else None
+
+            img_source = None
+            if thumb_url:
+                p = Path(thumb_url)
+                if p.exists():
+                    img_source = p
+            if img_source is None:
+                p = Path(file_path)
+                if p.exists():
+                    img_source = p
+
+            now = _utcnow_sql()
+            if img_source is None:
+                logger.warning(f"Backfill: no image for job {job_id} (file_id={file_id}), marking failed")
+                cursor.execute(
+                    "UPDATE job_queue SET status = 'failed', completed_at = ? WHERE id = ?",
+                    (now, job_id),
+                )
+                self.db.conn.commit()
+                continue
+
+            try:
+                img = Image.open(str(img_source)).convert("RGB")
+                try:
+                    structure_vec = self._structure_encoder.encode_image(img)
+                finally:
+                    img.close()
+                self.db.upsert_vectors(file_id, structure_vec=structure_vec)
+                cursor.execute(
+                    """UPDATE job_queue SET status = 'completed', completed_at = ?,
+                       phase_completed = '{"parse":true,"vision":true,"embed":true}'
+                       WHERE id = ?""",
+                    (now, job_id),
+                )
+                processed += 1
+            except Exception as e:
+                logger.warning(f"Backfill: DINOv2 failed for job {job_id}: {e}")
+                cursor.execute(
+                    "UPDATE job_queue SET status = 'failed', completed_at = ?, error_message = ? WHERE id = ?",
+                    (now, str(e), job_id),
+                )
+            self.db.conn.commit()
+
+        if processed > 0:
+            logger.info(f"Backfill: completed {processed} structure vector jobs")
+        return processed
 
     def _get_thumbnail_dir(self) -> Path:
         """Get server thumbnail directory (same logic as upload.py)."""
