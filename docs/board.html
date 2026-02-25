@@ -67,6 +67,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
 <script src="common.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 
@@ -102,7 +103,15 @@ registerPageI18n({
     "comment.saved": "Comment posted",
     "comment.deleted": "Comment deleted",
     "comment.empty": "No comments yet",
-    "comment.count": "{count} comments"
+    "comment.count": "{count} comments",
+    "attach.label": "Attachments",
+    "attach.hint": "Max 5 files, 5MB each (images, PDF)",
+    "attach.hint_comment": "Max 2 files, 5MB each",
+    "attach.uploading": "Uploading...",
+    "attach.remove": "Remove",
+    "attach.download": "Download",
+    "attach.too_large": "File too large (max 5MB)",
+    "attach.too_many": "Too many files"
   },
   ko: {
     "board.notice": "\uacf5\uc9c0",
@@ -133,7 +142,15 @@ registerPageI18n({
     "comment.saved": "\ub313\uae00\uc774 \ub4f1\ub85d\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
     "comment.deleted": "\ub313\uae00\uc774 \uc0ad\uc81c\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
     "comment.empty": "\uc544\uc9c1 \ub313\uae00\uc774 \uc5c6\uc2b5\ub2c8\ub2e4",
-    "comment.count": "\ub313\uae00 {count}\uac1c"
+    "comment.count": "\ub313\uae00 {count}\uac1c",
+    "attach.label": "\ucca8\ubd80\ud30c\uc77c",
+    "attach.hint": "\ucd5c\ub300 5\uac1c, \ud30c\uc77c\ub2f9 5MB (\uc774\ubbf8\uc9c0, PDF)",
+    "attach.hint_comment": "\ucd5c\ub300 2\uac1c, \ud30c\uc77c\ub2f9 5MB",
+    "attach.uploading": "\uc5c5\ub85c\ub4dc \uc911...",
+    "attach.remove": "\uc81c\uac70",
+    "attach.download": "\ub2e4\uc6b4\ub85c\ub4dc",
+    "attach.too_large": "\ud30c\uc77c\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4 (\ucd5c\ub300 5MB)",
+    "attach.too_many": "\ud30c\uc77c\uc774 \ub108\ubb34 \ub9ce\uc2b5\ub2c8\ub2e4"
   }
 });
 
@@ -141,6 +158,7 @@ registerPageI18n({
 let currentCategory = 'notice';
 let currentUser = null;
 let postsCache = {};
+let _pendingExistingAttachments = [];
 
 function getUser() {
   return currentUser || (getAuth() && getAuth().currentUser) || null;
@@ -281,6 +299,18 @@ function viewPost(postId) {
       </div>
       <div class="post-body md-content">${htmlContent}</div>`;
 
+  if (post.attachments && post.attachments.length > 0) {
+    html += '<div class="post-attachments">';
+    post.attachments.forEach(a => {
+      if (a.type && a.type.startsWith('image/')) {
+        html += `<a href="${escAttr(a.url)}" target="_blank" class="attachment-img-link"><img src="${escAttr(a.url)}" alt="${escAttr(a.name)}" class="attachment-img"></a>`;
+      } else {
+        html += `<a href="${escAttr(a.url)}" target="_blank" class="attachment-file">${escHtml(a.name)} <small>(${formatFileSize(a.size)})</small></a>`;
+      }
+    });
+    html += '</div>';
+  }
+
   if (canEdit) {
     html += `
       <div class="post-actions">
@@ -326,6 +356,26 @@ function showWriteForm(postId) {
       </div>`;
   }
 
+  // Attachment UI
+  let existingHtml = '';
+  if (post && post.attachments && post.attachments.length > 0) {
+    existingHtml = post.attachments.map((a, i) => `
+      <div class="file-item" data-idx="${i}">
+        <span class="file-item-name">${escHtml(a.name)}</span>
+        <span class="file-item-size">${formatFileSize(a.size)}</span>
+        <button class="file-item-remove" onclick="removeExistingAttachment(${i})">${t('attach.remove')}</button>
+      </div>`).join('');
+  }
+  html += `
+      <div class="form-group">
+        <label>${t('attach.label')}</label>
+        <div class="file-upload-area">
+          <input type="file" id="post-files" multiple accept="image/jpeg,image/png,image/gif,image/webp,.pdf" onchange="onFileSelect(this, 5)">
+          <div class="file-list" id="existing-files">${existingHtml}</div>
+        </div>
+        <small class="file-hint">${t('attach.hint')}</small>
+      </div>`;
+
   html += `
       <div class="form-actions">
         <button class="btn-save" onclick="savePost('${postId || ''}')">${t('board.save')}</button>
@@ -334,6 +384,7 @@ function showWriteForm(postId) {
     </div>`;
 
   container.innerHTML = html;
+  _pendingExistingAttachments = (post && post.attachments) ? [...post.attachments] : [];
 }
 
 /* ── Save Post ───────────────────────────────────────── */
@@ -358,6 +409,25 @@ async function savePost(postId) {
 
   const user = getUser();
   if (!user) { showToast('Please sign in first', 'error'); return; }
+
+  // Handle file attachments
+  const fileInput = document.getElementById('post-files');
+  const newFiles = fileInput ? fileInput.files : [];
+  let attachments = [..._pendingExistingAttachments];
+
+  if (newFiles.length > 0) {
+    if (attachments.length + newFiles.length > 5) {
+      showToast(t('attach.too_many'), 'error'); return;
+    }
+    showToast(t('attach.uploading'), 'success');
+    try {
+      const uploaded = await uploadFiles(newFiles, 'posts/' + (postId || Date.now()));
+      attachments = [...attachments, ...uploaded];
+    } catch (uploadErr) {
+      showToast(uploadErr.message, 'error'); return;
+    }
+  }
+  data.attachments = attachments;
 
   try {
     if (postId) {
@@ -432,6 +502,18 @@ async function loadComments(postId) {
           ? (c.created_at.toDate ? c.created_at.toDate() : new Date(c.created_at)).toLocaleDateString()
           : '';
         const canDel = u && (c.author_email === u.email || isAdmin(u));
+        let attachHtml = '';
+        if (c.attachments && c.attachments.length > 0) {
+          attachHtml = '<div class="comment-attachments">';
+          c.attachments.forEach(a => {
+            if (a.type && a.type.startsWith('image/')) {
+              attachHtml += `<a href="${escAttr(a.url)}" target="_blank" class="attachment-img-link"><img src="${escAttr(a.url)}" alt="${escAttr(a.name)}" class="attachment-img attachment-img-sm"></a>`;
+            } else {
+              attachHtml += `<a href="${escAttr(a.url)}" target="_blank" class="attachment-file">${escHtml(a.name)} <small>(${formatFileSize(a.size)})</small></a>`;
+            }
+          });
+          attachHtml += '</div>';
+        }
         html += `
           <div class="comment-item">
             <div class="comment-item-head">
@@ -439,6 +521,7 @@ async function loadComments(postId) {
               ${canDel ? `<button class="comment-delete-btn" onclick="deleteComment('${escAttr(postId)}','${escAttr(c.id)}')">${t('comment.delete')}</button>` : ''}
             </div>
             <div class="comment-item-body">${escHtml(c.content || '').replace(/\n/g, '<br>')}</div>
+            ${attachHtml}
           </div>`;
       });
       html += '</div>';
@@ -447,7 +530,14 @@ async function loadComments(postId) {
     html += `
       <div class="comment-form">
         <textarea id="comment-input" placeholder="${t('comment.placeholder')}"></textarea>
-        <button class="btn-save comment-submit" onclick="saveComment('${escAttr(postId)}')">${t('comment.submit')}</button>
+        <div class="comment-form-bottom">
+          <label class="comment-file-label">
+            <input type="file" id="comment-files" multiple accept="image/jpeg,image/png,image/gif,image/webp,.pdf" onchange="onFileSelect(this, 2)" style="display:none">
+            <span class="comment-attach-btn" title="${t('attach.label')}">&#128206;</span>
+          </label>
+          <small class="comment-file-hint">${t('attach.hint_comment')}</small>
+          <button class="btn-save comment-submit" onclick="saveComment('${escAttr(postId)}')">${t('comment.submit')}</button>
+        </div>
       </div>`;
 
     section.innerHTML = html;
@@ -468,12 +558,26 @@ async function saveComment(postId) {
   if (!user) { showToast('Please sign in first', 'error'); return; }
 
   try {
-    await db.collection('posts').doc(postId).collection('comments').add({
+    const commentData = {
       content: content,
       author_email: user.email,
       author_name: user.displayName || user.email.split('@')[0],
       created_at: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    };
+
+    // Handle comment file attachments
+    const fileInput = document.getElementById('comment-files');
+    const newFiles = fileInput ? fileInput.files : [];
+    if (newFiles.length > 0) {
+      if (newFiles.length > 2) {
+        showToast(t('attach.too_many'), 'error'); return;
+      }
+      showToast(t('attach.uploading'), 'success');
+      const uploaded = await uploadFiles(newFiles, 'comments/' + postId + '/' + Date.now());
+      commentData.attachments = uploaded;
+    }
+
+    await db.collection('posts').doc(postId).collection('comments').add(commentData);
     showToast(t('comment.saved'), 'success');
     loadComments(postId);
   } catch (err) {
@@ -521,6 +625,56 @@ window.addEventListener('hashchange', () => {
     switchCategory(hash);
   }
 });
+
+/* ── File Upload Helpers ─────────────────────────────── */
+async function uploadFiles(files, pathPrefix) {
+  const st = getStorage();
+  if (!st) throw new Error('Storage not available');
+
+  const MAX_SIZE = 5 * 1024 * 1024;
+  const ALLOWED = ['image/jpeg','image/png','image/gif','image/webp','application/pdf'];
+  const results = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (file.size > MAX_SIZE) throw new Error(t('attach.too_large') + ': ' + file.name);
+    if (!ALLOWED.includes(file.type)) continue;
+
+    const safeName = Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const ref = st.ref('board/' + pathPrefix + '/' + safeName);
+    await ref.put(file);
+    const url = await ref.getDownloadURL();
+    results.push({ name: file.name, url: url, size: file.size, type: file.type });
+  }
+  return results;
+}
+
+function formatFileSize(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function onFileSelect(input, maxFiles) {
+  if (input.files.length + _pendingExistingAttachments.length > maxFiles) {
+    showToast(t('attach.too_many'), 'error');
+    input.value = '';
+  }
+}
+
+function removeExistingAttachment(idx) {
+  _pendingExistingAttachments.splice(idx, 1);
+  const list = document.getElementById('existing-files');
+  if (list) {
+    list.innerHTML = _pendingExistingAttachments.map((a, i) => `
+      <div class="file-item" data-idx="${i}">
+        <span class="file-item-name">${escHtml(a.name)}</span>
+        <span class="file-item-size">${formatFileSize(a.size)}</span>
+        <button class="file-item-remove" onclick="removeExistingAttachment(${i})">${t('attach.remove')}</button>
+      </div>`).join('');
+  }
+}
 
 /* ── Utilities ───────────────────────────────────────── */
 function escHtml(str) {

@@ -19,6 +19,7 @@ const firebaseConfig = {
 /* ── Firebase Init (compat mode for CDN) ─────────────── */
 let db = null;
 let auth = null;
+let storage = null;
 let _firebaseInitialized = false;
 
 function initFirebase() {
@@ -28,6 +29,7 @@ function initFirebase() {
   firebase.initializeApp(firebaseConfig);
   if (typeof firebase.firestore === 'function') db = firebase.firestore();
   if (typeof firebase.auth === 'function') auth = firebase.auth();
+  if (typeof firebase.storage === 'function') storage = firebase.storage();
 }
 
 // Initialize Firebase immediately (before DOMContentLoaded)
@@ -36,6 +38,7 @@ initFirebase();
 
 function getDb() { return db; }
 function getAuth() { return auth; }
+function getStorage() { return storage; }
 function isAdmin(user) { return user && user.email === ADMIN_EMAIL; }
 
 /* ── Auth Gate (login required pages) ────────────────── */

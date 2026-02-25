@@ -431,10 +431,10 @@ footer a:hover { color: #38bdf8; }
   background: rgba(248,113,113,0.15); border-color: rgba(248,113,113,0.4);
 }
 .comment-form {
-  display: flex; gap: 10px; align-items: flex-end;
+  display: flex; flex-direction: column; gap: 0;
 }
 .comment-form textarea {
-  flex: 1; min-height: 64px; max-height: 200px; padding: 10px 14px;
+  width: 100%; min-height: 64px; max-height: 200px; padding: 10px 14px;
   border-radius: 10px; background: rgba(255,255,255,0.04);
   border: 1px solid rgba(255,255,255,0.1); color: #e0e0ee;
   font-size: 0.9rem; font-family: inherit; resize: vertical;
@@ -444,7 +444,107 @@ footer a:hover { color: #38bdf8; }
   outline: none; border-color: rgba(56,189,248,0.5);
 }
 .comment-submit {
-  padding: 10px 20px !important; white-space: nowrap;
+  padding: 10px 20px !important; white-space: nowrap; margin-left: auto;
+}
+
+/* ── File Upload Area ───────────────────────────────── */
+.file-upload-area {
+  border: 1px dashed rgba(255,255,255,0.12);
+  border-radius: 10px; padding: 12px 14px;
+  background: rgba(255,255,255,0.02);
+  transition: border-color 0.2s;
+}
+.file-upload-area:hover { border-color: rgba(56,189,248,0.3); }
+.file-upload-area input[type="file"] {
+  font-size: 0.85rem; color: #9ca3bf; font-family: inherit;
+}
+.file-upload-area input[type="file"]::file-selector-button {
+  background: rgba(56,189,248,0.15); color: #38bdf8;
+  border: 1px solid rgba(56,189,248,0.3); border-radius: 6px;
+  padding: 6px 14px; font-size: 0.8rem; font-weight: 600;
+  font-family: inherit; cursor: pointer; margin-right: 10px;
+  transition: all 0.2s;
+}
+.file-upload-area input[type="file"]::file-selector-button:hover {
+  background: rgba(56,189,248,0.25);
+}
+.file-hint {
+  display: block; margin-top: 6px;
+  font-size: 0.75rem; color: #6b7280;
+}
+.file-list {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 8px;
+}
+.file-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.file-item-name {
+  flex: 1; font-size: 0.8rem; color: #d1d5e0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.file-item-size { font-size: 0.75rem; color: #6b7280; white-space: nowrap; }
+.file-item-remove {
+  font-size: 0.7rem; color: #f87171; background: none;
+  border: 1px solid rgba(248,113,113,0.25); border-radius: 4px;
+  padding: 2px 8px; cursor: pointer; font-family: inherit;
+  transition: all 0.2s; white-space: nowrap;
+}
+.file-item-remove:hover { background: rgba(248,113,113,0.15); }
+
+/* ── Post Attachments ──────────────────────────────── */
+.post-attachments {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  margin: 20px 0 24px; padding: 16px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+}
+.attachment-img-link { display: block; }
+.attachment-img {
+  max-width: 280px; max-height: 200px;
+  border-radius: 8px; object-fit: cover;
+  border: 1px solid rgba(255,255,255,0.08);
+  transition: all 0.2s; cursor: pointer;
+}
+.attachment-img:hover {
+  border-color: rgba(56,189,248,0.4);
+  box-shadow: 0 0 16px rgba(56,189,248,0.15);
+}
+.attachment-img-sm {
+  max-width: 160px; max-height: 120px;
+}
+.attachment-file {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  font-size: 0.85rem; color: #38bdf8;
+  transition: all 0.2s; text-decoration: none;
+}
+.attachment-file:hover {
+  background: rgba(56,189,248,0.1);
+  border-color: rgba(56,189,248,0.3);
+}
+.attachment-file small { color: #6b7280; }
+
+/* ── Comment Attachments ───────────────────────────── */
+.comment-attachments {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 8px;
+}
+.comment-form-bottom {
+  display: flex; align-items: center; gap: 10px; margin-top: 8px;
+}
+.comment-attach-btn {
+  font-size: 1.2rem; cursor: pointer; opacity: 0.6;
+  transition: opacity 0.2s;
+}
+.comment-attach-btn:hover { opacity: 1; }
+.comment-file-hint {
+  font-size: 0.7rem; color: #6b7280; flex: 1;
 }
 
 /* ── Toast ──────────────────────────────────────────── */
