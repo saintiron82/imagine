@@ -101,6 +101,13 @@ class VisionAnalyzerFactory:
             or "auto"
         ).lower()
 
+        # Resolve platform-specific overrides
+        plat_key = {
+            'Darwin': 'darwin', 'Windows': 'windows', 'Linux': 'linux'
+        }.get(platform.system(), 'linux')
+        backends_map = vlm_config.get("backends", {})
+        plat_entry = backends_map.get(plat_key, {})
+
         chain = []
 
         if backend == 'auto':
@@ -109,16 +116,16 @@ class VisionAnalyzerFactory:
             logger.info(f"Auto-detected backend: {detected} (tier: {tier_name})")
             chain.append({
                 "backend": detected,
-                "model": vlm_config.get("model"),
-                "batch_size": vlm_config.get("batch_size"),
+                "model": plat_entry.get("model") or vlm_config.get("model"),
+                "batch_size": plat_entry.get("batch_size") or vlm_config.get("batch_size"),
             })
         else:
             # Explicit backend (from env, user-settings, or config)
             logger.info(f"Explicit backend: {backend} (tier: {tier_name})")
             chain.append({
                 "backend": backend,
-                "model": vlm_config.get("model"),
-                "batch_size": vlm_config.get("batch_size"),
+                "model": plat_entry.get("model") or vlm_config.get("model"),
+                "batch_size": plat_entry.get("batch_size") or vlm_config.get("batch_size"),
             })
 
         # Always ensure transformers is the final fallback
