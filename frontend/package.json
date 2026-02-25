@@ -76,6 +76,13 @@
     "asar": true,
     "asarUnpack": "**/*.node",
     "electronLanguages": ["en-US", "ko"],
+    "extraResources": [
+      {
+        "from": "../dist/backend_cli",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
+    ],
     "linux": {
       "target": "AppImage",
       "icon": "public/icon-512.png"

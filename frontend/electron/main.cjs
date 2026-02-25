@@ -248,6 +248,71 @@ function resolvePython() {
     return (pythonPath && fs.existsSync(pythonPath)) ? pythonPath : 'python3';
 }
 
+// ── Backend CLI (PyInstaller bundle) ─────────────────────────────
+// In packaged mode, use backend_cli.exe instead of python.
+// In dev mode, fall back to python.
+
+let _backendCliPath = undefined; // cached
+
+function getBackendCliPath() {
+    if (_backendCliPath !== undefined) return _backendCliPath;
+    if (isDev) { _backendCliPath = null; return null; }
+    const exeName = process.platform === 'win32' ? 'backend_cli.exe' : 'backend_cli';
+    const candidates = [
+        path.join(process.resourcesPath || '', 'backend', exeName),
+        path.join(process.resourcesPath || '', 'backend_cli', exeName),
+    ];
+    for (const p of candidates) {
+        if (fs.existsSync(p)) {
+            _backendCliPath = p;
+            writeLog('INFO', `[BackendCLI] Found bundled backend: ${p}`);
+            return p;
+        }
+    }
+    _backendCliPath = null;
+    writeLog('WARN', '[BackendCLI] No bundled backend found, using python fallback');
+    return null;
+}
+
+/**
+ * Spawn a backend process. In packaged mode uses backend_cli.exe,
+ * in dev mode uses python with the original script.
+ *
+ * @param {string} subcmd - backend_cli subcommand (e.g., 'worker-ipc', 'search-daemon')
+ * @param {string[]} subcmdArgs - arguments for the subcommand
+ * @param {object} spawnOpts - additional spawn options (env, stdio, detached, etc.)
+ * @param {string|null} devScript - relative script path from project root for dev mode (e.g., 'backend/api_stats.py')
+ * @param {string[]|null} devArgs - override args for dev mode (default: same as subcmdArgs)
+ * @returns {ChildProcess}
+ */
+function spawnBackend(subcmd, subcmdArgs = [], spawnOpts = {}, devScript = null, devArgs = null) {
+    const cliPath = getBackendCliPath();
+    if (cliPath) {
+        // Packaged mode: use backend_cli.exe
+        return spawn(cliPath, [subcmd, ...subcmdArgs], {
+            cwd: projectRoot,
+            ...spawnOpts,
+        });
+    } else if (devScript) {
+        // Dev mode: use python with specific script
+        const scriptPath = isDev
+            ? path.resolve(__dirname, '../../', devScript)
+            : path.join(projectRoot, devScript);
+        const py = resolvePython();
+        return spawn(py, [scriptPath, ...(devArgs || subcmdArgs)], {
+            cwd: projectRoot,
+            ...spawnOpts,
+        });
+    } else {
+        // Dev fallback: python -m backend.xxx
+        const py = resolvePython();
+        return spawn(py, ['-u', '-m', `backend.${subcmd.replace(/-/g, '_')}`, ...subcmdArgs], {
+            cwd: projectRoot,
+            ...spawnOpts,
+        });
+    }
+}
+
 // ── Search Daemon (lazy-start, idle-kill) ────────────────────────
 // Daemon is NOT started on app launch. It spawns on first search,
 // stays alive for IDLE_TIMEOUT_MS after last search, then auto-kills.
@@ -257,12 +322,6 @@ let searchReady = false;
 let pendingRequests = [];
 let responseBuffer = '';
 let idleTimer = null;
-
-function getSearchScriptPath() {
-    return isDev
-        ? path.resolve(__dirname, '../../backend/api_search.py')
-        : path.join(projectRoot, 'backend/api_search.py');
-}
 
 /**
  * Kill residual processes from previous crashed sessions.
@@ -319,16 +378,12 @@ function resetIdleTimer() {
 function spawnSearchDaemon() {
     if (searchDaemon) return;
 
-    const finalPython = resolvePython();
-    const scriptPath = getSearchScriptPath();
-
     console.log('[SearchDaemon] Starting search process (lazy)...');
 
-    searchDaemon = spawn(finalPython, [scriptPath, '--daemon'], {
-        cwd: projectRoot,
+    searchDaemon = spawnBackend('search-daemon', [], {
         env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
         stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    }, 'backend/api_search.py', ['--daemon']);
 
     searchDaemon.stderr.on('data', (data) => {
         const msg = data.toString().trim();
@@ -605,14 +660,9 @@ ipcMain.handle('check-metadata-exists', async (_, filePaths) => {
 
 // IPC Handler: Generate Thumbnail (single file)
 ipcMain.handle('generate-thumbnail', async (_, filePath) => {
-    const finalPython = resolvePython();
-
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
-        : path.join(projectRoot, 'backend/thumbnail_generator.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath, filePath, '--size', '256'], { cwd: projectRoot });
+        const proc = spawnBackend('thumbnail', ['--file', filePath, '--size', '256'], {},
+            'backend/utils/thumbnail_generator.py', [filePath, '--size', '256']);
         let output = '';
         let error = '';
 
@@ -642,14 +692,9 @@ ipcMain.handle('generate-thumbnail', async (_, filePath) => {
 
 // IPC Handler: Generate Thumbnails Batch
 ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
-    const finalPython = resolvePython();
-
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/utils/thumbnail_generator.py')
-        : path.join(projectRoot, 'backend/thumbnail_generator.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath, '--batch', JSON.stringify(filePaths), '--size', '256', '--return-paths'], { cwd: projectRoot });
+        const proc = spawnBackend('thumbnail', ['--batch', JSON.stringify(filePaths), '--size', '256', '--return-paths'], {},
+            'backend/utils/thumbnail_generator.py', ['--batch', JSON.stringify(filePaths), '--size', '256', '--return-paths']);
         let output = '';
         let error = '';
 
@@ -708,11 +753,6 @@ ipcMain.handle('select-archive-file', async () => {
 
 // IPC Handler: Export database + thumbnails as zip archive
 ipcMain.handle('export-database', async (_, { outputPath }) => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_export.py')
-        : path.join(projectRoot, 'backend/api_export.py');
-
     // If no outputPath, open save dialog
     if (!outputPath) {
         const result = await dialog.showSaveDialog({
@@ -725,7 +765,8 @@ ipcMain.handle('export-database', async (_, { outputPath }) => {
     }
 
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath, '--output', outputPath], { cwd: projectRoot });
+        const proc = spawnBackend('export', ['--output', outputPath], {},
+            'backend/api_export.py');
         let output = '';
         let error = '';
         proc.stdout.on('data', (data) => output += data.toString());
@@ -744,15 +785,9 @@ ipcMain.handle('export-database', async (_, { outputPath }) => {
 
 // IPC Handler: Relink preview (dry-run)
 ipcMain.handle('relink-preview', async (_, { packagePath, targetFolder }) => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_relink.py')
-        : path.join(projectRoot, 'backend/api_relink.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [
-            scriptPath, '--package', packagePath, '--folder', targetFolder, '--dry-run'
-        ], { cwd: projectRoot });
+        const proc = spawnBackend('relink', ['--package', packagePath, '--folder', targetFolder, '--dry-run'], {},
+            'backend/api_relink.py');
         let output = '';
         let error = '';
         proc.stdout.on('data', (data) => output += data.toString());
@@ -771,16 +806,12 @@ ipcMain.handle('relink-preview', async (_, { packagePath, targetFolder }) => {
 
 // IPC Handler: Relink apply
 ipcMain.handle('relink-apply', async (_, { packagePath, targetFolder, deleteMissing }) => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_relink.py')
-        : path.join(projectRoot, 'backend/api_relink.py');
-
-    const args = [scriptPath, '--package', packagePath, '--folder', targetFolder];
-    if (deleteMissing) args.push('--delete-missing');
+    const relinkArgs = ['--package', packagePath, '--folder', targetFolder];
+    if (deleteMissing) relinkArgs.push('--delete-missing');
 
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, args, { cwd: projectRoot });
+        const proc = spawnBackend('relink', relinkArgs, {},
+            'backend/api_relink.py');
         let output = '';
         let error = '';
         proc.stdout.on('data', (data) => output += data.toString());
@@ -847,13 +878,9 @@ ipcMain.handle('mdns-get-servers', async () => {
 
 // IPC Handler: Sync folder — scan and compare disk vs DB
 ipcMain.handle('sync-folder', async (_, { folderPath }) => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_sync.py')
-        : path.join(projectRoot, 'backend/api_sync.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath, '--folder', folderPath], { cwd: projectRoot });
+        const proc = spawnBackend('sync', ['--folder', folderPath], {},
+            'backend/api_sync.py');
         let output = '';
         let error = '';
         proc.stdout.on('data', (data) => output += data.toString());
@@ -872,18 +899,12 @@ ipcMain.handle('sync-folder', async (_, { folderPath }) => {
 
 // IPC Handler: Sync apply moves — update paths for moved files
 ipcMain.handle('sync-apply-moves', async (_, { moves }) => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_sync.py')
-        : path.join(projectRoot, 'backend/api_sync.py');
-
     // Pass first move's folder to get DB path, then apply all moves
     const folderPath = moves.length > 0 ? path.dirname(moves[0].new_path) : '.';
 
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [
-            scriptPath, '--folder', folderPath, '--apply-moves'
-        ], { cwd: projectRoot });
+        const proc = spawnBackend('sync', ['--folder', folderPath, '--apply-moves'], {},
+            'backend/api_sync.py');
         let output = '';
         let error = '';
         proc.stdout.on('data', (data) => output += data.toString());
@@ -904,17 +925,11 @@ ipcMain.handle('sync-apply-moves', async (_, { moves }) => {
 
 // IPC Handler: Sync delete missing — remove DB records for deleted files
 ipcMain.handle('sync-delete-missing', async (_, { fileIds }) => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_sync.py')
-        : path.join(projectRoot, 'backend/api_sync.py');
-
     const idsStr = fileIds.join(',');
 
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [
-            scriptPath, '--folder', '.', '--delete-missing', idsStr
-        ], { cwd: projectRoot });
+        const proc = spawnBackend('sync', ['--folder', '.', '--delete-missing', idsStr], {},
+            'backend/api_sync.py');
         let output = '';
         let error = '';
         proc.stdout.on('data', (data) => output += data.toString());
@@ -978,16 +993,10 @@ ipcMain.handle('search-vector', async (_, searchOptions) => {
 
 // IPC Handler: Database Stats (archived image count)
 ipcMain.handle('get-db-stats', async () => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_stats.py')
-        : path.join(projectRoot, 'backend/api_stats.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath], {
-            cwd: projectRoot,
+        const proc = spawnBackend('stats', [], {
             env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
-        });
+        }, 'backend/api_stats.py');
         let output = '';
         proc.stdout.on('data', (d) => output += d.toString());
         proc.on('close', (code) => {
@@ -1008,16 +1017,10 @@ ipcMain.handle('get-db-stats', async () => {
 // ── Job Queue IPC (server mode — direct DB, bypassing HTTP auth) ──
 
 function spawnQueueCmd(cmd, data) {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_queue.py')
-        : path.join(projectRoot, 'backend/api_queue.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath, cmd, JSON.stringify(data || {})], {
-            cwd: projectRoot,
+        const proc = spawnBackend('queue', [cmd, JSON.stringify(data || {})], {
             env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
-        });
+        }, 'backend/api_queue.py');
         let output = '';
         let errOutput = '';
         proc.stdout.on('data', (d) => output += d.toString());
@@ -1067,16 +1070,10 @@ ipcMain.handle('queue-clear-completed', async () => {
 
 // IPC Handler: Incomplete Stats (for resume dialog on startup)
 ipcMain.handle('get-incomplete-stats', async () => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_incomplete_stats.py')
-        : path.join(projectRoot, 'backend/api_incomplete_stats.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath], {
-            cwd: projectRoot,
+        const proc = spawnBackend('incomplete-stats', [], {
             env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
-        });
+        }, 'backend/api_incomplete_stats.py');
         let output = '';
         proc.stdout.on('data', (d) => output += d.toString());
         proc.on('close', (code) => {
@@ -1096,16 +1093,10 @@ ipcMain.handle('get-incomplete-stats', async () => {
 
 // IPC Handler: Folder Phase Stats (MC/VV/MV per folder)
 ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_folder_stats.py')
-        : path.join(projectRoot, 'backend/api_folder_stats.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath, storageRoot], {
-            cwd: projectRoot,
+        const proc = spawnBackend('folder-stats', [storageRoot], {
             env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
-        });
+        }, 'backend/api_folder_stats.py');
         let output = '';
         proc.stdout.on('data', (d) => output += d.toString());
         proc.on('close', (code) => {
@@ -1125,11 +1116,9 @@ ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
 
 // IPC Handler: Environment Check
 ipcMain.handle('check-env', async () => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(projectRoot, 'backend/setup/installer.py');
-
     return new Promise((resolve) => {
-        const proc = spawn(finalPython, [scriptPath, '--check'], { cwd: projectRoot });
+        const proc = spawnBackend('installer', ['--check'], {},
+            'backend/setup/installer.py');
         let output = '';
         proc.stdout.on('data', (d) => output += d.toString());
         proc.on('close', () => {
@@ -1145,12 +1134,10 @@ ipcMain.handle('check-env', async () => {
 
 // IPC Handler: Install Environment
 ipcMain.on('install-env', (event) => {
-    const finalPython = resolvePython();
-    const scriptPath = isDev ? path.resolve(__dirname, '../../backend/setup/installer.py') : path.join(projectRoot, 'backend/setup/installer.py');
-
     event.reply('install-log', { message: '🚀 Starting installation...', type: 'info' });
 
-    const proc = spawn(finalPython, [scriptPath, '--install', '--download-model'], { cwd: projectRoot });
+    const proc = spawnBackend('installer', ['--install', '--download-model'], {},
+        'backend/setup/installer.py');
 
     proc.stdout.on('data', (data) => {
         const msg = data.toString().trim();
@@ -1171,14 +1158,9 @@ ipcMain.on('install-env', (event) => {
 
 // IPC Handler: Update User Metadata
 ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
-    const finalPython = resolvePython();
-
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/api_metadata_update.py')
-        : path.join(projectRoot, 'backend/api_metadata_update.py');
-
     return new Promise((resolve, reject) => {
-        const proc = spawn(finalPython, [scriptPath], { cwd: projectRoot });
+        const proc = spawnBackend('metadata-update', [], {},
+            'backend/api_metadata_update.py');
 
         let output = '';
         let errorOutput = '';
@@ -1227,14 +1209,7 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
         return;
     }
 
-    const finalPython = resolvePython();
-    console.log('[run-pipeline] Python:', finalPython);
-
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
-        : path.join(projectRoot, 'backend/ingest_engine.py');
-
-    console.log('[run-pipeline] Script:', scriptPath);
+    console.log('[run-pipeline] Starting pipeline...');
     event.reply('pipeline-log', { message: `Starting batch processing: ${filePaths.length} files...`, type: 'info' });
 
     let processedCount = 0;
@@ -1268,12 +1243,11 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
         });
     }
 
-    const proc = spawn(finalPython, [scriptPath, '--files', JSON.stringify(filePaths)], {
-        cwd: projectRoot,
+    const proc = spawnBackend('pipeline', ['--files', JSON.stringify(filePaths)], {
         detached: true,  // Own process group for clean tree kill
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
         stdio: ['pipe', 'pipe', 'pipe'],  // stdin pipe = watchdog lifeline
-    });
+    }, 'backend/pipeline/ingest_engine.py');
     proc.stdin.on('error', () => {}); // Suppress EPIPE on process exit
     console.log('[run-pipeline] Spawned PID:', proc.pid);
     activePipelineProc = proc;
@@ -1440,14 +1414,8 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
         return;
     }
 
-    const finalPython = resolvePython();
-
-    const scriptPath = isDev
-        ? path.resolve(__dirname, '../../backend/pipeline/ingest_engine.py')
-        : path.join(projectRoot, 'backend/ingest_engine.py');
-
-    const args = [scriptPath, '--discover', folderPath];
-    if (noSkip) args.push('--no-skip');
+    const discoverArgs = ['--discover', folderPath];
+    if (noSkip) discoverArgs.push('--no-skip');
 
     event.reply('discover-log', { message: `Scanning folder: ${folderPath}`, type: 'info' });
 
@@ -1475,12 +1443,11 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
         });
     }
 
-    const proc = spawn(finalPython, args, {
-        cwd: projectRoot,
+    const proc = spawnBackend('pipeline', discoverArgs, {
         detached: true,
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
         stdio: ['pipe', 'pipe', 'pipe'],  // stdin pipe = watchdog lifeline
-    });
+    }, 'backend/pipeline/ingest_engine.py');
     proc.stdin.on('error', () => {}); // Suppress EPIPE on process exit
     activeDiscoverProcs.set(folderPath, proc);
 
@@ -1813,12 +1780,6 @@ let workerBuffer = '';
 let workerMainWindow = null;  // BrowserWindow reference for sending events
 let workerStartCmd = null;    // Queued start command (sent after 'ready' event)
 
-function getWorkerScriptPath() {
-    return isDev
-        ? path.resolve(__dirname, '../../backend/worker/worker_ipc.py')
-        : path.join(projectRoot, 'backend/worker/worker_ipc.py');
-}
-
 function sendWorkerEvent(channel, data) {
     try {
         if (workerMainWindow && !workerMainWindow.isDestroyed()) {
@@ -1931,16 +1892,13 @@ ipcMain.handle('worker-start', async (event, opts) => {
         }
     }
 
-    const finalPython = resolvePython();
-
     // Store window reference for relaying events
     workerMainWindow = BrowserWindow.fromWebContents(event.sender);
 
     console.log('[Worker] Starting worker_ipc.py...');
     console.log(`[Worker] Auth: access=${accessToken ? accessToken.substring(0, 20) + '...' : '(none)'}, refresh=${refreshToken ? refreshToken.substring(0, 16) + '...' : '(none)'}`);
 
-    workerProc = spawn(finalPython, ['-u', '-m', 'backend.worker.worker_ipc'], {
-        cwd: projectRoot,
+    workerProc = spawnBackend('worker-ipc', [], {
         env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
         stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -2077,17 +2035,26 @@ async function startEmbeddedServer(port = 8000) {
         return { success: false, error: `Port ${port} is already in use` };
     }
 
-    const finalPython = resolvePython();
     console.log(`[Server] Starting FastAPI on port ${port}...`);
 
-    serverProc = spawn(finalPython, [
-        '-m', 'uvicorn', 'backend.server.app:app',
-        '--host', '0.0.0.0', '--port', String(port),
-    ], {
-        cwd: projectRoot,
-        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
-        stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const cliPath = getBackendCliPath();
+    if (cliPath) {
+        serverProc = spawn(cliPath, ['server', '--port', String(port), '--host', '0.0.0.0'], {
+            cwd: projectRoot,
+            env: { ...process.env, IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+    } else {
+        const py = resolvePython();
+        serverProc = spawn(py, [
+            '-m', 'uvicorn', 'backend.server.app:app',
+            '--host', '0.0.0.0', '--port', String(port),
+        ], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+    }
 
     // Throttled server log forwarding: max 20 IPC messages/sec to renderer
     // Prevents OOM when server outputs high-volume warnings (e.g., EmbedAhead loops)
