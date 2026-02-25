@@ -102,18 +102,14 @@ function authGateSignIn() {
 /* ── i18n System ─────────────────────────────────────── */
 const commonI18n = {
   en: {
-    "nav.releases": "Releases",
-    "nav.guide": "Guide",
-    "nav.qna": "Q&A",
+    "nav.board": "Board",
     "nav.download": "Download",
     "common.loading": "Loading...",
     "common.empty": "No content yet",
     "common.error": "Failed to load content"
   },
   ko: {
-    "nav.releases": "\uB9B4\uB9AC\uC2A4",
-    "nav.guide": "\uAC00\uC774\uB4DC",
-    "nav.qna": "Q&A",
+    "nav.board": "\uAC8C\uC2DC\uD310",
     "nav.download": "\uB2E4\uC6B4\uB85C\uB4DC",
     "common.loading": "\uB85C\uB529 \uC911...",
     "common.empty": "\uC544\uC9C1 \uCF58\uD150\uCE20\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4",
