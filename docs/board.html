@@ -93,7 +93,16 @@ registerPageI18n({
     "board.deleted": "Deleted",
     "board.title_placeholder": "Enter title",
     "board.content_placeholder": "Write in Markdown...",
-    "board.post_count": "{count} posts"
+    "board.post_count": "{count} posts",
+    "comment.title": "Comments",
+    "comment.placeholder": "Write a comment...",
+    "comment.submit": "Submit",
+    "comment.delete": "Delete",
+    "comment.confirm_delete": "Delete this comment?",
+    "comment.saved": "Comment posted",
+    "comment.deleted": "Comment deleted",
+    "comment.empty": "No comments yet",
+    "comment.count": "{count} comments"
   },
   ko: {
     "board.notice": "\uacf5\uc9c0",
@@ -115,7 +124,16 @@ registerPageI18n({
     "board.deleted": "\uc0ad\uc81c\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
     "board.title_placeholder": "\uc81c\ubaa9\uc744 \uc785\ub825\ud558\uc138\uc694",
     "board.content_placeholder": "Markdown\uc73c\ub85c \uc791\uc131\ud558\uc138\uc694...",
-    "board.post_count": "{count}\uac1c\uc758 \uae00"
+    "board.post_count": "{count}\uac1c\uc758 \uae00",
+    "comment.title": "\ub313\uae00",
+    "comment.placeholder": "\ub313\uae00\uc744 \uc785\ub825\ud558\uc138\uc694...",
+    "comment.submit": "\ub4f1\ub85d",
+    "comment.delete": "\uc0ad\uc81c",
+    "comment.confirm_delete": "\uc774 \ub313\uae00\uc744 \uc0ad\uc81c\ud558\uc2dc\uaca0\uc2b5\ub2c8\uae4c?",
+    "comment.saved": "\ub313\uae00\uc774 \ub4f1\ub85d\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
+    "comment.deleted": "\ub313\uae00\uc774 \uc0ad\uc81c\ub418\uc5c8\uc2b5\ub2c8\ub2e4",
+    "comment.empty": "\uc544\uc9c1 \ub313\uae00\uc774 \uc5c6\uc2b5\ub2c8\ub2e4",
+    "comment.count": "\ub313\uae00 {count}\uac1c"
   }
 });
 
@@ -271,8 +289,10 @@ function viewPost(postId) {
       </div>`;
   }
 
+  html += `<div class="comment-section" id="comments-${escAttr(post.id)}"></div>`;
   html += '</div>';
   container.innerHTML = html;
+  loadComments(post.id);
 }
 
 /* ── Write / Edit Form ───────────────────────────────── */
@@ -380,6 +400,101 @@ function togglePreview() {
   box.classList.toggle('open');
   if (box.classList.contains('open') && typeof marked !== 'undefined') {
     box.innerHTML = '<div class="md-content">' + marked.parse(textarea.value || '') + '</div>';
+  }
+}
+
+/* ── Comments ────────────────────────────────────────── */
+async function loadComments(postId) {
+  const section = document.getElementById('comments-' + postId);
+  if (!section) return;
+
+  const db = getDb();
+  if (!db) return;
+
+  try {
+    const snap = await db.collection('posts').doc(postId)
+      .collection('comments').orderBy('created_at', 'asc').get();
+
+    const comments = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const u = getUser();
+
+    let html = `<div class="comment-header-row">
+      <h3>${t('comment.title')}</h3>
+      <span class="comment-count">${t('comment.count').replace('{count}', comments.length)}</span>
+    </div>`;
+
+    if (comments.length === 0) {
+      html += '<p class="comment-empty">' + t('comment.empty') + '</p>';
+    } else {
+      html += '<div class="comment-list">';
+      comments.forEach(c => {
+        const date = c.created_at
+          ? (c.created_at.toDate ? c.created_at.toDate() : new Date(c.created_at)).toLocaleDateString()
+          : '';
+        const canDel = u && (c.author_email === u.email || isAdmin(u));
+        html += `
+          <div class="comment-item">
+            <div class="comment-item-head">
+              <span class="comment-author">${escHtml(c.author_name || '')} &middot; ${date}</span>
+              ${canDel ? `<button class="comment-delete-btn" onclick="deleteComment('${escAttr(postId)}','${escAttr(c.id)}')">${t('comment.delete')}</button>` : ''}
+            </div>
+            <div class="comment-item-body">${escHtml(c.content || '').replace(/\n/g, '<br>')}</div>
+          </div>`;
+      });
+      html += '</div>';
+    }
+
+    html += `
+      <div class="comment-form">
+        <textarea id="comment-input" placeholder="${t('comment.placeholder')}"></textarea>
+        <button class="btn-save comment-submit" onclick="saveComment('${escAttr(postId)}')">${t('comment.submit')}</button>
+      </div>`;
+
+    section.innerHTML = html;
+  } catch (err) {
+    console.error('Failed to load comments:', err);
+    section.innerHTML = '';
+  }
+}
+
+async function saveComment(postId) {
+  const input = document.getElementById('comment-input');
+  const content = input ? input.value.trim() : '';
+  if (!content) { if (input) input.focus(); return; }
+
+  const db = getDb();
+  if (!db) return;
+  const user = getUser();
+  if (!user) { showToast('Please sign in first', 'error'); return; }
+
+  try {
+    await db.collection('posts').doc(postId).collection('comments').add({
+      content: content,
+      author_email: user.email,
+      author_name: user.displayName || user.email.split('@')[0],
+      created_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast(t('comment.saved'), 'success');
+    loadComments(postId);
+  } catch (err) {
+    console.error('Comment save failed:', err);
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteComment(postId, commentId) {
+  if (!confirm(t('comment.confirm_delete'))) return;
+
+  const db = getDb();
+  if (!db) return;
+
+  try {
+    await db.collection('posts').doc(postId).collection('comments').doc(commentId).delete();
+    showToast(t('comment.deleted'), 'success');
+    loadComments(postId);
+  } catch (err) {
+    console.error('Comment delete failed:', err);
+    showToast(err.message, 'error');
   }
 }
 

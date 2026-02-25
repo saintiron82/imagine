@@ -386,6 +386,67 @@ footer a:hover { color: #38bdf8; }
 }
 .preview-box.open { display: block; }
 
+/* ── Comments ────────────────────────────────────────── */
+.comment-section {
+  margin-top: 32px; padding-top: 24px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.comment-header-row {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px;
+}
+.comment-header-row h3 {
+  font-size: 1rem; font-weight: 600; color: #e0e0ee; margin: 0;
+}
+.comment-count {
+  font-size: 0.8rem; color: #6b7280;
+}
+.comment-empty {
+  font-size: 0.85rem; color: #6b7280; margin: 0 0 16px;
+}
+.comment-list {
+  display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;
+}
+.comment-item {
+  padding: 12px 16px; border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.comment-item-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 6px;
+}
+.comment-author {
+  font-size: 0.8rem; color: #94a3b8;
+}
+.comment-item-body {
+  font-size: 0.9rem; color: #d1d5e0; line-height: 1.6;
+}
+.comment-delete-btn {
+  font-size: 0.75rem; color: #f87171; background: none;
+  border: 1px solid rgba(248,113,113,0.25); border-radius: 6px;
+  padding: 2px 8px; cursor: pointer; font-family: inherit;
+  transition: all 0.2s;
+}
+.comment-delete-btn:hover {
+  background: rgba(248,113,113,0.15); border-color: rgba(248,113,113,0.4);
+}
+.comment-form {
+  display: flex; gap: 10px; align-items: flex-end;
+}
+.comment-form textarea {
+  flex: 1; min-height: 64px; max-height: 200px; padding: 10px 14px;
+  border-radius: 10px; background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1); color: #e0e0ee;
+  font-size: 0.9rem; font-family: inherit; resize: vertical;
+  transition: border-color 0.2s;
+}
+.comment-form textarea:focus {
+  outline: none; border-color: rgba(56,189,248,0.5);
+}
+.comment-submit {
+  padding: 10px 20px !important; white-space: nowrap;
+}
+
 /* ── Toast ──────────────────────────────────────────── */
 .toast {
   position: fixed; bottom: 24px; right: 24px; z-index: 200;
