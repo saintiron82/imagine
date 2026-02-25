@@ -74,24 +74,109 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      # tag push → GitHub Releases에 자동 업로드
-      # branch push → 빌드만 확인 (artifact 저장)
-      - name: Build Electron (publish on tag)
+      # 항상 --publish never → release 잡에서 통합 업로드
+      - name: Build Electron app
         working-directory: frontend
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            npx electron-builder --publish always
-          else
-            npx electron-builder --publish never
-          fi
-        shell: bash
+        run: npx electron-builder --publish never
 
       - name: Upload build artifact
-        if: "!startsWith(github.ref, 'refs/tags/')"
         uses: actions/upload-artifact@v4
         with:
           name: Imagine-${{ matrix.platform }}
           path: frontend/dist-electron/*
           retention-days: 7
+
+  # ── Release (tag push only) ──────────────────────────────────
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for release notes
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Extract version info
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # previous tag for changelog range
+          PREV_TAG=$(git tag --sort=-v:refname | grep '^v' | sed -n '2p')
+          echo "prev_tag=${PREV_TAG:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          PREV_TAG="${{ steps.version.outputs.prev_tag }}"
+
+          cat > release_notes.md << 'HEADER'
+          ## Imagine $TAG
+
+          ### Downloads
+
+          | Platform | File |
+          |----------|------|
+          | Windows | `Imagine-*-win.zip` |
+          | macOS | `Imagine-*-mac.dmg` / `Imagine-*-mac.zip` |
+
+          > Python 설치 불필요 — 백엔드가 바이너리로 포함되어 있습니다.
+          > AI 모델은 첫 실행 시 자동 다운로드됩니다.
+
+          HEADER
+
+          # replace $TAG / $VERSION placeholders
+          sed -i "s/\$TAG/$TAG/g" release_notes.md
+          sed -i "s/\$VERSION/$VERSION/g" release_notes.md
+
+          # auto-generate changelog from commits
+          if [ -n "$PREV_TAG" ]; then
+            echo "### Changes since $PREV_TAG" >> release_notes.md
+            echo "" >> release_notes.md
+            git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" \
+              --no-merges \
+              --grep="^feat" --grep="^fix" --grep="^refactor" --grep="^perf" \
+              --all-match=false \
+              | head -50 >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+
+          echo "" >> release_notes.md
+          echo "---" >> release_notes.md
+          echo "*Built automatically by GitHub Actions*" >> release_notes.md
+
+      - name: List artifacts
+        shell: bash
+        run: find artifacts/ -type f | head -30
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+
+          # collect release files (installers/archives only)
+          FILES=()
+          for f in artifacts/Imagine-win/*.{exe,zip,msi} artifacts/Imagine-mac/*.{dmg,zip}; do
+            [ -f "$f" ] && FILES+=("$f")
+          done
+
+          gh release create "$TAG" \
+            --title "Imagine $TAG" \
+            --notes-file release_notes.md \
+            "${FILES[@]}"
