@@ -13,7 +13,6 @@ import numpy as np
 from PIL import Image
 from typing import Optional, List, Union
 from transformers import AutoImageProcessor, AutoModel
-from backend.utils.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 class DinoV2Encoder:
     """
     DINOv2 encoder for structural image embeddings.
-    
+
     Uses 'facebook/dinov2-base' model.
     Output dimension: 768
     """
@@ -32,8 +31,6 @@ class DinoV2Encoder:
         self.processor = None
         self.model = None
         self.dimensions = 768  # DINOv2 Base
-        cfg = get_config()
-        self.require_local_model = bool(cfg.get("embedding.structure.require_local_model", True))
         
     def _get_device(self) -> str:
         """Select best available device."""
@@ -44,26 +41,28 @@ class DinoV2Encoder:
         return "cpu"
 
     def load_model(self):
-        """Lazy load the model and processor."""
+        """Lazy load the model and processor (auto-download on first use)."""
         if self.model is not None:
             return
 
         logger.info(f"Loading DINOv2 model: {self.model_name} on {self.device}...")
         try:
-            hf_kwargs = {"local_files_only": self.require_local_model}
-            self.processor = AutoImageProcessor.from_pretrained(self.model_name, **hf_kwargs)
-            self.model = AutoModel.from_pretrained(self.model_name, **hf_kwargs).to(self.device)
+            # Stage 1: try local cache first (fast, no network)
+            self.processor = AutoImageProcessor.from_pretrained(
+                self.model_name, local_files_only=True)
+            self.model = AutoModel.from_pretrained(
+                self.model_name, local_files_only=True).to(self.device)
             self.model.eval()
-            logger.info("✅ DINOv2 model loaded successfully.")
+            logger.info("DINOv2 model loaded from cache.")
+        except OSError:
+            # Stage 2: auto-download from HuggingFace
+            logger.info("DINOv2 local cache not found, downloading from HuggingFace...")
+            self.processor = AutoImageProcessor.from_pretrained(self.model_name)
+            self.model = AutoModel.from_pretrained(self.model_name).to(self.device)
+            self.model.eval()
+            logger.info("DINOv2 model downloaded and loaded.")
         except Exception as e:
-            if self.require_local_model:
-                msg = (
-                    f"DINOv2 model not installed locally: {self.model_name}. "
-                    "Run: .venv/bin/python scripts/install_hf_models.py --dinov2"
-                )
-                logger.error(f"❌ {msg}")
-                raise RuntimeError(msg) from e
-            logger.error(f"❌ Failed to load DINOv2 model: {e}")
+            logger.error(f"Failed to load DINOv2 model: {e}")
             raise
 
     def encode_image(self, image: Union[Image.Image, np.ndarray]) -> np.ndarray:

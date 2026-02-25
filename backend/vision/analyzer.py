@@ -11,7 +11,6 @@ This module analyzes images to extract:
 
 import logging
 import time
-import os
 import platform
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -63,7 +62,6 @@ class VisionAnalyzer:
         self.model = None
         self.processor = None
         cfg = get_config()
-        self.require_local_models = bool(cfg.get("vision.require_local_models", True))
         self.fail_if_cpu_on_macos = bool(cfg.get("vision.fail_if_cpu_on_macos", True))
         default_max_new_tokens = 96 if self.device == "cpu" else 192
         default_max_gen_time_s = 12.0 if self.device == "cpu" else 30.0
@@ -73,10 +71,6 @@ class VisionAnalyzer:
         self.vlm_max_gen_time_s = float(
             cfg.get("vision.vlm_max_gen_time_s", default_max_gen_time_s) or default_max_gen_time_s
         )
-        if self.require_local_models:
-            # Force strict offline mode to avoid long network retries when local models are missing.
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
         logger.info(
             f"VisionAnalyzer initialized (tier: {tier_name}, device: {self.device}, "
@@ -136,133 +130,132 @@ class VisionAnalyzer:
         except Exception as e:
             logger.warning(f"[VLM load] tokenizer padding config skipped: {e}")
 
+    def _load_model_with_kwargs(self, local_files_only: bool):
+        """
+        Load model and processor with the given HuggingFace kwargs.
+
+        Raises OSError when local_files_only=True and model is not cached.
+        """
+        hf_kwargs = {"local_files_only": local_files_only}
+
+        if "blip2" in self.model_id.lower():
+            from transformers import Blip2Processor, Blip2ForConditionalGeneration
+
+            self.processor = Blip2Processor.from_pretrained(self.model_id, **hf_kwargs)
+            dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
+            blip_kwargs = {"torch_dtype": dtype, **hf_kwargs}
+            if self.device in ("cuda", "mps"):
+                blip_kwargs["device_map"] = {"": self.device}
+            self.model = Blip2ForConditionalGeneration.from_pretrained(
+                self.model_id, **blip_kwargs,
+            )
+            if self.device not in ("cuda", "mps"):
+                self.model = self.model.to(self.device)
+
+        elif "blip" in self.model_id.lower():
+            from transformers import BlipProcessor, BlipForConditionalGeneration
+
+            self.processor = BlipProcessor.from_pretrained(self.model_id, **hf_kwargs)
+            dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
+            blip_kwargs = {"torch_dtype": dtype, **hf_kwargs}
+            if self.device in ("cuda", "mps"):
+                blip_kwargs["device_map"] = {"": self.device}
+            self.model = BlipForConditionalGeneration.from_pretrained(
+                self.model_id, **blip_kwargs,
+            )
+            if self.device not in ("cuda", "mps"):
+                self.model = self.model.to(self.device)
+
+        elif "Qwen2-VL" in self.model_id:
+            from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+
+            self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
+            self._configure_padding_for_decoder_generation()
+            qwen2_dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
+            qwen2_dm = {"": self.device} if self.device in ("cuda", "mps") else "auto"
+            self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                self.model_id,
+                torch_dtype=qwen2_dtype,
+                device_map=qwen2_dm,
+                **hf_kwargs,
+            )
+
+        elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
+            from transformers import AutoProcessor, AutoModelForImageTextToText
+
+            t_proc = time.perf_counter()
+            logger.info("[VLM load] AutoProcessor.from_pretrained start")
+            self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
+            self._configure_padding_for_decoder_generation()
+            logger.info(
+                f"[VLM load] AutoProcessor ready in {time.perf_counter() - t_proc:.1f}s"
+            )
+
+            t_model = time.perf_counter()
+            if self.device in ("cuda", "mps"):
+                dm = {"": self.device}
+                logger.info(f"[VLM load] from_pretrained start (device_map={{\"\":\"{self.device}\"}})")
+                self.model = AutoModelForImageTextToText.from_pretrained(
+                    self.model_id,
+                    torch_dtype=torch.float16,
+                    device_map=dm,
+                    **hf_kwargs,
+                )
+            else:
+                logger.info("[VLM load] from_pretrained start (cpu path)")
+                self.model = AutoModelForImageTextToText.from_pretrained(
+                    self.model_id,
+                    torch_dtype=torch.float32,
+                    **hf_kwargs,
+                )
+            logger.info(
+                f"[VLM load] Weights loaded in {time.perf_counter() - t_model:.1f}s"
+            )
+
+        else:
+            from transformers import AutoProcessor, AutoModelForCausalLM
+
+            self.processor = AutoProcessor.from_pretrained(
+                self.model_id,
+                trust_remote_code=True,
+                **hf_kwargs,
+            )
+            other_dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
+            other_kwargs = {
+                "trust_remote_code": True,
+                "torch_dtype": other_dtype,
+                **hf_kwargs,
+            }
+            if self.device in ("cuda", "mps"):
+                other_kwargs["device_map"] = {"": self.device}
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_id, **other_kwargs,
+            )
+            if self.device not in ("cuda", "mps"):
+                self.model = self.model.to(self.device)
+
     def _load_model(self):
-        """Lazy load the vision model."""
+        """Lazy load the vision model (auto-download on first use)."""
         if self.model is not None:
             return
 
         logger.info(f"Loading {self.model_id} model...")
-        hf_kwargs = {"local_files_only": self.require_local_models}
 
+        # Stage 1: try local cache first (fast, no network)
         try:
-            if "blip2" in self.model_id.lower():
-                # BLIP-2 model
-                from transformers import Blip2Processor, Blip2ForConditionalGeneration
+            self._load_model_with_kwargs(local_files_only=True)
+            logger.info(f"{self.model_id} loaded from cache on {self.device}")
+            return
+        except OSError:
+            logger.info(f"{self.model_id} not in local cache, downloading from HuggingFace...")
 
-                self.processor = Blip2Processor.from_pretrained(self.model_id, **hf_kwargs)
-                dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
-                blip_kwargs = {"torch_dtype": dtype, **hf_kwargs}
-                if self.device in ("cuda", "mps"):
-                    blip_kwargs["device_map"] = {"": self.device}
-                self.model = Blip2ForConditionalGeneration.from_pretrained(
-                    self.model_id, **blip_kwargs,
-                )
-                if self.device not in ("cuda", "mps"):
-                    self.model = self.model.to(self.device)
-
-            elif "blip" in self.model_id.lower():
-                # BLIP (original) model (default, simple and reliable)
-                from transformers import BlipProcessor, BlipForConditionalGeneration
-
-                self.processor = BlipProcessor.from_pretrained(self.model_id, **hf_kwargs)
-                dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
-                blip_kwargs = {"torch_dtype": dtype, **hf_kwargs}
-                if self.device in ("cuda", "mps"):
-                    blip_kwargs["device_map"] = {"": self.device}
-                self.model = BlipForConditionalGeneration.from_pretrained(
-                    self.model_id, **blip_kwargs,
-                )
-                if self.device not in ("cuda", "mps"):
-                    self.model = self.model.to(self.device)
-
-            elif "Qwen2-VL" in self.model_id:
-                # Qwen2-VL model
-                from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
-
-                self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
-                self._configure_padding_for_decoder_generation()
-                qwen2_dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
-                qwen2_dm = {"": self.device} if self.device in ("cuda", "mps") else "auto"
-                self.model = Qwen2VLForConditionalGeneration.from_pretrained(
-                    self.model_id,
-                    torch_dtype=qwen2_dtype,
-                    device_map=qwen2_dm,
-                    **hf_kwargs,
-                )
-
-            elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
-                # Qwen3-VL model (Standard/Pro/Ultra tiers)
-                # Use Auto classes for forward-compatible HF pattern
-                from transformers import AutoProcessor, AutoModelForImageTextToText
-
-                t_proc = time.perf_counter()
-                logger.info("[VLM load] AutoProcessor.from_pretrained start")
-                self.processor = AutoProcessor.from_pretrained(self.model_id, **hf_kwargs)
-                self._configure_padding_for_decoder_generation()
-                logger.info(
-                    f"[VLM load] AutoProcessor ready in {time.perf_counter() - t_proc:.1f}s"
-                )
-
-                # Load directly onto target device via device_map to avoid
-                # 2x memory peak from CPU staging (MPS supported since transformers 5.0+)
-                t_model = time.perf_counter()
-                if self.device in ("cuda", "mps"):
-                    dm = {"": self.device}
-                    logger.info(f"[VLM load] from_pretrained start (device_map={{\"\":\"{self.device}\"}})")
-                    self.model = AutoModelForImageTextToText.from_pretrained(
-                        self.model_id,
-                        torch_dtype=torch.float16,
-                        device_map=dm,
-                        **hf_kwargs,
-                    )
-                else:
-                    logger.info("[VLM load] from_pretrained start (cpu path)")
-                    self.model = AutoModelForImageTextToText.from_pretrained(
-                        self.model_id,
-                        torch_dtype=torch.float32,
-                        **hf_kwargs,
-                    )
-                logger.info(
-                    f"[VLM load] Weights loaded in {time.perf_counter() - t_model:.1f}s"
-                )
-
-            else:
-                # Florence-2 or other models
-                from transformers import AutoProcessor, AutoModelForCausalLM
-
-                self.processor = AutoProcessor.from_pretrained(
-                    self.model_id,
-                    trust_remote_code=True,
-                    **hf_kwargs,
-                )
-                other_dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
-                other_kwargs = {
-                    "trust_remote_code": True,
-                    "torch_dtype": other_dtype,
-                    **hf_kwargs,
-                }
-                if self.device in ("cuda", "mps"):
-                    other_kwargs["device_map"] = {"": self.device}
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_id, **other_kwargs,
-                )
-                if self.device not in ("cuda", "mps"):
-                    self.model = self.model.to(self.device)
-
-            logger.info(f"{self.model_id} loaded successfully on {self.device}")
-
+        # Stage 2: auto-download from HuggingFace
+        try:
+            self._load_model_with_kwargs(local_files_only=False)
+            logger.info(f"{self.model_id} downloaded and loaded on {self.device}")
         except Exception as e:
-            # Do not mask ingest-engine timeout interrupts as "model missing".
-            # _call_with_timeout raises a private _TimedOut inside the target call.
             if isinstance(e, TimeoutError) or e.__class__.__name__ == "_TimedOut":
                 raise
-            if self.require_local_models:
-                msg = (
-                    f"Vision model not installed locally: {self.model_id}. "
-                    "Run: .venv/bin/python scripts/install_hf_models.py --vlm"
-                )
-                logger.error(msg)
-                raise RuntimeError(msg) from e
             logger.error(f"Failed to load {self.model_id}: {e}")
             raise
 
