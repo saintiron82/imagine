@@ -199,7 +199,7 @@
           <svg width="38" height="38" viewBox="0 0 24 24" fill="#e0e0ee"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
         </div>
         <h3>Windows</h3>
-        <p class="dl-meta">.exe &middot; Installer</p>
+        <p class="dl-meta">.zip &middot; Portable</p>
         <button class="dl-btn disabled" data-i18n="dl.coming_soon">Coming Soon</button>
       </div>
       <div class="download-card" id="dl-linux" onclick="handleDownload('linux')">
@@ -280,7 +280,7 @@ function renderRelease(release, infoEl, strings) {
 
   const assets = release.assets || [];
   const macAsset = assets.find(a => /\.dmg$/i.test(a.name));
-  const winAsset = assets.find(a => /\.exe$/i.test(a.name));
+  const winAsset = assets.find(a => /\.exe$/i.test(a.name)) || assets.find(a => /win.*\.zip$/i.test(a.name));
   const linuxAsset = assets.find(a => /\.AppImage$/i.test(a.name));
 
   updateDownloadCard('dl-mac', macAsset, strings);

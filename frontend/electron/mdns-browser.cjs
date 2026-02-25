@@ -3,6 +3,7 @@
  *
  * Uses bonjour-service (pure JS, no native modules).
  * Only runs in Electron main process.
+ * Failure-safe: all errors are caught and logged, never crash the app.
  */
 
 let Bonjour;
@@ -24,34 +25,57 @@ const discoveredServers = new Map();
 function startBrowsing(callback) {
     if (!Bonjour) return;
 
-    stopBrowsing(); // Clean up previous session
+    try {
+        stopBrowsing(); // Clean up previous session
 
-    bonjourInstance = new Bonjour();
-    browser = bonjourInstance.find({ type: 'imagine' }, (service) => {
-        const addresses = (service.addresses || []).filter(
-            (a) => a && !a.includes(':') // IPv4 only
-        );
-        if (addresses.length === 0) return;
+        bonjourInstance = new Bonjour();
+        browser = bonjourInstance.find({ type: 'imagine' }, (service) => {
+            try {
+                const addresses = (service.addresses || []).filter(
+                    (a) => a && !a.includes(':') // IPv4 only
+                );
+                if (addresses.length === 0) return;
 
-        const server = {
-            name: service.name,
-            host: service.host,
-            port: service.port,
-            addresses,
-            version: service.txt?.version || '',
-            serverName: service.txt?.name || service.name,
-        };
+                const server = {
+                    name: service.name,
+                    host: service.host,
+                    port: service.port,
+                    addresses,
+                    version: service.txt?.version || '',
+                    serverName: service.txt?.name || service.name,
+                };
 
-        discoveredServers.set(service.name, server);
-        if (callback) callback('found', server);
-    });
-
-    // Service removal
-    if (browser) {
-        browser.on('down', (service) => {
-            discoveredServers.delete(service.name);
-            if (callback) callback('lost', { name: service.name });
+                discoveredServers.set(service.name, server);
+                if (callback) callback('found', server);
+            } catch (err) {
+                console.warn('mDNS service callback error:', err.message);
+            }
         });
+
+        // Service removal
+        if (browser) {
+            browser.on('down', (service) => {
+                try {
+                    discoveredServers.delete(service.name);
+                    if (callback) callback('lost', { name: service.name });
+                } catch { /* ignore */ }
+            });
+
+            // Handle mDNS socket errors (e.g. Docker Desktop port conflict)
+            browser.on('error', (err) => {
+                console.warn('mDNS browser error (ignored):', err.message);
+            });
+        }
+
+        // Handle bonjour instance socket errors
+        if (bonjourInstance && bonjourInstance._server) {
+            bonjourInstance._server.on('error', (err) => {
+                console.warn('mDNS socket error (ignored):', err.message);
+            });
+        }
+    } catch (err) {
+        console.warn('mDNS startBrowsing failed (ignored):', err.message);
+        stopBrowsing();
     }
 }
 

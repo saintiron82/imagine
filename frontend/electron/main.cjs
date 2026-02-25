@@ -783,30 +783,52 @@ ipcMain.handle('relink-apply', async (_, { packagePath, targetFolder, deleteMiss
     });
 });
 
-// ── mDNS Server Discovery ──────────────────────────────────────────────
-const mdnsBrowser = require('./mdns-browser.cjs');
+// ── mDNS Server Discovery (lazy-loaded, failure-safe) ─────────────────
+let _mdnsBrowser = null;
+function getMdnsBrowser() {
+    if (_mdnsBrowser === null) {
+        try {
+            _mdnsBrowser = require('./mdns-browser.cjs');
+        } catch {
+            _mdnsBrowser = false; // mark as unavailable
+        }
+    }
+    return _mdnsBrowser || null;
+}
 
 ipcMain.handle('mdns-start-browse', async (event) => {
-    if (!mdnsBrowser.isAvailable()) return { success: false, error: 'bonjour-service not available' };
+    try {
+        const mdns = getMdnsBrowser();
+        if (!mdns || !mdns.isAvailable()) return { success: false, error: 'bonjour-service not available' };
 
-    const win = BrowserWindow.fromWebContents(event.sender);
-    mdnsBrowser.startBrowsing((eventType, data) => {
-        try {
-            if (win && !win.isDestroyed()) {
-                win.webContents.send('mdns-server-event', { type: eventType, ...data });
-            }
-        } catch { /* window closed */ }
-    });
-    return { success: true };
+        const win = BrowserWindow.fromWebContents(event.sender);
+        mdns.startBrowsing((eventType, data) => {
+            try {
+                if (win && !win.isDestroyed()) {
+                    win.webContents.send('mdns-server-event', { type: eventType, ...data });
+                }
+            } catch { /* window closed */ }
+        });
+        return { success: true };
+    } catch (err) {
+        console.warn('mDNS browse failed:', err.message);
+        return { success: false, error: err.message };
+    }
 });
 
 ipcMain.handle('mdns-stop-browse', async () => {
-    mdnsBrowser.stopBrowsing();
+    try {
+        const mdns = getMdnsBrowser();
+        if (mdns) mdns.stopBrowsing();
+    } catch { /* ignore */ }
     return { success: true };
 });
 
 ipcMain.handle('mdns-get-servers', async () => {
-    return mdnsBrowser.getDiscoveredServers();
+    try {
+        const mdns = getMdnsBrowser();
+        return mdns ? mdns.getDiscoveredServers() : [];
+    } catch { return []; }
 });
 
 // IPC Handler: Sync folder — scan and compare disk vs DB

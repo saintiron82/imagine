@@ -1,7 +1,7 @@
 {
   "name": "imagine",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -68,14 +68,10 @@
       "category": "public.app-category.developer-tools"
     },
     "win": {
-      "target": "nsis",
+      "target": "zip",
       "icon": "public/icon-256.png",
-      "signAndEditExecutable": false
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "differentialPackage": true
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
     },
     "linux": {
       "target": "AppImage",
