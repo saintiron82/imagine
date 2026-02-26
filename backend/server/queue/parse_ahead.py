@@ -75,15 +75,17 @@ class ParseAheadPool(BaseAheadPool):
         """Auto mode: server processes full pipeline P→V→VV→MV.
 
         Loads and unloads models per-phase to minimize GPU memory.
+        Picks up ALL pending jobs, including already-parsed ones (Phase P skip).
         Returns number of files processed.
         """
         batch_size = self._get_config_value("server.auto_processing.batch_size", 5)
 
         cursor = self.db.conn.cursor()
+        # Pick up ALL pending jobs — already-parsed ones will skip Phase P
         cursor.execute(
-            """SELECT id, file_id, file_path FROM job_queue
+            """SELECT id, file_id, file_path, parse_status, parsed_metadata
+               FROM job_queue
                WHERE status = 'pending'
-                 AND (parse_status IS NULL OR parse_status = 'pending')
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (batch_size,),
@@ -96,10 +98,11 @@ class ParseAheadPool(BaseAheadPool):
 
         # Mark jobs as processing
         now = _utcnow_sql()
-        for job_id, _, _ in jobs:
+        for row in jobs:
+            job_id = row[0]
             cursor.execute(
                 """UPDATE job_queue
-                   SET status = 'processing', started_at = ?, parse_status = 'parsing'
+                   SET status = 'processing', started_at = ?
                    WHERE id = ? AND status = 'pending'""",
                 (now, job_id),
             )
@@ -107,13 +110,27 @@ class ParseAheadPool(BaseAheadPool):
 
         contexts = []  # [(job_id, file_id, file_path, thumb_path, mc_raw)]
 
-        # ── Phase P: Parse ──
-        for job_id, file_id, file_path in jobs:
+        # ── Phase P: Parse (skip already-parsed jobs) ──
+        for job_id, file_id, file_path, parse_status, parsed_metadata in jobs:
             if not self._running or self._processing_mode != "auto":
                 break
 
+            # Already parsed — reuse existing metadata, skip re-parse
+            if parse_status == "parsed":
+                pm = json.loads(parsed_metadata) if parsed_metadata else {}
+                contexts.append(
+                    (job_id, file_id, file_path, pm.get("thumb_path"), pm.get("mc_raw"))
+                )
+                logger.debug(f"Auto: job {job_id} already parsed, skipping Phase P")
+                continue
+
             success = False
             try:
+                cursor.execute(
+                    "UPDATE job_queue SET parse_status = 'parsing' WHERE id = ?",
+                    (job_id,),
+                )
+                self.db.conn.commit()
                 success = self._parse_single_job(job_id, file_id, file_path)
             except Exception as e:
                 logger.error(f"Auto Parse job {job_id}: {e}")
