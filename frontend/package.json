@@ -19,7 +19,7 @@
     "bonjour-service": "^1.3.0",
     "electron-updater": "^6.8.3",
     "js-yaml": "^4.1.0",
-    "lucide-react": "^0.563.0",
+    "lucide-react": "^0.575.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
@@ -75,12 +75,17 @@
     },
     "asar": true,
     "asarUnpack": "**/*.node",
-    "electronLanguages": ["en-US", "ko"],
+    "electronLanguages": [
+      "en-US",
+      "ko"
+    ],
     "extraResources": [
       {
         "from": "../dist/backend_cli",
         "to": "backend",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "linux": {
