@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user, require_admin
-from backend.server.queue.manager import _utcnow_sql
+from backend.server.queue.manager import _utcnow_sql, JobQueueManager
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +333,11 @@ def worker_disconnect(
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db),
 ):
-    """Worker graceful disconnect."""
+    """Worker graceful disconnect. Reclaims assigned jobs back to pending."""
+    # Reclaim jobs assigned to this worker (phase_completed preserved)
+    queue = JobQueueManager(db)
+    reclaimed = queue.reclaim_worker_jobs(req.session_id)
+
     now = _utcnow_sql()
     cursor = db.conn.cursor()
     cursor.execute(
@@ -342,12 +346,12 @@ def worker_disconnect(
         (now, req.session_id, user["id"])
     )
     db.conn.commit()
-    logger.info(f"Worker disconnected: session={req.session_id}")
+    logger.info(f"Worker disconnected: session={req.session_id}, reclaimed {reclaimed} jobs")
 
     # Recalculate pools after worker leaves (may deactivate EmbedAhead if last mc_only)
     _recalculate_server_pools(request.app, db)
 
-    return {"ok": True}
+    return {"ok": True, "reclaimed": reclaimed}
 
 
 # ── User self-service endpoints ──────────────────────────────
@@ -568,10 +572,18 @@ def admin_stop_worker(
 @router.post("/admin/workers/{session_id}/block")
 def admin_block_worker(
     session_id: int,
+    request: Request,
     admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db),
 ):
-    """Block a worker — it will be forced to disconnect (admin only)."""
+    """Block a worker — it will be forced to disconnect (admin only).
+
+    Immediately reclaims all jobs assigned to this worker back to pending.
+    """
+    # Reclaim jobs before blocking (phase_completed preserved)
+    queue = JobQueueManager(db)
+    reclaimed = queue.reclaim_worker_jobs(session_id)
+
     now = _utcnow_sql()
     cursor = db.conn.cursor()
     cursor.execute(
@@ -583,8 +595,12 @@ def admin_block_worker(
     if cursor.rowcount == 0:
         raise HTTPException(status_code=404, detail="Session not found")
     db.conn.commit()
-    logger.info(f"Admin blocked worker session {session_id}")
-    return {"ok": True}
+    logger.info(f"Admin blocked worker session {session_id}, reclaimed {reclaimed} jobs")
+
+    # Recalculate pools after blocking
+    _recalculate_server_pools(request.app, db)
+
+    return {"ok": True, "reclaimed": reclaimed}
 
 
 @router.patch("/admin/workers/{session_id}/config")

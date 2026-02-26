@@ -347,7 +347,8 @@ class JobQueueManager:
             """UPDATE job_queue
                SET status = ?, error_message = ?,
                    retry_count = retry_count + 1,
-                   assigned_to = NULL, assigned_at = NULL
+                   assigned_to = NULL, assigned_at = NULL,
+                   worker_session_id = NULL
                WHERE id = ?""",
             (new_status, error_message, job_id)
         )
@@ -357,6 +358,30 @@ class JobQueueManager:
         else:
             logger.warning(f"Job {job_id} permanently failed: {error_message}")
         return True
+
+    def reclaim_worker_jobs(self, worker_session_id: int) -> int:
+        """Reclaim all jobs assigned to a worker session back to pending.
+
+        Called when a worker disconnects, is blocked, or times out.
+        Preserves phase_completed so Smart Skip avoids re-processing
+        already-completed phases.
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """UPDATE job_queue
+               SET status = 'pending',
+                   assigned_to = NULL,
+                   assigned_at = NULL,
+                   worker_session_id = NULL
+               WHERE worker_session_id = ?
+                 AND status IN ('assigned', 'processing')""",
+            (worker_session_id,)
+        )
+        self.db.conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.info(f"Reclaimed {count} jobs from worker session {worker_session_id}")
+        return count
 
     def get_stale_jobs(self, timeout_minutes: int = 30) -> List[int]:
         """Find jobs that have been assigned but not progressed within timeout."""
@@ -378,14 +403,19 @@ class JobQueueManager:
 
         cursor = self.db.conn.cursor()
         placeholders = ",".join("?" * len(stale_ids))
+        # Preserve phase_completed (avoid re-processing done phases),
+        # clear worker_session_id to remove stale references.
         cursor.execute(
             f"""UPDATE job_queue
-                SET status = 'pending', assigned_to = NULL, assigned_at = NULL
+                SET status = 'pending',
+                    assigned_to = NULL,
+                    assigned_at = NULL,
+                    worker_session_id = NULL
                 WHERE id IN ({placeholders})""",
             stale_ids
         )
         self.db.conn.commit()
-        logger.info(f"Reassigned {cursor.rowcount} stale jobs")
+        logger.info(f"Reassigned {cursor.rowcount} stale jobs (phase_completed preserved)")
         return cursor.rowcount
 
     def get_stats(self) -> Dict[str, Any]:

@@ -10,6 +10,7 @@ Or via CLI:
 
 import logging
 import sys
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -103,6 +104,13 @@ async def startup():
     except Exception as e:
         logger.warning(f"Embed-ahead pool failed to start: {e}")
 
+    # Heartbeat watchdog: periodically detect dead workers and reclaim their jobs
+    try:
+        app.state.heartbeat_watchdog = _start_heartbeat_watchdog()
+        logger.info("Heartbeat watchdog started (60s interval, 3min timeout)")
+    except Exception as e:
+        logger.warning(f"Heartbeat watchdog failed to start: {e}")
+
     # mDNS service registration (optional — requires zeroconf)
     try:
         from backend.server.mdns import ImagineServiceAnnouncer
@@ -125,6 +133,10 @@ async def shutdown():
     if hasattr(app.state, "embed_ahead") and app.state.embed_ahead:
         app.state.embed_ahead.stop()
         logger.info("Embed-ahead pool stopped")
+    if hasattr(app.state, "heartbeat_watchdog") and app.state.heartbeat_watchdog:
+        if hasattr(app.state.heartbeat_watchdog, "_stop_event"):
+            app.state.heartbeat_watchdog._stop_event.set()
+        logger.info("Heartbeat watchdog stopped")
     if hasattr(app.state, "mdns") and app.state.mdns:
         app.state.mdns.stop()
     close_db()
@@ -231,6 +243,71 @@ def _cleanup_stale_jobs():
         db.conn.commit()
     except Exception as e:
         logger.warning(f"Startup job cleanup failed: {e}")
+
+
+def _start_heartbeat_watchdog():
+    """Background thread: detect dead workers via heartbeat timeout and reclaim jobs.
+
+    Checks every 60s for online workers whose last_heartbeat is older than 3 minutes.
+    (Heartbeat interval is 30s, so 3 minutes = 6 missed heartbeats → likely dead.)
+    """
+    INTERVAL = 60   # check interval (seconds)
+    TIMEOUT = 3     # heartbeat timeout (minutes)
+
+    _stop_event = threading.Event()
+
+    def _check():
+        while not _stop_event.is_set():
+            _stop_event.wait(INTERVAL)
+            if _stop_event.is_set():
+                break
+            try:
+                from backend.server.deps import get_db
+                from backend.server.queue.manager import JobQueueManager, _utcnow_sql
+                from backend.server.routers.workers import _recalculate_server_pools
+
+                db = get_db()
+                cursor = db.conn.cursor()
+                now = _utcnow_sql()
+
+                cursor.execute(
+                    """SELECT id, worker_name FROM worker_sessions
+                       WHERE status = 'online'
+                         AND last_heartbeat IS NOT NULL
+                         AND datetime(last_heartbeat, '+' || ? || ' minutes') < datetime('now')""",
+                    (TIMEOUT,)
+                )
+                stale_sessions = cursor.fetchall()
+
+                if not stale_sessions:
+                    continue
+
+                queue = JobQueueManager(db)
+                total_reclaimed = 0
+                for session_id, worker_name in stale_sessions:
+                    reclaimed = queue.reclaim_worker_jobs(session_id)
+                    total_reclaimed += reclaimed
+                    cursor.execute(
+                        "UPDATE worker_sessions SET status = 'offline', disconnected_at = ? WHERE id = ?",
+                        (now, session_id)
+                    )
+                    logger.warning(
+                        f"Heartbeat timeout: worker '{worker_name}' (session={session_id}) "
+                        f"marked offline, reclaimed {reclaimed} jobs"
+                    )
+
+                db.conn.commit()
+
+                if total_reclaimed > 0:
+                    _recalculate_server_pools(app, db)
+
+            except Exception as e:
+                logger.error(f"Heartbeat watchdog error: {e}")
+
+    t = threading.Thread(target=_check, daemon=True, name="heartbeat-watchdog")
+    t.start()
+    t._stop_event = _stop_event  # attach for clean shutdown
+    return t
 
 
 # ── SPA Static Serving (React frontend) ─────────────────────
