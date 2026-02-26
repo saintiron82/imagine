@@ -10,8 +10,13 @@ a buffer of pre-parsed jobs proportional to worker demand.
 mc_only mode: Also runs Phase VV (SigLIP2 + DINOv2) on parsed jobs since
 VV/Structure only need the image (independent of MC). Both encoders stay
 loaded for the session.
+
+auto mode: When no workers are connected and auto_processing is enabled,
+the server processes all phases (P→V→VV→MV) itself. Models are loaded
+per-phase and unloaded between phases to minimize memory usage.
 """
 
+import gc
 import json
 import logging
 import shutil
@@ -64,6 +69,271 @@ class ParseAheadPool(BaseAheadPool):
                 logger.warning(f"ParseAheadPool: DINOv2 Structure encoder unload error: {e}")
             self._structure_encoder = None
 
+    # ── Auto mode: full pipeline P→V→VV→MV ────────────────────
+
+    def _process_auto_batch(self) -> int:
+        """Auto mode: server processes full pipeline P→V→VV→MV.
+
+        Loads and unloads models per-phase to minimize GPU memory.
+        Returns number of files processed.
+        """
+        batch_size = self._get_config_value("server.auto_processing.batch_size", 5)
+
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """SELECT id, file_id, file_path FROM job_queue
+               WHERE status = 'pending'
+                 AND (parse_status IS NULL OR parse_status = 'pending')
+               ORDER BY priority DESC, created_at ASC
+               LIMIT ?""",
+            (batch_size,),
+        )
+        jobs = cursor.fetchall()
+        if not jobs:
+            return 0
+
+        logger.info(f"Auto processing: starting batch of {len(jobs)} files")
+
+        # Mark jobs as processing
+        now = _utcnow_sql()
+        for job_id, _, _ in jobs:
+            cursor.execute(
+                """UPDATE job_queue
+                   SET status = 'processing', started_at = ?, parse_status = 'parsing'
+                   WHERE id = ? AND status = 'pending'""",
+                (now, job_id),
+            )
+        self.db.conn.commit()
+
+        contexts = []  # [(job_id, file_id, file_path, thumb_path, mc_raw)]
+
+        # ── Phase P: Parse ──
+        for job_id, file_id, file_path in jobs:
+            if not self._running or self._processing_mode != "auto":
+                break
+
+            success = False
+            try:
+                success = self._parse_single_job(job_id, file_id, file_path)
+            except Exception as e:
+                logger.error(f"Auto Parse job {job_id}: {e}")
+
+            if success:
+                cursor.execute(
+                    "SELECT parsed_metadata FROM job_queue WHERE id = ?", (job_id,)
+                )
+                row = cursor.fetchone()
+                pm = json.loads(row[0]) if row and row[0] else {}
+                contexts.append(
+                    (job_id, file_id, file_path, pm.get("thumb_path"), pm.get("mc_raw"))
+                )
+                cursor.execute(
+                    "UPDATE job_queue SET parse_status = 'parsed', parsed_at = ? WHERE id = ?",
+                    (_utcnow_sql(), job_id),
+                )
+            else:
+                cursor.execute(
+                    """UPDATE job_queue SET status = 'failed',
+                       parse_status = 'failed', error_message = 'Auto parse failed'
+                       WHERE id = ?""",
+                    (job_id,),
+                )
+        self.db.conn.commit()
+
+        if not contexts or not self._running or self._processing_mode != "auto":
+            return len(contexts)
+
+        # ── Phase V: Vision/VLM (MC generation) ──
+        logger.info(f"Auto Phase V: processing {len(contexts)} files with VLM")
+        self._auto_run_vision_batch(contexts)
+        self._auto_unload_vlm()
+
+        if not self._running or self._processing_mode != "auto":
+            return len(contexts)
+
+        # ── Phase VV: SigLIP2 visual embedding ──
+        logger.info(f"Auto Phase VV: processing {len(contexts)} files with SigLIP2")
+        for ctx in contexts:
+            job_id, file_id, file_path, thumb_path, _ = ctx
+            if not self._running or self._processing_mode != "auto":
+                break
+            if thumb_path:
+                try:
+                    self._run_vv_embedding(
+                        file_id, Path(file_path),
+                        Path(thumb_path) if thumb_path else None,
+                    )
+                except Exception as e:
+                    logger.warning(f"Auto VV failed for job {job_id}: {e}")
+        # VV encoder stays loaded (lightweight, reusable for next batch)
+
+        if not self._running or self._processing_mode != "auto":
+            return len(contexts)
+
+        # ── Phase MV: Qwen3-Embedding text embedding ──
+        logger.info(f"Auto Phase MV: processing {len(contexts)} files with text embedder")
+        self._auto_run_mv_batch(contexts)
+        self._auto_unload_mv()
+
+        # ── Mark all completed ──
+        now = _utcnow_sql()
+        for ctx in contexts:
+            job_id = ctx[0]
+            cursor.execute(
+                """UPDATE job_queue SET status = 'completed', completed_at = ?,
+                   phase_completed = '{"parse":true,"vision":true,"embed":true}'
+                   WHERE id = ? AND status = 'processing'""",
+                (now, job_id),
+            )
+        self.db.conn.commit()
+
+        logger.info(f"Auto processing: {len(contexts)} files completed (P→V→VV→MV)")
+        return len(contexts)
+
+    def _auto_run_vision_batch(self, contexts: list):
+        """Phase V: Generate MC (caption/tags) with VLM. Pattern from worker_daemon."""
+        from PIL import Image
+
+        try:
+            from backend.vision.vision_factory import get_vision_analyzer
+            analyzer = get_vision_analyzer()
+        except Exception as e:
+            logger.error(f"Auto Vision: failed to load VLM: {e}")
+            return
+
+        for ctx in contexts:
+            job_id, file_id, file_path, thumb_path, mc_raw = ctx
+            if not self._running or self._processing_mode != "auto":
+                break
+            if not thumb_path or not Path(thumb_path).exists():
+                continue
+
+            try:
+                raw_img = Image.open(thumb_path)
+                if raw_img.mode == "RGBA":
+                    img = Image.new("RGB", raw_img.size, (255, 255, 255))
+                    img.paste(raw_img, mask=raw_img.split()[3])
+                    raw_img.close()
+                elif raw_img.mode != "RGB":
+                    img = raw_img.convert("RGB")
+                else:
+                    img = raw_img
+
+                vision_result = analyzer.analyze(img, mc_raw or {})
+                img.close()
+
+                if vision_result and isinstance(vision_result, dict):
+                    fields = {}
+                    if "caption" in vision_result:
+                        fields["mc_caption"] = vision_result["caption"]
+                    if "tags" in vision_result:
+                        fields["ai_tags"] = vision_result["tags"]
+                    for key in [
+                        "image_type", "art_style", "scene_type", "ocr_text",
+                        "dominant_color", "character_type", "item_type", "ui_type",
+                    ]:
+                        if vision_result.get(key) is not None:
+                            fields[key] = vision_result[key]
+
+                    if fields:
+                        self.db.update_file_fields(file_id, fields)
+                        cursor = self.db.conn.cursor()
+                        cursor.execute(
+                            """UPDATE job_queue SET phase_completed =
+                               json_set(COALESCE(phase_completed, '{}'), '$.vision', 1)
+                               WHERE id = ?""",
+                            (job_id,),
+                        )
+                        self.db.conn.commit()
+                        logger.debug(f"Auto Vision: job {job_id} MC generated")
+
+            except Exception as e:
+                logger.warning(f"Auto Vision failed for job {job_id}: {e}")
+
+    def _auto_run_mv_batch(self, contexts: list):
+        """Phase MV: Generate meaning vectors from MC text with Qwen3-Embedding."""
+        try:
+            from backend.vector.text_embedding import get_text_embedding_provider
+            provider = get_text_embedding_provider()
+        except Exception as e:
+            logger.error(f"Auto MV: failed to load text embedder: {e}")
+            return
+
+        for ctx in contexts:
+            job_id, file_id, _, _, _ = ctx
+            if not self._running or self._processing_mode != "auto":
+                break
+
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "SELECT mc_caption, ai_tags FROM files WHERE id = ?", (file_id,)
+            )
+            row = cursor.fetchone()
+            if not row or not (row[0] or row[1]):
+                continue
+
+            mc_caption = row[0] or ""
+            ai_tags = row[1] or ""
+            if isinstance(ai_tags, list):
+                ai_tags = ", ".join(str(t) for t in ai_tags)
+
+            mv_text = f"{mc_caption} {ai_tags}".strip()
+            if not mv_text:
+                continue
+
+            try:
+                mv_vec = provider.encode(mv_text)
+                self.db.upsert_vectors(file_id, mv_vec=mv_vec)
+                logger.debug(f"Auto MV: job {job_id} embedded OK")
+            except Exception as e:
+                logger.warning(f"Auto MV failed for job {job_id}: {e}")
+
+    def _auto_unload_vlm(self):
+        """Unload VLM after Phase V to free GPU memory."""
+        try:
+            from backend.vision.vision_factory import VisionAnalyzerFactory
+            VisionAnalyzerFactory.reset()
+            self._gc_cleanup()
+            logger.info("Auto: VLM unloaded")
+        except Exception as e:
+            logger.warning(f"Auto: VLM unload failed: {e}")
+
+    def _auto_unload_mv(self):
+        """Unload MV text embedder after Phase MV to free GPU memory."""
+        try:
+            from backend.vector.text_embedding import reset_provider
+            reset_provider()
+            self._gc_cleanup()
+            logger.info("Auto: MV text embedder unloaded")
+        except Exception as e:
+            logger.warning(f"Auto: MV unload failed: {e}")
+
+    @staticmethod
+    def _gc_cleanup():
+        """Force garbage collection and GPU cache cleanup."""
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if hasattr(torch, "mps") and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        except Exception:
+            pass
+
+    def _interruptible_sleep(self, seconds: float):
+        """Sleep that wakes up immediately if mode changes from auto."""
+        interval = 1.0
+        elapsed = 0.0
+        while elapsed < seconds and self._running:
+            if self._processing_mode != "auto":
+                logger.info("Mode changed during rest, resuming immediately")
+                return
+            time.sleep(min(interval, seconds - elapsed))
+            elapsed += interval
+
+    # ── Buffer management ────────────────────────────────────────
+
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
 
@@ -99,6 +369,22 @@ class ParseAheadPool(BaseAheadPool):
         try:
             while self._running:
                 try:
+                    # Auto mode: server processes all phases (P→V→VV→MV) when no workers
+                    if self._processing_mode == "auto":
+                        processed = self._process_auto_batch()
+                        if processed > 0:
+                            rest_s = self._get_config_value(
+                                "server.auto_processing.rest_after_batch_s", 30
+                            )
+                            logger.info(
+                                f"Auto batch done ({processed} files), resting {rest_s}s"
+                            )
+                            self._interruptible_sleep(rest_s)
+                        else:
+                            self._process_backfill_batch()
+                            time.sleep(poll_interval_s)
+                        continue
+
                     # Process backfill jobs during idle (no demand or buffer full)
                     target = self._calculate_buffer_target()
                     if target <= 0:

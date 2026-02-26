@@ -110,12 +110,33 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
 
     # ParseAheadPool 모드 업데이트
     if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
-        if has_mc_only:
+        if not modes:
+            # No workers online — check auto_processing config
+            from backend.utils.config import get_config
+            cfg = get_config()
+            auto_enabled = cfg.get("server.auto_processing.enabled", True)
+            if auto_enabled:
+                old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
+                app.state.parse_ahead._processing_mode = "auto"
+                if old_mode != "auto":
+                    logger.info("No workers online, auto-processing enabled")
+            else:
+                app.state.parse_ahead._processing_mode = global_mode
+        elif has_mc_only:
+            old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
             app.state.parse_ahead._processing_mode = "mc_only"
+            if old_mode == "auto":
+                logger.info("Workers connected, switching from auto to mc_only mode")
         elif has_embed_only:
+            old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
             app.state.parse_ahead._processing_mode = "embed_only"
+            if old_mode == "auto":
+                logger.info("Workers connected, switching from auto to embed_only mode")
         else:
+            old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
             app.state.parse_ahead._processing_mode = global_mode
+            if old_mode == "auto":
+                logger.info(f"Workers connected, switching from auto to {global_mode} mode")
 
         # mc_only/embed_only 워커가 있으면 ParseAhead에 demand seed
         if has_mc_only or has_embed_only:

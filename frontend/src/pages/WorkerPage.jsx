@@ -299,6 +299,8 @@ const DAY_ISO = [1, 2, 3, 4, 5, 6, 7]; // ISO weekday
 
 function WorkerScheduleSettings({ t }) {
   const [processingMode, setProcessingMode] = useState('full');
+  const [autoProcessing, setAutoProcessing] = useState(true);
+  const [restAfterBatch, setRestAfterBatch] = useState(30);
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [activeDays, setActiveDays] = useState([1, 2, 3, 4, 5, 6, 7]);
@@ -313,8 +315,14 @@ function WorkerScheduleSettings({ t }) {
         const result = await window.electron?.pipeline?.getConfig();
         if (result?.success) {
           const w = result.config?.worker || {};
+          const s = result.config?.server || {};
           if (w.processing_mode) setProcessingMode(w.processing_mode);
           if (w.idle_unload_minutes != null) setIdleTimeout(w.idle_unload_minutes);
+          // Auto processing settings (server config)
+          if (s.auto_processing) {
+            if (s.auto_processing.enabled != null) setAutoProcessing(s.auto_processing.enabled);
+            if (s.auto_processing.rest_after_batch_s != null) setRestAfterBatch(s.auto_processing.rest_after_batch_s);
+          }
           if (w.schedule) {
             const sched = w.schedule;
             if (sched.active_hours) {
@@ -415,6 +423,52 @@ function WorkerScheduleSettings({ t }) {
               : t('worker.mode_embed_only_desc')}
           </div>
         </div>
+
+        {/* Auto Processing */}
+        <div>
+          <label className="text-xs text-gray-400 mb-2 block">{t('worker.auto_title')}</label>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const newVal = !autoProcessing;
+                setAutoProcessing(newVal);
+                saveSetting('server.auto_processing.enabled', newVal);
+              }}
+              className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
+                autoProcessing
+                  ? 'bg-green-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {autoProcessing ? t('worker.auto_on') : t('worker.auto_off')}
+            </button>
+          </div>
+          <div className="text-[10px] text-gray-500 mt-1">
+            {t('worker.auto_desc')}
+          </div>
+        </div>
+
+        {/* Rest After Batch */}
+        {autoProcessing && (
+          <div>
+            <label className="text-xs text-gray-400 mb-2 block">{t('worker.rest_title')}</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" min="0" max="300" value={restAfterBatch}
+                onChange={e => {
+                  const v = parseInt(e.target.value) || 0;
+                  setRestAfterBatch(v);
+                  saveSetting('server.auto_processing.rest_after_batch_s', v);
+                }}
+                className="w-20 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
+              />
+              <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
+            </div>
+            <div className="text-[10px] text-gray-500 mt-1">
+              {t('worker.rest_desc')}
+            </div>
+          </div>
+        )}
 
         {/* Active Hours */}
         <div>
