@@ -398,9 +398,21 @@ function WorkerScheduleSettings({ t }) {
             >
               {t('worker.mode_mc_only')}
             </button>
+            <button
+              onClick={() => { setProcessingMode('embed_only'); saveSetting('worker.processing_mode', 'embed_only'); }}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                processingMode === 'embed_only'
+                  ? 'bg-violet-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {t('worker.mode_embed_only')}
+            </button>
           </div>
           <div className="text-[10px] text-gray-500 mt-1">
-            {processingMode === 'full' ? t('worker.mode_full_desc') : t('worker.mode_mc_only_desc')}
+            {processingMode === 'full' ? t('worker.mode_full_desc')
+              : processingMode === 'mc_only' ? t('worker.mode_mc_only_desc')
+              : t('worker.mode_embed_only_desc')}
           </div>
         </div>
 
