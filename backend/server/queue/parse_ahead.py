@@ -7,13 +7,15 @@ so that workers receive thumbnails (~200KB) instead of raw files (~500MB).
 The pool runs as a background daemon thread, continuously maintaining
 a buffer of pre-parsed jobs proportional to worker demand.
 
-mc_only mode: Also runs Phase VV (SigLIP2 + DINOv2) on parsed jobs since
-VV/Structure only need the image (independent of MC). Both encoders stay
-loaded for the session.
-
-auto mode: When no workers are connected and auto_processing is enabled,
-the server processes all phases (P→V→VV→MV) itself. Models are loaded
-per-phase and unloaded between phases to minimize memory usage.
+Modes:
+- auto: No workers connected — server processes all phases (P→V→VV→MV).
+  Models loaded per-phase and unloaded between phases.
+- mc_only: Also runs Phase VV (SigLIP2 + DINOv2) on parsed jobs since
+  VV/Structure only need the image (independent of MC). Workers handle
+  V(MC) only; EmbedAheadPool handles MV.
+- distribute: Pre-parse + gap-fill V(MC) for lightweight workers. Full
+  workers handle V+VV+MV, lightweight workers handle VV+MV. Server fills
+  vision gaps so lightweight workers can claim vision-done jobs.
 """
 
 import gc
@@ -39,9 +41,10 @@ class ParseAheadPool(BaseAheadPool):
     Monitors connected workers' total capacity and pre-parses
     pending jobs to have thumbnails + metadata ready before claim.
 
-    In mc_only mode, also runs Phase VV (SigLIP2 visual embedding +
-    DINOv2 structure embedding) since both only need the image pixel
-    data, not MC text.
+    Modes:
+    - auto: Full pipeline P→V→VV→MV (no workers connected).
+    - mc_only: P + VV (SigLIP2 + DINOv2); workers do V(MC) only.
+    - distribute: P + gap-fill V(MC) for lightweight workers.
     """
 
     def __init__(self, db):
@@ -50,6 +53,8 @@ class ParseAheadPool(BaseAheadPool):
         self._processing_mode = get_processing_mode()
         self._vv_encoder = None  # Lazy-loaded SigLIP2, stays resident in mc_only mode
         self._structure_encoder = None  # Lazy-loaded DINOv2, stays resident in mc_only mode
+        self._has_lightweight_workers = False  # Set by _recalculate_server_pools()
+        self._last_retry_reset = 0.0  # Timestamp of last parse_status='failed' reset
         logger.info(f"ParseAheadPool initialized (processing_mode={self._processing_mode})")
 
     def _unload_models(self):
@@ -208,7 +213,11 @@ class ParseAheadPool(BaseAheadPool):
         return len(contexts)
 
     def _auto_run_vision_batch(self, contexts: list):
-        """Phase V: Generate MC (caption/tags) with VLM. Pattern from worker_daemon."""
+        """Phase V: Generate MC (caption/tags) with VLM.
+
+        Used by both auto mode (full pipeline) and distribute mode (gap-fill).
+        Caller is responsible for mode checks between phases.
+        """
         from PIL import Image
 
         try:
@@ -220,7 +229,7 @@ class ParseAheadPool(BaseAheadPool):
 
         for ctx in contexts:
             job_id, file_id, file_path, thumb_path, mc_raw = ctx
-            if not self._running or self._processing_mode != "auto":
+            if not self._running:
                 break
             if not thumb_path or not Path(thumb_path).exists():
                 continue
@@ -278,7 +287,7 @@ class ParseAheadPool(BaseAheadPool):
 
         for ctx in contexts:
             job_id, file_id, _, _, _ = ctx
-            if not self._running or self._processing_mode != "auto":
+            if not self._running:
                 break
 
             cursor = self.db.conn.cursor()
@@ -366,11 +375,170 @@ class ParseAheadPool(BaseAheadPool):
 
         return self.get_total_demand()
 
+    def _run_pre_parse_buffer(self) -> bool:
+        """Run one cycle of pre-parse buffer filling.
+
+        Calculates target based on worker demand, finds unparsed jobs,
+        and pre-parses them (Phase P only, with VV in mc_only mode).
+
+        Returns True if at least one job was parsed.
+        """
+        target = self._calculate_buffer_target()
+        if target <= 0:
+            self._process_backfill_batch()
+            return False
+
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM job_queue "
+            "WHERE parse_status = 'parsed' AND status = 'pending'"
+        )
+        current_parsed = cursor.fetchone()[0]
+        deficit = target - current_parsed
+
+        if deficit <= 0:
+            self._process_backfill_batch()
+            return False
+
+        # Select jobs to pre-parse
+        cursor.execute(
+            """SELECT id, file_id, file_path FROM job_queue
+               WHERE status = 'pending'
+                 AND (parse_status IS NULL OR parse_status = 'pending')
+               ORDER BY priority DESC, created_at ASC
+               LIMIT ?""",
+            (deficit,),
+        )
+        jobs_to_parse = cursor.fetchall()
+
+        if not jobs_to_parse:
+            # No unparsed jobs — check if all are parse-failed (deadlock).
+            # Reset parse_status='failed' back to NULL every 60s for retry.
+            now = time.time()
+            if now - self._last_retry_reset > 60:
+                cursor.execute(
+                    """UPDATE job_queue SET parse_status = NULL
+                       WHERE status = 'pending' AND parse_status = 'failed'"""
+                )
+                if cursor.rowcount > 0:
+                    self.db.conn.commit()
+                    logger.info(
+                        f"ParseAhead: reset {cursor.rowcount} parse-failed "
+                        f"jobs for retry"
+                    )
+                self._last_retry_reset = now
+            self._process_backfill_batch()
+            return False
+
+        parsed_count = 0
+        for row in jobs_to_parse:
+            if not self._running:
+                break
+
+            job_id, file_id, file_path = row
+
+            # Atomically claim the job for parsing (prevent race condition)
+            cursor.execute(
+                """UPDATE job_queue
+                   SET parse_status = 'parsing'
+                   WHERE id = ?
+                     AND (parse_status IS NULL OR parse_status = 'pending')
+                     AND status = 'pending'""",
+                (job_id,),
+            )
+            self.db.conn.commit()
+
+            if cursor.rowcount == 0:
+                # Another thread/process claimed it already
+                continue
+
+            success = False
+            try:
+                success = self._parse_single_job(job_id, file_id, file_path)
+            except Exception as e:
+                logger.error(
+                    f"ParseAhead job {job_id} exception: {e}\n"
+                    f"{traceback.format_exc()}"
+                )
+
+            now = _utcnow_sql()
+            if success:
+                cursor.execute(
+                    "UPDATE job_queue SET parse_status = 'parsed', parsed_at = ? WHERE id = ?",
+                    (now, job_id),
+                )
+                parsed_count += 1
+            else:
+                cursor.execute(
+                    "UPDATE job_queue SET parse_status = 'failed' WHERE id = ?",
+                    (job_id,),
+                )
+            self.db.conn.commit()
+
+        return parsed_count > 0
+
+    def _fill_vision_gaps(self) -> int:
+        """Generate V(MC) for parsed+pending+vision-not-done jobs (gap-fill).
+
+        In distribute mode with lightweight workers, these workers can only
+        handle VV+MV (they lack GPU for VLM). Server generates MC here so
+        lightweight workers can claim the vision-done jobs for VV+MV.
+
+        Full workers that already claimed jobs won't be affected — they
+        handle V+VV+MV themselves.
+
+        Returns number of jobs processed.
+        """
+        batch_size = self._get_config_value("server.auto_processing.batch_size", 5)
+
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """SELECT id, file_id, file_path, parsed_metadata
+               FROM job_queue
+               WHERE status = 'pending'
+                 AND parse_status = 'parsed'
+                 AND (json_extract(phase_completed, '$.vision') IS NULL
+                      OR json_extract(phase_completed, '$.vision') = 0)
+               ORDER BY priority DESC, created_at ASC
+               LIMIT ?""",
+            (batch_size,),
+        )
+        jobs = cursor.fetchall()
+        if not jobs:
+            return 0
+
+        # Build contexts for vision batch
+        contexts = []
+        for job_id, file_id, file_path, parsed_metadata in jobs:
+            pm = json.loads(parsed_metadata) if parsed_metadata else {}
+            contexts.append((
+                job_id, file_id, file_path,
+                pm.get("thumb_path"),
+                pm.get("mc_raw"),
+            ))
+
+        logger.info(
+            f"Gap-fill V: {len(contexts)} parsed jobs → VLM MC generation "
+            f"for lightweight workers"
+        )
+
+        # Run Phase V (MC generation) — reuse auto mode's vision batch
+        self._auto_run_vision_batch(contexts)
+        self._auto_unload_vlm()
+
+        return len(contexts)
+
     def _loop(self):
-        """Main loop: continuously pre-parse pending jobs to fill the buffer."""
+        """Main loop: continuously pre-parse pending jobs to fill the buffer.
+
+        Modes:
+        - auto: Server processes all phases (P→V→VV→MV) when no workers connected.
+        - mc_only: Pre-parse + VV embedding; workers handle V(MC) only.
+        - distribute: Pre-parse + gap-fill V(MC) for lightweight workers;
+          full workers handle V+VV+MV, lightweight workers handle VV+MV.
+        """
         logger.info("ParseAheadPool loop started")
         poll_interval_s = self._get_config_value("server.parse_ahead.poll_interval_s", 2)
-        last_retry_reset = 0.0  # timestamp of last parse_status='failed' reset
 
         # Auto-queue backfill jobs on startup
         try:
@@ -402,101 +570,22 @@ class ParseAheadPool(BaseAheadPool):
                             time.sleep(poll_interval_s)
                         continue
 
-                    # Process backfill jobs during idle (no demand or buffer full)
-                    target = self._calculate_buffer_target()
-                    if target <= 0:
-                        self._process_backfill_batch()
-                        time.sleep(5)
-                        continue
+                    # Non-auto modes (mc_only, distribute): pre-parse pending jobs
+                    self._run_pre_parse_buffer()
 
-                    # Count currently parsed-and-pending jobs
-                    cursor = self.db.conn.cursor()
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM job_queue "
-                        "WHERE parse_status = 'parsed' AND status = 'pending'"
-                    )
-                    current_parsed = cursor.fetchone()[0]
-                    deficit = target - current_parsed
-
-                    if deficit <= 0:
-                        self._process_backfill_batch()
-                        time.sleep(poll_interval_s)
-                        continue
-
-                    # Select jobs to pre-parse
-                    cursor.execute(
-                        """SELECT id, file_id, file_path FROM job_queue
-                           WHERE status = 'pending'
-                             AND (parse_status IS NULL OR parse_status = 'pending')
-                           ORDER BY priority DESC, created_at ASC
-                           LIMIT ?""",
-                        (deficit,),
-                    )
-                    jobs_to_parse = cursor.fetchall()
-
-                    if not jobs_to_parse:
-                        # No unparsed jobs — check if all are parse-failed (deadlock).
-                        # Reset parse_status='failed' back to NULL every 60s
-                        # so they can be retried.
-                        now = time.time()
-                        if now - last_retry_reset > 60:
-                            cursor.execute(
-                                """UPDATE job_queue SET parse_status = NULL
-                                   WHERE status = 'pending' AND parse_status = 'failed'"""
+                    # Distribute mode: gap-fill V(MC) for lightweight workers
+                    if (self._processing_mode == "distribute"
+                            and self._has_lightweight_workers):
+                        gap_filled = self._fill_vision_gaps()
+                        if gap_filled > 0:
+                            rest_s = self._get_config_value(
+                                "server.auto_processing.rest_after_batch_s", 30
                             )
-                            if cursor.rowcount > 0:
-                                self.db.conn.commit()
-                                logger.info(
-                                    f"ParseAhead: reset {cursor.rowcount} parse-failed "
-                                    f"jobs for retry"
-                                )
-                            last_retry_reset = now
-                        self._process_backfill_batch()
-                        time.sleep(poll_interval_s)
-                        continue
-
-                    for row in jobs_to_parse:
-                        if not self._running:
-                            break
-
-                        job_id, file_id, file_path = row
-
-                        # Atomically claim the job for parsing (prevent race condition)
-                        cursor.execute(
-                            """UPDATE job_queue
-                               SET parse_status = 'parsing'
-                               WHERE id = ?
-                                 AND (parse_status IS NULL OR parse_status = 'pending')
-                                 AND status = 'pending'""",
-                            (job_id,),
-                        )
-                        self.db.conn.commit()
-
-                        if cursor.rowcount == 0:
-                            # Another thread/process claimed it already
+                            logger.info(
+                                f"Gap-fill done ({gap_filled} files), resting {rest_s}s"
+                            )
+                            time.sleep(rest_s)
                             continue
-
-                        success = False
-                        try:
-                            success = self._parse_single_job(job_id, file_id, file_path)
-                        except Exception as e:
-                            logger.error(
-                                f"ParseAhead job {job_id} exception: {e}\n"
-                                f"{traceback.format_exc()}"
-                            )
-
-                        now = _utcnow_sql()
-                        if success:
-                            cursor.execute(
-                                "UPDATE job_queue SET parse_status = 'parsed', parsed_at = ? WHERE id = ?",
-                                (now, job_id),
-                            )
-                        else:
-                            cursor.execute(
-                                "UPDATE job_queue SET parse_status = 'failed' WHERE id = ?",
-                                (job_id,),
-                            )
-                        self.db.conn.commit()
 
                     time.sleep(poll_interval_s)
 
