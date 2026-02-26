@@ -1,8 +1,8 @@
 # Imagine — Project Report
 
-**Version**: v0.6.0
-**Date**: 2026-02-24
-**Status**: Phase 4.7 Complete (Active Development)
+**Version**: v0.6.1
+**Date**: 2026-02-26
+**Status**: Phase 4.9 Complete (Active Development)
 
 ---
 
@@ -133,7 +133,7 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 
 | Metric | Value |
 |--------|-------|
-| Total commits | 313 |
+| Total commits | ~350 |
 | Backend Python | ~75,000 lines |
 | Frontend JSX/JS | ~29,000 lines |
 | Electron (main/preload) | ~2,100 lines |
@@ -221,6 +221,18 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 - Confirmation modal with password input, loading spinner, error display
 - Reset reports count of deleted files/vectors/jobs, refreshes folder stats UI
 
+### Phase 4.8: Auto Processing & Advanced Job Management
+- **Server Auto Processing Mode**: Background (`P→V→VV→MV`) pipeline execution when no workers are active. Toggle available in Admin panel.
+- **Job Reclamation System**: Auto-recovers jobs from disconnected, blocked, or timed-out workers.
+- **Auto batch skipping**: Automatically skips already-parsed records in pending jobs.
+- **DINOv2 Integration**: Integrated `vec_structure` generation directly into the `ParseAheadPool` with auto-queue backfill for missing structure vectors.
+- **Unified HF Models**: Standardized auto-download system for all HuggingFace models upon first use.
+
+### Phase 4.9: Web Presence & Auto Distribution
+- **Landing Site / App**: GitHub Pages landing site with English/Korean i18n support.
+- **Community Features**: Board, Q&A, Guide, and Releases pages integrated with Firebase Authentication and Firestore DB. 
+- **Auto-Update System**: Integrated `electron-updater` working with GitHub Releases for seamless local desktop app updates.
+
 ---
 
 ## 6. Remaining Phases
@@ -257,7 +269,7 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 - [ ] Python embedded runtime bundling
 - [ ] Windows NSIS installer
 - [ ] macOS DMG build (code signing)
-- [ ] electron-updater auto-update
+- [x] electron-updater auto-update
 - [ ] First-run guide (model download wizard)
 - [ ] Portable mode (USB execution)
 
