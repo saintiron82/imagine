@@ -958,11 +958,31 @@ class WorkerDaemon:
         logger.info(f"Phase P: {len(active)} jobs pre-parsed by server (worker skips parsing)")
 
         # ── Phase V: Vision (VLM, 1-by-1 — MLX batch_size=1) ──
-        elapsed_vision = self._run_vision_phase(active, progress_callback)
-        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
+        # Skip vision for jobs where server already generated MC (gap-fill).
+        # vision_data is attached by claim when phase_completed.vision = 1.
+        needs_vision = [c for c in active if not c.job.get("vision_data")]
+        already_vision = [c for c in active if c.job.get("vision_data")]
+
+        if already_vision:
+            for ctx in already_vision:
+                vd = ctx.job["vision_data"]
+                ctx.metadata.update(vd)
+                ctx.vision_fields = vd
+            logger.info(
+                f"Phase V: skipped {len(already_vision)} vision-done jobs "
+                f"(server gap-fill MC)"
+            )
+
+        if needs_vision:
+            elapsed_vision = self._run_vision_phase(needs_vision, progress_callback)
+            fpm_vision = (len(needs_vision) / elapsed_vision * 60) if elapsed_vision > 0 else 0
+        else:
+            elapsed_vision = 0.0
+            fpm_vision = 0.0
 
         # Unload VLM to free GPU memory for embedding phases
-        self._unload_vlm()
+        if needs_vision:
+            self._unload_vlm()
 
         # Check stop signal between phases
         if self._stop_requested:
