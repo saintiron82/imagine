@@ -16,19 +16,20 @@ logger = logging.getLogger(__name__)
 def get_processing_mode() -> str:
     """Get effective processing mode from config.
 
-    Checks server.processing_mode first (set by Admin API at runtime),
-    then falls back to worker.processing_mode (set by WorkerPage UI,
-    stored in user-settings.yaml). Defaults to "full".
-
-    This resolves the config path mismatch where WorkerPage saves to
-    'worker.processing_mode' but the server reads 'server.processing_mode'.
+    Returns "mc_only" or "auto" (default).
+    - mc_only: Server P+VV+MV, workers do V(MC) only.
+    - auto: Server P + gap-fill, workers distribute V/VV/MV by capability.
     """
     try:
         from backend.utils.config import get_config
         cfg = get_config()
-        return cfg.get("server.processing_mode") or cfg.get("worker.processing_mode") or "full"
+        mode = cfg.get("server.processing_mode") or "auto"
+        # Normalize legacy values
+        if mode not in ("mc_only", "auto"):
+            mode = "auto"
+        return mode
     except Exception:
-        return "full"
+        return "auto"
 
 
 def _utcnow_sql() -> str:
@@ -125,13 +126,13 @@ class JobQueueManager:
                         pass
 
         if processing_mode == "embed_only":
-            # embed_only workers: claim jobs where vision (MC) is done but embed (VV/MV) is not.
-            # These arise when a full worker completes Phase V then fails before embed,
-            # or when Phase-splitting is explicitly used in mixed-worker scenarios.
+            # embed_only (lightweight) workers: claim pre-parsed + vision-done jobs.
+            # Server gap-fills V(MC) for these jobs. Worker does VV+MV only.
             cursor.execute(
                 """SELECT id, file_id, file_path, priority, parsed_metadata
                    FROM job_queue
                    WHERE status = 'pending'
+                     AND parse_status = 'parsed'
                      AND json_extract(phase_completed, '$.vision') = 1
                      AND (json_extract(phase_completed, '$.embed') IS NULL
                           OR json_extract(phase_completed, '$.embed') = 0)
@@ -155,19 +156,24 @@ class JobQueueManager:
             rows = list(cursor.fetchall())
 
         else:
-            # full workers: prefer pre-parsed jobs (skip Phase P), fallback to unparsed.
-            # 1) Prefer pre-parsed jobs (server already ran Phase P)
+            # full workers: only claim pre-parsed jobs.
+            # Server (ParseAheadPool) always handles Phase P — workers never parse.
+            # Priority: vision-done jobs first (VV+MV only), then regular (V+VV+MV).
+            # 1) Vision-done jobs (server gap-filled MC — just needs VV+MV)
             cursor.execute(
                 """SELECT id, file_id, file_path, priority, parsed_metadata
                    FROM job_queue
                    WHERE status = 'pending' AND parse_status = 'parsed'
+                     AND json_extract(phase_completed, '$.vision') = 1
+                     AND (json_extract(phase_completed, '$.embed') IS NULL
+                          OR json_extract(phase_completed, '$.embed') = 0)
                    ORDER BY priority DESC, created_at ASC
                    LIMIT ?""",
                 (count,)
             )
             rows = list(cursor.fetchall())
 
-            # 2) Fill remainder with unparsed jobs
+            # 2) Regular pre-parsed jobs (needs V+VV+MV)
             if len(rows) < count:
                 remainder = count - len(rows)
                 claimed_ids = [r[0] for r in rows]
@@ -176,8 +182,9 @@ class JobQueueManager:
                     cursor.execute(
                         f"""SELECT id, file_id, file_path, priority, parsed_metadata
                             FROM job_queue
-                            WHERE status = 'pending'
-                              AND (parse_status IS NULL OR parse_status = 'pending' OR parse_status = 'failed')
+                            WHERE status = 'pending' AND parse_status = 'parsed'
+                              AND (json_extract(phase_completed, '$.vision') IS NULL
+                                   OR json_extract(phase_completed, '$.vision') = 0)
                               AND id NOT IN ({placeholders})
                             ORDER BY priority DESC, created_at ASC
                             LIMIT ?""",
@@ -187,8 +194,9 @@ class JobQueueManager:
                     cursor.execute(
                         """SELECT id, file_id, file_path, priority, parsed_metadata
                            FROM job_queue
-                           WHERE status = 'pending'
-                             AND (parse_status IS NULL OR parse_status = 'pending' OR parse_status = 'failed')
+                           WHERE status = 'pending' AND parse_status = 'parsed'
+                             AND (json_extract(phase_completed, '$.vision') IS NULL
+                                  OR json_extract(phase_completed, '$.vision') = 0)
                            ORDER BY priority DESC, created_at ASC
                            LIMIT ?""",
                         (remainder,)
@@ -212,12 +220,13 @@ class JobQueueManager:
         if not rows:
             return []
 
-        # For embed_only mode: pre-fetch vision fields from files table.
+        # Pre-fetch vision fields from files table for workers that need them.
+        # embed_only workers always need vision_data (VV+MV only, MC from server).
+        # full workers need vision_data for vision-done jobs (server gap-filled MC).
         # mc_caption, ai_tags etc. are stored in files by Phase V but NOT in
-        # parsed_metadata (which only contains Phase P output). Embed workers
-        # need these fields to build the MV (text embedding) input.
+        # parsed_metadata (which only contains Phase P output).
         embed_vision_map = {}
-        if processing_mode == "embed_only":
+        if processing_mode in ("embed_only", "full"):
             file_paths_nfc = [unicodedata.normalize('NFC', r[2]) for r in rows]
             placeholders = ",".join("?" * len(file_paths_nfc))
             cursor.execute(
@@ -267,8 +276,9 @@ class JobQueueManager:
                     except (json.JSONDecodeError, TypeError):
                         job_data["pre_parsed"] = False
 
-                # Attach vision data for embed_only mode (mc_caption needed for MV)
-                if processing_mode == "embed_only":
+                # Attach vision data for workers that need MC from server.
+                # embed_only: always (VV+MV only). full: only for vision-done jobs.
+                if processing_mode in ("embed_only", "full"):
                     nfc_path = unicodedata.normalize('NFC', file_path)
                     vision = embed_vision_map.get(nfc_path)
                     if vision:

@@ -919,7 +919,16 @@ class WorkerDaemon:
         for job in jobs:
             ctx = _JobContext(job=job)
 
-            if job.get("pre_parsed"):
+            if not job.get("pre_parsed"):
+                # Server must always pre-parse jobs. Non-pre-parsed = error.
+                ctx.failed = True
+                ctx.error = f"Job not pre-parsed by server: {job['file_path']} (file_id={job.get('file_id')})"
+                logger.error(f"[RESOLVE] {ctx.error}")
+                _notify(progress_callback, "file_error", {
+                    "file_name": Path(job["file_path"]).name,
+                    "error": ctx.error,
+                })
+            else:
                 # Server already ran Phase P — use claim metadata directly
                 ctx.local_path = self._get_downloaded(job)
                 ctx.metadata = dict(job.get("metadata", {}))
@@ -939,62 +948,14 @@ class WorkerDaemon:
                         "file_name": Path(job["file_path"]).name,
                         "error": ctx.error,
                     })
-            else:
-                ctx.local_path = self._get_downloaded(job)
-                if not ctx.local_path or not Path(ctx.local_path).exists():
-                    ctx.failed = True
-                    ctx.error = f"Cannot access file: {job['file_path']} (file_id={job.get('file_id')})"
-                    logger.error(f"[RESOLVE] {ctx.error}")
-                    _notify(progress_callback, "file_error", {
-                        "file_name": Path(job["file_path"]).name,
-                        "error": ctx.error,
-                    })
 
             contexts.append(ctx)
 
         active = [c for c in contexts if not c.failed]
 
-        # Split into pre-parsed (Phase P skipped) and needs-parse
-        needs_parse = [c for c in active if not c.job.get("pre_parsed")]
-        already_parsed = [c for c in active if c.job.get("pre_parsed")]
-
-        if already_parsed:
-            logger.info(f"Phase P skipped for {len(already_parsed)} pre-parsed jobs")
-
-        # ── Phase P: Parse only unparsed jobs (CPU, 1-by-1) ──
-        t_phase = time.perf_counter()
-        parse_count = len(needs_parse)
-        _notify(progress_callback, "phase_start", {"phase": "parse", "count": parse_count})
-        for i, ctx in enumerate(needs_parse):
-            self._current_phase = "parse"
-            self._current_file = Path(ctx.job["file_path"]).name
-            self.uploader.report_progress(ctx.job["job_id"], "parse")
-
-            result = self._run_parse(Path(ctx.local_path))
-            if result is None:
-                ctx.failed = True
-                ctx.error = f"Parse failed: {ctx.job['file_path']}"
-                logger.warning(f"Parse failed: {self._current_file}")
-            else:
-                ctx.metadata, ctx.thumb_path, ctx.meta_obj = result
-
-            _notify(progress_callback, "file_done", {
-                "phase": "parse", "file_name": self._current_file,
-                "index": i + 1, "count": parse_count, "success": not ctx.failed,
-            })
-        elapsed_parse = time.perf_counter() - t_phase
-        fpm_parse = (parse_count / elapsed_parse * 60) if elapsed_parse > 0 and parse_count > 0 else 0
-        _notify(progress_callback, "phase_complete", {
-            "phase": "parse", "count": parse_count,
-            "elapsed_s": round(elapsed_parse, 2), "files_per_min": round(fpm_parse, 1),
-        })
-
-        active = [c for c in contexts if not c.failed]
-
-        # Check stop signal between phases
-        if self._stop_requested:
-            logger.info("Stop requested after Parse phase — aborting batch")
-            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
+        # Phase P is always handled by the server (ParseAheadPool).
+        # All jobs should be pre-parsed — no local parsing needed.
+        logger.info(f"Phase P: {len(active)} jobs pre-parsed by server (worker skips parsing)")
 
         # ── Phase V: Vision (VLM, 1-by-1 — MLX batch_size=1) ──
         elapsed_vision = self._run_vision_phase(active, progress_callback)
