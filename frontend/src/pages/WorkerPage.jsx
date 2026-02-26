@@ -298,7 +298,6 @@ const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_ISO = [1, 2, 3, 4, 5, 6, 7]; // ISO weekday
 
 function WorkerScheduleSettings({ t }) {
-  const [processingMode, setProcessingMode] = useState('full');
   const [autoProcessing, setAutoProcessing] = useState(true);
   const [restAfterBatch, setRestAfterBatch] = useState(30);
   const [workerRest, setWorkerRest] = useState(0);
@@ -317,7 +316,6 @@ function WorkerScheduleSettings({ t }) {
         if (result?.success) {
           const w = result.config?.worker || {};
           const s = result.config?.server || {};
-          if (w.processing_mode) setProcessingMode(w.processing_mode);
           if (w.rest_after_batch_s != null) setWorkerRest(w.rest_after_batch_s);
           if (w.idle_unload_minutes != null) setIdleTimeout(w.idle_unload_minutes);
           // Auto processing settings (server config)
@@ -384,48 +382,6 @@ function WorkerScheduleSettings({ t }) {
       <p className="text-xs text-gray-500 mb-4">{t('worker.schedule_desc')}</p>
 
       <div className="space-y-5">
-        {/* Processing Mode */}
-        <div>
-          <label className="text-xs text-gray-400 mb-2 block">{t('worker.mode_title')}</label>
-          <div className="flex rounded-lg overflow-hidden border border-gray-600 w-fit">
-            <button
-              onClick={() => { setProcessingMode('full'); saveSetting('worker.processing_mode', 'full'); }}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                processingMode === 'full'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {t('worker.mode_full')}
-            </button>
-            <button
-              onClick={() => { setProcessingMode('mc_only'); saveSetting('worker.processing_mode', 'mc_only'); }}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                processingMode === 'mc_only'
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {t('worker.mode_mc_only')}
-            </button>
-            <button
-              onClick={() => { setProcessingMode('embed_only'); saveSetting('worker.processing_mode', 'embed_only'); }}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                processingMode === 'embed_only'
-                  ? 'bg-violet-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {t('worker.mode_embed_only')}
-            </button>
-          </div>
-          <div className="text-[10px] text-gray-500 mt-1">
-            {processingMode === 'full' ? t('worker.mode_full_desc')
-              : processingMode === 'mc_only' ? t('worker.mode_mc_only_desc')
-              : t('worker.mode_embed_only_desc')}
-          </div>
-        </div>
-
         {/* Worker Rest After Batch */}
         <div>
           <label className="text-xs text-gray-400 mb-2 block">{t('worker.worker_rest_title')}</label>

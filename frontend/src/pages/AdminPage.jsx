@@ -206,7 +206,7 @@ function WorkersPanel() {
   const { t } = useLocale();
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [globalMode, setGlobalMode] = useState('full');
+  const [globalMode, setGlobalMode] = useState('auto');
   const [editingCapacity, setEditingCapacity] = useState(null); // { id, value }
   const [autoProcessing, setAutoProcessing] = useState(true);
   const [restAfterBatch, setRestAfterBatch] = useState(30);
@@ -267,14 +267,7 @@ function WorkersPanel() {
     }
   };
 
-  const handleModeChange = async (sessionId, mode) => {
-    try {
-      await updateWorkerConfig(sessionId, { processing_mode: mode || null });
-      load();
-    } catch (e) {
-      console.error('Failed to update worker mode:', e);
-    }
-  };
+  // Per-worker processing_mode override removed — auto-detected by GPU capability.
 
   const handleCapacitySave = async (sessionId) => {
     if (!editingCapacity) return;
@@ -358,16 +351,6 @@ function WorkersPanel() {
           </div>
           <div className="flex rounded-lg overflow-hidden border border-gray-600">
             <button
-              onClick={() => handleGlobalMode('full')}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                globalMode === 'full'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {t('admin.worker_mode_full')}
-            </button>
-            <button
               onClick={() => handleGlobalMode('mc_only')}
               className={`px-4 py-2 text-xs font-medium transition-colors ${
                 globalMode === 'mc_only'
@@ -378,25 +361,22 @@ function WorkersPanel() {
               {t('admin.worker_mode_mc_only')}
             </button>
             <button
-              onClick={() => handleGlobalMode('embed_only')}
+              onClick={() => handleGlobalMode('auto')}
               className={`px-4 py-2 text-xs font-medium transition-colors ${
-                globalMode === 'embed_only'
-                  ? 'bg-violet-600 text-white'
+                globalMode === 'auto'
+                  ? 'bg-blue-600 text-white'
                   : 'bg-gray-700 text-gray-400 hover:text-white'
               }`}
             >
-              {t('admin.worker_mode_embed_only')}
+              {t('admin.worker_mode_auto')}
             </button>
           </div>
         </div>
         {globalMode === 'mc_only' && (
           <div className="text-xs text-amber-400/70 mt-2">{t('admin.worker_mode_mc_only_desc')}</div>
         )}
-        {globalMode === 'embed_only' && (
-          <div className="text-xs text-violet-400/70 mt-2">{t('admin.worker_mode_embed_only_desc')}</div>
-        )}
-        {globalMode === 'full' && (
-          <div className="text-xs text-blue-400/70 mt-2">{t('admin.worker_mode_full_desc')}</div>
+        {globalMode === 'auto' && (
+          <div className="text-xs text-blue-400/70 mt-2">{t('admin.worker_mode_auto_desc')}</div>
         )}
       </div>
 
@@ -487,16 +467,21 @@ function WorkersPanel() {
                 <td className="px-4 py-3 text-gray-400">{w.username}</td>
                 <td className="px-4 py-3">{stateBadge(w)}</td>
                 <td className="px-4 py-3">
-                  <select
-                    value={w.processing_mode_override || ''}
-                    onChange={(e) => handleModeChange(w.id, e.target.value)}
-                    className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-300 cursor-pointer focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="">{t('admin.worker_mode_global')}</option>
-                    <option value="full">{t('admin.worker_mode_full')}</option>
-                    <option value="mc_only">{t('admin.worker_mode_mc_only')}</option>
-                    <option value="embed_only">{t('admin.worker_mode_embed_only')}</option>
-                  </select>
+                  {w.processing_mode_override === 'mc_only' ? (
+                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-900/50 text-amber-400">
+                      MC Only
+                    </span>
+                  ) : w.processing_mode_override === 'embed_only' ? (
+                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-400"
+                      title={t('admin.worker_capability_tooltip')}>
+                      {t('admin.worker_capability_lightweight')}
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-400"
+                      title={t('admin.worker_capability_tooltip')}>
+                      {t('admin.worker_capability_full')}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {editingCapacity?.id === w.id ? (
