@@ -118,6 +118,14 @@ export async function updateGlobalProcessingMode(mode) {
   return apiClient.patch('/api/v1/admin/workers/global-config', { processing_mode: mode });
 }
 
+export async function getAutoProcessing() {
+  return apiClient.get('/api/v1/admin/workers/auto-processing');
+}
+
+export async function updateAutoProcessing(config) {
+  return apiClient.patch('/api/v1/admin/workers/auto-processing', config);
+}
+
 // ── Worker Self-service ──────────────────────────────────
 
 export async function registerWorker() {

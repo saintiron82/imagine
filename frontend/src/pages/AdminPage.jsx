@@ -13,6 +13,7 @@ import {
   listWorkerTokens, createWorkerToken, revokeWorkerToken,
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
   updateWorkerConfig, updateGlobalProcessingMode,
+  getAutoProcessing, updateAutoProcessing,
 } from '../api/admin';
 import {
   Users, Key, Activity, FolderSearch, Terminal, Server,
@@ -207,6 +208,8 @@ function WorkersPanel() {
   const [loading, setLoading] = useState(true);
   const [globalMode, setGlobalMode] = useState('full');
   const [editingCapacity, setEditingCapacity] = useState(null); // { id, value }
+  const [autoProcessing, setAutoProcessing] = useState(true);
+  const [restAfterBatch, setRestAfterBatch] = useState(30);
 
   const load = useCallback(async () => {
     try {
@@ -225,6 +228,11 @@ function WorkersPanel() {
 
   useEffect(() => {
     load();
+    // Load auto_processing config once
+    getAutoProcessing().then(data => {
+      if (data.enabled != null) setAutoProcessing(data.enabled);
+      if (data.rest_after_batch_s != null) setRestAfterBatch(data.rest_after_batch_s);
+    }).catch(() => {});
     const interval = setInterval(load, 5000);
     return () => clearInterval(interval);
   }, [load]);
@@ -389,6 +397,45 @@ function WorkersPanel() {
         )}
         {globalMode === 'full' && (
           <div className="text-xs text-blue-400/70 mt-2">{t('admin.worker_mode_full_desc')}</div>
+        )}
+      </div>
+
+      {/* Auto Processing (server processes all phases when no workers) */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-gray-300">{t('worker.auto_title')}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{t('worker.auto_desc')}</div>
+          </div>
+          <button
+            onClick={async () => {
+              const newVal = !autoProcessing;
+              setAutoProcessing(newVal);
+              try { await updateAutoProcessing({ enabled: newVal }); } catch (e) { console.error(e); setAutoProcessing(!newVal); }
+            }}
+            className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
+              autoProcessing
+                ? 'bg-green-600 text-white'
+                : 'bg-gray-700 text-gray-400 hover:text-white'
+            }`}
+          >
+            {autoProcessing ? t('worker.auto_on') : t('worker.auto_off')}
+          </button>
+        </div>
+        {autoProcessing && (
+          <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-700/50">
+            <div className="text-xs text-gray-400">{t('worker.rest_title')}</div>
+            <input
+              type="number" min="0" max="300" value={restAfterBatch}
+              onChange={async (e) => {
+                const v = Math.max(0, Math.min(300, parseInt(e.target.value) || 0));
+                setRestAfterBatch(v);
+                try { await updateAutoProcessing({ rest_after_batch_s: v }); } catch (err) { console.error(err); }
+              }}
+              className="w-20 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
+            />
+            <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
+          </div>
         )}
       </div>
 

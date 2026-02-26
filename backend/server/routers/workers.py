@@ -56,6 +56,12 @@ class GlobalModeUpdate(BaseModel):
     processing_mode: str  # "full" | "mc_only"
 
 
+class AutoProcessingUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    rest_after_batch_s: Optional[int] = None
+    batch_size: Optional[int] = None
+
+
 def _get_global_processing_mode() -> str:
     """Read global processing_mode from config (cached singleton).
 
@@ -694,3 +700,45 @@ def admin_update_global_config(
 
     logger.info(f"Admin set global processing mode: {req.processing_mode} ({affected} workers)")
     return {"ok": True, "affected": affected}
+
+
+@router.get("/admin/workers/auto-processing")
+def admin_get_auto_processing(
+    admin: dict = Depends(require_admin),
+):
+    """Get current auto_processing config."""
+    from backend.utils.config import get_config
+    cfg = get_config()
+    return {
+        "enabled": cfg.get("server.auto_processing.enabled", True),
+        "rest_after_batch_s": cfg.get("server.auto_processing.rest_after_batch_s", 30),
+        "batch_size": cfg.get("server.auto_processing.batch_size", 5),
+    }
+
+
+@router.patch("/admin/workers/auto-processing")
+def admin_update_auto_processing(
+    req: AutoProcessingUpdate,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Update server auto_processing settings and recalculate pools."""
+    from backend.utils.config import get_config
+    cfg = get_config()
+
+    if req.enabled is not None:
+        cfg._set_dotted("server.auto_processing.enabled", req.enabled)
+    if req.rest_after_batch_s is not None:
+        cfg._set_dotted("server.auto_processing.rest_after_batch_s", req.rest_after_batch_s)
+    if req.batch_size is not None:
+        cfg._set_dotted("server.auto_processing.batch_size", req.batch_size)
+
+    # Recalculate pools so mode change takes effect immediately
+    try:
+        _recalculate_server_pools(request.app, db)
+    except Exception as e:
+        logger.warning(f"Pool recalculation on auto-processing update failed: {e}")
+
+    logger.info(f"Admin updated auto_processing: enabled={req.enabled}, rest={req.rest_after_batch_s}s, batch={req.batch_size}")
+    return {"ok": True}
