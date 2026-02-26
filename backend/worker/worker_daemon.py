@@ -1678,6 +1678,14 @@ class WorkerDaemon:
         Models should already be unloaded by the throttle handler."""
         logger.info("Entering RESTING: resource pressure critical, waiting for recovery")
 
+    def _interruptible_sleep(self, seconds: float):
+        """Sleep that wakes early on shutdown signal."""
+        global _shutdown
+        elapsed = 0.0
+        while elapsed < seconds and not _shutdown:
+            time.sleep(min(1.0, seconds - elapsed))
+            elapsed += 1.0
+
     # ── Throttle Logic ────────────────────────────────────────
 
     def _check_throttle(self) -> str:
@@ -1886,6 +1894,14 @@ class WorkerDaemon:
 
                 # Wait for refill to complete
                 refill_thread.join(timeout=30)
+
+                # Rest after batch (configurable cooldown)
+                if not _shutdown:
+                    from backend.worker.config import get_rest_after_batch_s
+                    rest_s = get_rest_after_batch_s()
+                    if rest_s > 0:
+                        logger.info(f"Resting {rest_s}s after batch")
+                        self._interruptible_sleep(rest_s)
 
             except KeyboardInterrupt:
                 break

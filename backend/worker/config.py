@@ -72,6 +72,12 @@ def get_heartbeat_interval() -> int:
     return cfg.get("heartbeat_interval", 30)
 
 
+def get_rest_after_batch_s() -> int:
+    """Seconds to rest after each batch completes. 0 = no rest."""
+    cfg = get_worker_config()
+    return cfg.get("rest_after_batch_s", 0)
+
+
 def get_storage_mode() -> str:
     """Get storage mode: 'server_upload' or 'shared_fs'."""
     try:

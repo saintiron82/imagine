@@ -397,8 +397,14 @@ class WorkerIPCController:
                 # Record job activity to reset idle timeout timer
                 daemon._state_machine.record_job_activity()
 
-                # Brief pause between batches
-                time.sleep(1)
+                # Rest after batch (configurable cooldown)
+                from backend.worker.config import get_rest_after_batch_s
+                rest_s = get_rest_after_batch_s()
+                if rest_s > 0:
+                    _emit_log(f"Resting {rest_s}s after batch", "info")
+                    time.sleep(rest_s)
+                else:
+                    time.sleep(1)  # Brief default pause
 
         except Exception as e:
             import traceback
