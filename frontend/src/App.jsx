@@ -1201,34 +1201,21 @@ function App() {
             </h2>
             <div className="space-y-2 text-sm text-neutral-300 mb-4">
               {/* Summary stats */}
-              <div className="grid grid-cols-2 gap-2 text-xs bg-neutral-800 rounded-lg p-3">
+              <div className="grid grid-cols-3 gap-2 text-xs bg-neutral-800 rounded-lg p-3">
                 <div>{t('audit.total_files')}: <span className="text-white font-medium">{auditResult.total_files}</span></div>
                 <div>{t('audit.complete')}: <span className="text-green-400 font-medium">{auditResult.complete_files}</span></div>
                 <div>{t('audit.incomplete')}: <span className={auditResult.incomplete_files > 0 ? 'text-yellow-400 font-medium' : 'text-neutral-500'}>{auditResult.incomplete_files}</span></div>
-                <div>{t('audit.actions')}: <span className={((auditResult.repaired_jobs || 0) + (auditResult.created_jobs || 0) + (auditResult.failed_reset || 0)) > 0 ? 'text-blue-400 font-medium' : 'text-neutral-500'}>{(auditResult.repaired_jobs || 0) + (auditResult.created_jobs || 0) + (auditResult.failed_reset || 0)}</span></div>
               </div>
 
               {auditResult.incomplete_files > 0 ? (
                 <>
-                  {auditResult.repaired_jobs > 0 && (
-                    <p className="text-yellow-400 text-xs">{t('audit.repaired_jobs', { count: auditResult.repaired_jobs })}</p>
-                  )}
-                  {auditResult.created_jobs > 0 && (
-                    <p className="text-blue-400 text-xs">{t('audit.created_jobs', { count: auditResult.created_jobs })}</p>
-                  )}
-                  {auditResult.failed_reset > 0 && (
-                    <p className="text-orange-400 text-xs">{t('audit.failed_reset', { count: auditResult.failed_reset })}</p>
-                  )}
+                  <p className="text-yellow-400 text-xs">
+                    {t('audit.repaired_files', { count: auditResult.repaired_files || auditResult.incomplete_files })}
+                  </p>
                   <div className="max-h-48 overflow-y-auto mt-2 space-y-1">
                     {auditResult.details?.map((d, i) => (
                       <div key={i} className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1.5 rounded flex items-center gap-2">
-                        <span className={
-                          d.action === 'completed→pending' ? 'text-yellow-500' :
-                          d.action === 'created_job' ? 'text-blue-500' :
-                          d.action?.includes('failed') ? 'text-orange-500' :
-                          'text-neutral-500'
-                        }>{d.action}</span>
-                        <span className="text-red-400">[{d.missing.join(', ')}]</span>
+                        <span className="text-red-400 shrink-0">[{d.missing.join(', ')}]</span>
                         <span className="truncate flex-1">{d.file_path?.split('/').pop()}</span>
                       </div>
                     ))}

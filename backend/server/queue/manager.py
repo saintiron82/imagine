@@ -768,28 +768,21 @@ class JobQueueManager:
     def audit_completed_jobs(self) -> Dict[str, Any]:
         """Full data integrity audit across ALL files in the database.
 
-        Two-pass scan:
-          1. All files: check mc+vv+mv exist. If incomplete, ensure a
-             pending job exists for re-processing.
-          2. Completed jobs: verify data actually exists. Reset to pending
-             if false-completed.
+        File-centric: each file is either complete (mc+vv+mv) or not.
+        For incomplete files, ensures a pending job exists for re-processing.
 
-        Returns:
+        Returns file-centric results:
             {
                 "total_files": int,
                 "complete_files": int,
                 "incomplete_files": int,
-                "repaired_jobs": int,    # completed→pending
-                "created_jobs": int,     # new pending jobs for uncovered files
-                "failed_reset": int,     # failed→pending
-                "details": [{"file_id", "file_path", "missing", "action"}]
+                "repaired_files": int,   # files that were fixed
+                "details": [{"file_id", "file_path", "missing"}]
             }
         """
         cursor = self.db.conn.cursor()
         details = []
-        repaired_jobs = 0
-        created_jobs = 0
-        failed_reset = 0
+        repaired_files = 0
 
         # ── Pass 1: Scan ALL files for data completeness ──
         cursor.execute("""
@@ -841,8 +834,7 @@ class JobQueueManager:
             """, (file_id,))
             job_row = cursor.fetchone()
 
-            action = None
-
+            # Ensure this file has a pending job for re-processing
             if job_row is None:
                 # No job at all — create one
                 try:
@@ -853,8 +845,6 @@ class JobQueueManager:
                            VALUES (?, ?, 'pending', 0, ?, 'parsed')""",
                         (file_id, file_path, actual_phases)
                     )
-                    created_jobs += 1
-                    action = "created_job"
                 except Exception as e:
                     logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
 
@@ -868,11 +858,9 @@ class JobQueueManager:
                        WHERE id = ?""",
                     (actual_phases, job_row[0])
                 )
-                repaired_jobs += 1
-                action = "completed→pending"
 
             elif job_row[1] == 'failed':
-                # Stuck in failed — reset to pending with actual phases
+                # Stuck in failed — reset to pending
                 cursor.execute(
                     """UPDATE job_queue
                        SET status = 'pending', phase_completed = ?,
@@ -882,57 +870,42 @@ class JobQueueManager:
                        WHERE id = ?""",
                     (actual_phases, job_row[0])
                 )
-                failed_reset += 1
-                action = "failed→pending"
 
             elif job_row[1] in ('pending', 'assigned', 'processing'):
-                # Already in pipeline — just update phase_completed to be accurate
+                # Already in pipeline — just fix phase_completed
                 cursor.execute(
                     "UPDATE job_queue SET phase_completed = ? WHERE id = ?",
                     (actual_phases, job_row[0])
                 )
-                action = "phases_updated"
 
-            if action:
-                details.append({
-                    "file_id": file_id,
-                    "file_path": file_path,
-                    "missing": missing,
-                    "action": action,
-                })
+            repaired_files += 1
+            details.append({
+                "file_id": file_id,
+                "file_path": file_path,
+                "missing": missing,
+            })
 
-        # ── Pass 2: Completed jobs whose file has missing data ──
-        # (Already handled in Pass 1 via incomplete_file_ids)
-        # Additionally check for completed jobs referencing files not in our scan
-        # (edge case: file deleted from files table but job remains)
+        # ── Pass 2: Completed jobs referencing deleted files ──
         cursor.execute("""
             SELECT jq.id, jq.file_id FROM job_queue jq
             WHERE jq.status = 'completed'
             AND NOT EXISTS(SELECT 1 FROM files WHERE id = jq.file_id)
         """)
-        for job_id, file_id in cursor.fetchall():
+        dangling_rows = cursor.fetchall()
+        for job_id, file_id in dangling_rows:
             cursor.execute(
                 "UPDATE job_queue SET status = 'failed', error_message = 'file missing from DB' WHERE id = ?",
                 (job_id,)
             )
-            repaired_jobs += 1
-            details.append({
-                "file_id": file_id,
-                "file_path": None,
-                "missing": ["file_record"],
-                "action": "completed→failed(no_file)",
-            })
 
         self.db.conn.commit()
 
         incomplete_files = total_files - complete_files
-        total_actions = repaired_jobs + created_jobs + failed_reset
 
-        if total_actions > 0:
+        if repaired_files > 0:
             logger.warning(
-                f"Audit: {total_files} files scanned, {incomplete_files} incomplete. "
-                f"Actions: {repaired_jobs} completed→pending, {created_jobs} jobs created, "
-                f"{failed_reset} failed→pending"
+                f"Audit: {total_files} files, {incomplete_files} incomplete, "
+                f"{repaired_files} repaired"
             )
         else:
             logger.info(f"Audit: {total_files} files scanned, all complete")
@@ -941,9 +914,7 @@ class JobQueueManager:
             "total_files": total_files,
             "complete_files": complete_files,
             "incomplete_files": incomplete_files,
-            "repaired_jobs": repaired_jobs,
-            "created_jobs": created_jobs,
-            "failed_reset": failed_reset,
+            "repaired_files": repaired_files,
             "details": details,
         }
 

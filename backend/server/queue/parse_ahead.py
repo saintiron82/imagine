@@ -65,18 +65,18 @@ class ParseAheadPool(BaseAheadPool):
         self._startup_integrity_audit()
 
     def _startup_integrity_audit(self):
-        """Run integrity audit on server startup to repair stale completed jobs."""
+        """Run integrity audit on server startup to repair incomplete files."""
         try:
             from backend.server.queue.manager import JobQueueManager
             mgr = JobQueueManager(self.db)
             result = mgr.audit_completed_jobs()
-            if result["repaired"] > 0:
+            if result["repaired_files"] > 0:
                 logger.warning(
-                    f"Startup audit: {result['repaired']}/{result['audited']} "
-                    f"completed jobs had missing data → reset to pending"
+                    f"Startup audit: {result['total_files']} files, "
+                    f"{result['repaired_files']} incomplete → repaired"
                 )
-            elif result["audited"] > 0:
-                logger.info(f"Startup audit: {result['audited']} completed jobs verified OK")
+            else:
+                logger.info(f"Startup audit: {result['total_files']} files, all complete")
         except Exception as e:
             logger.warning(f"Startup integrity audit failed (non-fatal): {e}")
 
