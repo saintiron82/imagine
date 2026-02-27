@@ -766,62 +766,186 @@ class JobQueueManager:
         return count
 
     def audit_completed_jobs(self) -> Dict[str, Any]:
-        """Scan all completed jobs and verify actual data integrity.
+        """Full data integrity audit across ALL files in the database.
 
-        Finds jobs marked 'completed' but with missing data (mc/vv/mv),
-        then resets them to 'pending' with accurate phase_completed
-        so workers can re-process only the missing phases.
+        Two-pass scan:
+          1. All files: check mc+vv+mv exist. If incomplete, ensure a
+             pending job exists for re-processing.
+          2. Completed jobs: verify data actually exists. Reset to pending
+             if false-completed.
 
         Returns:
-            {"audited": int, "repaired": int, "details": [{"job_id", "file_id", "missing"}]}
+            {
+                "total_files": int,
+                "complete_files": int,
+                "incomplete_files": int,
+                "repaired_jobs": int,    # completed→pending
+                "created_jobs": int,     # new pending jobs for uncovered files
+                "failed_reset": int,     # failed→pending
+                "details": [{"file_id", "file_path", "missing", "action"}]
+            }
         """
         cursor = self.db.conn.cursor()
-        cursor.execute(
-            """SELECT jq.id, jq.file_id, jq.file_path
-               FROM job_queue jq
-               WHERE jq.status = 'completed'"""
-        )
-        rows = cursor.fetchall()
-
-        audited = 0
-        repaired = 0
         details = []
+        repaired_jobs = 0
+        created_jobs = 0
+        failed_reset = 0
 
-        for job_id, file_id, file_path in rows:
-            audited += 1
-            verify = self.db.verify_data_integrity(
-                file_id, expect_mc=True, expect_vv=True, expect_mv=True
-            )
-            if not verify["valid"]:
-                # Reset to pending with actual phase status
-                phase_json = json.dumps(verify["actual_phases"])
+        # ── Pass 1: Scan ALL files for data completeness ──
+        cursor.execute("""
+            SELECT f.id, f.file_path,
+                   (f.mc_caption IS NOT NULL AND f.mc_caption != '') AS has_mc,
+                   EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) AS has_vv,
+                   EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) AS has_mv
+            FROM files f
+        """)
+        all_files = cursor.fetchall()
+        total_files = len(all_files)
+        complete_files = 0
+        incomplete_file_ids = set()
+
+        for file_id, file_path, has_mc, has_vv, has_mv in all_files:
+            if has_mc and has_vv and has_mv:
+                complete_files += 1
+                continue
+
+            # This file is incomplete
+            incomplete_file_ids.add(file_id)
+            missing = []
+            if not has_mc:
+                missing.append("mc")
+            if not has_vv:
+                missing.append("vv")
+            if not has_mv:
+                missing.append("mv")
+
+            actual_phases = json.dumps({
+                "parse": True,
+                "vision": bool(has_mc),
+                "embed": bool(has_vv and has_mv),
+            })
+
+            # Check what jobs exist for this file
+            cursor.execute("""
+                SELECT id, status, phase_completed
+                FROM job_queue WHERE file_id = ?
+                ORDER BY
+                    CASE status
+                        WHEN 'processing' THEN 1
+                        WHEN 'pending' THEN 2
+                        WHEN 'assigned' THEN 3
+                        WHEN 'completed' THEN 4
+                        WHEN 'failed' THEN 5
+                    END
+                LIMIT 1
+            """, (file_id,))
+            job_row = cursor.fetchone()
+
+            action = None
+
+            if job_row is None:
+                # No job at all — create one
+                try:
+                    cursor.execute(
+                        """INSERT INTO job_queue
+                           (file_id, file_path, status, priority,
+                            phase_completed, parse_status)
+                           VALUES (?, ?, 'pending', 0, ?, 'parsed')""",
+                        (file_id, file_path, actual_phases)
+                    )
+                    created_jobs += 1
+                    action = "created_job"
+                except Exception as e:
+                    logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
+
+            elif job_row[1] == 'completed':
+                # False-completed — reset to pending
                 cursor.execute(
                     """UPDATE job_queue
                        SET status = 'pending', phase_completed = ?,
                            assigned_to = NULL, assigned_at = NULL,
                            worker_session_id = NULL
                        WHERE id = ?""",
-                    (phase_json, job_id),
+                    (actual_phases, job_row[0])
                 )
-                repaired += 1
+                repaired_jobs += 1
+                action = "completed→pending"
+
+            elif job_row[1] == 'failed':
+                # Stuck in failed — reset to pending with actual phases
+                cursor.execute(
+                    """UPDATE job_queue
+                       SET status = 'pending', phase_completed = ?,
+                           retry_count = 0, error_message = NULL,
+                           assigned_to = NULL, assigned_at = NULL,
+                           worker_session_id = NULL
+                       WHERE id = ?""",
+                    (actual_phases, job_row[0])
+                )
+                failed_reset += 1
+                action = "failed→pending"
+
+            elif job_row[1] in ('pending', 'assigned', 'processing'):
+                # Already in pipeline — just update phase_completed to be accurate
+                cursor.execute(
+                    "UPDATE job_queue SET phase_completed = ? WHERE id = ?",
+                    (actual_phases, job_row[0])
+                )
+                action = "phases_updated"
+
+            if action:
                 details.append({
-                    "job_id": job_id,
                     "file_id": file_id,
                     "file_path": file_path,
-                    "missing": verify["missing"],
+                    "missing": missing,
+                    "action": action,
                 })
-                logger.warning(
-                    f"Audit: job {job_id} (file_id={file_id}) missing {verify['missing']} "
-                    f"→ reset to pending"
-                )
 
-        if repaired > 0:
-            self.db.conn.commit()
-            logger.info(f"Audit complete: {audited} checked, {repaired} repaired")
+        # ── Pass 2: Completed jobs whose file has missing data ──
+        # (Already handled in Pass 1 via incomplete_file_ids)
+        # Additionally check for completed jobs referencing files not in our scan
+        # (edge case: file deleted from files table but job remains)
+        cursor.execute("""
+            SELECT jq.id, jq.file_id FROM job_queue jq
+            WHERE jq.status = 'completed'
+            AND NOT EXISTS(SELECT 1 FROM files WHERE id = jq.file_id)
+        """)
+        for job_id, file_id in cursor.fetchall():
+            cursor.execute(
+                "UPDATE job_queue SET status = 'failed', error_message = 'file missing from DB' WHERE id = ?",
+                (job_id,)
+            )
+            repaired_jobs += 1
+            details.append({
+                "file_id": file_id,
+                "file_path": None,
+                "missing": ["file_record"],
+                "action": "completed→failed(no_file)",
+            })
+
+        self.db.conn.commit()
+
+        incomplete_files = total_files - complete_files
+        total_actions = repaired_jobs + created_jobs + failed_reset
+
+        if total_actions > 0:
+            logger.warning(
+                f"Audit: {total_files} files scanned, {incomplete_files} incomplete. "
+                f"Actions: {repaired_jobs} completed→pending, {created_jobs} jobs created, "
+                f"{failed_reset} failed→pending"
+            )
         else:
-            logger.info(f"Audit complete: {audited} checked, all OK")
+            logger.info(f"Audit: {total_files} files scanned, all complete")
 
-        return {"audited": audited, "repaired": repaired, "details": details}
+        return {
+            "total_files": total_files,
+            "complete_files": complete_files,
+            "incomplete_files": incomplete_files,
+            "repaired_jobs": repaired_jobs,
+            "created_jobs": created_jobs,
+            "failed_reset": failed_reset,
+            "details": details,
+        }
 
     def clear_completed_jobs(self) -> int:
         """Delete all completed jobs."""
