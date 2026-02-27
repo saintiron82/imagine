@@ -170,12 +170,9 @@ def complete_job(
         structure_vec = _decode_vector(req.vectors.get("structure"))
         db.upsert_vectors(stored_file_id, vv_vec=vv_vec, mv_vec=mv_vec, structure_vec=structure_vec)
 
-    # Verify data integrity before marking complete
-    expect_mc = bool(vision_fields)
-    expect_vv = bool(req.vectors and req.vectors.get("vv"))
-    expect_mv = bool(req.vectors and req.vectors.get("mv"))
+    # Verify data integrity: completed = ALL data must exist (mc + vv + mv)
     integrity = db.verify_data_integrity(
-        stored_file_id, expect_mc=expect_mc, expect_vv=expect_vv, expect_mv=expect_mv
+        stored_file_id, expect_mc=True, expect_vv=True, expect_mv=True
     )
 
     queue = _get_queue(db)
@@ -329,11 +326,9 @@ def complete_embed(
     mv_vec = _decode_vector(req.vectors.get("mv"))
     db.upsert_vectors(stored_file_id, vv_vec=vv_vec, mv_vec=mv_vec)
 
-    # Verify vectors were actually stored
-    expect_vv = vv_vec is not None
-    expect_mv = mv_vec is not None
+    # Verify all data exists: completed = mc + vv + mv all present
     integrity = db.verify_data_integrity(
-        stored_file_id, expect_mc=True, expect_vv=expect_vv, expect_mv=expect_mv
+        stored_file_id, expect_mc=True, expect_vv=True, expect_mv=True
     )
 
     queue = _get_queue(db)
