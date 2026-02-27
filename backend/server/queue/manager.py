@@ -219,6 +219,28 @@ class JobQueueManager:
                 pass
 
         if not rows:
+            # Diagnostic: log queue state when no jobs available for worker
+            if worker_session_id is not None:
+                try:
+                    diag = cursor.execute(
+                        """SELECT
+                            COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                            COUNT(*) FILTER (WHERE status = 'pending' AND parse_status IS NULL) as unparsed,
+                            COUNT(*) FILTER (WHERE status = 'pending' AND parse_status = 'parsing') as parsing,
+                            COUNT(*) FILTER (WHERE status = 'pending' AND parse_status = 'parsed') as parsed,
+                            COUNT(*) FILTER (WHERE status = 'pending' AND parse_status = 'failed') as parse_failed,
+                            COUNT(*) FILTER (WHERE status = 'assigned') as assigned,
+                            COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                            COUNT(*) FROM job_queue"""
+                    ).fetchone()
+                    logger.info(
+                        f"[CLAIM-DIAG] session={worker_session_id} mode={processing_mode} | "
+                        f"pending={diag[0]} (unparsed={diag[1]} parsing={diag[2]} "
+                        f"parsed={diag[3]} failed={diag[4]}) assigned={diag[5]} "
+                        f"completed={diag[6]} total={diag[7]}"
+                    )
+                except Exception:
+                    pass
             return []
 
         # Pre-fetch vision fields from files table for workers that need them.

@@ -576,6 +576,16 @@ class ParseAheadPool(BaseAheadPool):
                         continue
 
                     # Non-auto modes (mc_only, parse_only, distribute): pre-parse pending jobs
+                    if not hasattr(self, '_diag_counter'):
+                        self._diag_counter = 0
+                    self._diag_counter += 1
+                    if self._diag_counter % 15 == 1:  # Log every ~30s (15 * 2s poll)
+                        target = self._calculate_buffer_target()
+                        demand = self.has_recent_demand()
+                        logger.info(
+                            f"[PA-DIAG] mode={self._processing_mode} "
+                            f"demand={demand} target={target}"
+                        )
                     self._run_pre_parse_buffer()
 
                     # Distribute mode: gap-fill V(MC) for lightweight workers
