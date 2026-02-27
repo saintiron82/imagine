@@ -460,6 +460,7 @@
   "audit.complete": "Complete (MC+VV+MV)",
   "audit.incomplete": "Incomplete",
   "audit.repaired_files": "{count} incomplete files → queued for reprocessing",
+  "audit.failed_reset": "{count} failed jobs → queued for retry",
   "audit.all_ok": "All files verified — MC+VV+MV complete",
   "audit.result_repaired": "Audit: {total} files, {incomplete} incomplete → repaired",
   "audit.result_ok": "Audit: {total} files, all complete",

@@ -1013,7 +1013,8 @@ function App() {
     setShowDbMenu(false);
     try {
       const result = await auditIntegrity();
-      if (result.incomplete_files > 0) {
+      const hasIssues = result.incomplete_files > 0 || result.failed_reset > 0;
+      if (hasIssues) {
         setAuditResult(result);
         appendLog({
           message: t('audit.result_repaired', {
@@ -1216,19 +1217,28 @@ function App() {
                 <div>{t('audit.incomplete')}: <span className={auditResult.incomplete_files > 0 ? 'text-yellow-400 font-medium' : 'text-neutral-500'}>{auditResult.incomplete_files}</span></div>
               </div>
 
-              {auditResult.incomplete_files > 0 ? (
+              {(auditResult.incomplete_files > 0 || auditResult.failed_reset > 0) ? (
                 <>
-                  <p className="text-yellow-400 text-xs">
-                    {t('audit.repaired_files', { count: auditResult.repaired_files || auditResult.incomplete_files })}
-                  </p>
-                  <div className="max-h-48 overflow-y-auto mt-2 space-y-1">
-                    {auditResult.details?.map((d, i) => (
-                      <div key={i} className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1.5 rounded flex items-center gap-2">
-                        <span className="text-red-400 shrink-0">[{d.missing.join(', ')}]</span>
-                        <span className="truncate flex-1">{d.file_path?.split('/').pop()}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {auditResult.incomplete_files > 0 && (
+                    <p className="text-yellow-400 text-xs">
+                      {t('audit.repaired_files', { count: auditResult.repaired_files || auditResult.incomplete_files })}
+                    </p>
+                  )}
+                  {auditResult.failed_reset > 0 && (
+                    <p className="text-orange-400 text-xs">
+                      {t('audit.failed_reset', { count: auditResult.failed_reset })}
+                    </p>
+                  )}
+                  {auditResult.details?.length > 0 && (
+                    <div className="max-h-48 overflow-y-auto mt-2 space-y-1">
+                      {auditResult.details.map((d, i) => (
+                        <div key={i} className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1.5 rounded flex items-center gap-2">
+                          <span className="text-red-400 shrink-0">[{d.missing.join(', ')}]</span>
+                          <span className="truncate flex-1">{d.file_path?.split('/').pop()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </>
               ) : (
                 <p className="text-green-400 font-medium">{t('audit.all_ok')}</p>

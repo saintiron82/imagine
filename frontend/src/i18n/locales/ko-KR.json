@@ -460,6 +460,7 @@
   "audit.complete": "완전 (MC+VV+MV)",
   "audit.incomplete": "불완전",
   "audit.repaired_files": "불완전 {count}개 파일 → 재처리 대기로 전환",
+  "audit.failed_reset": "실패 {count}개 작업 → 재처리 대기로 전환",
   "audit.all_ok": "모든 파일 검증 완료 — MC+VV+MV 완전",
   "audit.result_repaired": "정합성 검사: 파일 {total}개 중 {incomplete}개 불완전 → 수정",
   "audit.result_ok": "정합성 검사: 파일 {total}개, 모두 완전",
