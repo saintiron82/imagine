@@ -765,6 +765,64 @@ class JobQueueManager:
             logger.info(f"Retried {count} failed jobs")
         return count
 
+    def audit_completed_jobs(self) -> Dict[str, Any]:
+        """Scan all completed jobs and verify actual data integrity.
+
+        Finds jobs marked 'completed' but with missing data (mc/vv/mv),
+        then resets them to 'pending' with accurate phase_completed
+        so workers can re-process only the missing phases.
+
+        Returns:
+            {"audited": int, "repaired": int, "details": [{"job_id", "file_id", "missing"}]}
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """SELECT jq.id, jq.file_id, jq.file_path
+               FROM job_queue jq
+               WHERE jq.status = 'completed'"""
+        )
+        rows = cursor.fetchall()
+
+        audited = 0
+        repaired = 0
+        details = []
+
+        for job_id, file_id, file_path in rows:
+            audited += 1
+            verify = self.db.verify_data_integrity(
+                file_id, expect_mc=True, expect_vv=True, expect_mv=True
+            )
+            if not verify["valid"]:
+                # Reset to pending with actual phase status
+                phase_json = json.dumps(verify["actual_phases"])
+                cursor.execute(
+                    """UPDATE job_queue
+                       SET status = 'pending', phase_completed = ?,
+                           assigned_to = NULL, assigned_at = NULL,
+                           worker_session_id = NULL
+                       WHERE id = ?""",
+                    (phase_json, job_id),
+                )
+                repaired += 1
+                details.append({
+                    "job_id": job_id,
+                    "file_id": file_id,
+                    "file_path": file_path,
+                    "missing": verify["missing"],
+                })
+                logger.warning(
+                    f"Audit: job {job_id} (file_id={file_id}) missing {verify['missing']} "
+                    f"→ reset to pending"
+                )
+
+        if repaired > 0:
+            self.db.conn.commit()
+            logger.info(f"Audit complete: {audited} checked, {repaired} repaired")
+        else:
+            logger.info(f"Audit complete: {audited} checked, all OK")
+
+        return {"audited": audited, "repaired": repaired, "details": details}
+
     def clear_completed_jobs(self) -> int:
         """Delete all completed jobs."""
         cursor = self.db.conn.cursor()

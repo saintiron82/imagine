@@ -572,6 +572,21 @@ def retry_failed_jobs(
     return {"success": True, "retried": count}
 
 
+@router.post("/api/v1/admin/jobs/audit-integrity")
+def audit_integrity(
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Scan completed jobs for data integrity issues and repair (admin only).
+
+    Checks all completed jobs against actual DB data (mc_caption, vec_files,
+    vec_text). Jobs with missing data are reset to pending for re-processing.
+    """
+    queue = _get_queue(db)
+    result = queue.audit_completed_jobs()
+    return {"success": True, **result}
+
+
 @router.delete("/api/v1/admin/jobs/clear-completed")
 def clear_completed_jobs(
     _admin: dict = Depends(require_admin),
