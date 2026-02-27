@@ -1008,34 +1008,43 @@ function App() {
     }
   };
 
-  const handleAuditIntegrity = async () => {
+  const handleAuditIntegrity = async ({ silent = false } = {}) => {
     setAuditLoading(true);
     setShowDbMenu(false);
     try {
       const result = await auditIntegrity();
-      setAuditResult(result);
-      const actions = (result.repaired_jobs || 0) + (result.created_jobs || 0) + (result.failed_reset || 0);
-      if (actions > 0) {
+      if (result.incomplete_files > 0) {
+        setAuditResult(result);
         appendLog({
           message: t('audit.result_repaired', {
             total: result.total_files,
             incomplete: result.incomplete_files,
-            actions,
           }),
           type: 'warn',
         });
-      } else {
+      } else if (!silent) {
+        setAuditResult(result);
         appendLog({
           message: t('audit.result_ok', { total: result.total_files }),
           type: 'success',
         });
       }
     } catch (e) {
-      appendLog({ message: `Audit error: ${e.message}`, type: 'error' });
+      if (!silent) {
+        appendLog({ message: `Audit error: ${e.message}`, type: 'error' });
+      }
     } finally {
       setAuditLoading(false);
     }
   };
+
+  // Auto-audit on login: admin이 서버에 로그인하면 자동 정합성 검사
+  // skipAuth=false → 서버 모드 (web 또는 Electron server/client)
+  useEffect(() => {
+    if (isAuthenticated && isAdmin && skipAuth === false) {
+      handleAuditIntegrity({ silent: true });
+    }
+  }, [isAuthenticated, isAdmin]);
 
   const handleImportProcessNew = (folderPath) => {
     handleProcessFolder(folderPath);
