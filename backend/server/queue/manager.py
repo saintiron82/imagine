@@ -173,6 +173,7 @@ class JobQueueManager:
                 (count,)
             )
             rows = list(cursor.fetchall())
+            vision_done_ids = {r[0] for r in rows}  # Track which jobs have vision done
 
             # 2) Regular pre-parsed jobs (needs V+VV+MV)
             if len(rows) < count:
@@ -300,8 +301,16 @@ class JobQueueManager:
                         job_data["pre_parsed"] = False
 
                 # Attach vision data for workers that need MC from server.
-                # embed_only: always (VV+MV only). full: only for vision-done jobs.
-                if processing_mode in ("embed_only", "full"):
+                # embed_only: always (VV+MV only, all jobs have vision done).
+                # full: only for jobs where phase_completed.vision = 1
+                #       (NOT based on files table — old mc_caption from previous
+                #        sessions should not suppress worker's own Vision phase).
+                if processing_mode == "embed_only":
+                    nfc_path = unicodedata.normalize('NFC', file_path)
+                    vision = embed_vision_map.get(nfc_path)
+                    if vision:
+                        job_data["vision_data"] = vision
+                elif processing_mode == "full" and job_id in vision_done_ids:
                     nfc_path = unicodedata.normalize('NFC', file_path)
                     vision = embed_vision_map.get(nfc_path)
                     if vision:
