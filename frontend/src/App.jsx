@@ -13,14 +13,14 @@ import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
 import UpdateNotification from './components/UpdateNotification';
 import EolBanner from './components/EolBanner';
-import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2, ShieldCheck } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2, ShieldCheck, RotateCcw } from 'lucide-react';
 import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
 import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
-import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity } from './api/admin';
+import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
 
 function App() {
@@ -67,6 +67,7 @@ function App() {
   const [resetError, setResetError] = useState('');
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditResult, setAuditResult] = useState(null);
+  const [retryLoading, setRetryLoading] = useState(false);
 
   // Worker progress state (client mode)
   const [isWorkerRunning, setIsWorkerRunning] = useState(false);
@@ -1013,7 +1014,7 @@ function App() {
     setShowDbMenu(false);
     try {
       const result = await auditIntegrity();
-      const hasIssues = result.incomplete_files > 0 || result.failed_reset > 0;
+      const hasIssues = result.incomplete_files > 0;
       if (hasIssues) {
         setAuditResult(result);
         appendLog({
@@ -1046,6 +1047,30 @@ function App() {
       handleAuditIntegrity({ silent: true });
     }
   }, [isAuthenticated, isAdmin]);
+
+  const handleRetryFailed = async () => {
+    setRetryLoading(true);
+    setShowDbMenu(false);
+    try {
+      const result = await retryFailedJobs();
+      const count = result.retried || 0;
+      if (count > 0) {
+        appendLog({
+          message: t('audit.retry_result', { count }),
+          type: 'warn',
+        });
+      } else {
+        appendLog({
+          message: t('audit.retry_none'),
+          type: 'success',
+        });
+      }
+    } catch (e) {
+      appendLog({ message: `Retry error: ${e.message}`, type: 'error' });
+    } finally {
+      setRetryLoading(false);
+    }
+  };
 
   const handleImportProcessNew = (folderPath) => {
     handleProcessFolder(folderPath);
@@ -1217,18 +1242,11 @@ function App() {
                 <div>{t('audit.incomplete')}: <span className={auditResult.incomplete_files > 0 ? 'text-yellow-400 font-medium' : 'text-neutral-500'}>{auditResult.incomplete_files}</span></div>
               </div>
 
-              {(auditResult.incomplete_files > 0 || auditResult.failed_reset > 0) ? (
+              {auditResult.incomplete_files > 0 ? (
                 <>
-                  {auditResult.incomplete_files > 0 && (
-                    <p className="text-yellow-400 text-xs">
-                      {t('audit.repaired_files', { count: auditResult.repaired_files || auditResult.incomplete_files })}
-                    </p>
-                  )}
-                  {auditResult.failed_reset > 0 && (
-                    <p className="text-orange-400 text-xs">
-                      {t('audit.failed_reset', { count: auditResult.failed_reset })}
-                    </p>
-                  )}
+                  <p className="text-yellow-400 text-xs">
+                    {t('audit.repaired_files', { count: auditResult.repaired_files || auditResult.incomplete_files })}
+                  </p>
                   {auditResult.details?.length > 0 && (
                     <div className="max-h-48 overflow-y-auto mt-2 space-y-1">
                       {auditResult.details.map((d, i) => (
@@ -1373,6 +1391,18 @@ function App() {
                   {isAdmin && (
                     <>
                       <div className="border-t border-gray-600 my-1" />
+                      <button
+                        onClick={handleRetryFailed}
+                        disabled={retryLoading}
+                        className="w-full flex items-center gap-2 px-4 py-2 text-sm text-orange-400 hover:bg-orange-900/30 hover:text-orange-300 transition-colors disabled:opacity-50"
+                      >
+                        {retryLoading ? (
+                          <span className="w-3.5 h-3.5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <RotateCcw size={14} />
+                        )}
+                        {t('action.retry_failed')}
+                      </button>
                       <button
                         onClick={handleAuditIntegrity}
                         disabled={auditLoading}

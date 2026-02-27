@@ -898,23 +898,14 @@ class JobQueueManager:
                 (job_id,)
             )
 
-        # ── Pass 3: Reset ALL remaining failed jobs → pending ──
-        cursor.execute("""
-            UPDATE job_queue
-            SET status = 'pending', retry_count = 0, error_message = NULL,
-                assigned_to = NULL, assigned_at = NULL, worker_session_id = NULL
-            WHERE status = 'failed'
-        """)
-        failed_reset = cursor.rowcount
-
         self.db.conn.commit()
 
         incomplete_files = total_files - complete_files
 
-        if repaired_files > 0 or failed_reset > 0:
+        if repaired_files > 0:
             logger.warning(
                 f"Audit: {total_files} files, {incomplete_files} incomplete, "
-                f"{repaired_files} repaired, {failed_reset} failed→pending"
+                f"{repaired_files} repaired"
             )
         else:
             logger.info(f"Audit: {total_files} files scanned, all complete")
@@ -923,7 +914,6 @@ class JobQueueManager:
             "total_files": total_files,
             "complete_files": complete_files,
             "incomplete_files": incomplete_files,
-            "failed_reset": failed_reset,
             "repaired_files": repaired_files,
             "details": details,
         }
