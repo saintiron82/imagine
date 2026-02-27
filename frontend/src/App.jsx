@@ -863,13 +863,29 @@ function App() {
       return;
     }
 
-    // Electron client mode: direct discover spawn (local processing)
+    // Electron client mode with active worker: route through server API → queue for workers
+    if (appMode === 'client' && isWorkerRunning) {
+      try {
+        const result = await scanFolder(folderPath);
+        appendLog({
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
+    // Electron standalone mode: direct discover spawn (local processing)
     window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip });
   };
 
   // Resume incomplete work: discover only folders that have incomplete files
-  const handleResume = () => {
+  const handleResume = async () => {
     setShowResumeDialog(false);
     if (!resumeStats?.folders?.length) return;
 
@@ -880,6 +896,27 @@ function App() {
     setIsDiscovering(true);
     setCurrentTab('archive');
     setCurrentPath(incompleteFolders[0]);
+
+    // Client mode with active worker: route all folders through server API
+    if (appMode === 'client' && isWorkerRunning) {
+      let totalJobs = 0;
+      try {
+        for (const folder of incompleteFolders) {
+          const result = await scanFolder(folder);
+          totalJobs += result.jobs_created || 0;
+        }
+        appendLog({
+          message: t('archive.queue_registered', { jobs: totalJobs }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Resume scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
     discoverQueueRef.current = { folders: incompleteFolders, index: 0, scanning: true };
     // Save session target for resume on next startup
     window.electron.pipeline.updateConfig('last_session.folders', incompleteFolders);
@@ -895,11 +932,32 @@ function App() {
   };
 
   // Scan folders from RegisteredFoldersPanel (via Settings → SearchPanel)
-  const handleScanFolders = (folderPaths) => {
+  const handleScanFolders = async (folderPaths) => {
     if (isProcessing || isDiscovering || !folderPaths?.length) return;
     setIsDiscovering(true);
     setCurrentTab('archive');
     setCurrentPath(folderPaths[0]);
+
+    // Client mode with active worker: route all folders through server API
+    if (appMode === 'client' && isWorkerRunning) {
+      let totalJobs = 0;
+      try {
+        for (const folder of folderPaths) {
+          const result = await scanFolder(folder);
+          totalJobs += result.jobs_created || 0;
+        }
+        appendLog({
+          message: t('archive.queue_registered', { jobs: totalJobs }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
     discoverQueueRef.current = { folders: folderPaths, index: 0, scanning: folderPaths.length > 1 };
     window.electron?.pipeline?.updateConfig('last_session.folders', folderPaths);
     appendLog({ message: `Scanning ${folderPaths.length} folder(s)...`, type: 'info' });
