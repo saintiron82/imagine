@@ -93,23 +93,43 @@ def get_gpu_vram_mb() -> int:
         logger.warning("PyTorch not installed, cannot detect GPU")
         return 0
 
-    if not torch.cuda.is_available():
-        logger.info("No CUDA GPU detected (CPU-only mode)")
+    # CUDA GPU
+    if torch.cuda.is_available():
+        try:
+            device = torch.cuda.current_device()
+            vram_bytes = torch.cuda.get_device_properties(device).total_memory
+            vram_mb = vram_bytes // (1024 * 1024)
+
+            gpu_name = torch.cuda.get_device_name(device)
+            logger.info(f"GPU detected: {gpu_name}, VRAM: {vram_mb} MB")
+
+            return vram_mb
+
+        except Exception as e:
+            logger.error(f"Failed to detect CUDA VRAM: {e}")
+            return 0
+
+    # Apple Silicon MPS — unified memory (system RAM = GPU memory)
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        import os
+        try:
+            total_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+            vram_mb = total_bytes // (1024 * 1024)
+            logger.info(f"MPS GPU detected (Apple Silicon), unified memory: {vram_mb} MB")
+            return vram_mb
+        except (ValueError, OSError):
+            try:
+                import psutil
+                vram_mb = psutil.virtual_memory().total // (1024 * 1024)
+                logger.info(f"MPS GPU detected (Apple Silicon), system memory: {vram_mb} MB")
+                return vram_mb
+            except Exception:
+                pass
+        logger.warning("MPS available but failed to detect memory")
         return 0
 
-    try:
-        device = torch.cuda.current_device()
-        vram_bytes = torch.cuda.get_device_properties(device).total_memory
-        vram_mb = vram_bytes // (1024 * 1024)
-
-        gpu_name = torch.cuda.get_device_name(device)
-        logger.info(f"GPU detected: {gpu_name}, VRAM: {vram_mb} MB")
-
-        return vram_mb
-
-    except Exception as e:
-        logger.error(f"Failed to detect VRAM: {e}")
-        return 0
+    logger.info("No CUDA/MPS GPU detected (CPU-only mode)")
+    return 0
 
 
 def select_tier(vram_mb: int, config: Dict[str, Any]) -> str:
@@ -173,28 +193,40 @@ def get_gpu_info() -> Dict[str, Any]:
             "error": "PyTorch not installed"
         }
 
-    if not torch.cuda.is_available():
+    # CUDA
+    if torch.cuda.is_available():
+        try:
+            device = torch.cuda.current_device()
+            props = torch.cuda.get_device_properties(device)
+
+            return {
+                "cuda_available": True,
+                "device_count": torch.cuda.device_count(),
+                "current_device": device,
+                "name": props.name,
+                "vram_mb": props.total_memory // (1024 * 1024),
+                "compute_capability": f"{props.major}.{props.minor}",
+                "multi_processor_count": props.multi_processor_count,
+            }
+
+        except Exception as e:
+            return {
+                "cuda_available": True,
+                "error": str(e)
+            }
+
+    # MPS (Apple Silicon)
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        vram_mb = get_gpu_vram_mb()
         return {
             "cuda_available": False,
-            "device_count": 0
+            "mps_available": True,
+            "name": "Apple Silicon (MPS)",
+            "vram_mb": vram_mb,
         }
 
-    try:
-        device = torch.cuda.current_device()
-        props = torch.cuda.get_device_properties(device)
-
-        return {
-            "cuda_available": True,
-            "device_count": torch.cuda.device_count(),
-            "current_device": device,
-            "name": props.name,
-            "vram_mb": props.total_memory // (1024 * 1024),
-            "compute_capability": f"{props.major}.{props.minor}",
-            "multi_processor_count": props.multi_processor_count,
-        }
-
-    except Exception as e:
-        return {
-            "cuda_available": True,
-            "error": str(e)
-        }
+    return {
+        "cuda_available": False,
+        "mps_available": False,
+        "device_count": 0
+    }

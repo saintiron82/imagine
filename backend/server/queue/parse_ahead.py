@@ -266,7 +266,7 @@ class ParseAheadPool(BaseAheadPool):
                             fields[key] = vision_result[key]
 
                     if fields:
-                        self.db.update_file_fields(file_id, fields)
+                        self.db.update_vision_fields(file_path, fields)
                         cursor = self.db.conn.cursor()
                         cursor.execute(
                             """UPDATE job_queue SET phase_completed =

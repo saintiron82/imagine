@@ -133,20 +133,29 @@ def _collect_mps_metrics(metrics: MetricsDict) -> None:
 
     metrics["gpu_type"] = "mps"
 
-    # MPS memory — torch.mps provides allocated/driver allocated
+    # Apple Silicon unified memory: total "VRAM" = system RAM (shared architecture).
+    # driver_allocated_memory() only returns current Metal allocation (near 0 at startup),
+    # so we report system total memory as gpu_memory_total_gb for tier detection.
+    import os
+    try:
+        sys_total_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 ** 3)
+        metrics["gpu_memory_total_gb"] = round(sys_total_gb, 2)
+    except (ValueError, OSError):
+        # Fallback: psutil
+        try:
+            import psutil
+            metrics["gpu_memory_total_gb"] = round(psutil.virtual_memory().total / (1024 ** 3), 2)
+        except Exception:
+            pass
+
+    # MPS memory — current allocation tracking
     try:
         mem_allocated = torch.mps.current_allocated_memory() / (1024 ** 3)
         metrics["gpu_memory_used_gb"] = round(mem_allocated, 2)
 
-        # MPS has driver_allocated_memory (total allocated by Metal driver)
-        try:
-            mem_driver = torch.mps.driver_allocated_memory() / (1024 ** 3)
-            metrics["gpu_memory_total_gb"] = round(mem_driver, 2)
-            if mem_driver > 0:
-                metrics["gpu_memory_percent"] = round(mem_allocated / mem_driver * 100, 1)
-        except (AttributeError, RuntimeError):
-            # driver_allocated_memory may not exist on older PyTorch
-            pass
+        total_gb = metrics.get("gpu_memory_total_gb", 0)
+        if total_gb > 0:
+            metrics["gpu_memory_percent"] = round(mem_allocated / total_gb * 100, 1)
     except Exception as exc:
         logger.debug(f"Failed to read MPS memory: {exc}")
 
