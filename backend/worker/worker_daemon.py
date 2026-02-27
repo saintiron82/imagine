@@ -956,6 +956,8 @@ class WorkerDaemon:
         # Phase P is always handled by the server (ParseAheadPool).
         # All jobs should be pre-parsed — no local parsing needed.
         logger.info(f"Phase P: {len(active)} jobs pre-parsed by server (worker skips parsing)")
+        elapsed_parse = 0.0
+        fpm_parse = 0.0
 
         # ── Phase V: Vision (VLM, 1-by-1 — MLX batch_size=1) ──
         # Skip vision for jobs where server already generated MC (gap-fill).
