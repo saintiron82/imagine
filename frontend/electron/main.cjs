@@ -1901,7 +1901,7 @@ ipcMain.handle('worker-start', async (event, opts) => {
     workerProc = spawnBackend('worker-ipc', [], {
         env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
         stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    }, 'backend/worker/worker_ipc.py');
 
     // Queue the start command — will be sent after 'ready' event
     workerStartCmd = startCmd;
