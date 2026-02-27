@@ -144,9 +144,9 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         elif global_mode == "parse_only":
             # parse_only: Server P only (zero GPU), workers do V+VV+MV
             app.state.parse_ahead._processing_mode = "parse_only"
-            # Unload any GPU models from previous mode (e.g., mc_only → parse_only switch)
-            app.state.parse_ahead._unload_models()
             if old_mode != "parse_only":
+                # Unload any GPU models from previous mode (e.g., mc_only → parse_only switch)
+                app.state.parse_ahead._unload_models()
                 logger.info(f"Workers connected, switching to parse_only mode")
         else:
             # auto → distribute: Server P + gap-fill V, workers V/VV/MV
@@ -166,7 +166,7 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
             except Exception:
                 pass
 
-    # EmbedAheadPool 관리 — only needed for mc_only mode
+    # EmbedAheadPool 관리 — only needed for mc_only mode (not parse_only or auto/distribute)
     needs_embed_ahead = has_workers and global_mode == "mc_only"
     embed_ahead_running = (
         hasattr(app.state, "embed_ahead")
