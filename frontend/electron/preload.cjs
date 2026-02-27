@@ -205,6 +205,10 @@ contextBridge.exposeInMainWorld('electron', {
         offWorkerState: () => ipcRenderer.removeAllListeners('worker-state'),
     },
 
+    // Menu Actions (main → renderer)
+    onMenuAction: (cb) => ipcRenderer.on('menu-action', (_, action) => cb(action)),
+    offMenuAction: () => ipcRenderer.removeAllListeners('menu-action'),
+
     // Auto-Updater
     updater: {
         check: () => ipcRenderer.invoke('updater-check'),

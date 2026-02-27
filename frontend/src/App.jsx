@@ -344,6 +344,13 @@ function App() {
       }
     }
 
+    // Menu action listener (Electron menu → React handler)
+    if (window.electron?.onMenuAction) {
+      window.electron.onMenuAction((action) => {
+        window.dispatchEvent(new CustomEvent('electron-menu-action', { detail: action }));
+      });
+    }
+
     // Check for incomplete work from last session on startup
     const checkIncompleteOnStartup = async () => {
       try {
@@ -386,6 +393,7 @@ function App() {
         window.electron.pipeline.offDiscoverProgress();
         window.electron.pipeline.offDiscoverFileDone();
       }
+      window.electron?.offMenuAction?.();
     };
   }, []);
 
@@ -1009,6 +1017,39 @@ function App() {
 
   const clearLogs = () => setLogs([]);
 
+  // Electron menu action handler
+  useEffect(() => {
+    if (!isElectron) return;
+    const handler = (e) => {
+      const action = e.detail;
+      switch (action) {
+        case 'open-folder':
+          window.electron?.pipeline?.openFolderDialog().then((folderPath) => {
+            if (folderPath) {
+              setCurrentPath(folderPath);
+              setCurrentTab('archive');
+            }
+          });
+          break;
+        case 'export-db':
+          handleExportDb();
+          break;
+        case 'import-db':
+          setShowImportDialog(true);
+          break;
+        case 'toggle-server':
+          handleServerToggle();
+          break;
+        case 'toggle-worker':
+          if (isWorkerRunning) handleWorkerStop();
+          else handleWorkerStart();
+          break;
+      }
+    };
+    window.addEventListener('electron-menu-action', handler);
+    return () => window.removeEventListener('electron-menu-action', handler);
+  }, [isElectron, isWorkerRunning]);
+
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
 
   // Auth loading state
@@ -1121,9 +1162,12 @@ function App() {
       )}
 
       {/* Header Bar */}
-      <div className="h-14 border-b border-gray-700 flex items-center px-4 justify-between bg-gray-800 shadow-sm z-10 shrink-0">
+      <div
+        className="h-14 border-b border-gray-700 flex items-center pr-4 justify-between bg-gray-800 shadow-sm z-10 shrink-0"
+        style={{ WebkitAppRegion: isElectron ? 'drag' : undefined, paddingLeft: isElectron ? 80 : 16 }}
+      >
         {/* Left: App Name + Mode Badge */}
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2" style={{ WebkitAppRegion: 'no-drag' }}>
           <Search className="text-blue-400" size={20} />
           <h1 className="font-bold text-lg">{t('app.title')}</h1>
           {isElectron && appMode && (
@@ -1142,7 +1186,7 @@ function App() {
         </div>
 
         {/* Right: Tab Buttons + Process (in archive mode) + Language */}
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2" style={{ WebkitAppRegion: 'no-drag' }}>
           <button
             onClick={() => setCurrentTab('search')}
             className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'search'
