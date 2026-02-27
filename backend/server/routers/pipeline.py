@@ -170,12 +170,26 @@ def complete_job(
         structure_vec = _decode_vector(req.vectors.get("structure"))
         db.upsert_vectors(stored_file_id, vv_vec=vv_vec, mv_vec=mv_vec, structure_vec=structure_vec)
 
-    # Mark job complete
+    # Verify data integrity before marking complete
+    expect_mc = bool(vision_fields)
+    expect_vv = bool(req.vectors and req.vectors.get("vv"))
+    expect_mv = bool(req.vectors and req.vectors.get("mv"))
+    integrity = db.verify_data_integrity(
+        stored_file_id, expect_mc=expect_mc, expect_vv=expect_vv, expect_mv=expect_mv
+    )
+
     queue = _get_queue(db)
-    queue.complete_job(job_id, user["id"])
+    if integrity["valid"]:
+        queue.complete_job(job_id, user["id"])
+    else:
+        logger.warning(
+            f"Job {job_id} integrity mismatch: missing={integrity['missing']}. "
+            f"Saving with actual phases: {integrity['actual_phases']}"
+        )
+        queue.complete_job_with_phases(job_id, user["id"], integrity["actual_phases"])
 
     logger.info(f"Job {job_id} completed by user {user['username']}: {file_path}")
-    return {"success": True, "file_id": stored_file_id}
+    return {"success": True, "file_id": stored_file_id, "integrity": integrity["valid"]}
 
 
 @router.patch("/api/v1/jobs/{job_id}/fail")
@@ -249,6 +263,18 @@ def complete_mc(
 
     db.update_vision_fields(file_path, vision_fields)
 
+    # Post-save verification: confirm mc_caption was actually stored
+    integrity = db.verify_data_integrity(stored_file_id, expect_mc=True)
+    if not integrity["has_mc"]:
+        logger.error(
+            f"MC-only job {job_id}: mc_caption save verification failed "
+            f"(data not found in DB after update_vision_fields)"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="mc_caption save failed — data not found in DB after write"
+        )
+
     # Update job: mark vision done, keep status='processing' for EmbedAhead to finish MV
     phase_json = json.dumps({"parse": True, "vision": True, "embed": False})
     mc_now = _utcnow_sql()
@@ -303,12 +329,25 @@ def complete_embed(
     mv_vec = _decode_vector(req.vectors.get("mv"))
     db.upsert_vectors(stored_file_id, vv_vec=vv_vec, mv_vec=mv_vec)
 
-    # Mark job fully complete
+    # Verify vectors were actually stored
+    expect_vv = vv_vec is not None
+    expect_mv = mv_vec is not None
+    integrity = db.verify_data_integrity(
+        stored_file_id, expect_mc=True, expect_vv=expect_vv, expect_mv=expect_mv
+    )
+
     queue = _get_queue(db)
-    queue.complete_job(job_id, user["id"])
+    if integrity["valid"]:
+        queue.complete_job(job_id, user["id"])
+    else:
+        logger.warning(
+            f"Embed-only job {job_id} integrity mismatch: missing={integrity['missing']}. "
+            f"Saving with actual phases: {integrity['actual_phases']}"
+        )
+        queue.complete_job_with_phases(job_id, user["id"], integrity["actual_phases"])
 
     logger.info(f"Embed-only job {job_id} completed by {user['username']}: {file_path}")
-    return {"success": True, "file_id": stored_file_id}
+    return {"success": True, "file_id": stored_file_id, "integrity": integrity["valid"]}
 
 
 # ── Discover: Browse & Scan server filesystem ────────────────

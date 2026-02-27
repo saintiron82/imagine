@@ -58,20 +58,71 @@ class JobQueueManager:
         """
         return get_processing_mode()
 
-    def create_jobs(self, file_ids: List[int], file_paths: List[str], priority: int = 0) -> int:
-        """Create pending jobs for files. Returns count of jobs created."""
+    def _batch_check_existing_data(self, file_ids: List[int]) -> Dict[int, dict]:
+        """Check actual DB data existence for a batch of files.
+
+        Returns a mapping of file_id → {"has_mc": bool, "has_vv": bool, "has_mv": bool}
+        Uses a single query with subqueries for efficiency.
+        """
+        if not file_ids:
+            return {}
+
         cursor = self.db.conn.cursor()
+        placeholders = ",".join("?" * len(file_ids))
+        cursor.execute(f"""
+            SELECT f.id,
+                   (f.mc_caption IS NOT NULL AND f.mc_caption != '') AS has_mc,
+                   EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) AS has_vv,
+                   EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) AS has_mv
+            FROM files f
+            WHERE f.id IN ({placeholders})
+        """, file_ids)
+
+        result = {}
+        for row in cursor.fetchall():
+            result[row[0]] = {
+                "has_mc": bool(row[1]),
+                "has_vv": bool(row[2]),
+                "has_mv": bool(row[3]),
+            }
+        return result
+
+    def create_jobs(self, file_ids: List[int], file_paths: List[str], priority: int = 0) -> int:
+        """Create pending jobs for files with accurate phase_completed.
+
+        Checks actual DB data to set initial phase_completed correctly,
+        preventing re-processing of already-complete phases.
+
+        Returns count of jobs created.
+        """
+        cursor = self.db.conn.cursor()
+
+        # Batch check existing data for all files
+        existing_data = self._batch_check_existing_data(file_ids)
+
         created = 0
         for fid, fpath in zip(file_ids, file_paths):
             # Normalize to NFC — macOS filesystem returns NFD (decomposed Korean),
             # but files table stores NFC (via upsert_metadata). Must match.
             fpath = unicodedata.normalize('NFC', fpath)
+
+            # Determine accurate phase_completed from actual data
+            data = existing_data.get(fid, {})
+            has_mc = data.get("has_mc", False)
+            has_vv = data.get("has_vv", False)
+            has_mv = data.get("has_mv", False)
+            phase_completed = json.dumps({
+                "parse": True,  # Files being registered already have metadata
+                "vision": has_mc,
+                "embed": has_vv and has_mv,
+            })
+
             try:
                 cursor.execute(
-                    """INSERT INTO job_queue (file_id, file_path, status, priority)
-                       VALUES (?, ?, 'pending', ?)
+                    """INSERT INTO job_queue (file_id, file_path, status, priority, phase_completed)
+                       VALUES (?, ?, 'pending', ?, ?)
                        ON CONFLICT DO NOTHING""",
-                    (fid, fpath, priority)
+                    (fid, fpath, priority, phase_completed)
                 )
                 if cursor.rowcount > 0:
                     created += 1
@@ -365,6 +416,53 @@ class JobQueueManager:
                WHERE id = ? AND assigned_to = ?""",
             (now, job_id, user_id)
         )
+        success = cursor.rowcount > 0
+        self.db.conn.commit()
+        return success
+
+    def complete_job_with_phases(self, job_id: int, user_id: int, phases: dict) -> bool:
+        """Complete a job with explicit phase status based on actual data.
+
+        If all phases are done → status='completed'.
+        If some phases are missing → status='pending' (re-claimable for retry).
+
+        Args:
+            job_id: Job ID
+            user_id: Assigned worker's user ID
+            phases: {"parse": bool, "vision": bool, "embed": bool}
+
+        Returns:
+            True if updated successfully.
+        """
+        cursor = self.db.conn.cursor()
+        now = _utcnow_sql()
+
+        all_done = all(phases.values())
+        if all_done:
+            # Fully complete
+            cursor.execute(
+                """UPDATE job_queue
+                   SET status = 'completed', completed_at = ?,
+                       phase_completed = ?
+                   WHERE id = ? AND assigned_to = ?""",
+                (now, json.dumps(phases), job_id, user_id)
+            )
+        else:
+            # Partial completion → release back to pending for re-claim
+            missing = [k for k, v in phases.items() if not v]
+            logger.warning(
+                f"Job {job_id} partially complete (missing: {missing}). "
+                f"Releasing to pending for re-processing."
+            )
+            cursor.execute(
+                """UPDATE job_queue
+                   SET status = 'pending', phase_completed = ?,
+                       assigned_to = NULL, assigned_at = NULL,
+                       worker_session_id = NULL
+                   WHERE id = ? AND assigned_to = ?""",
+                (json.dumps(phases), job_id, user_id)
+            )
+
         success = cursor.rowcount > 0
         self.db.conn.commit()
         return success

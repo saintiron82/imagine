@@ -201,20 +201,47 @@ class ParseAheadPool(BaseAheadPool):
         self._auto_run_mv_batch(contexts)
         self._auto_unload_mv()
 
-        # ── Mark all completed ──
+        # ── Mark completed with per-file integrity verification ──
         now = _utcnow_sql()
+        completed_count = 0
+        partial_count = 0
         for ctx in contexts:
-            job_id = ctx[0]
-            cursor.execute(
-                """UPDATE job_queue SET status = 'completed', completed_at = ?,
-                   phase_completed = '{"parse":true,"vision":true,"embed":true}'
-                   WHERE id = ? AND status = 'processing'""",
-                (now, job_id),
+            job_id, file_id = ctx[0], ctx[1]
+            verify = self.db.verify_data_integrity(
+                file_id, expect_mc=True, expect_vv=True, expect_mv=True
             )
+            if verify["valid"]:
+                cursor.execute(
+                    """UPDATE job_queue SET status = 'completed', completed_at = ?,
+                       phase_completed = '{"parse":true,"vision":true,"embed":true}'
+                       WHERE id = ? AND status = 'processing'""",
+                    (now, job_id),
+                )
+                completed_count += 1
+            else:
+                # Partial: set actual phases, release to pending for re-processing
+                phase_json = json.dumps(verify["actual_phases"])
+                cursor.execute(
+                    """UPDATE job_queue SET status = 'pending', phase_completed = ?,
+                       assigned_to = NULL, assigned_at = NULL, worker_session_id = NULL
+                       WHERE id = ? AND status = 'processing'""",
+                    (phase_json, job_id),
+                )
+                partial_count += 1
+                logger.warning(
+                    f"Auto job {job_id} (file_id={file_id}) integrity mismatch: "
+                    f"missing={verify['missing']}. Released to pending."
+                )
         self.db.conn.commit()
 
-        logger.info(f"Auto processing: {len(contexts)} files completed (P→V→VV→MV)")
-        return len(contexts)
+        if partial_count > 0:
+            logger.warning(
+                f"Auto processing: {completed_count} completed, "
+                f"{partial_count} partial (released to pending)"
+            )
+        else:
+            logger.info(f"Auto processing: {completed_count} files completed (P→V→VV→MV)")
+        return completed_count
 
     def _auto_run_vision_batch(self, contexts: list):
         """Phase V: Generate MC (caption/tags) with VLM.

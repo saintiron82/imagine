@@ -1238,6 +1238,75 @@ class SQLiteDB:
             "has_structure": has_structure,
         }
 
+    def verify_data_integrity(self, file_id: int,
+                              expect_mc: bool = False,
+                              expect_vv: bool = False,
+                              expect_mv: bool = False) -> dict:
+        """Verify actual DB data existence for a file, independent of flags.
+
+        Uses PK-based O(1) queries to check whether each data type truly
+        exists in the database. Returns a dict describing what was found
+        and what is missing vs. expectations.
+
+        Args:
+            file_id: The files.id to check
+            expect_mc: Whether MC (mc_caption) should exist
+            expect_vv: Whether VV (vec_files row) should exist
+            expect_mv: Whether MV (vec_text row) should exist
+
+        Returns:
+            {
+                "valid": bool,         # All expectations met
+                "has_mc": bool,        # mc_caption IS NOT NULL AND != ''
+                "has_vv": bool,        # vec_files row exists
+                "has_mv": bool,        # vec_text row exists
+                "missing": [str],      # List of missing items: "mc", "vv", "mv"
+                "actual_phases": {     # Data-driven phase status
+                    "parse": bool,
+                    "vision": bool,
+                    "embed": bool,
+                },
+            }
+        """
+        cursor = self.conn.cursor()
+
+        # Check mc_caption
+        cursor.execute(
+            "SELECT 1 FROM files WHERE id = ? AND mc_caption IS NOT NULL AND mc_caption != ''",
+            (file_id,)
+        )
+        has_mc = cursor.fetchone() is not None
+
+        # Check vec_files
+        cursor.execute("SELECT 1 FROM vec_files WHERE file_id = ?", (file_id,))
+        has_vv = cursor.fetchone() is not None
+
+        # Check vec_text
+        cursor.execute("SELECT 1 FROM vec_text WHERE file_id = ?", (file_id,))
+        has_mv = cursor.fetchone() is not None
+
+        # Determine missing items
+        missing = []
+        if expect_mc and not has_mc:
+            missing.append("mc")
+        if expect_vv and not has_vv:
+            missing.append("vv")
+        if expect_mv and not has_mv:
+            missing.append("mv")
+
+        return {
+            "valid": len(missing) == 0,
+            "has_mc": has_mc,
+            "has_vv": has_vv,
+            "has_mv": has_mv,
+            "missing": missing,
+            "actual_phases": {
+                "parse": True,  # If file_id exists, parse is done
+                "vision": has_mc,
+                "embed": has_vv and has_mv,
+            },
+        }
+
     def find_by_content_hash(self, content_hash: str) -> List[Dict[str, Any]]:
         """
         Find files by content_hash (may return multiple results for copies).
