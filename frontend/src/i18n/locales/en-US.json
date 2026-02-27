@@ -458,6 +458,8 @@
   "admin.worker_mode": "Capability",
   "admin.worker_mode_mc_only": "MC Only",
   "admin.worker_mode_mc_only_desc": "Server handles P+VV+MV, delegates MC to worker",
+  "admin.worker_mode_parse_only": "Parse Only",
+  "admin.worker_mode_parse_only_desc": "Server handles Parse only. V+VV+MV fully delegated to workers.",
   "admin.worker_mode_auto": "Auto",
   "admin.worker_mode_auto_desc": "Distribute V/VV/MV based on worker GPU. Server fills gaps.",
   "admin.worker_capability_full": "Full",

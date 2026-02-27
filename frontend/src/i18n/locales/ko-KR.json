@@ -458,6 +458,8 @@
   "admin.worker_mode": "능력",
   "admin.worker_mode_mc_only": "MC Only",
   "admin.worker_mode_mc_only_desc": "서버가 P+VV+MV 처리, 워커에 MC만 위임",
+  "admin.worker_mode_parse_only": "Parse Only",
+  "admin.worker_mode_parse_only_desc": "서버는 Parse만 처리. V+VV+MV는 모두 워커에게 위임.",
   "admin.worker_mode_auto": "자동",
   "admin.worker_mode_auto_desc": "워커 GPU에 따라 V/VV/MV 자동 분배, 서버가 빈 자리 채움.",
   "admin.worker_capability_full": "Full",

@@ -361,6 +361,16 @@ function WorkersPanel() {
               {t('admin.worker_mode_mc_only')}
             </button>
             <button
+              onClick={() => handleGlobalMode('parse_only')}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                globalMode === 'parse_only'
+                  ? 'bg-teal-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {t('admin.worker_mode_parse_only')}
+            </button>
+            <button
               onClick={() => handleGlobalMode('auto')}
               className={`px-4 py-2 text-xs font-medium transition-colors ${
                 globalMode === 'auto'
@@ -374,6 +384,9 @@ function WorkersPanel() {
         </div>
         {globalMode === 'mc_only' && (
           <div className="text-xs text-amber-400/70 mt-2">{t('admin.worker_mode_mc_only_desc')}</div>
+        )}
+        {globalMode === 'parse_only' && (
+          <div className="text-xs text-teal-400/70 mt-2">{t('admin.worker_mode_parse_only_desc')}</div>
         )}
         {globalMode === 'auto' && (
           <div className="text-xs text-blue-400/70 mt-2">{t('admin.worker_mode_auto_desc')}</div>
