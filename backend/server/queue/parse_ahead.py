@@ -13,6 +13,9 @@ Modes:
 - mc_only: Also runs Phase VV (SigLIP2 + DINOv2) on parsed jobs since
   VV/Structure only need the image (independent of MC). Workers handle
   V(MC) only; EmbedAheadPool handles MV.
+- parse_only: Server does Phase P only (zero GPU models loaded). All GPU
+  work (V+VV+MV) is delegated to workers running in full mode. When no
+  workers are online, server keeps parsing and queues jobs (no auto fallback).
 - distribute: Pre-parse + gap-fill V(MC) for lightweight workers. Full
   workers handle V+VV+MV, lightweight workers handle VV+MV. Server fills
   vision gaps so lightweight workers can claim vision-done jobs.
@@ -44,6 +47,7 @@ class ParseAheadPool(BaseAheadPool):
     Modes:
     - auto: Full pipeline P→V→VV→MV (no workers connected).
     - mc_only: P + VV (SigLIP2 + DINOv2); workers do V(MC) only.
+    - parse_only: P only (zero GPU); workers do V+VV+MV (full mode).
     - distribute: P + gap-fill V(MC) for lightweight workers.
     """
 
@@ -534,6 +538,7 @@ class ParseAheadPool(BaseAheadPool):
         Modes:
         - auto: Server processes all phases (P→V→VV→MV) when no workers connected.
         - mc_only: Pre-parse + VV embedding; workers handle V(MC) only.
+        - parse_only: Pre-parse only (zero GPU); workers handle V+VV+MV.
         - distribute: Pre-parse + gap-fill V(MC) for lightweight workers;
           full workers handle V+VV+MV, lightweight workers handle VV+MV.
         """
@@ -570,7 +575,7 @@ class ParseAheadPool(BaseAheadPool):
                             time.sleep(poll_interval_s)
                         continue
 
-                    # Non-auto modes (mc_only, distribute): pre-parse pending jobs
+                    # Non-auto modes (mc_only, parse_only, distribute): pre-parse pending jobs
                     self._run_pre_parse_buffer()
 
                     # Distribute mode: gap-fill V(MC) for lightweight workers

@@ -52,7 +52,7 @@ class WorkerConfigUpdate(BaseModel):
 
 
 class GlobalModeUpdate(BaseModel):
-    processing_mode: str  # "mc_only" | "auto"
+    processing_mode: str  # "mc_only" | "parse_only" | "auto"
 
 
 class AutoProcessingUpdate(BaseModel):
@@ -90,10 +90,12 @@ def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
 
 
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
-    """온라인 워커 + admin 모드(mc_only/auto)에 따라 서버 사이드 풀 자동 설정.
+    """온라인 워커 + admin 모드(mc_only/parse_only/auto)에 따라 서버 사이드 풀 자동 설정.
 
-    - 워커 없음 → auto 모드 (서버가 P→V→VV→MV 전부)
+    - 워커 없음 + parse_only → 서버 P만, 워커 대기 (auto 폴백 없음)
+    - 워커 없음 + auto/mc_only → auto 모드 (서버가 P→V→VV→MV 전부)
     - mc_only 모드 → ParseAhead(P+VV) + EmbedAhead(MV), 워커는 V(MC)만
+    - parse_only 모드 → ParseAhead(P only, zero GPU), 워커는 V+VV+MV (full)
     - auto 모드 → ParseAhead(P + gap-fill V), 워커는 능력별 V/VV/MV 분산
     """
     if not app:
@@ -106,7 +108,7 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     rows = cursor.fetchall()
     has_workers = len(rows) > 0
 
-    global_mode = _get_global_processing_mode()  # "mc_only" | "auto"
+    global_mode = _get_global_processing_mode()  # "mc_only" | "parse_only" | "auto"
 
     # Check for lightweight (embed_only) workers in auto mode
     has_lightweight = any(
@@ -118,21 +120,34 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
 
         if not has_workers:
-            # No workers online — auto (server handles everything)
-            from backend.utils.config import get_config
-            cfg = get_config()
-            auto_enabled = cfg.get("server.auto_processing.enabled", True)
-            if auto_enabled:
-                app.state.parse_ahead._processing_mode = "auto"
-                if old_mode != "auto":
-                    logger.info("No workers online, auto-processing enabled")
+            if global_mode == "parse_only":
+                # parse_only: keep parsing, queue jobs, wait for workers
+                app.state.parse_ahead._processing_mode = "parse_only"
+                if old_mode != "parse_only":
+                    logger.info("No workers online, parse_only mode — server parsing only, waiting for workers")
             else:
-                app.state.parse_ahead._processing_mode = "distribute"
+                # auto/mc_only without workers
+                from backend.utils.config import get_config
+                cfg = get_config()
+                auto_enabled = cfg.get("server.auto_processing.enabled", True)
+                if auto_enabled:
+                    app.state.parse_ahead._processing_mode = "auto"
+                    if old_mode != "auto":
+                        logger.info("No workers online, auto-processing enabled")
+                else:
+                    app.state.parse_ahead._processing_mode = "distribute"
         elif global_mode == "mc_only":
             # mc_only: Server P+VV, workers V(MC), EmbedAhead MV
             app.state.parse_ahead._processing_mode = "mc_only"
             if old_mode != "mc_only":
                 logger.info(f"Workers connected, switching to mc_only mode")
+        elif global_mode == "parse_only":
+            # parse_only: Server P only (zero GPU), workers do V+VV+MV
+            app.state.parse_ahead._processing_mode = "parse_only"
+            # Unload any GPU models from previous mode (e.g., mc_only → parse_only switch)
+            app.state.parse_ahead._unload_models()
+            if old_mode != "parse_only":
+                logger.info(f"Workers connected, switching to parse_only mode")
         else:
             # auto → distribute: Server P + gap-fill V, workers V/VV/MV
             app.state.parse_ahead._processing_mode = "distribute"
@@ -247,6 +262,9 @@ def worker_connect(
     if global_mode == "mc_only":
         # mc_only: all workers do V(MC) only, regardless of capability
         processing_mode = "mc_only"
+    elif global_mode == "parse_only":
+        # parse_only: all workers do full pipeline (V+VV+MV)
+        processing_mode = "full"
     else:
         # auto: use auto-detected capability (full/embed_only)
         processing_mode = (ov[0] if ov and ov[0] else None) or "full"
@@ -340,10 +358,13 @@ def worker_heartbeat(
 
     # Determine effective processing mode:
     # - mc_only global → ALL workers get mc_only
+    # - parse_only global → ALL workers get full (V+VV+MV)
     # - auto global → workers get their auto-detected mode (full/embed_only)
     global_mode = _get_global_processing_mode()
     if global_mode == "mc_only":
         processing_mode = "mc_only"
+    elif global_mode == "parse_only":
+        processing_mode = "full"
     else:
         processing_mode = mode_override or "full"
     effective_batch = batch_override or batch_capacity
@@ -679,17 +700,18 @@ def admin_update_global_config(
     admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db),
 ):
-    """Change global processing mode (mc_only | auto).
+    """Change global processing mode (mc_only | parse_only | auto).
 
     - mc_only: all workers get mc_only override (V/MC only)
+    - parse_only: all workers get full override (V+VV+MV); server does P only (zero GPU)
     - auto: workers keep their auto-detected roles (full/embed_only)
 
     Also dynamically starts/stops EmbedAheadPool and updates
     ParseAheadPool's processing_mode based on the new mode.
     """
     mode = req.processing_mode
-    if mode not in ("mc_only", "auto"):
-        raise HTTPException(status_code=400, detail="processing_mode must be 'mc_only' or 'auto'")
+    if mode not in ("mc_only", "parse_only", "auto"):
+        raise HTTPException(status_code=400, detail="processing_mode must be 'mc_only', 'parse_only', or 'auto'")
 
     cursor = db.conn.cursor()
 
@@ -700,7 +722,14 @@ def admin_update_global_config(
                SET processing_mode_override = 'mc_only'
                WHERE status = 'online'""",
         )
-    else:
+    elif mode == "parse_only":
+        # parse_only: all workers do full pipeline (V+VV+MV)
+        cursor.execute(
+            """UPDATE worker_sessions
+               SET processing_mode_override = 'full'
+               WHERE status = 'online'""",
+        )
+    elif mode == "auto":
         # auto: let workers keep their auto-detected roles (full/embed_only).
         # Do NOT clear processing_mode_override — it was set by connect based
         # on GPU capability. _recalculate_server_pools() uses these values.
