@@ -58,6 +58,10 @@ export async function clearCompletedJobs() {
   return apiClient.delete('/api/v1/admin/jobs/clear-completed');
 }
 
+export async function auditIntegrity() {
+  return apiClient.post('/api/v1/admin/jobs/audit-integrity');
+}
+
 // ── Discover (server filesystem) ────────────────────────
 
 export async function browseFolders(path = '/') {

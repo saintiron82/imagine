@@ -13,14 +13,14 @@ import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
 import UpdateNotification from './components/UpdateNotification';
 import EolBanner from './components/EolBanner';
-import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2 } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2, ShieldCheck } from 'lucide-react';
 import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
 import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
-import { registerPaths, scanFolder, getJobStats, resetDatabase } from './api/admin';
+import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
 
 function App() {
@@ -65,6 +65,8 @@ function App() {
   const [resetPassword, setResetPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetError, setResetError] = useState('');
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditResult, setAuditResult] = useState(null);
 
   // Worker progress state (client mode)
   const [isWorkerRunning, setIsWorkerRunning] = useState(false);
@@ -1006,6 +1008,30 @@ function App() {
     }
   };
 
+  const handleAuditIntegrity = async () => {
+    setAuditLoading(true);
+    setShowDbMenu(false);
+    try {
+      const result = await auditIntegrity();
+      setAuditResult(result);
+      if (result.repaired > 0) {
+        appendLog({
+          message: t('audit.result_repaired', { audited: result.audited, repaired: result.repaired }),
+          type: 'warn',
+        });
+      } else {
+        appendLog({
+          message: t('audit.result_ok', { audited: result.audited }),
+          type: 'success',
+        });
+      }
+    } catch (e) {
+      appendLog({ message: `Audit error: ${e.message}`, type: 'error' });
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   const handleImportProcessNew = (folderPath) => {
     handleProcessFolder(folderPath);
   };
@@ -1161,6 +1187,46 @@ function App() {
         </div>
       )}
 
+      {auditResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+            <h2 className="text-lg font-semibold text-blue-400 mb-3 flex items-center gap-2">
+              <ShieldCheck size={20} />
+              {t('audit.title')}
+            </h2>
+            <div className="space-y-2 text-sm text-neutral-300 mb-4">
+              <p>{t('audit.checked', { count: auditResult.audited })}</p>
+              {auditResult.repaired > 0 ? (
+                <>
+                  <p className="text-yellow-400 font-medium">
+                    {t('audit.repaired', { count: auditResult.repaired })}
+                  </p>
+                  <div className="max-h-40 overflow-y-auto mt-2 space-y-1">
+                    {auditResult.details?.map((d, i) => (
+                      <div key={i} className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1 rounded">
+                        <span className="text-neutral-500">#{d.job_id}</span>{' '}
+                        <span className="text-yellow-500">[{d.missing.join(', ')}]</span>{' '}
+                        <span className="truncate">{d.file_path?.split('/').pop()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-green-400 font-medium">{t('audit.all_ok')}</p>
+              )}
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setAuditResult(null)}
+                className="px-4 py-2 text-sm bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg transition-colors"
+              >
+                {t('action.close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header Bar */}
       <div
         className="h-14 border-b border-gray-700 flex items-center pr-4 justify-between bg-gray-800 shadow-sm z-10 shrink-0"
@@ -1278,6 +1344,18 @@ function App() {
                   {isAdmin && (
                     <>
                       <div className="border-t border-gray-600 my-1" />
+                      <button
+                        onClick={handleAuditIntegrity}
+                        disabled={auditLoading}
+                        className="w-full flex items-center gap-2 px-4 py-2 text-sm text-blue-400 hover:bg-blue-900/30 hover:text-blue-300 transition-colors disabled:opacity-50"
+                      >
+                        {auditLoading ? (
+                          <span className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <ShieldCheck size={14} />
+                        )}
+                        {t('action.audit_integrity')}
+                      </button>
                       <button
                         onClick={() => { setShowDbMenu(false); setShowResetDialog(true); }}
                         className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors"

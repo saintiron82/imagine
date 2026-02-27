@@ -61,6 +61,25 @@ class ParseAheadPool(BaseAheadPool):
         self._last_retry_reset = 0.0  # Timestamp of last parse_status='failed' reset
         logger.info(f"ParseAheadPool initialized (processing_mode={self._processing_mode})")
 
+        # Auto-audit on startup: repair completed jobs with missing data
+        self._startup_integrity_audit()
+
+    def _startup_integrity_audit(self):
+        """Run integrity audit on server startup to repair stale completed jobs."""
+        try:
+            from backend.server.queue.manager import JobQueueManager
+            mgr = JobQueueManager(self.db)
+            result = mgr.audit_completed_jobs()
+            if result["repaired"] > 0:
+                logger.warning(
+                    f"Startup audit: {result['repaired']}/{result['audited']} "
+                    f"completed jobs had missing data → reset to pending"
+                )
+            elif result["audited"] > 0:
+                logger.info(f"Startup audit: {result['audited']} completed jobs verified OK")
+        except Exception as e:
+            logger.warning(f"Startup integrity audit failed (non-fatal): {e}")
+
     def _unload_models(self):
         """Unload VV and Structure encoders if loaded (mc_only mode)."""
         if self._vv_encoder is not None:
