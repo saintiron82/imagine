@@ -1262,7 +1262,37 @@ function App() {
                 <p className="text-green-400 font-medium">{t('audit.all_ok')}</p>
               )}
             </div>
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+              {isAdmin && (
+                <button
+                  onClick={async () => {
+                    setRetryLoading(true);
+                    try {
+                      const result = await retryFailedJobs();
+                      const count = result.retried || 0;
+                      appendLog({
+                        message: count > 0
+                          ? t('audit.retry_result', { count })
+                          : t('audit.retry_none'),
+                        type: count > 0 ? 'warn' : 'success',
+                      });
+                    } catch (e) {
+                      appendLog({ message: `Retry error: ${e.message}`, type: 'error' });
+                    } finally {
+                      setRetryLoading(false);
+                    }
+                  }}
+                  disabled={retryLoading}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                >
+                  {retryLoading ? (
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <RotateCcw size={14} />
+                  )}
+                  {t('action.retry_failed')}
+                </button>
+              )}
               <button
                 onClick={() => setAuditResult(null)}
                 className="px-4 py-2 text-sm bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg transition-colors"
