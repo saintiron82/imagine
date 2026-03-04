@@ -40,13 +40,13 @@ const SetupPage = ({ onComplete }) => {
     const handleConfirm = useCallback(async () => {
         if (!selectedMode) return;
 
-        // Client (worker) mode → skip env check, go straight in
-        if (selectedMode === 'client' || !window.electron?.pipeline?.checkEnv) {
+        // Web mode (no Electron API) → skip env check
+        if (!window.electron?.pipeline?.checkEnv) {
             onComplete(selectedMode);
             return;
         }
 
-        // Server (admin) mode on Electron → check environment first
+        // Server & Client both need AI models locally → check environment
         setPhase('checking');
         try {
             const status = await window.electron.pipeline.checkEnv();

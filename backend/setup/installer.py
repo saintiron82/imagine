@@ -258,6 +258,11 @@ def download_mlx_model():
 
 def install_packages():
     """Install packages via pip."""
+    # PyInstaller bundle already includes all dependencies
+    if getattr(sys, '_MEIPASS', None):
+        logger.info("✅ Packaged mode: all dependencies are bundled.")
+        return True
+
     logger.info("Installing dependencies...")
     try:
         # Detect if running in virtualenv

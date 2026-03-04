@@ -1136,7 +1136,13 @@ ipcMain.handle('check-env', async () => {
 ipcMain.on('install-env', (event) => {
     event.reply('install-log', { message: '🚀 Starting installation...', type: 'info' });
 
-    const proc = spawnBackend('installer', ['--install', '--download-model'], {},
+    // Packaged mode: pip install unnecessary (all deps bundled), download models only
+    // Dev mode: pip install + model download
+    const cliPath = getBackendCliPath();
+    const installerArgs = cliPath
+        ? ['--download-model']
+        : ['--install', '--download-model'];
+    const proc = spawnBackend('installer', installerArgs, {},
         'backend/setup/installer.py');
 
     proc.stdout.on('data', (data) => {
