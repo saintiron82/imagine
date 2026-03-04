@@ -302,10 +302,9 @@ def download_model():
     logger.info(f"Downloading VV model: {model_name}")
     logger.info("This may take a while on first run...")
     try:
-        from transformers import AutoModel, AutoProcessor
-        AutoProcessor.from_pretrained(model_name)
-        AutoModel.from_pretrained(model_name)
-        logger.info(f"✅ Model downloaded and verified: {model_name}")
+        from huggingface_hub import snapshot_download
+        snapshot_download(model_name)
+        logger.info(f"✅ Model downloaded and cached: {model_name}")
         return True
     except Exception as e:
         logger.error(f"❌ Model download failed: {e}")
