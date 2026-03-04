@@ -146,6 +146,7 @@ a = Analysis(
         'torch.amp',
         'transformers',
         'accelerate',
+        'jwt',
         'pydantic',
         'pydantic.deprecated.decorator',
         'yaml',
