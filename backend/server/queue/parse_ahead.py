@@ -123,6 +123,7 @@ class ParseAheadPool(BaseAheadPool):
             return 0
 
         logger.info(f"Auto processing: starting batch of {len(jobs)} files")
+        self._update_builtin_session("parse", f"batch({len(jobs)})")
 
         # Mark jobs as processing
         now = _utcnow_sql()
@@ -190,6 +191,7 @@ class ParseAheadPool(BaseAheadPool):
 
         # ── Phase V: Vision/VLM (MC generation) ──
         logger.info(f"Auto Phase V: processing {len(contexts)} files with VLM")
+        self._update_builtin_session("vision", f"batch({len(contexts)})")
         self._auto_run_vision_batch(contexts)
         self._auto_unload_vlm()
 
@@ -198,6 +200,7 @@ class ParseAheadPool(BaseAheadPool):
 
         # ── Phase VV: SigLIP2 visual embedding ──
         logger.info(f"Auto Phase VV: processing {len(contexts)} files with SigLIP2")
+        self._update_builtin_session("embed_vv", f"batch({len(contexts)})")
         for ctx in contexts:
             job_id, file_id, file_path, thumb_path, _ = ctx
             if not self._running or self._processing_mode != "auto":
@@ -217,6 +220,7 @@ class ParseAheadPool(BaseAheadPool):
 
         # ── Phase MV: Qwen3-Embedding text embedding ──
         logger.info(f"Auto Phase MV: processing {len(contexts)} files with text embedder")
+        self._update_builtin_session("embed_mv", f"batch({len(contexts)})")
         self._auto_run_mv_batch(contexts)
         self._auto_unload_mv()
 
@@ -260,7 +264,43 @@ class ParseAheadPool(BaseAheadPool):
             )
         else:
             logger.info(f"Auto processing: {completed_count} files completed (P→V→VV→MV)")
+        self._update_builtin_session(None, None, jobs_done=completed_count)
         return completed_count
+
+    def _update_builtin_session(self, phase: str = None, file_name: str = None,
+                                 jobs_done: int = 0):
+        """Update virtual builtin worker session for UI visibility.
+
+        Only active when global mode is builtin_worker.
+        """
+        try:
+            from backend.server.queue.manager import get_processing_mode, _utcnow_sql
+            if get_processing_mode() != "builtin_worker":
+                return
+
+            cursor = self.db.conn.cursor()
+            now = _utcnow_sql()
+
+            if jobs_done > 0:
+                cursor.execute(
+                    """UPDATE worker_sessions
+                       SET current_phase = ?, current_file = ?,
+                           jobs_completed = COALESCE(jobs_completed, 0) + ?,
+                           last_heartbeat = ?
+                       WHERE worker_name = '__builtin__' AND status = 'online'""",
+                    (phase, file_name, jobs_done, now),
+                )
+            else:
+                cursor.execute(
+                    """UPDATE worker_sessions
+                       SET current_phase = ?, current_file = ?,
+                           last_heartbeat = ?
+                       WHERE worker_name = '__builtin__' AND status = 'online'""",
+                    (phase, file_name, now),
+                )
+            self.db.conn.commit()
+        except Exception as e:
+            logger.debug(f"Builtin session update failed: {e}")
 
     def _auto_run_vision_batch(self, contexts: list):
         """Phase V: Generate MC (caption/tags) with VLM.

@@ -16,17 +16,18 @@ logger = logging.getLogger(__name__)
 def get_processing_mode() -> str:
     """Get effective processing mode from config.
 
-    Returns "mc_only", "parse_only", or "auto" (default).
+    Returns "mc_only", "parse_only", "auto", or "builtin_worker" (default: auto).
     - mc_only: Server P+VV+MV, workers do V(MC) only.
     - parse_only: Server P only (zero GPU), workers do V+VV+MV (full mode).
     - auto: Server P + gap-fill, workers distribute V/VV/MV by capability.
+    - builtin_worker: Server processes full P→V→VV→MV always, regardless of workers.
     """
     try:
         from backend.utils.config import get_config
         cfg = get_config()
         mode = cfg.get("server.processing_mode") or "auto"
         # Normalize legacy values
-        if mode not in ("mc_only", "parse_only", "auto"):
+        if mode not in ("mc_only", "parse_only", "auto", "builtin_worker"):
             mode = "auto"
         return mode
     except Exception:

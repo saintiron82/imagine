@@ -52,7 +52,7 @@ class WorkerConfigUpdate(BaseModel):
 
 
 class GlobalModeUpdate(BaseModel):
-    processing_mode: str  # "mc_only" | "parse_only" | "auto"
+    processing_mode: str  # "mc_only" | "parse_only" | "auto" | "builtin_worker"
 
 
 class AutoProcessingUpdate(BaseModel):
@@ -103,12 +103,36 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
 
     cursor = db.conn.cursor()
     cursor.execute(
-        "SELECT processing_mode_override FROM worker_sessions WHERE status = 'online'"
+        "SELECT processing_mode_override FROM worker_sessions WHERE status = 'online' AND worker_name != ?",
+        (BUILTIN_WORKER_NAME,),
     )
     rows = cursor.fetchall()
     has_workers = len(rows) > 0
 
-    global_mode = _get_global_processing_mode()  # "mc_only" | "parse_only" | "auto"
+    global_mode = _get_global_processing_mode()  # "mc_only" | "parse_only" | "auto" | "builtin_worker"
+
+    # ── builtin_worker: server always processes full pipeline ──
+    if global_mode == "builtin_worker":
+        if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
+            old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
+            app.state.parse_ahead._processing_mode = "auto"
+            if old_mode != "auto":
+                logger.info("Builtin worker mode: ParseAheadPool set to auto (full pipeline)")
+
+        # Stop EmbedAheadPool if running (not needed — ParseAhead does P→V→VV→MV)
+        if (hasattr(app.state, "embed_ahead") and app.state.embed_ahead
+                and getattr(app.state.embed_ahead, "_thread", None)
+                and app.state.embed_ahead._thread.is_alive()):
+            try:
+                app.state.embed_ahead.stop()
+                app.state.embed_ahead = None
+                logger.info("EmbedAheadPool stopped (builtin_worker mode)")
+            except Exception as e:
+                logger.warning(f"Failed to stop EmbedAheadPool: {e}")
+
+        # Ensure virtual worker session exists
+        _ensure_builtin_worker_session(db)
+        return
 
     # Check for lightweight (embed_only) workers in auto mode
     has_lightweight = any(
@@ -195,6 +219,82 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         f"Pool recalculated: workers={has_workers}, global_mode={global_mode}, "
         f"lightweight={has_lightweight}, embed_ahead={needs_embed_ahead}"
     )
+
+
+# ── Builtin worker virtual session ──────────────────────────
+
+BUILTIN_WORKER_NAME = "__builtin__"
+
+
+def _ensure_builtin_worker_session(db: "SQLiteDB") -> int:
+    """Create or reactivate the virtual builtin worker session.
+
+    Returns the session_id.
+    """
+    now = _utcnow_sql()
+    cursor = db.conn.cursor()
+
+    # Check if already online
+    cursor.execute(
+        "SELECT id FROM worker_sessions WHERE worker_name = ? AND status = 'online'",
+        (BUILTIN_WORKER_NAME,),
+    )
+    row = cursor.fetchone()
+    if row:
+        return row[0]
+
+    # Try reactivating existing offline session
+    cursor.execute(
+        """UPDATE worker_sessions
+           SET status = 'online', last_heartbeat = ?, disconnected_at = NULL
+           WHERE worker_name = ? AND status = 'offline'""",
+        (now, BUILTIN_WORKER_NAME),
+    )
+    if cursor.rowcount > 0:
+        db.conn.commit()
+        cursor.execute(
+            "SELECT id FROM worker_sessions WHERE worker_name = ? AND status = 'online'",
+            (BUILTIN_WORKER_NAME,),
+        )
+        row = cursor.fetchone()
+        logger.info(f"Builtin worker session reactivated (id={row[0]})")
+        return row[0]
+
+    # Create new session (user_id=1 = default admin)
+    batch_size = 5
+    try:
+        from backend.utils.config import get_config
+        batch_size = get_config().get("server.auto_processing.batch_size", 5)
+    except Exception:
+        pass
+
+    cursor.execute(
+        """INSERT INTO worker_sessions
+           (user_id, worker_name, hostname, batch_capacity, status,
+            processing_mode_override, connected_at, last_heartbeat)
+           VALUES (1, ?, 'server (built-in)', ?, 'online', 'full', ?, ?)""",
+        (BUILTIN_WORKER_NAME, batch_size, now, now),
+    )
+    session_id = cursor.lastrowid
+    db.conn.commit()
+    logger.info(f"Builtin worker session created (id={session_id})")
+    return session_id
+
+
+def _deactivate_builtin_worker_session(db: "SQLiteDB"):
+    """Mark builtin worker session as offline."""
+    now = _utcnow_sql()
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """UPDATE worker_sessions
+           SET status = 'offline', disconnected_at = ?,
+               current_job_id = NULL, current_file = NULL, current_phase = NULL
+           WHERE worker_name = ? AND status = 'online'""",
+        (now, BUILTIN_WORKER_NAME),
+    )
+    if cursor.rowcount > 0:
+        db.conn.commit()
+        logger.info("Builtin worker session deactivated")
 
 
 # ── Worker → Server endpoints ────────────────────────────────
@@ -700,40 +800,50 @@ def admin_update_global_config(
     admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db),
 ):
-    """Change global processing mode (mc_only | parse_only | auto).
+    """Change global processing mode (mc_only | parse_only | auto | builtin_worker).
 
     - mc_only: all workers get mc_only override (V/MC only)
     - parse_only: all workers get full override (V+VV+MV); server does P only (zero GPU)
     - auto: workers keep their auto-detected roles (full/embed_only)
+    - builtin_worker: server processes full P→V→VV→MV always, regardless of workers
 
     Also dynamically starts/stops EmbedAheadPool and updates
     ParseAheadPool's processing_mode based on the new mode.
     """
     mode = req.processing_mode
-    if mode not in ("mc_only", "parse_only", "auto"):
-        raise HTTPException(status_code=400, detail="processing_mode must be 'mc_only', 'parse_only', or 'auto'")
+    if mode not in ("mc_only", "parse_only", "auto", "builtin_worker"):
+        raise HTTPException(status_code=400, detail="processing_mode must be 'mc_only', 'parse_only', 'auto', or 'builtin_worker'")
 
     cursor = db.conn.cursor()
+
+    # Deactivate builtin worker session when switching away from builtin_worker
+    if mode != "builtin_worker":
+        _deactivate_builtin_worker_session(db)
 
     if mode == "mc_only":
         # mc_only: all workers do V(MC) only — override everyone to mc_only
         cursor.execute(
             """UPDATE worker_sessions
                SET processing_mode_override = 'mc_only'
-               WHERE status = 'online'""",
+               WHERE status = 'online' AND worker_name != ?""",
+            (BUILTIN_WORKER_NAME,),
         )
     elif mode == "parse_only":
         # parse_only: all workers do full pipeline (V+VV+MV)
         cursor.execute(
             """UPDATE worker_sessions
                SET processing_mode_override = 'full'
-               WHERE status = 'online'""",
+               WHERE status = 'online' AND worker_name != ?""",
+            (BUILTIN_WORKER_NAME,),
         )
     elif mode == "auto":
         # auto: let workers keep their auto-detected roles (full/embed_only).
         # Do NOT clear processing_mode_override — it was set by connect based
         # on GPU capability. _recalculate_server_pools() uses these values.
         pass
+    elif mode == "builtin_worker":
+        # builtin_worker: server processes full pipeline. External workers unaffected.
+        _ensure_builtin_worker_session(db)
 
     db.conn.commit()
     affected = cursor.rowcount

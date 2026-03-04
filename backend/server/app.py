@@ -283,6 +283,7 @@ def _start_heartbeat_watchdog():
                 cursor.execute(
                     """SELECT id, worker_name FROM worker_sessions
                        WHERE status = 'online'
+                         AND worker_name != '__builtin__'
                          AND last_heartbeat IS NOT NULL
                          AND datetime(last_heartbeat, '+' || ? || ' minutes') < datetime('now')""",
                     (TIMEOUT,)
