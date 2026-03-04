@@ -89,8 +89,8 @@ def get_gpu_vram_mb() -> int:
     """
     try:
         import torch
-    except ImportError:
-        logger.warning("PyTorch not installed, cannot detect GPU")
+    except Exception as e:
+        logger.warning(f"PyTorch unavailable ({type(e).__name__}), cannot detect GPU")
         return 0
 
     # CUDA GPU

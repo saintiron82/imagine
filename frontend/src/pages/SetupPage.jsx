@@ -1,13 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Shield, Cpu, ArrowRight, Download, CheckCircle, AlertCircle, Loader2, SkipForward } from 'lucide-react';
+import { Shield, Cpu, ArrowRight, ArrowLeft, Download, CheckCircle, AlertCircle, Loader2, SkipForward, Zap, Star, Rocket } from 'lucide-react';
 import { useLocale } from '../i18n';
+
+const TIERS = [
+    { id: 'standard', icon: Zap,    color: 'emerald' },
+    { id: 'pro',      icon: Star,   color: 'blue' },
+    { id: 'ultra',    icon: Rocket, color: 'purple' },
+];
 
 const SetupPage = ({ onComplete }) => {
     const { t } = useLocale();
     const [selectedMode, setSelectedMode] = useState(null);
+    const [selectedTier, setSelectedTier] = useState(null);
 
     // Environment check state
-    const [phase, setPhase] = useState('select'); // 'select' | 'checking' | 'install' | 'installing' | 'done'
+    const [phase, setPhase] = useState('select'); // 'select' | 'tier' | 'checking' | 'install' | 'installing' | 'done'
     const [envStatus, setEnvStatus] = useState(null);
     const [installLogs, setInstallLogs] = useState([]);
     const [installDone, setInstallDone] = useState(false);
@@ -37,22 +44,33 @@ const SetupPage = ({ onComplete }) => {
         return () => pipeline.offInstallLog?.();
     }, []);
 
-    const handleConfirm = useCallback(async () => {
+    // Mode selection → tier selection
+    const handleModeConfirm = useCallback(() => {
         if (!selectedMode) return;
-
-        // Web mode (no Electron API) → skip env check
         if (!window.electron?.pipeline?.checkEnv) {
             onComplete(selectedMode);
             return;
         }
+        setPhase('tier');
+    }, [selectedMode, onComplete]);
 
-        // Server & Client both need AI models locally → check environment
+    // Tier selection → save + env check
+    const handleTierConfirm = useCallback(async () => {
+        if (!selectedTier) return;
+
+        // Save tier to user-settings.yaml
+        try {
+            await window.electron.pipeline.updateConfig('ai_mode.override', selectedTier);
+            await window.electron.pipeline.updateConfig('ai_mode.auto_detect', false);
+        } catch (e) {
+            console.error('Failed to save tier:', e);
+        }
+
+        // Check environment
         setPhase('checking');
         try {
             const status = await window.electron.pipeline.checkEnv();
             setEnvStatus(status);
-
-            // If all critical models are present, proceed directly
             const modelsOk = status.visual_model_cached && status.dependencies_ok;
             if (modelsOk) {
                 onComplete(selectedMode);
@@ -61,10 +79,9 @@ const SetupPage = ({ onComplete }) => {
             }
         } catch (e) {
             console.error('check-env failed:', e);
-            // On error, let user proceed anyway
             onComplete(selectedMode);
         }
-    }, [selectedMode, onComplete]);
+    }, [selectedTier, selectedMode, onComplete]);
 
     const handleInstall = useCallback(() => {
         setPhase('installing');
@@ -193,6 +210,84 @@ const SetupPage = ({ onComplete }) => {
         );
     }
 
+    // Phase: Tier selection
+    if (phase === 'tier') {
+        const colorMap = {
+            emerald: { active: 'border-emerald-500 bg-emerald-900/20 shadow-lg shadow-emerald-900/30', icon: 'bg-emerald-600', dot: 'bg-emerald-400' },
+            blue:    { active: 'border-blue-500 bg-blue-900/20 shadow-lg shadow-blue-900/30', icon: 'bg-blue-600', dot: 'bg-blue-400' },
+            purple:  { active: 'border-purple-500 bg-purple-900/20 shadow-lg shadow-purple-900/30', icon: 'bg-purple-600', dot: 'bg-purple-400' },
+        };
+
+        return (
+            <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+                <div className="max-w-3xl w-full px-8">
+                    <div className="text-center mb-10">
+                        <h1 className="text-2xl font-bold mb-2">{t('setup.select_tier')}</h1>
+                        <p className="text-gray-400 text-sm">{t('setup.select_tier_desc')}</p>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4 mb-8">
+                        {TIERS.map(({ id, icon: Icon, color }) => {
+                            const isSelected = selectedTier === id;
+                            const cm = colorMap[color];
+                            return (
+                                <button key={id}
+                                    onClick={() => setSelectedTier(id)}
+                                    className={`p-5 rounded-xl border-2 text-left transition-all ${
+                                        isSelected ? cm.active : 'border-gray-700 bg-gray-800/50 hover:border-gray-500'
+                                    }`}
+                                >
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className={`p-2 rounded-lg ${isSelected ? cm.icon : 'bg-gray-700'}`}>
+                                            <Icon size={20} />
+                                        </div>
+                                        <h2 className="text-base font-bold">{t(`setup.tier_${id}_title`)}</h2>
+                                    </div>
+                                    <p className="text-xs text-gray-400 leading-relaxed mb-3">
+                                        {t(`setup.tier_${id}_desc`)}
+                                    </p>
+                                    <div className="space-y-1.5 text-xs text-gray-500">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className={`w-1 h-1 rounded-full ${cm.dot}`} />
+                                            {t(`setup.tier_${id}_vram`)}
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className={`w-1 h-1 rounded-full ${cm.dot}`} />
+                                            VLM: {t(`setup.tier_${id}_vlm`)}
+                                        </div>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                        <button onClick={() => setPhase('select')}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white transition-colors">
+                            <ArrowLeft size={16} />
+                            {t('action.back') || 'Back'}
+                        </button>
+                        <div className="flex items-center gap-4">
+                            <p className="text-xs text-gray-600">{t('setup.changeable_later')}</p>
+                            <button
+                                onClick={handleTierConfirm}
+                                disabled={!selectedTier}
+                                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
+                                    selectedTier
+                                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                                        : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                }`}
+                            >
+                                {t('setup.next')}
+                                <ArrowRight size={16} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     // Phase: Mode selection (default)
     return (
         <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
@@ -282,7 +377,7 @@ const SetupPage = ({ onComplete }) => {
                 <div className="flex justify-between items-center">
                     <p className="text-xs text-gray-600">{t('setup.changeable_later')}</p>
                     <button
-                        onClick={handleConfirm}
+                        onClick={handleModeConfirm}
                         disabled={!selectedMode}
                         className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
                             selectedMode
@@ -290,7 +385,7 @@ const SetupPage = ({ onComplete }) => {
                                 : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                         }`}
                     >
-                        {t('setup.start')}
+                        {t('setup.next')}
                         <ArrowRight size={16} />
                     </button>
                 </div>

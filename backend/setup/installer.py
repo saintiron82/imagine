@@ -63,12 +63,20 @@ def check_imports():
     return status, all_ok
 
 def _get_tier_config():
-    """Get active tier name and config from config.yaml."""
+    """Get active tier name and config. Never imports torch."""
     try:
-        from backend.utils.tier_config import get_active_tier
-        return get_active_tier()
+        from backend.utils.config import get_config
+        cfg = get_config()
+        override = cfg.get("ai_mode.override")
+        tier_name = override if override else "pro"
+        tiers = cfg.get("ai_mode.tiers", {})
+        tier_config = tiers.get(tier_name, {})
+        if not tier_config and tier_name != "pro":
+            tier_config = tiers.get("pro", {})
+            tier_name = "pro"
+        return tier_name, tier_config
     except Exception:
-        return "standard", {}
+        return "pro", {}
 
 def check_model():
     """Check if SigLIP2 VV model is cached (tier-based)."""
@@ -288,11 +296,10 @@ def install_packages():
         return False
 
 def download_model():
-    """Download SigLIP2 VV model (tier-based)."""
-    tier_name, tier_config = _get_tier_config()
-    model_name = tier_config.get("visual", {}).get("model", DEFAULT_VV_MODEL)
+    """Download SigLIP2 VV model (same for all tiers)."""
+    model_name = DEFAULT_VV_MODEL
 
-    logger.info(f"Downloading VV model ({tier_name} tier): {model_name}")
+    logger.info(f"Downloading VV model: {model_name}")
     logger.info("This may take a while on first run...")
     try:
         from transformers import AutoModel, AutoProcessor
