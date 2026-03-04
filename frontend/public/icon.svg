@@ -14,7 +14,7 @@
     </linearGradient>
   </defs>
   <!-- Dark rounded square -->
-  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="0" fill="url(#bg)"/>
   <!-- Subtle grid pattern -->
   <line x1="170" y1="120" x2="170" y2="400" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
   <line x1="256" y1="120" x2="256" y2="400" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
