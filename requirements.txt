@@ -33,6 +33,7 @@ fastapi>=0.115.0
 uvicorn>=0.34.0
 python-multipart>=0.0.20
 bcrypt>=4.0.0
+PyJWT>=2.9.0
 
 # HTTP Client (Ollama API, worker→server)
 requests>=2.32.0
