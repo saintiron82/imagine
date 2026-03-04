@@ -21,6 +21,8 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
   const [stats, setStats] = useState(null);
   const [logs, setLogs] = useState([]);
   const logEndRef = useRef(null);
+  const logContainerRef = useRef(null);
+  const isUserScrolledUp = useRef(false);
   const pollRef = useRef(null);
 
   // Derive workerStatus from isWorkerRunning prop (App.jsx is the single source of truth)
@@ -48,10 +50,22 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
     return () => clearInterval(pollRef.current);
   }, []);
 
-  // Auto-scroll logs
+  // Smart auto-scroll: only scroll if user hasn't scrolled up
+  // Use scrollTop instead of scrollIntoView to avoid scrolling the entire page
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = logContainerRef.current;
+    if (!isUserScrolledUp.current && el) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [logs]);
+
+  const handleLogScroll = useCallback(() => {
+    const el = logContainerRef.current;
+    if (!el) return;
+    // Consider "at bottom" if within 40px of the bottom
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    isUserScrolledUp.current = !atBottom;
+  }, []);
 
   // Worker log IPC listener only (status/jobDone handled by App.jsx)
   useEffect(() => {
@@ -383,7 +397,8 @@ export default function ClientWorkerView({ appMode, isWorkerRunning = false, wor
           <h3 className="text-sm font-medium text-gray-300 px-4 py-3 border-b border-gray-700">
             {t('worker.recent_log')}
           </h3>
-          <div className="h-64 overflow-y-auto p-3 font-mono text-xs space-y-1">
+          <div ref={logContainerRef} onScroll={handleLogScroll}
+               className="h-64 overflow-y-auto p-3 font-mono text-xs space-y-1">
             {logs.length === 0 ? (
               <div className="text-gray-600">{t('msg.no_logs')}</div>
             ) : (
