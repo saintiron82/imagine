@@ -1,16 +1,199 @@
-import React, { useState } from 'react';
-import { Shield, Cpu, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Shield, Cpu, ArrowRight, Download, CheckCircle, AlertCircle, Loader2, SkipForward } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 const SetupPage = ({ onComplete }) => {
     const { t } = useLocale();
     const [selectedMode, setSelectedMode] = useState(null);
 
-    const handleConfirm = () => {
-        if (!selectedMode) return;
-        onComplete(selectedMode);
-    };
+    // Environment check state
+    const [phase, setPhase] = useState('select'); // 'select' | 'checking' | 'install' | 'installing' | 'done'
+    const [envStatus, setEnvStatus] = useState(null);
+    const [installLogs, setInstallLogs] = useState([]);
+    const [installDone, setInstallDone] = useState(false);
+    const [installSuccess, setInstallSuccess] = useState(false);
+    const logEndRef = useRef(null);
 
+    // Auto-scroll install logs
+    useEffect(() => {
+        logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [installLogs]);
+
+    // Listen for install-log events
+    useEffect(() => {
+        const pipeline = window.electron?.pipeline;
+        if (!pipeline) return;
+
+        const handler = (data) => {
+            setInstallLogs(prev => [...prev, data]);
+            if (data.done) {
+                setInstallDone(true);
+                setInstallSuccess(data.type === 'success');
+                setPhase('done');
+            }
+        };
+
+        pipeline.onInstallLog?.(handler);
+        return () => pipeline.offInstallLog?.();
+    }, []);
+
+    const handleConfirm = useCallback(async () => {
+        if (!selectedMode) return;
+
+        // Client (worker) mode → skip env check, go straight in
+        if (selectedMode === 'client' || !window.electron?.pipeline?.checkEnv) {
+            onComplete(selectedMode);
+            return;
+        }
+
+        // Server (admin) mode on Electron → check environment first
+        setPhase('checking');
+        try {
+            const status = await window.electron.pipeline.checkEnv();
+            setEnvStatus(status);
+
+            // If all critical models are present, proceed directly
+            const modelsOk = status.visual_model_cached && status.dependencies_ok;
+            if (modelsOk) {
+                onComplete(selectedMode);
+            } else {
+                setPhase('install');
+            }
+        } catch (e) {
+            console.error('check-env failed:', e);
+            // On error, let user proceed anyway
+            onComplete(selectedMode);
+        }
+    }, [selectedMode, onComplete]);
+
+    const handleInstall = useCallback(() => {
+        setPhase('installing');
+        setInstallLogs([]);
+        window.electron?.pipeline?.installEnv();
+    }, []);
+
+    const handleSkip = useCallback(() => {
+        onComplete(selectedMode);
+    }, [selectedMode, onComplete]);
+
+    const handleFinish = useCallback(() => {
+        onComplete(selectedMode);
+    }, [selectedMode, onComplete]);
+
+    // Phase: Environment check in progress
+    if (phase === 'checking') {
+        return (
+            <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+                <div className="text-center">
+                    <Loader2 size={40} className="animate-spin text-blue-400 mx-auto mb-4" />
+                    <p className="text-gray-300">{t('setup.checking_env')}</p>
+                </div>
+            </div>
+        );
+    }
+
+    // Phase: Models missing — offer install
+    if (phase === 'install') {
+        const missing = [];
+        if (!envStatus?.visual_model_cached) missing.push('SigLIP2 (VV)');
+        if (!envStatus?.dependencies_ok) missing.push(t('setup.dependencies'));
+
+        return (
+            <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+                <div className="max-w-lg w-full px-8">
+                    <div className="text-center mb-8">
+                        <AlertCircle size={48} className="text-yellow-400 mx-auto mb-4" />
+                        <h2 className="text-xl font-bold mb-2">{t('setup.models_required')}</h2>
+                        <p className="text-sm text-gray-400">{t('setup.models_required_desc')}</p>
+                    </div>
+
+                    {missing.length > 0 && (
+                        <div className="bg-gray-800 rounded-lg p-4 mb-6 border border-gray-700">
+                            <p className="text-xs text-gray-500 mb-2">{t('setup.missing_items')}</p>
+                            {missing.map((item, i) => (
+                                <div key={i} className="flex items-center gap-2 text-sm text-yellow-300">
+                                    <AlertCircle size={14} />
+                                    {item}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    <div className="flex gap-3">
+                        <button onClick={handleInstall}
+                            className="flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                            <Download size={18} />
+                            {t('setup.download_models')}
+                        </button>
+                        <button onClick={handleSkip}
+                            className="flex items-center gap-2 px-4 py-3 rounded-lg font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
+                            <SkipForward size={16} />
+                            {t('setup.skip')}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Phase: Installing models
+    if (phase === 'installing' || phase === 'done') {
+        return (
+            <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+                <div className="max-w-2xl w-full px-8">
+                    <div className="text-center mb-6">
+                        {phase === 'installing' ? (
+                            <>
+                                <Loader2 size={40} className="animate-spin text-blue-400 mx-auto mb-4" />
+                                <h2 className="text-xl font-bold mb-1">{t('setup.downloading')}</h2>
+                                <p className="text-xs text-gray-500">{t('setup.downloading_desc')}</p>
+                            </>
+                        ) : installSuccess ? (
+                            <>
+                                <CheckCircle size={40} className="text-green-400 mx-auto mb-4" />
+                                <h2 className="text-xl font-bold mb-1">{t('setup.install_complete')}</h2>
+                            </>
+                        ) : (
+                            <>
+                                <AlertCircle size={40} className="text-red-400 mx-auto mb-4" />
+                                <h2 className="text-xl font-bold mb-1">{t('setup.install_failed')}</h2>
+                                <p className="text-xs text-gray-500">{t('setup.install_failed_desc')}</p>
+                            </>
+                        )}
+                    </div>
+
+                    {/* Install logs */}
+                    <div className="bg-gray-800 rounded-lg border border-gray-700 mb-6">
+                        <div className="h-64 overflow-y-auto p-3 font-mono text-xs space-y-0.5">
+                            {installLogs.map((log, i) => (
+                                <div key={i} className={
+                                    log.type === 'error' ? 'text-red-400' :
+                                    log.type === 'success' ? 'text-green-400' :
+                                    log.type === 'warning' ? 'text-yellow-400' :
+                                    'text-gray-400'
+                                }>
+                                    {log.message}
+                                </div>
+                            ))}
+                            <div ref={logEndRef} />
+                        </div>
+                    </div>
+
+                    {phase === 'done' && (
+                        <div className="text-center">
+                            <button onClick={handleFinish}
+                                className="flex items-center gap-2 mx-auto px-6 py-3 rounded-lg font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                                {t('setup.start')}
+                                <ArrowRight size={16} />
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // Phase: Mode selection (default)
     return (
         <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
             <div className="max-w-2xl w-full px-8">
