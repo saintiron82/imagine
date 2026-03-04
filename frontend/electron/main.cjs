@@ -22,29 +22,40 @@ process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; })
 process.stderr?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 
 // ---------- File-based crash/error logging ----------
-// Logs to <userData>/logs/main.log (survives crashes, rotated at 5MB)
-const LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+// Logs to <userData>/logs/main-<timestamp>.log per session. Old logs auto-cleaned.
+const LOG_MAX_FILES = 5; // keep last 5 session logs
 const logDir = path.join(app.getPath('userData'), 'logs');
 try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* ignore */ }
-const logFilePath = path.join(logDir, 'main.log');
 
-function _rotateLogIfNeeded() {
+// Generate session-specific log filename
+const _sessionTs = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); // 2026-03-05T14-30-00
+const logFilePath = path.join(logDir, `main-${_sessionTs}.log`);
+
+// Clean old session logs (keep last N)
+function _cleanOldLogs() {
     try {
-        const stat = fs.statSync(logFilePath);
-        if (stat.size > LOG_MAX_BYTES) {
-            const prev = logFilePath + '.1';
-            try { fs.unlinkSync(prev); } catch { /* ok */ }
-            fs.renameSync(logFilePath, prev);
+        const files = fs.readdirSync(logDir)
+            .filter(f => f.startsWith('main-') && f.endsWith('.log'))
+            .sort()
+            .reverse();
+        // Also include legacy main.log / main.log.1
+        const legacy = ['main.log', 'main.log.1'];
+        for (const old of legacy) {
+            try { fs.unlinkSync(path.join(logDir, old)); } catch { /* ok */ }
         }
-    } catch { /* file doesn't exist yet */ }
+        // Remove excess session logs
+        for (const old of files.slice(LOG_MAX_FILES)) {
+            try { fs.unlinkSync(path.join(logDir, old)); } catch { /* ok */ }
+        }
+    } catch { /* best effort */ }
 }
+_cleanOldLogs();
 
 function writeLog(level, ...args) {
     const ts = new Date().toISOString();
     const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
     const line = `${ts} [${level}] ${msg}\n`;
     try {
-        _rotateLogIfNeeded();
         fs.appendFileSync(logFilePath, line, 'utf8');
     } catch { /* best effort */ }
 }
