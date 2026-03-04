@@ -79,10 +79,27 @@ def get_rest_after_batch_s() -> int:
 
 
 def get_storage_mode() -> str:
-    """Get storage mode: 'server_upload' or 'shared_fs'."""
+    """Get storage mode: 'server_upload' or 'shared_fs'.
+
+    Auto-detection: if server URL points to a remote host (not localhost),
+    force 'server_upload' mode since remote workers cannot access local files.
+    """
+    # Check explicit config first
     try:
         from backend.utils.config import get_config
         cfg = get_config()
-        return cfg.get("server", {}).get("storage", {}).get("mode", "shared_fs")
+        explicit = cfg.get("server", {}).get("storage", {}).get("mode")
+        if explicit:
+            return explicit
     except Exception:
-        return "shared_fs"
+        pass
+
+    # Auto-detect: remote server → server_upload
+    server_url = get_server_url()
+    from urllib.parse import urlparse
+    parsed = urlparse(server_url)
+    hostname = parsed.hostname or ""
+    if hostname not in ("localhost", "127.0.0.1", "::1", ""):
+        return "server_upload"
+
+    return "shared_fs"

@@ -1267,17 +1267,32 @@ class WorkerDaemon:
         contexts = []
         for job in jobs:
             ctx = _JobContext(job=job)
-            ctx.local_path = self._get_downloaded(job)
+            file_id = job.get("file_id")
             ctx.metadata = dict(job.get("metadata", {}))
 
-            # Use server-generated thumbnail if available (shared_fs mode).
-            # Without this, shared_fs returns the original file path and VLM
-            # processes at full resolution (~2x slower than thumbnail).
+            # Resolve thumbnail for VLM processing
             server_thumb = job.get("thumb_path")
-            if server_thumb and Path(server_thumb).exists():
-                ctx.thumb_path = server_thumb
+
+            if self.storage_mode == "shared_fs":
+                # Shared FS: use server-generated thumbnail directly
+                if server_thumb and Path(server_thumb).exists():
+                    ctx.thumb_path = server_thumb
+                else:
+                    # Fallback: try original file path
+                    ctx.local_path = self._get_downloaded(job)
+                    ctx.thumb_path = ctx.local_path
             else:
-                ctx.thumb_path = ctx.local_path
+                # server_upload: download thumbnail from server
+                if server_thumb and Path(server_thumb).exists():
+                    ctx.thumb_path = server_thumb
+                else:
+                    thumb = self._resolve_thumbnail(job)
+                    if thumb:
+                        ctx.thumb_path = thumb
+                    else:
+                        # Fallback: try full file download
+                        ctx.local_path = self._get_downloaded(job)
+                        ctx.thumb_path = ctx.local_path
 
             if not ctx.thumb_path or not Path(ctx.thumb_path).exists():
                 ctx.failed = True
