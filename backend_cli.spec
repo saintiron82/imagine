@@ -37,6 +37,9 @@ datas = [
 # config.yaml is optional (gitignored, generated at runtime if missing)
 if os.path.exists('config.yaml'):
     datas.append(('config.yaml', '.'))
+else:
+    import warnings
+    warnings.warn("config.yaml not found — bundle will use hardcoded defaults")
 
 # Add migrations if they exist
 if os.path.exists('backend/db/migrations'):
@@ -132,6 +135,15 @@ a = Analysis(
         'torch',
         'torch._C',
         'torch.utils._python_dispatch',
+        'torch.autograd',
+        'torch.autograd.function',
+        'torch.nn',
+        'torch.nn.functional',
+        'torch.nn.modules',
+        'torch.optim',
+        'torch.utils.data',
+        'torch._dynamo',
+        'torch.amp',
         'transformers',
         'accelerate',
         'pydantic',

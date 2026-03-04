@@ -6,6 +6,7 @@ User settings take precedence over system defaults.
 """
 
 import os
+import sys
 import logging
 import platform
 from pathlib import Path
@@ -15,7 +16,11 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
+# PyInstaller bundle: config.yaml is extracted to _MEIPASS root
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    _PROJECT_ROOT = Path(sys._MEIPASS)
+else:
+    _PROJECT_ROOT = Path(__file__).parent.parent.parent
 _CONFIG_PATH = _PROJECT_ROOT / "config.yaml"
 
 # .env key → config.yaml dotted path

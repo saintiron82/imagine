@@ -23,6 +23,9 @@ if str(PROJECT_ROOT) not in sys.path:
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger("installer")
 
+# All tiers use the same VV model (cross-tier compatible)
+DEFAULT_VV_MODEL = "google/siglip2-so400m-patch16-naflex"
+
 REQUIRED_PACKAGES = [
     "torch",
     "sqlite-vec",          # SQLite vector extension
@@ -71,7 +74,7 @@ def check_model():
     """Check if SigLIP2 VV model is cached (tier-based)."""
     try:
         tier_name, tier_config = _get_tier_config()
-        model_name = tier_config.get("visual", {}).get("model", "google/siglip2-base-patch16-224")
+        model_name = tier_config.get("visual", {}).get("model", DEFAULT_VV_MODEL)
 
         cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
         # HuggingFace caches models as "models--org--name"
@@ -287,7 +290,7 @@ def install_packages():
 def download_model():
     """Download SigLIP2 VV model (tier-based)."""
     tier_name, tier_config = _get_tier_config()
-    model_name = tier_config.get("visual", {}).get("model", "google/siglip2-base-patch16-224")
+    model_name = tier_config.get("visual", {}).get("model", DEFAULT_VV_MODEL)
 
     logger.info(f"Downloading VV model ({tier_name} tier): {model_name}")
     logger.info("This may take a while on first run...")
