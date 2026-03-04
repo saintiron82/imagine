@@ -18,7 +18,7 @@ block_cipher = None
 
 # Platform-specific excludes
 platform_excludes = [
-    'tkinter', '_tkinter', 'unittest',
+    'tkinter', '_tkinter',
     'xmlrpc', 'pydoc', 'doctest',
 ]
 
