@@ -97,7 +97,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ### 현재 버전
 
 ```
-v0.6.2
+v0.6.3
 ```
 
 ### 형식
