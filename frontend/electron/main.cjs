@@ -1220,6 +1220,7 @@ ipcMain.handle('metadata:updateUserData', async (event, filePath, updates) => {
 // IPC Handler: Run Python Pipeline (global — registered once)
 // Guard: only one pipeline at a time
 let activePipelineProc = null;
+let activeBackfillProc = null;
 let pipelineStoppedByUser = false;
 
 ipcMain.on('run-pipeline', (event, { filePaths }) => {

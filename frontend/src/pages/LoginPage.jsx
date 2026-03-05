@@ -278,18 +278,30 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
         setCreateSubmitting(false);
         return;
       }
+      if (!info.ok) {
+        setCreateError(t('auth.server_unreachable') || 'Server connection failed');
+        setCreateSubmitting(false);
+        return;
+      }
 
-      // Server ready — proceed
+      // 3. Initialize server NOW (creates group + admin)
       setClientServerUrl(baseUrl);
-      setCreateSubmitting(false);
+      await initServer(baseUrl, {
+        group_name: createGroupName,
+        server_password: createServerPassword,
+        admin_username: createAdminUsername,
+        admin_password: createAdminPassword,
+      });
 
+      // 4. Server init succeeded — proceed to tier or finish
+      setCreateSubmitting(false);
       if (isElectron && window.electron?.pipeline?.checkEnv) {
         setView('tier');
       } else {
-        handleCreateFinalize();
+        if (onLoginComplete) onLoginComplete('server');
       }
     } catch (e) {
-      setCreateError(e.message || t('auth.server_unreachable') || 'Server connection failed');
+      setCreateError(e.message || 'Server initialization failed');
       setCreateSubmitting(false);
     }
   };
@@ -310,41 +322,16 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
       setEnvStatus(status);
       const modelsOk = status.visual_model_cached && status.dependencies_ok;
       if (modelsOk) {
-        await handleCreateFinalize();
+        // Init already done — just complete login
+        if (onLoginComplete) onLoginComplete('server');
       } else {
         setView('install');
       }
     } catch (e) {
       console.error('check-env failed:', e);
-      await handleCreateFinalize();
+      if (onLoginComplete) onLoginComplete('server');
     }
-  }, [selectedTier]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleCreateFinalize = useCallback(async () => {
-    setCreateError('');
-    setCreateSubmitting(true);
-
-    try {
-      const baseUrl = getServerUrl() || `http://localhost:${serverPort || 8000}`;
-
-      // Initialize server (creates group + admin)
-      await initServer(baseUrl, {
-        group_name: createGroupName,
-        server_password: createServerPassword,
-        admin_username: createAdminUsername,
-        admin_password: createAdminPassword,
-      });
-
-      // Auto-login complete — admin mode
-      if (onLoginComplete) {
-        onLoginComplete('server');
-      }
-    } catch (e) {
-      setCreateError(e.message || 'Server initialization failed');
-      setCreateSubmitting(false);
-      setView('createGroup');
-    }
-  }, [createGroupName, createServerPassword, createAdminUsername, createAdminPassword, onLoginComplete, serverPort, t]);
+  }, [selectedTier, onLoginComplete]);
 
   const handleInstall = useCallback(() => {
     setView('installing');
@@ -352,13 +339,13 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
     window.electron?.pipeline?.installEnv();
   }, []);
 
-  const handleSkip = useCallback(async () => {
-    await handleCreateFinalize();
-  }, [handleCreateFinalize]);
+  const handleSkip = useCallback(() => {
+    if (onLoginComplete) onLoginComplete('server');
+  }, [onLoginComplete]);
 
-  const handleFinish = useCallback(async () => {
-    await handleCreateFinalize();
-  }, [handleCreateFinalize]);
+  const handleFinish = useCallback(() => {
+    if (onLoginComplete) onLoginComplete('server');
+  }, [onLoginComplete]);
 
   // --- Filter history ---
   const mdnsUrls = new Set(
