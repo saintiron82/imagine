@@ -154,6 +154,7 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
     if (result.ok) {
       setServerStatus('ok');
       setServerName(result.serverName || '');
+      localStorage.setItem('imagine-server-url', targetUrl);
       const info = await getServerInfo(targetUrl);
       if (info.ok) {
         setServerInitialized(info.initialized);
@@ -890,6 +891,41 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
               {t('group.server_not_initialized')}
             </div>
           )}
+
+          {/* Server URL — compact inline field */}
+          <div className="mb-4">
+            <label className="block text-[10px] text-gray-500 mb-1">{t('auth.server_url')}</label>
+            <div className="flex gap-1.5">
+              <div className="relative flex-1">
+                <Server size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                <input type="text" value={serverUrl}
+                  onChange={(e) => {
+                    setServerUrlLocal(e.target.value);
+                    setServerStatus(null);
+                    setServerInitialized(null);
+                    setGroupName('');
+                  }}
+                  placeholder="http://192.168.1.10:8000"
+                  className="w-full pl-8 pr-3 py-1.5 bg-gray-900 border border-gray-700 rounded-md text-xs text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none font-mono" />
+              </div>
+              <button type="button" onClick={() => handleCheckServer()}
+                disabled={!serverUrl.trim() || serverStatus === 'checking'}
+                className="px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-md text-[10px] text-gray-300 hover:bg-gray-600 disabled:opacity-50 transition-colors shrink-0">
+                {serverStatus === 'checking' ? <Loader size={12} className="animate-spin" /> : t('auth.check')}
+              </button>
+            </div>
+            {serverStatus === 'ok' && (
+              <div className="flex items-center gap-1 mt-1 text-[10px] text-green-400">
+                <CheckCircle size={10} />
+                {groupName ? t('auth.connected_to', { name: groupName }) : t('auth.server_connected')}
+              </div>
+            )}
+            {serverStatus === 'error' && (
+              <div className="flex items-center gap-1 mt-1 text-[10px] text-red-400">
+                <XCircle size={10} /> {serverError}
+              </div>
+            )}
+          </div>
 
           {/* Tab toggle */}
           <div className={`flex mb-4 bg-gray-900 rounded-lg p-1 ${serverInitialized === false ? 'opacity-40 pointer-events-none' : ''}`}>
