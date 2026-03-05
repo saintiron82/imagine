@@ -11,7 +11,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { isElectron, getAccessToken, setServerUrl, getServerUrl } from '../api/client';
-import { login as apiLogin, register as apiRegister, getMe, logout as apiLogout, checkServerHealth, storeWorkerCredentials, clearWorkerCredentials } from '../api/auth';
+import { login as apiLogin, register as apiRegister, getMe, logout as apiLogout, checkServerHealth, storeWorkerCredentials, clearWorkerCredentials, getServerInfo } from '../api/auth';
 
 const AuthContext = createContext(null);
 
@@ -51,16 +51,28 @@ export function AuthProvider({ children }) {
   /**
    * Switch auth mode after SetupPage selection.
    * Called by App.jsx when user picks server or client mode.
+   *
+   * If tokens already exist (e.g. SetupPage completed server init or join),
+   * try to load the user profile directly instead of showing LoginPage.
    */
   const configureAuth = useCallback(async (mode) => {
     setAuthMode(mode);
-    if (mode === 'server') {
-      // Server mode: require login via LoginPage
+    if (mode === 'server' || mode === 'client') {
       setSkipAuth(false);
-      setUser(null);
-    } else if (mode === 'client') {
-      setSkipAuth(false);
-      clearWorkerCredentials();
+
+      // Check if we already have a valid token (SetupPage auto-login)
+      const token = getAccessToken();
+      if (token) {
+        try {
+          const me = await getMe();
+          setUser(me.user || me);
+          return; // Already authenticated, skip LoginPage
+        } catch {
+          // Token invalid, fall through to show LoginPage
+        }
+      }
+
+      if (mode === 'client') clearWorkerCredentials();
       setUser(null);
     } else {
       // Reset (null): local admin bypass for SetupPage display
@@ -85,11 +97,11 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const register = useCallback(async ({ invite_code, username, email, password, serverUrl }) => {
+  const register = useCallback(async ({ server_password, username, email, password, serverUrl }) => {
     setError('');
     try {
       if (serverUrl) setServerUrl(serverUrl);
-      await apiRegister({ invite_code, username, email, password });
+      await apiRegister({ server_password, username, email, password });
       const me = await getMe();
       setUser(me.user || me);
       return true;

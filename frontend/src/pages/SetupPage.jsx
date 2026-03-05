@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Shield, Cpu, ArrowRight, ArrowLeft, Download, CheckCircle, AlertCircle, Loader2, SkipForward, Zap, Star, Rocket } from 'lucide-react';
+import { Shield, Cpu, ArrowRight, ArrowLeft, Download, CheckCircle, AlertCircle, Loader2, SkipForward, Zap, Star, Rocket, Users, Globe, Lock, User } from 'lucide-react';
 import { useLocale } from '../i18n';
+import { isElectron, setServerUrl as setClientServerUrl } from '../api/client';
+import { getServerInfo, initServer, register as apiRegister } from '../api/auth';
+import { useMdnsDiscovery } from '../hooks/useMdnsDiscovery';
+import {
+  getServerHistory,
+  addServerToHistory,
+} from '../utils/serverHistory';
 
 const TIERS = [
     { id: 'standard', icon: Zap,    color: 'emerald' },
@@ -8,18 +15,54 @@ const TIERS = [
     { id: 'ultra',    icon: Rocket, color: 'purple' },
 ];
 
+/**
+ * SetupPage — Group-based setup wizard.
+ *
+ * Phases:
+ *   'select'     — Choose "Create Group" or "Join Group"
+ *   'create'     — Enter group name, server password, admin account
+ *   'join'       — Enter server URL, server password, user account
+ *   'tier'       — (Create only) Select AI tier
+ *   'checking'   — (Create only) Environment check
+ *   'install'    — (Create only) Models missing, offer install
+ *   'installing' — (Create only) Installing models
+ *   'done'       — (Create only) Installation complete
+ */
 const SetupPage = ({ onComplete }) => {
     const { t } = useLocale();
-    const [selectedMode, setSelectedMode] = useState(null);
+    const [phase, setPhase] = useState('select');
     const [selectedTier, setSelectedTier] = useState(null);
 
+    // Create group form
+    const [groupName, setGroupName] = useState('');
+    const [serverPassword, setServerPassword] = useState('');
+    const [adminUsername, setAdminUsername] = useState('');
+    const [adminPassword, setAdminPassword] = useState('');
+
+    // Join group form
+    const [joinServerUrl, setJoinServerUrl] = useState('');
+    const [joinServerPassword, setJoinServerPassword] = useState('');
+    const [joinUsername, setJoinUsername] = useState('');
+    const [joinPassword, setJoinPassword] = useState('');
+    const [joinGroupName, setJoinGroupName] = useState('');
+    const [joinServerChecked, setJoinServerChecked] = useState(false);
+    const [joinServerChecking, setJoinServerChecking] = useState(false);
+    const [joinError, setJoinError] = useState('');
+    const [joinSubmitting, setJoinSubmitting] = useState(false);
+
+    // Create group state
+    const [createError, setCreateError] = useState('');
+    const [createSubmitting, setCreateSubmitting] = useState(false);
+
     // Environment check state
-    const [phase, setPhase] = useState('select'); // 'select' | 'tier' | 'checking' | 'install' | 'installing' | 'done'
     const [envStatus, setEnvStatus] = useState(null);
     const [installLogs, setInstallLogs] = useState([]);
     const [installDone, setInstallDone] = useState(false);
     const [installSuccess, setInstallSuccess] = useState(false);
     const logEndRef = useRef(null);
+
+    // mDNS discovery (for join mode)
+    const { servers: mdnsServers, browsing } = useMdnsDiscovery();
 
     // Auto-scroll install logs
     useEffect(() => {
@@ -44,17 +87,75 @@ const SetupPage = ({ onComplete }) => {
         return () => pipeline.offInstallLog?.();
     }, []);
 
-    // Mode selection → tier selection
-    const handleModeConfirm = useCallback(() => {
-        if (!selectedMode) return;
-        if (!window.electron?.pipeline?.checkEnv) {
-            onComplete(selectedMode);
-            return;
-        }
-        setPhase('tier');
-    }, [selectedMode, onComplete]);
+    // ── Join: Check server ──
+    const handleCheckJoinServer = useCallback(async (url) => {
+        const targetUrl = (url || joinServerUrl).trim();
+        if (!targetUrl) return;
+        setJoinServerChecking(true);
+        setJoinError('');
+        setJoinGroupName('');
+        setJoinServerChecked(false);
 
-    // Tier selection → save + env check
+        try {
+            const info = await getServerInfo(targetUrl);
+            if (info.ok) {
+                setJoinGroupName(info.group_name || '');
+                setJoinServerChecked(true);
+                if (!info.initialized) {
+                    setJoinError(t('group.server_not_initialized'));
+                    setJoinServerChecked(false);
+                }
+            } else {
+                setJoinError(info.error || 'Connection failed');
+            }
+        } catch (e) {
+            setJoinError(e.message);
+        }
+        setJoinServerChecking(false);
+    }, [joinServerUrl, t]);
+
+    // ── Join: Select mDNS server ──
+    const handleSelectMdns = useCallback((server) => {
+        const addr = server.addresses?.[0] || server.host;
+        const url = `http://${addr}:${server.port}`;
+        setJoinServerUrl(url);
+        handleCheckJoinServer(url);
+    }, [handleCheckJoinServer]);
+
+    // ── Join: Submit ──
+    const handleJoinSubmit = useCallback(async (e) => {
+        e.preventDefault();
+        setJoinError('');
+        setJoinSubmitting(true);
+
+        try {
+            const trimmedUrl = joinServerUrl.trim();
+            setClientServerUrl(trimmedUrl);
+
+            // Register via API
+            await apiRegister({
+                server_password: joinServerPassword,
+                username: joinUsername,
+                password: joinPassword,
+            });
+
+            // Save to history
+            addServerToHistory({
+                url: trimmedUrl,
+                name: joinGroupName,
+                version: '',
+                lastUsername: joinUsername,
+            });
+
+            // Complete: client mode
+            onComplete('client');
+        } catch (e) {
+            setJoinError(e.detail || e.message || 'Registration failed');
+        }
+        setJoinSubmitting(false);
+    }, [joinServerUrl, joinServerPassword, joinUsername, joinPassword, joinGroupName, onComplete]);
+
+    // ── Create: Tier confirm → save + env check ──
     const handleTierConfirm = useCallback(async () => {
         if (!selectedTier) return;
 
@@ -73,15 +174,47 @@ const SetupPage = ({ onComplete }) => {
             setEnvStatus(status);
             const modelsOk = status.visual_model_cached && status.dependencies_ok;
             if (modelsOk) {
-                onComplete(selectedMode);
+                await handleCreateFinalize();
             } else {
                 setPhase('install');
             }
         } catch (e) {
             console.error('check-env failed:', e);
-            onComplete(selectedMode);
+            await handleCreateFinalize();
         }
-    }, [selectedTier, selectedMode, onComplete]);
+    }, [selectedTier]);
+
+    // ── Create: Start server + init + auto-login ──
+    const handleCreateFinalize = useCallback(async () => {
+        setCreateError('');
+        setCreateSubmitting(true);
+
+        try {
+            // Start embedded FastAPI server
+            const port = 8000;
+            await window.electron.server.start({ port });
+
+            // Wait a moment for server to be ready
+            await new Promise(r => setTimeout(r, 1500));
+
+            const baseUrl = `http://localhost:${port}`;
+            setClientServerUrl(baseUrl);
+
+            // Initialize server (creates group + admin)
+            await initServer(baseUrl, {
+                group_name: groupName,
+                server_password: serverPassword,
+                admin_username: adminUsername,
+                admin_password: adminPassword,
+            });
+
+            // Complete: server mode
+            onComplete('server');
+        } catch (e) {
+            setCreateError(e.message || 'Server initialization failed');
+            setCreateSubmitting(false);
+        }
+    }, [groupName, serverPassword, adminUsername, adminPassword, onComplete]);
 
     const handleInstall = useCallback(() => {
         setPhase('installing');
@@ -89,15 +222,15 @@ const SetupPage = ({ onComplete }) => {
         window.electron?.pipeline?.installEnv();
     }, []);
 
-    const handleSkip = useCallback(() => {
-        onComplete(selectedMode);
-    }, [selectedMode, onComplete]);
+    const handleSkip = useCallback(async () => {
+        await handleCreateFinalize();
+    }, [handleCreateFinalize]);
 
-    const handleFinish = useCallback(() => {
-        onComplete(selectedMode);
-    }, [selectedMode, onComplete]);
+    const handleFinish = useCallback(async () => {
+        await handleCreateFinalize();
+    }, [handleCreateFinalize]);
 
-    // Phase: Environment check in progress
+    // ── Phase: Checking environment ──
     if (phase === 'checking') {
         return (
             <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
@@ -109,7 +242,7 @@ const SetupPage = ({ onComplete }) => {
         );
     }
 
-    // Phase: Models missing — offer install
+    // ── Phase: Models missing ──
     if (phase === 'install') {
         const missing = [];
         if (!envStatus?.visual_model_cached) missing.push('SigLIP2 (VV)');
@@ -153,8 +286,8 @@ const SetupPage = ({ onComplete }) => {
         );
     }
 
-    // Phase: Installing models
-    if (phase === 'installing' || phase === 'done') {
+    // ── Phase: Installing models ──
+    if (phase === 'installing' || (phase === 'done' && installDone)) {
         return (
             <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
                 <div className="max-w-2xl w-full px-8">
@@ -179,7 +312,6 @@ const SetupPage = ({ onComplete }) => {
                         )}
                     </div>
 
-                    {/* Install logs */}
                     <div className="bg-gray-800 rounded-lg border border-gray-700 mb-6">
                         <div className="h-64 overflow-y-auto p-3 font-mono text-xs space-y-0.5">
                             {installLogs.map((log, i) => (
@@ -199,10 +331,15 @@ const SetupPage = ({ onComplete }) => {
                     {phase === 'done' && (
                         <div className="text-center">
                             <button onClick={handleFinish}
-                                className="flex items-center gap-2 mx-auto px-6 py-3 rounded-lg font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                                disabled={createSubmitting}
+                                className="flex items-center gap-2 mx-auto px-6 py-3 rounded-lg font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50">
+                                {createSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
                                 {t('setup.start')}
                                 <ArrowRight size={16} />
                             </button>
+                            {createError && (
+                                <p className="text-xs text-red-400 mt-2">{createError}</p>
+                            )}
                         </div>
                     )}
                 </div>
@@ -210,7 +347,7 @@ const SetupPage = ({ onComplete }) => {
         );
     }
 
-    // Phase: Tier selection
+    // ── Phase: Tier selection (create only) ──
     if (phase === 'tier') {
         const colorMap = {
             emerald: { active: 'border-emerald-500 bg-emerald-900/20 shadow-lg shadow-emerald-900/30', icon: 'bg-emerald-600', dot: 'bg-emerald-400' },
@@ -262,7 +399,7 @@ const SetupPage = ({ onComplete }) => {
                     </div>
 
                     <div className="flex justify-between items-center">
-                        <button onClick={() => setPhase('select')}
+                        <button onClick={() => setPhase('create')}
                             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white transition-colors">
                             <ArrowLeft size={16} />
                             {t('action.back') || 'Back'}
@@ -288,105 +425,345 @@ const SetupPage = ({ onComplete }) => {
         );
     }
 
-    // Phase: Mode selection (default)
+    // ── Phase: Create Group form ──
+    if (phase === 'create') {
+        const canProceed = groupName.trim() && serverPassword.trim().length >= 4
+            && adminUsername.trim().length >= 2 && adminPassword.trim().length >= 6;
+
+        const handleCreateNext = () => {
+            if (!canProceed) return;
+            if (window.electron?.pipeline?.checkEnv) {
+                setPhase('tier');
+            } else {
+                handleCreateFinalize();
+            }
+        };
+
+        return (
+            <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+                <div className="max-w-md w-full px-8">
+                    <div className="text-center mb-8">
+                        <div className="p-3 rounded-full bg-blue-600/20 w-fit mx-auto mb-4">
+                            <Users size={32} className="text-blue-400" />
+                        </div>
+                        <h1 className="text-2xl font-bold mb-2">{t('group.create')}</h1>
+                        <p className="text-sm text-gray-400">{t('group.create_desc')}</p>
+                    </div>
+
+                    <div className="space-y-4">
+                        {/* Group Name */}
+                        <div>
+                            <label className="block text-xs text-gray-400 mb-1">{t('group.name')}</label>
+                            <input
+                                type="text"
+                                value={groupName}
+                                onChange={(e) => setGroupName(e.target.value)}
+                                placeholder={t('group.name_placeholder')}
+                                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                maxLength={100}
+                            />
+                        </div>
+
+                        {/* Server Password */}
+                        <div>
+                            <label className="block text-xs text-gray-400 mb-1">{t('group.server_password')}</label>
+                            <input
+                                type="password"
+                                value={serverPassword}
+                                onChange={(e) => setServerPassword(e.target.value)}
+                                placeholder={t('group.server_password_placeholder')}
+                                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                maxLength={128}
+                            />
+                            <p className="text-[10px] text-gray-600 mt-1">{t('group.server_password_hint')}</p>
+                        </div>
+
+                        <div className="border-t border-gray-700 pt-4">
+                            <p className="text-xs text-gray-500 mb-3">{t('group.admin_account')}</p>
+
+                            {/* Admin Username */}
+                            <div className="mb-3">
+                                <label className="block text-xs text-gray-400 mb-1">{t('auth.username')}</label>
+                                <input
+                                    type="text"
+                                    value={adminUsername}
+                                    onChange={(e) => setAdminUsername(e.target.value)}
+                                    placeholder={t('auth.username_placeholder')}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                    maxLength={50}
+                                />
+                            </div>
+
+                            {/* Admin Password */}
+                            <div>
+                                <label className="block text-xs text-gray-400 mb-1">{t('auth.password')}</label>
+                                <input
+                                    type="password"
+                                    value={adminPassword}
+                                    onChange={(e) => setAdminPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                    maxLength={128}
+                                />
+                            </div>
+                        </div>
+
+                        {createError && (
+                            <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">
+                                {createError}
+                            </div>
+                        )}
+
+                        <div className="flex justify-between items-center pt-2">
+                            <button onClick={() => setPhase('select')}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white transition-colors">
+                                <ArrowLeft size={16} />
+                                {t('action.back') || 'Back'}
+                            </button>
+                            <button
+                                onClick={handleCreateNext}
+                                disabled={!canProceed || createSubmitting}
+                                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
+                                    canProceed && !createSubmitting
+                                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                                        : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                }`}
+                            >
+                                {createSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
+                                {t('setup.next')}
+                                <ArrowRight size={16} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ── Phase: Join Group form ──
+    if (phase === 'join') {
+        const canSubmit = joinServerChecked && joinServerPassword.trim()
+            && joinUsername.trim().length >= 2 && joinPassword.trim().length >= 6;
+
+        return (
+            <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+                <div className="max-w-md w-full px-8">
+                    <div className="text-center mb-8">
+                        <div className="p-3 rounded-full bg-emerald-600/20 w-fit mx-auto mb-4">
+                            <Globe size={32} className="text-emerald-400" />
+                        </div>
+                        <h1 className="text-2xl font-bold mb-2">{t('group.join')}</h1>
+                        <p className="text-sm text-gray-400">{t('group.join_desc')}</p>
+                    </div>
+
+                    {/* mDNS Discovered Servers */}
+                    {isElectron && (mdnsServers.length > 0 || browsing) && (
+                        <div className="mb-4">
+                            <p className="text-[10px] text-gray-500 uppercase mb-1.5">{t('auth.discovered_servers')}</p>
+                            {mdnsServers.length > 0 ? (
+                                <div className="space-y-1">
+                                    {mdnsServers.map((s) => {
+                                        const addr = s.addresses?.[0] || s.host;
+                                        const sUrl = `http://${addr}:${s.port}`;
+                                        const isSelected = joinServerUrl === sUrl;
+                                        return (
+                                            <button key={s.name} type="button"
+                                                onClick={() => handleSelectMdns(s)}
+                                                className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left text-sm transition-colors ${
+                                                    isSelected
+                                                        ? 'bg-emerald-900/40 border border-emerald-600'
+                                                        : 'bg-gray-800/50 border border-gray-700 hover:border-gray-500'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                                                    <span className="text-white font-medium">{s.serverName || s.name}</span>
+                                                </div>
+                                                <span className="text-xs text-gray-500 font-mono">{addr}:{s.port}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : browsing ? (
+                                <p className="text-xs text-gray-600 italic">{t('auth.discovering')}</p>
+                            ) : null}
+                        </div>
+                    )}
+
+                    <form onSubmit={handleJoinSubmit} className="space-y-4">
+                        {/* Server URL */}
+                        <div>
+                            <label className="block text-xs text-gray-400 mb-1">{t('auth.server_url')}</label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={joinServerUrl}
+                                    onChange={(e) => {
+                                        setJoinServerUrl(e.target.value);
+                                        setJoinServerChecked(false);
+                                        setJoinGroupName('');
+                                    }}
+                                    placeholder="http://192.168.1.10:8000"
+                                    className="flex-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none font-mono"
+                                />
+                                <button type="button"
+                                    onClick={() => handleCheckJoinServer()}
+                                    disabled={!joinServerUrl.trim() || joinServerChecking}
+                                    className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-50 transition-colors"
+                                >
+                                    {joinServerChecking ? '...' : t('auth.check')}
+                                </button>
+                            </div>
+                            {joinServerChecked && joinGroupName && (
+                                <div className="flex items-center gap-2 mt-2 px-3 py-1.5 bg-emerald-900/20 border border-emerald-800/40 rounded-lg">
+                                    <Users size={12} className="text-emerald-400" />
+                                    <span className="text-sm text-emerald-300 font-medium">{joinGroupName}</span>
+                                    <CheckCircle size={12} className="text-emerald-400 ml-auto" />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Server Password */}
+                        <div>
+                            <label className="block text-xs text-gray-400 mb-1">{t('group.server_password')}</label>
+                            <input
+                                type="password"
+                                value={joinServerPassword}
+                                onChange={(e) => setJoinServerPassword(e.target.value)}
+                                placeholder={t('auth.server_password_placeholder')}
+                                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                            />
+                        </div>
+
+                        <div className="border-t border-gray-700 pt-4">
+                            <p className="text-xs text-gray-500 mb-3">{t('group.your_account')}</p>
+
+                            {/* Username */}
+                            <div className="mb-3">
+                                <label className="block text-xs text-gray-400 mb-1">{t('auth.username')}</label>
+                                <input
+                                    type="text"
+                                    value={joinUsername}
+                                    onChange={(e) => setJoinUsername(e.target.value)}
+                                    placeholder={t('auth.username_placeholder')}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                />
+                            </div>
+
+                            {/* Password */}
+                            <div>
+                                <label className="block text-xs text-gray-400 mb-1">{t('auth.password')}</label>
+                                <input
+                                    type="password"
+                                    value={joinPassword}
+                                    onChange={(e) => setJoinPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                />
+                            </div>
+                        </div>
+
+                        {joinError && (
+                            <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">
+                                {joinError}
+                            </div>
+                        )}
+
+                        <div className="flex justify-between items-center pt-2">
+                            <button type="button" onClick={() => setPhase('select')}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white transition-colors">
+                                <ArrowLeft size={16} />
+                                {t('action.back') || 'Back'}
+                            </button>
+                            <button type="submit"
+                                disabled={!canSubmit || joinSubmitting}
+                                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
+                                    canSubmit && !joinSubmitting
+                                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                        : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                }`}
+                            >
+                                {joinSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
+                                {t('group.join_btn')}
+                                <ArrowRight size={16} />
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    // ── Phase: Select mode (default) ──
     return (
         <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
             <div className="max-w-2xl w-full px-8">
                 {/* Title */}
                 <div className="text-center mb-10">
                     <h1 className="text-3xl font-bold mb-2">Imagine</h1>
-                    <p className="text-gray-400 text-sm">{t('setup.subtitle')}</p>
+                    <p className="text-gray-400 text-sm">{t('group.setup_subtitle')}</p>
                 </div>
 
                 {/* Mode Cards */}
                 <div className="grid grid-cols-2 gap-6 mb-8">
-                    {/* Server Mode Card */}
+                    {/* Create Group */}
                     <button
-                        onClick={() => setSelectedMode('server')}
-                        className={`p-6 rounded-xl border-2 text-left transition-all ${
-                            selectedMode === 'server'
-                                ? 'border-blue-500 bg-blue-900/20 shadow-lg shadow-blue-900/30'
-                                : 'border-gray-700 bg-gray-800/50 hover:border-gray-500'
-                        }`}
+                        onClick={() => setPhase('create')}
+                        className="p-6 rounded-xl border-2 border-gray-700 bg-gray-800/50 hover:border-blue-500 hover:bg-blue-900/10 text-left transition-all group"
                     >
                         <div className="flex items-center gap-3 mb-4">
-                            <div className={`p-2.5 rounded-lg ${
-                                selectedMode === 'server' ? 'bg-blue-600' : 'bg-gray-700'
-                            }`}>
+                            <div className="p-2.5 rounded-lg bg-gray-700 group-hover:bg-blue-600 transition-colors">
                                 <Shield size={24} />
                             </div>
-                            <h2 className="text-lg font-bold">{t('setup.server_title')}</h2>
+                            <h2 className="text-lg font-bold">{t('group.create')}</h2>
                         </div>
                         <p className="text-sm text-gray-400 leading-relaxed">
-                            {t('setup.server_desc')}
+                            {t('group.create_desc')}
                         </p>
                         <ul className="mt-4 space-y-1.5 text-xs text-gray-500">
                             <li className="flex items-center gap-1.5">
                                 <span className="w-1 h-1 rounded-full bg-blue-400" />
-                                {t('setup.server_feature1')}
+                                {t('group.create_feature1')}
                             </li>
                             <li className="flex items-center gap-1.5">
                                 <span className="w-1 h-1 rounded-full bg-blue-400" />
-                                {t('setup.server_feature2')}
+                                {t('group.create_feature2')}
                             </li>
                             <li className="flex items-center gap-1.5">
                                 <span className="w-1 h-1 rounded-full bg-blue-400" />
-                                {t('setup.server_feature3')}
+                                {t('group.create_feature3')}
                             </li>
                         </ul>
                     </button>
 
-                    {/* Client Mode Card */}
+                    {/* Join Group */}
                     <button
-                        onClick={() => setSelectedMode('client')}
-                        className={`p-6 rounded-xl border-2 text-left transition-all ${
-                            selectedMode === 'client'
-                                ? 'border-emerald-500 bg-emerald-900/20 shadow-lg shadow-emerald-900/30'
-                                : 'border-gray-700 bg-gray-800/50 hover:border-gray-500'
-                        }`}
+                        onClick={() => setPhase('join')}
+                        className="p-6 rounded-xl border-2 border-gray-700 bg-gray-800/50 hover:border-emerald-500 hover:bg-emerald-900/10 text-left transition-all group"
                     >
                         <div className="flex items-center gap-3 mb-4">
-                            <div className={`p-2.5 rounded-lg ${
-                                selectedMode === 'client' ? 'bg-emerald-600' : 'bg-gray-700'
-                            }`}>
-                                <Cpu size={24} />
+                            <div className="p-2.5 rounded-lg bg-gray-700 group-hover:bg-emerald-600 transition-colors">
+                                <Globe size={24} />
                             </div>
-                            <h2 className="text-lg font-bold">{t('setup.client_title')}</h2>
+                            <h2 className="text-lg font-bold">{t('group.join')}</h2>
                         </div>
                         <p className="text-sm text-gray-400 leading-relaxed">
-                            {t('setup.client_desc')}
+                            {t('group.join_desc')}
                         </p>
                         <ul className="mt-4 space-y-1.5 text-xs text-gray-500">
                             <li className="flex items-center gap-1.5">
                                 <span className="w-1 h-1 rounded-full bg-emerald-400" />
-                                {t('setup.client_feature1')}
+                                {t('group.join_feature1')}
                             </li>
                             <li className="flex items-center gap-1.5">
                                 <span className="w-1 h-1 rounded-full bg-emerald-400" />
-                                {t('setup.client_feature2')}
+                                {t('group.join_feature2')}
                             </li>
                             <li className="flex items-center gap-1.5">
                                 <span className="w-1 h-1 rounded-full bg-emerald-400" />
-                                {t('setup.client_feature3')}
+                                {t('group.join_feature3')}
                             </li>
                         </ul>
-                    </button>
-                </div>
-
-                {/* Confirm Button */}
-                <div className="flex justify-between items-center">
-                    <p className="text-xs text-gray-600">{t('setup.changeable_later')}</p>
-                    <button
-                        onClick={handleModeConfirm}
-                        disabled={!selectedMode}
-                        className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
-                            selectedMode
-                                ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                        }`}
-                    >
-                        {t('setup.next')}
-                        <ArrowRight size={16} />
                     </button>
                 </div>
             </div>

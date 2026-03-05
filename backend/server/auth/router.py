@@ -40,26 +40,17 @@ def _verify_password(password: str, hashed: str) -> bool:
 @router.post("/register", response_model=TokenResponse,
               dependencies=[Depends(check_register_rate)])
 def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
-    """Register a new user with an invite code."""
+    """Register a new user with server password verification."""
     cursor = db.conn.cursor()
 
-    # Validate invite code
-    cursor.execute(
-        "SELECT id, max_uses, use_count, expires_at FROM invite_codes WHERE code = ?",
-        (req.invite_code,)
-    )
-    invite = cursor.fetchone()
-    if invite is None:
-        raise HTTPException(status_code=400, detail="Invalid invite code")
+    # Validate server password
+    cursor.execute("SELECT value FROM system_meta WHERE key = 'server_password_hash'")
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
 
-    invite_id, max_uses, use_count, expires_at = invite
-    if use_count >= max_uses:
-        raise HTTPException(status_code=400, detail="Invite code has been fully used")
-
-    if expires_at:
-        exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-        if exp < datetime.now(timezone.utc):
-            raise HTTPException(status_code=400, detail="Invite code has expired")
+    if not _verify_password(req.server_password, row[0]):
+        raise HTTPException(status_code=403, detail="Invalid server password")
 
     # Check username uniqueness
     cursor.execute("SELECT id FROM users WHERE username = ?", (req.username,))
@@ -80,16 +71,6 @@ def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
         (req.username, req.email, password_hash)
     )
     user_id = cursor.lastrowid
-
-    # Update invite usage
-    cursor.execute(
-        "UPDATE invite_codes SET use_count = use_count + 1 WHERE id = ?",
-        (invite_id,)
-    )
-    cursor.execute(
-        "INSERT INTO invite_uses (invite_id, user_id) VALUES (?, ?)",
-        (invite_id, user_id)
-    )
 
     # Generate tokens
     access_token = create_access_token(user_id, req.username, "user")

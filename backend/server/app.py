@@ -167,6 +167,7 @@ from backend.server.routers.app_download import router as app_download_router
 from backend.server.routers.sync import router as sync_router
 from backend.server.routers.classification import router as classification_router
 from backend.server.routers.database import router as database_router
+from backend.server.routers.server_init import router as server_init_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -181,6 +182,7 @@ app.include_router(app_download_router, prefix="/api/v1")
 app.include_router(sync_router, prefix="/api/v1")
 app.include_router(classification_router, prefix="/api/v1")
 app.include_router(database_router, prefix="/api/v1")
+app.include_router(server_init_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")
@@ -197,25 +199,8 @@ def health():
 # ── Default admin account ────────────────────────────────────
 
 def _create_default_admin():
-    """Create default admin account if no users exist (first startup)."""
-    try:
-        from backend.server.deps import get_db
-        db = get_db()
-        cursor = db.conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM users")
-        count = cursor.fetchone()[0]
-        if count == 0:
-            import bcrypt
-            password_hash = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
-            cursor.execute(
-                """INSERT INTO users (username, email, password_hash, role, is_active)
-                   VALUES (?, ?, ?, 'admin', 1)""",
-                ("admin", "admin@localhost", password_hash)
-            )
-            db.conn.commit()
-            logger.info("Created default admin account (admin / admin)")
-    except Exception as e:
-        logger.warning(f"Could not create default admin: {e}")
+    """No-op: admin is now created via POST /api/v1/server/init."""
+    pass
 
 
 def _cleanup_stale_jobs():

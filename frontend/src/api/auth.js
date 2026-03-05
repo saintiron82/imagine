@@ -4,9 +4,9 @@
 
 import { apiClient, setTokens, clearTokens, getServerUrl } from './client';
 
-export async function register({ invite_code, username, email, password }) {
+export async function register({ server_password, username, email, password }) {
   const data = await apiClient.post('/api/v1/auth/register', {
-    invite_code,
+    server_password,
     username,
     email,
     password,
@@ -74,4 +74,47 @@ export async function checkServerHealth() {
   } catch (e) {
     return { ok: false, error: e.message };
   }
+}
+
+/**
+ * Get public server info (no auth required).
+ * Returns { group_name, initialized, version }.
+ */
+export async function getServerInfo(baseUrl) {
+  try {
+    const base = baseUrl || getServerUrl();
+    if (!base) return { ok: false, error: 'No server URL' };
+
+    const resp = await fetch(`${base}/api/v1/server/info`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      return { ok: true, ...data };
+    }
+    return { ok: false, error: `HTTP ${resp.status}` };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Initialize server (first-time setup).
+ */
+export async function initServer(baseUrl, { group_name, server_password, admin_username, admin_password }) {
+  const resp = await fetch(`${baseUrl}/api/v1/server/init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ group_name, server_password, admin_username, admin_password }),
+    signal: AbortSignal.timeout(10000),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+  if (data.access_token) {
+    setTokens(data.access_token, data.refresh_token);
+  }
+  return data;
 }

@@ -133,16 +133,23 @@ function App() {
     window.electron?.license?.get().catch(() => {});
   }, []);
 
-  const handleSetupComplete = (mode) => {
+  const handleSetupComplete = async (mode) => {
     setAppMode(mode);
     setUseLocalBackend(mode === 'server');
 
     if (mode === 'server') {
       setServerUrl(`http://localhost:${serverPort}`);
+      setServerRunning(true);
+      // Fetch LAN addresses for server info panel
+      try {
+        const status = await window.electron?.server?.getStatus();
+        if (status?.lanAddresses) setServerLanAddresses(status.lanAddresses);
+        if (status?.primaryLanUrl) setServerLanUrl(status.primaryLanUrl);
+      } catch { /* ignore */ }
     }
-    // client mode: URL is entered in LoginPage, not here
+    // client mode: URL was already set in SetupPage join flow
 
-    // Switch auth: server → local bypass, client → JWT required
+    // Switch auth: tries to use existing token from SetupPage init/join
     configureAuth(mode);
   };
 

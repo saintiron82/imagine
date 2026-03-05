@@ -5,7 +5,7 @@
  * - mDNS auto-discovery of Imagine servers (Electron only)
  * - Recent server history (all modes)
  * - Health check with server name display
- * - Login / Register with invite code
+ * - Login / Register with server password
  * - Server mode: simplified UI (no URL selection, auto health check)
  */
 
@@ -15,6 +15,7 @@ import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { setServerUrl as setClientServerUrl } from '../api/client';
 import { useMdnsDiscovery } from '../hooks/useMdnsDiscovery';
+import { getServerInfo } from '../api/auth';
 import {
   getServerHistory,
   addServerToHistory,
@@ -23,7 +24,7 @@ import {
 } from '../utils/serverHistory';
 import {
   LogIn, UserPlus, Server, Eye, EyeOff, CheckCircle, XCircle,
-  Download, Wifi, X, Clock, Radio, Loader,
+  Download, Wifi, X, Clock, Radio, Loader, Users,
 } from 'lucide-react';
 
 export default function LoginPage({ onShowDownload, serverRunning, serverPort }) {
@@ -39,8 +40,9 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
+  const [serverPassword, setServerPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [groupName, setGroupName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [serverStatus, setServerStatus] = useState(null);
   const [serverError, setServerError] = useState('');
@@ -103,6 +105,11 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
     if (result.ok) {
       setServerStatus('ok');
       setServerName(result.serverName || '');
+      // Fetch group name from server info
+      const info = await getServerInfo(targetUrl);
+      if (info.ok && info.group_name) {
+        setGroupName(info.group_name);
+      }
     } else {
       setServerStatus('error');
       setServerError(result.error);
@@ -150,7 +157,7 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
       success = await login({ username, password, serverUrl: trimmedUrl });
     } else {
       success = await register({
-        invite_code: inviteCode,
+        server_password: serverPassword,
         username,
         email: email || undefined,
         password,
@@ -412,19 +419,28 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
                 </button>
               </div>
 
+              {/* Group name badge */}
+              {groupName && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-blue-900/20 border border-blue-800/40 rounded-lg">
+                  <Users size={14} className="text-blue-400" />
+                  <span className="text-sm text-blue-300 font-medium">{groupName}</span>
+                </div>
+              )}
+
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Invite Code (register only) */}
+                {/* Server Password (register only) */}
                 {mode === 'register' && (
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">{t('auth.invite_code')}</label>
+                    <label className="block text-xs text-gray-400 mb-1">{t('auth.server_password')}</label>
                     <input
-                      type="text"
-                      value={inviteCode}
-                      onChange={(e) => setInviteCode(e.target.value)}
-                      placeholder={t('auth.invite_code_placeholder')}
+                      type="password"
+                      value={serverPassword}
+                      onChange={(e) => setServerPassword(e.target.value)}
+                      placeholder={t('auth.server_password_placeholder')}
                       className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
                       required
                     />
+                    <p className="text-[10px] text-gray-600 mt-1">{t('auth.server_password_hint')}</p>
                   </div>
                 )}
 
@@ -500,11 +516,12 @@ export default function LoginPage({ onShowDownload, serverRunning, serverPort })
                 </button>
               </form>
 
-              {/* Server mode: default credentials hint */}
-              {isServerMode && mode === 'login' && (
-                <p className="text-xs text-gray-500 mt-3 text-center">
-                  {t('server.login_hint')}
-                </p>
+              {/* Server mode: group name display */}
+              {isServerMode && groupName && (
+                <div className="flex items-center justify-center gap-2 mt-3">
+                  <Users size={12} className="text-blue-400" />
+                  <span className="text-xs text-blue-300">{groupName}</span>
+                </div>
               )}
             </div>
           )}

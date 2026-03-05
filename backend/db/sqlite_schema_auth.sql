@@ -9,7 +9,7 @@
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE,  -- nullable (email is optional for group-based registration)
     password_hash TEXT NOT NULL,
     role TEXT DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     is_active INTEGER DEFAULT 1,  -- boolean: 0/1

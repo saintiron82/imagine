@@ -96,6 +96,7 @@ class SQLiteDB:
                 self._migrate_worker_resources_json()
                 self._migrate_mc_completed_at()
                 self._migrate_backfill_parse_status()
+                self._migrate_users_email_nullable()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -292,6 +293,39 @@ class SQLiteDB:
         self.conn.execute("PRAGMA writable_schema = OFF")
         self.conn.commit()
         logger.info("✅ parse_status CHECK extended to include 'backfill'")
+
+    def _migrate_users_email_nullable(self):
+        """Make users.email nullable (remove NOT NULL constraint).
+
+        Group-based registration makes email optional.
+        Uses PRAGMA writable_schema since SQLite cannot ALTER COLUMN.
+        """
+        if not self._table_exists('users'):
+            return
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        if not row:
+            return
+        schema_sql = row[0]
+        # Check if email column has NOT NULL — if not present, already nullable
+        if 'email TEXT UNIQUE NOT NULL' not in schema_sql:
+            return
+
+        logger.info("Migrating: making users.email nullable...")
+        self.conn.execute("PRAGMA writable_schema = ON")
+        self.conn.execute("""
+            UPDATE sqlite_master
+            SET sql = REPLACE(sql,
+                'email TEXT UNIQUE NOT NULL',
+                'email TEXT UNIQUE')
+            WHERE type = 'table' AND name = 'users'
+        """)
+        self.conn.execute("PRAGMA writable_schema = OFF")
+        # Integrity check after schema modification
+        self.conn.execute("PRAGMA integrity_check")
+        self.conn.commit()
+        logger.info("✅ users.email is now nullable")
 
     def _migrate_mc_completed_at(self):
         """Add mc_completed_at column to job_queue for mc_only throughput measurement."""
