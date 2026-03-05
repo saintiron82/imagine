@@ -38,10 +38,9 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
     if cursor.fetchone():
         raise HTTPException(status_code=409, detail="Server already initialized")
 
-    # Check no users exist yet
-    cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] > 0:
-        raise HTTPException(status_code=409, detail="Server already has users")
+    # Clean up residual data from partial init attempts
+    cursor.execute("DELETE FROM refresh_tokens")
+    cursor.execute("DELETE FROM users")
 
     # Store group config
     password_hash = _hash_password(req.server_password)
