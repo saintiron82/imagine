@@ -594,5 +594,11 @@
   "group.server_not_initialized": "This server has not been initialized yet",
   "auth.server_password": "Server Password",
   "auth.server_password_placeholder": "Enter server password",
-  "auth.server_password_hint": "Ask the server admin for the password"
+  "auth.server_password_hint": "Ask the server admin for the password",
+  "validation.username_min": "Username must be at least 2 characters",
+  "validation.password_min": "Password must be at least 6 characters",
+  "validation.server_password_required": "Server password is required",
+  "validation.group_name_required": "Group name is required",
+  "validation.check_server_first": "Check server connection first",
+  "validation.field_required": "This field is required"
 }

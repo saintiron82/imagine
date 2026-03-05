@@ -213,6 +213,7 @@ const SetupPage = ({ onComplete }) => {
         } catch (e) {
             setCreateError(e.message || 'Server initialization failed');
             setCreateSubmitting(false);
+            setPhase('create');  // Return to form so error is visible
         }
     }, [groupName, serverPassword, adminUsername, adminPassword, onComplete]);
 
@@ -234,9 +235,26 @@ const SetupPage = ({ onComplete }) => {
     if (phase === 'checking') {
         return (
             <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-                <div className="text-center">
-                    <Loader2 size={40} className="animate-spin text-blue-400 mx-auto mb-4" />
-                    <p className="text-gray-300">{t('setup.checking_env')}</p>
+                <div className="text-center max-w-md">
+                    {createError ? (
+                        <>
+                            <AlertCircle size={40} className="text-red-400 mx-auto mb-4" />
+                            <p className="text-gray-300 mb-3">{t('setup.checking_env')}</p>
+                            <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400 mb-4">
+                                {createError}
+                            </div>
+                            <button onClick={() => { setCreateError(''); setPhase('create'); }}
+                                className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 transition-colors">
+                                <ArrowLeft size={14} className="inline mr-1" />
+                                {t('action.back') || 'Back'}
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <Loader2 size={40} className="animate-spin text-blue-400 mx-auto mb-4" />
+                            <p className="text-gray-300">{t('setup.checking_env')}</p>
+                        </>
+                    )}
                 </div>
             </div>
         );
@@ -427,8 +445,8 @@ const SetupPage = ({ onComplete }) => {
 
     // ── Phase: Create Group form ──
     if (phase === 'create') {
-        const canProceed = groupName.trim() && serverPassword.trim().length >= 4
-            && adminUsername.trim().length >= 2 && adminPassword.trim().length >= 6;
+        const canProceed = groupName.trim().length > 0 && serverPassword.trim().length >= 1
+            && adminUsername.trim().length >= 1 && adminPassword.trim().length >= 1;
 
         const handleCreateNext = () => {
             if (!canProceed) return;
@@ -459,9 +477,14 @@ const SetupPage = ({ onComplete }) => {
                                 value={groupName}
                                 onChange={(e) => setGroupName(e.target.value)}
                                 placeholder={t('group.name_placeholder')}
-                                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                className={`w-full px-3 py-2 bg-gray-800 border rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none ${
+                                    groupName.length > 0 && groupName.trim().length === 0 ? 'border-red-500' : 'border-gray-600'
+                                }`}
                                 maxLength={100}
                             />
+                            {groupName.length > 0 && groupName.trim().length === 0 && (
+                                <p className="text-[10px] text-red-400 mt-1">{t('validation.group_name_required')}</p>
+                            )}
                         </div>
 
                         {/* Server Password */}
@@ -646,8 +669,13 @@ const SetupPage = ({ onComplete }) => {
                                     value={joinUsername}
                                     onChange={(e) => setJoinUsername(e.target.value)}
                                     placeholder={t('auth.username_placeholder')}
-                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                    className={`w-full px-3 py-2 bg-gray-800 border rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none ${
+                                        joinUsername.length > 0 && joinUsername.trim().length < 2 ? 'border-red-500/50' : 'border-gray-600'
+                                    }`}
                                 />
+                                {joinUsername.length > 0 && joinUsername.trim().length < 2 && (
+                                    <p className="text-[10px] text-red-400 mt-1">{t('validation.username_min')}</p>
+                                )}
                             </div>
 
                             {/* Password */}
@@ -658,8 +686,13 @@ const SetupPage = ({ onComplete }) => {
                                     value={joinPassword}
                                     onChange={(e) => setJoinPassword(e.target.value)}
                                     placeholder="••••••••"
-                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                    className={`w-full px-3 py-2 bg-gray-800 border rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none ${
+                                        joinPassword.length > 0 && joinPassword.length < 6 ? 'border-red-500/50' : 'border-gray-600'
+                                    }`}
                                 />
+                                {joinPassword.length > 0 && joinPassword.length < 6 && (
+                                    <p className="text-[10px] text-red-400 mt-1">{t('validation.password_min')}</p>
+                                )}
                             </div>
                         </div>
 
@@ -667,6 +700,10 @@ const SetupPage = ({ onComplete }) => {
                             <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">
                                 {joinError}
                             </div>
+                        )}
+
+                        {!joinServerChecked && joinServerUrl.trim() && !joinServerChecking && (
+                            <p className="text-[10px] text-yellow-400">{t('validation.check_server_first')}</p>
                         )}
 
                         <div className="flex justify-between items-center pt-2">
