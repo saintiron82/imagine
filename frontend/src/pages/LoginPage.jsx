@@ -325,7 +325,7 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
     setCreateSubmitting(true);
 
     try {
-      const baseUrl = clientServerUrl || `http://localhost:${serverPort || 8000}`;
+      const baseUrl = getServerUrl() || `http://localhost:${serverPort || 8000}`;
 
       // Initialize server (creates group + admin)
       await initServer(baseUrl, {
@@ -344,7 +344,7 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
       setCreateSubmitting(false);
       setView('createGroup');
     }
-  }, [createGroupName, createServerPassword, createAdminUsername, createAdminPassword, onLoginComplete, serverPort, clientServerUrl, t]);
+  }, [createGroupName, createServerPassword, createAdminUsername, createAdminPassword, onLoginComplete, serverPort, t]);
 
   const handleInstall = useCallback(() => {
     setView('installing');
