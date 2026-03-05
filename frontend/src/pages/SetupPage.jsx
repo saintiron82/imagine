@@ -445,8 +445,20 @@ const SetupPage = ({ onComplete }) => {
 
     // ── Phase: Create Group form ──
     if (phase === 'create') {
-        const canProceed = groupName.trim().length > 0 && serverPassword.trim().length >= 1
-            && adminUsername.trim().length >= 1 && adminPassword.trim().length >= 1;
+        const checks = {
+            groupName: groupName.trim().length > 0,
+            serverPassword: serverPassword.trim().length >= 1,
+            adminUsername: adminUsername.trim().length >= 1,
+            adminPassword: adminPassword.trim().length >= 1,
+        };
+        const canProceed = checks.groupName && checks.serverPassword && checks.adminUsername && checks.adminPassword;
+        // Show hints after user has interacted (typed something)
+        const touched = {
+            groupName: groupName.length > 0,
+            serverPassword: serverPassword.length > 0,
+            adminUsername: adminUsername.length > 0,
+            adminPassword: adminPassword.length > 0,
+        };
 
         const handleCreateNext = () => {
             if (!canProceed) return;
@@ -478,11 +490,11 @@ const SetupPage = ({ onComplete }) => {
                                 onChange={(e) => setGroupName(e.target.value)}
                                 placeholder={t('group.name_placeholder')}
                                 className={`w-full px-3 py-2 bg-gray-800 border rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none ${
-                                    groupName.length > 0 && groupName.trim().length === 0 ? 'border-red-500' : 'border-gray-600'
+                                    touched.groupName && !checks.groupName ? 'border-red-500/60' : checks.groupName ? 'border-green-600/40' : 'border-gray-600'
                                 }`}
                                 maxLength={100}
                             />
-                            {groupName.length > 0 && groupName.trim().length === 0 && (
+                            {touched.groupName && !checks.groupName && (
                                 <p className="text-[10px] text-red-400 mt-1">{t('validation.group_name_required')}</p>
                             )}
                         </div>
@@ -495,10 +507,16 @@ const SetupPage = ({ onComplete }) => {
                                 value={serverPassword}
                                 onChange={(e) => setServerPassword(e.target.value)}
                                 placeholder={t('group.server_password_placeholder')}
-                                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                className={`w-full px-3 py-2 bg-gray-800 border rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none ${
+                                    touched.serverPassword && !checks.serverPassword ? 'border-red-500/60' : checks.serverPassword ? 'border-green-600/40' : 'border-gray-600'
+                                }`}
                                 maxLength={128}
                             />
-                            <p className="text-[10px] text-gray-600 mt-1">{t('group.server_password_hint')}</p>
+                            {touched.serverPassword && !checks.serverPassword ? (
+                                <p className="text-[10px] text-red-400 mt-1">{t('validation.server_password_required')}</p>
+                            ) : (
+                                <p className="text-[10px] text-gray-600 mt-1">{t('group.server_password_hint')}</p>
+                            )}
                         </div>
 
                         <div className="border-t border-gray-700 pt-4">
@@ -512,9 +530,14 @@ const SetupPage = ({ onComplete }) => {
                                     value={adminUsername}
                                     onChange={(e) => setAdminUsername(e.target.value)}
                                     placeholder={t('auth.username_placeholder')}
-                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                    className={`w-full px-3 py-2 bg-gray-800 border rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none ${
+                                        touched.adminUsername && !checks.adminUsername ? 'border-red-500/60' : checks.adminUsername ? 'border-green-600/40' : 'border-gray-600'
+                                    }`}
                                     maxLength={50}
                                 />
+                                {touched.adminUsername && !checks.adminUsername && (
+                                    <p className="text-[10px] text-red-400 mt-1">{t('validation.field_required')}</p>
+                                )}
                             </div>
 
                             {/* Admin Password */}
@@ -525,11 +548,34 @@ const SetupPage = ({ onComplete }) => {
                                     value={adminPassword}
                                     onChange={(e) => setAdminPassword(e.target.value)}
                                     placeholder="••••••••"
-                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                    className={`w-full px-3 py-2 bg-gray-800 border rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none ${
+                                        touched.adminPassword && !checks.adminPassword ? 'border-red-500/60' : checks.adminPassword ? 'border-green-600/40' : 'border-gray-600'
+                                    }`}
                                     maxLength={128}
                                 />
+                                {touched.adminPassword && !checks.adminPassword && (
+                                    <p className="text-[10px] text-red-400 mt-1">{t('validation.field_required')}</p>
+                                )}
                             </div>
                         </div>
+
+                        {/* Checklist summary */}
+                        {!canProceed && (touched.groupName || touched.serverPassword || touched.adminUsername || touched.adminPassword) && (
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
+                                <span className={checks.groupName ? 'text-green-500' : 'text-gray-600'}>
+                                    {checks.groupName ? '✓' : '○'} {t('group.name')}
+                                </span>
+                                <span className={checks.serverPassword ? 'text-green-500' : 'text-gray-600'}>
+                                    {checks.serverPassword ? '✓' : '○'} {t('group.server_password')}
+                                </span>
+                                <span className={checks.adminUsername ? 'text-green-500' : 'text-gray-600'}>
+                                    {checks.adminUsername ? '✓' : '○'} {t('auth.username')}
+                                </span>
+                                <span className={checks.adminPassword ? 'text-green-500' : 'text-gray-600'}>
+                                    {checks.adminPassword ? '✓' : '○'} {t('auth.password')}
+                                </span>
+                            </div>
+                        )}
 
                         {createError && (
                             <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">
