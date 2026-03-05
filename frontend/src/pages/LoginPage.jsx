@@ -293,12 +293,16 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
         admin_password: createAdminPassword,
       });
 
-      // 4. Server init succeeded — proceed to tier or finish
+      // 4. Server init succeeded — go to tier selection or back to login
       setCreateSubmitting(false);
+      setServerInitialized(true);
+      setGroupName(createGroupName);
       if (isElectron && window.electron?.pipeline?.checkEnv) {
         setView('tier');
       } else {
-        if (onLoginComplete) onLoginComplete('server');
+        // Return to login form — user must login with the admin account they just created
+        setUsername(createAdminUsername);
+        setView('main');
       }
     } catch (e) {
       setCreateError(e.message || 'Server initialization failed');
@@ -322,16 +326,18 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
       setEnvStatus(status);
       const modelsOk = status.visual_model_cached && status.dependencies_ok;
       if (modelsOk) {
-        // Init already done — just complete login
-        if (onLoginComplete) onLoginComplete('server');
+        // Env ready — go back to login form
+        setUsername(createAdminUsername);
+        setView('main');
       } else {
         setView('install');
       }
     } catch (e) {
       console.error('check-env failed:', e);
-      if (onLoginComplete) onLoginComplete('server');
+      setUsername(createAdminUsername);
+      setView('main');
     }
-  }, [selectedTier, onLoginComplete]);
+  }, [selectedTier, createAdminUsername]);
 
   const handleInstall = useCallback(() => {
     setView('installing');
@@ -340,12 +346,14 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
   }, []);
 
   const handleSkip = useCallback(() => {
-    if (onLoginComplete) onLoginComplete('server');
-  }, [onLoginComplete]);
+    setUsername(createAdminUsername);
+    setView('main');
+  }, [createAdminUsername]);
 
   const handleFinish = useCallback(() => {
-    if (onLoginComplete) onLoginComplete('server');
-  }, [onLoginComplete]);
+    setUsername(createAdminUsername);
+    setView('main');
+  }, [createAdminUsername]);
 
   // --- Filter history ---
   const mdnsUrls = new Set(

@@ -118,8 +118,6 @@ export async function initServer(baseUrl, { group_name, server_password, admin_u
   if (!resp.ok) {
     throw new Error(data.detail || `HTTP ${resp.status}`);
   }
-  if (data.access_token) {
-    setTokens(data.access_token, data.refresh_token);
-  }
+  // Don't store tokens — user must login manually after group creation
   return data;
 }
