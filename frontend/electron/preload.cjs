@@ -205,6 +205,14 @@ contextBridge.exposeInMainWorld('electron', {
         offWorkerState: () => ipcRenderer.removeAllListeners('worker-state'),
     },
 
+    // License (deviceId generation + future license check)
+    license: {
+        get: () => ipcRenderer.invoke('license-get'),
+        set: (data) => ipcRenderer.invoke('license-set', data),
+        clear: () => ipcRenderer.invoke('license-clear'),
+        getConfig: () => ipcRenderer.invoke('license-get-config'),
+    },
+
     // Menu Actions (main → renderer)
     onMenuAction: (cb) => ipcRenderer.on('menu-action', (_, action) => cb(action)),
     offMenuAction: () => ipcRenderer.removeAllListeners('menu-action'),

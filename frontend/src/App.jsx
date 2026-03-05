@@ -104,6 +104,13 @@ function App() {
   const [tunnelDownloading, setTunnelDownloading] = useState(false);
 
   // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
+  // Web mode: restrict tabs to search/download only
+  useEffect(() => {
+    if (!isElectron && (currentTab === 'archive' || currentTab === 'admin')) {
+      setCurrentTab('search');
+    }
+  }, [currentTab]);
+
   useEffect(() => {
     if (!isElectron) return;
     const loadConfig = async () => {
@@ -118,6 +125,12 @@ function App() {
       }
     };
     loadConfig();
+  }, []);
+
+  // Ensure deviceId exists on startup (license infra — currently disabled)
+  useEffect(() => {
+    if (!isElectron) return;
+    window.electron?.license?.get().catch(() => {});
   }, []);
 
   const handleSetupComplete = (mode) => {
@@ -1340,20 +1353,22 @@ function App() {
             <Search size={16} />
             <span>{t('tab.search')}</span>
           </button>
-          {/* Archive/Worker tab — role-based: admin=archive, user=worker */}
-          <button
-            onClick={() => setCurrentTab('archive')}
-            className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
-              ? (isAdmin ? 'bg-gray-700 text-white' : 'bg-emerald-700 text-white')
-              : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-              }`}
-          >
-            {isAdmin ? <Archive size={16} /> : <Zap size={16} />}
-            <span>{isAdmin ? t('tab.archive_server') : t('tab.archive_worker')}</span>
-          </button>
+          {/* Archive/Worker tab — role-based: admin=archive, user=worker (Electron only) */}
+          {isElectron && (
+            <button
+              onClick={() => setCurrentTab('archive')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
+                ? (isAdmin ? 'bg-gray-700 text-white' : 'bg-emerald-700 text-white')
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+            >
+              {isAdmin ? <Archive size={16} /> : <Zap size={16} />}
+              <span>{isAdmin ? t('tab.archive_server') : t('tab.archive_worker')}</span>
+            </button>
+          )}
 
-          {/* Admin tab — admin role only */}
-          {isAdmin && (
+          {/* Admin tab — admin role only, Electron only */}
+          {isElectron && isAdmin && (
             <button
               onClick={() => setCurrentTab('admin')}
               className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'admin'
@@ -1363,6 +1378,20 @@ function App() {
             >
               <Settings size={16} />
               <span>{t('tab.admin')}</span>
+            </button>
+          )}
+
+          {/* Download tab — web mode only */}
+          {!isElectron && (
+            <button
+              onClick={() => setCurrentTab('download')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'download'
+                ? 'bg-emerald-600 text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+            >
+              <Download size={16} />
+              <span>{t('tab.download')}</span>
             </button>
           )}
 
@@ -1389,7 +1418,9 @@ function App() {
             </>
           )}
 
-          {/* DB Import/Export Menu */}
+          {/* DB Import/Export Menu (Electron only) */}
+          {isElectron && (
+          <>
           <div className="w-px h-6 bg-gray-600 mx-1" />
           <div className="relative">
             <button
@@ -1458,6 +1489,8 @@ function App() {
               </>
             )}
           </div>
+          </>
+          )}
 
           {/* Server Mode Toggle (Electron only) */}
           {isElectron && (
@@ -1572,7 +1605,9 @@ function App() {
         <div className="flex-1 flex flex-col bg-gray-900 relative">
           {/* Content Area */}
           <div className="flex-1 overflow-hidden">
-            {currentTab === 'admin' && isAdmin ? (
+            {currentTab === 'download' && !isElectron ? (
+              <DownloadPage onBack={() => setCurrentTab('search')} />
+            ) : currentTab === 'admin' && isAdmin ? (
               <AdminPage />
             ) : currentTab === 'search' ? (
               <SearchPanel

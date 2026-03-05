@@ -2412,6 +2412,65 @@ ipcMain.handle('tunnel-status', async () => {
     };
 });
 
+// ── License IPC ─────────────────────────────────────────────────
+const crypto = require('crypto');
+const LICENSE_FILE = path.join(app.getPath('userData'), 'license.json');
+
+function readLicenseFile() {
+    try {
+        if (fs.existsSync(LICENSE_FILE)) {
+            return JSON.parse(fs.readFileSync(LICENSE_FILE, 'utf8'));
+        }
+    } catch { /* corrupt file — treat as empty */ }
+    return {};
+}
+
+function writeLicenseFile(data) {
+    fs.writeFileSync(LICENSE_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+ipcMain.handle('license-get', async () => {
+    try {
+        let data = readLicenseFile();
+        // Auto-generate deviceId on first access
+        if (!data.deviceId) {
+            data.deviceId = crypto.randomUUID();
+            writeLicenseFile(data);
+        }
+        return { success: true, data };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('license-set', async (_event, updates) => {
+    try {
+        const data = { ...readLicenseFile(), ...updates };
+        writeLicenseFile(data);
+        return { success: true };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('license-clear', async () => {
+    try {
+        if (fs.existsSync(LICENSE_FILE)) fs.unlinkSync(LICENSE_FILE);
+        return { success: true };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('license-get-config', async () => {
+    try {
+        const systemConfig = readYamlFile(path.join(configRoot, 'config.yaml'));
+        return { success: true, license: systemConfig.license || { enabled: false } };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+});
+
 // ── Window creation (pure UI — no IPC registration) ──────────────
 
 function createWindow() {
