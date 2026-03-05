@@ -602,5 +602,6 @@
   "validation.group_name_required": "Group name is required",
   "validation.check_server_first": "Check server connection first",
   "validation.field_required": "This field is required",
-  "validation.password_min_4": "Password must be at least 4 characters"
+  "validation.password_min_4": "Password must be at least 4 characters",
+  "validation.server_already_initialized": "This server is already initialized. Use 'Join Group' instead, or reset the database first."
 }

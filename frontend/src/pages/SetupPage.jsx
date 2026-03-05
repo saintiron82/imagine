@@ -200,6 +200,12 @@ const SetupPage = ({ onComplete }) => {
             const baseUrl = `http://localhost:${port}`;
             setClientServerUrl(baseUrl);
 
+            // Pre-check: verify server is not already initialized
+            const info = await getServerInfo(baseUrl);
+            if (info.ok && info.initialized) {
+                throw new Error(t('validation.server_already_initialized'));
+            }
+
             // Initialize server (creates group + admin)
             await initServer(baseUrl, {
                 group_name: groupName,
@@ -460,8 +466,24 @@ const SetupPage = ({ onComplete }) => {
             adminPassword: adminPassword.length > 0,
         };
 
-        const handleCreateNext = () => {
+        const handleCreateNext = async () => {
             if (!canProceed) return;
+            setCreateError('');
+            setCreateSubmitting(true);
+
+            // Pre-check: if server is already running, verify it's not already initialized
+            try {
+                const info = await getServerInfo('http://localhost:8000');
+                if (info.ok && info.initialized) {
+                    setCreateError(t('validation.server_already_initialized'));
+                    setCreateSubmitting(false);
+                    return;
+                }
+            } catch {
+                // Server not running yet — that's expected for fresh create
+            }
+            setCreateSubmitting(false);
+
             if (window.electron?.pipeline?.checkEnv) {
                 setPhase('tier');
             } else {
