@@ -840,7 +840,7 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-900">
       {renderTopBar()}
-      <div className="w-full max-w-lg p-8 pt-14">
+      <div className="w-full max-w-md p-8 pt-14">
         {/* Header */}
         <div className="text-center mb-6">
           <h1 className="text-3xl font-bold text-white mb-2">Imagine</h1>
@@ -855,123 +855,125 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
           </div>
         )}
 
-        <div className="flex gap-4">
-          {/* === Left: Login/Register Card === */}
-          <div className={`flex-1 bg-gray-800 rounded-lg border border-gray-700 p-6 ${
-            serverWaiting || serverInitialized === false ? 'opacity-50 pointer-events-none' : ''
-          }`}>
+        {/* === Login Card === */}
+        <div className={`bg-gray-800 rounded-lg border border-gray-700 p-6 ${
+          serverWaiting ? 'opacity-50 pointer-events-none' : ''
+        }`}>
+          {/* Top action buttons */}
+          <div className="flex items-center gap-2 mb-4">
             {/* Group name badge */}
             {groupName && serverInitialized && (
-              <div className="flex items-center gap-2 px-3 py-2 mb-4 bg-blue-900/20 border border-blue-800/40 rounded-lg">
-                <Users size={14} className="text-blue-400" />
-                <span className="text-sm text-blue-300 font-medium">{groupName}</span>
-              </div>
+              <span className="flex items-center gap-1.5 text-xs text-blue-300 bg-blue-900/20 border border-blue-800/40 px-2.5 py-1 rounded">
+                <Users size={12} className="text-blue-400" />
+                {groupName}
+              </span>
             )}
-
-            {/* Tab toggle */}
-            <div className="flex mb-4 bg-gray-900 rounded-lg p-1">
-              <button onClick={() => setMode('login')}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  mode === 'login' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
-                }`}>
-                <LogIn size={16} /> {t('auth.login')}
-              </button>
-              <button onClick={() => setMode('register')}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  mode === 'register' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
-                }`}>
-                <UserPlus size={16} /> {t('auth.register')}
-              </button>
-            </div>
-
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              {/* Server Password (register only) */}
-              {mode === 'register' && (
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">{t('auth.server_password')}</label>
-                  <input type="password" value={serverPassword}
-                    onChange={(e) => setServerPassword(e.target.value)}
-                    placeholder={t('auth.server_password_placeholder')}
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-                    required />
-                  <p className="text-[10px] text-gray-600 mt-1">{t('auth.server_password_hint')}</p>
-                </div>
-              )}
-
-              {/* Username */}
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">{t('auth.username')}</label>
-                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
-                  placeholder={t('auth.username_placeholder')}
-                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-                  required />
-              </div>
-
-              {/* Email (register only) */}
-              {mode === 'register' && (
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">
-                    {t('auth.email')} <span className="text-gray-600">({t('label.optional')})</span>
-                  </label>
-                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                    placeholder="user@example.com"
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none" />
-                </div>
-              )}
-
-              {/* Password */}
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">{t('auth.password')}</label>
-                <div className="relative">
-                  <input type={showPassword ? 'text' : 'password'} value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3 py-2 pr-10 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-                    required />
-                  <button type="button" onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Error */}
-              {error && (
-                <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">{error}</div>
-              )}
-
-              {/* Submit */}
-              <button type="submit" disabled={submitting || !serverUrl.trim()}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg text-sm font-medium transition-colors">
-                {submitting ? '...' : mode === 'login' ? t('auth.login') : t('auth.register')}
-              </button>
-            </form>
-          </div>
-
-          {/* === Right: Side actions === */}
-          <div className="w-44 space-y-3 shrink-0">
+            <div className="flex-1" />
             {/* Create Group — always visible */}
             <button onClick={() => setView('createGroup')}
-              className={`w-full p-4 rounded-lg border text-left transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
                 serverInitialized === false
-                  ? 'border-blue-500 bg-blue-900/20 shadow-lg shadow-blue-900/20'
-                  : 'border-gray-700 bg-gray-800/50 hover:border-gray-500'
+                  ? 'bg-blue-600 text-white hover:bg-blue-500'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700'
               }`}>
-              <Plus size={20} className="text-blue-400 mb-2" />
-              <p className="text-sm font-medium text-white">{t('group.create_title')}</p>
-              <p className="text-[10px] text-gray-500 mt-1">{t('group.create_short_desc')}</p>
+              <Plus size={12} />
+              {t('group.create_title')}
             </button>
-
             {/* Remote Server — Electron only */}
             {isElectron && (
               <button onClick={() => setView('remote')}
-                className="w-full p-4 rounded-lg border border-gray-700 bg-gray-800/50 hover:border-gray-500 text-left transition-all">
-                <Globe size={20} className="text-emerald-400 mb-2" />
-                <p className="text-sm font-medium text-white">{t('auth.remote_server')}</p>
-                <p className="text-[10px] text-gray-500 mt-1">{t('auth.remote_server_desc')}</p>
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-gray-500 hover:text-white hover:bg-gray-700 transition-colors">
+                <Globe size={12} />
+                {t('auth.remote_server')}
               </button>
             )}
           </div>
+
+          {/* Server not initialized hint */}
+          {serverInitialized === false && !serverWaiting && (
+            <div className="p-3 mb-4 bg-yellow-900/20 border border-yellow-800/40 rounded-lg text-xs text-yellow-300">
+              {t('group.server_not_initialized')}
+            </div>
+          )}
+
+          {/* Tab toggle */}
+          <div className={`flex mb-4 bg-gray-900 rounded-lg p-1 ${serverInitialized === false ? 'opacity-40 pointer-events-none' : ''}`}>
+            <button onClick={() => setMode('login')}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                mode === 'login' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
+              }`}>
+              <LogIn size={16} /> {t('auth.login')}
+            </button>
+            <button onClick={() => setMode('register')}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                mode === 'register' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
+              }`}>
+              <UserPlus size={16} /> {t('auth.register')}
+            </button>
+          </div>
+
+          <form onSubmit={handleLoginSubmit} className={`space-y-4 ${serverInitialized === false ? 'opacity-40 pointer-events-none' : ''}`}>
+            {/* Server Password (register only) */}
+            {mode === 'register' && (
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">{t('auth.server_password')}</label>
+                <input type="password" value={serverPassword}
+                  onChange={(e) => setServerPassword(e.target.value)}
+                  placeholder={t('auth.server_password_placeholder')}
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                  required />
+                <p className="text-[10px] text-gray-600 mt-1">{t('auth.server_password_hint')}</p>
+              </div>
+            )}
+
+            {/* Username */}
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">{t('auth.username')}</label>
+              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
+                placeholder={t('auth.username_placeholder')}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                required />
+            </div>
+
+            {/* Email (register only) */}
+            {mode === 'register' && (
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">
+                  {t('auth.email')} <span className="text-gray-600">({t('label.optional')})</span>
+                </label>
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                  placeholder="user@example.com"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none" />
+              </div>
+            )}
+
+            {/* Password */}
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">{t('auth.password')}</label>
+              <div className="relative">
+                <input type={showPassword ? 'text' : 'password'} value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3 py-2 pr-10 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                  required />
+                <button type="button" onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">{error}</div>
+            )}
+
+            {/* Submit */}
+            <button type="submit" disabled={submitting || !serverUrl.trim()}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg text-sm font-medium transition-colors">
+              {submitting ? '...' : mode === 'login' ? t('auth.login') : t('auth.register')}
+            </button>
+          </form>
         </div>
 
         {/* Desktop App Download (web only) */}
