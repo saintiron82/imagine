@@ -604,5 +604,13 @@
   "validation.check_server_first": "먼저 서버 연결을 확인하세요",
   "validation.field_required": "필수 입력 항목입니다",
   "validation.password_min_4": "비밀번호는 4자 이상이어야 합니다",
-  "validation.server_already_initialized": "이미 초기화된 서버입니다. '그룹 참여'를 사용하거나, DB를 초기화하세요."
+  "validation.server_already_initialized": "이미 초기화된 서버입니다. '그룹 참여'를 사용하거나, DB를 초기화하세요.",
+  "group.create_title": "새 그룹 만들기",
+  "group.create_short_desc": "새 서버 그룹을 초기화합니다",
+  "group.admin_username": "관리자 아이디",
+  "group.admin_username_placeholder": "예: admin",
+  "group.admin_password": "관리자 비밀번호",
+  "auth.remote_server": "원격 서버",
+  "auth.remote_server_desc": "다른 서버에 접속합니다",
+  "auth.connect": "접속"
 }

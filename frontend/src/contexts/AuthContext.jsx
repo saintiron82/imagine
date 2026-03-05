@@ -1,12 +1,8 @@
 /**
  * AuthContext — manages authentication state.
  *
- * - Electron server mode: JWT auth required (local server login screen)
- * - Electron client mode: JWT auth required (remote server)
- * - Web mode: JWT auth required
- *
- * Mode is determined at runtime by SetupPage selection (not config.yaml).
- * App.jsx calls configureAuth(mode) after user picks a mode.
+ * All modes (Electron + Web) require JWT authentication.
+ * LoginPage is always shown first; role-based mode is set after login.
  */
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
@@ -27,58 +23,40 @@ export function AuthProvider({ children }) {
   const [authMode, setAuthMode] = useState(null);
 
   useEffect(() => {
-    // Web mode: always require JWT
-    if (!isElectron) {
-      setSkipAuth(false);
-      const token = getAccessToken();
-      if (!token || !getServerUrl()) {
-        setLoading(false);
-        return;
-      }
-      getMe()
-        .then((data) => setUser(data.user || data))
-        .catch(() => setUser(null))
-        .finally(() => setLoading(false));
+    // All modes: require JWT. Try auto-login with existing token.
+    setSkipAuth(false);
+    const token = getAccessToken();
+    if (!token) {
+      setLoading(false);
       return;
     }
-
-    // Electron: start with local bypass (SetupPage will determine actual mode)
-    setSkipAuth(true);
-    setUser({ id: 0, username: 'local', role: 'admin' });
-    setLoading(false);
+    getMe()
+      .then((data) => setUser(data.user || data))
+      .catch(() => setUser(null))
+      .finally(() => setLoading(false));
   }, []);
 
   /**
-   * Switch auth mode after SetupPage selection.
-   * Called by App.jsx when user picks server or client mode.
-   *
-   * If tokens already exist (e.g. SetupPage completed server init or join),
-   * try to load the user profile directly instead of showing LoginPage.
+   * Re-check auth state. Called after login/init to refresh user profile.
+   * If token exists, tries to load user; otherwise shows LoginPage.
    */
   const configureAuth = useCallback(async (mode) => {
     setAuthMode(mode);
-    if (mode === 'server' || mode === 'client') {
-      setSkipAuth(false);
+    setSkipAuth(false);
 
-      // Check if we already have a valid token (SetupPage auto-login)
-      const token = getAccessToken();
-      if (token) {
-        try {
-          const me = await getMe();
-          setUser(me.user || me);
-          return; // Already authenticated, skip LoginPage
-        } catch {
-          // Token invalid, fall through to show LoginPage
-        }
+    const token = getAccessToken();
+    if (token) {
+      try {
+        const me = await getMe();
+        setUser(me.user || me);
+        return;
+      } catch {
+        // Token invalid
       }
-
-      if (mode === 'client') clearWorkerCredentials();
-      setUser(null);
-    } else {
-      // Reset (null): local admin bypass for SetupPage display
-      setSkipAuth(true);
-      setUser({ id: 0, username: 'local', role: 'admin' });
     }
+
+    if (mode === 'client') clearWorkerCredentials();
+    setUser(null);
   }, []);
 
   const login = useCallback(async ({ username, password, serverUrl }) => {

@@ -8,7 +8,7 @@ import ServerArchiveView from './components/ServerArchiveView';
 import ClientWorkerView from './components/ClientWorkerView';
 import LoginPage from './pages/LoginPage';
 import AdminPage from './pages/AdminPage';
-import SetupPage from './pages/SetupPage';
+// SetupPage removed — LoginPage is now the first screen
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
 import UpdateNotification from './components/UpdateNotification';
@@ -89,8 +89,8 @@ function App() {
   });
   const workerThroughputRef = useRef({ windowTimes: [] });
 
-  // App mode: 'server' | 'client' | null (show SetupPage) | 'web'
-  // Electron: restore from localStorage if previously set (skip SetupPage on re-launch)
+  // App mode: 'server' | 'client' | 'web'
+  // Electron: restore from localStorage, default null (LoginPage decides after login)
   const [appMode, setAppMode] = useState(() => {
     if (!isElectron) return 'web';
     return localStorage.getItem('imagine-app-mode') || null;
@@ -136,64 +136,62 @@ function App() {
     window.electron?.license?.get().catch(() => {});
   }, []);
 
-  // Auto-restore mode on re-launch: start server / configure auth
+  // Electron: always auto-start local server on mount
   useEffect(() => {
-    if (!isElectron || !appMode) return;
+    if (!isElectron) return;
 
-    const restore = async () => {
-      setUseLocalBackend(appMode === 'server');
-
-      if (appMode === 'server') {
-        // Auto-start embedded server
-        const port = serverPort || 8000;
-        try {
-          const status = await window.electron?.server?.getStatus();
-          if (!status?.running) {
-            await window.electron?.server?.start({ port });
-            // Wait for server to be ready
-            await new Promise(r => setTimeout(r, 1500));
-          }
-          setServerRunning(true);
-          setServerUrl(`http://localhost:${port}`);
-          const newStatus = await window.electron?.server?.getStatus();
-          if (newStatus?.lanAddresses) setServerLanAddresses(newStatus.lanAddresses);
-          if (newStatus?.primaryLanUrl) setServerLanUrl(newStatus.primaryLanUrl);
-        } catch (e) {
-          console.error('Failed to auto-start server:', e);
+    const startLocalServer = async () => {
+      const port = serverPort || 8000;
+      try {
+        const status = await window.electron?.server?.getStatus();
+        if (!status?.running) {
+          await window.electron?.server?.start({ port });
+          await new Promise(r => setTimeout(r, 1500));
         }
+        setServerRunning(true);
+        setServerUrl(`http://localhost:${port}`);
+        const newStatus = await window.electron?.server?.getStatus();
+        if (newStatus?.lanAddresses) setServerLanAddresses(newStatus.lanAddresses);
+        if (newStatus?.primaryLanUrl) setServerLanUrl(newStatus.primaryLanUrl);
+      } catch (e) {
+        console.error('Failed to auto-start server:', e);
       }
 
-      // Configure auth (will auto-authenticate if token exists)
-      configureAuth(appMode);
+      // Restore mode if previously set
+      if (appMode) {
+        setUseLocalBackend(appMode === 'server');
+        configureAuth(appMode);
+      }
     };
 
-    restore();
+    startLocalServer();
   }, []); // Run once on mount
 
-  const handleSetupComplete = async (mode) => {
+  /**
+   * Called after successful login/init from LoginPage.
+   * Determines mode based on user role: admin → server, otherwise → client.
+   */
+  const handleLoginComplete = async (mode) => {
     setAppMode(mode);
     localStorage.setItem('imagine-app-mode', mode);
     setUseLocalBackend(mode === 'server');
 
     if (mode === 'server') {
-      setServerUrl(`http://localhost:${serverPort}`);
+      const port = serverPort || 8000;
+      setServerUrl(`http://localhost:${port}`);
       setServerRunning(true);
-      // Fetch LAN addresses for server info panel
       try {
         const status = await window.electron?.server?.getStatus();
         if (status?.lanAddresses) setServerLanAddresses(status.lanAddresses);
         if (status?.primaryLanUrl) setServerLanUrl(status.primaryLanUrl);
       } catch { /* ignore */ }
     }
-    // client mode: URL was already set in SetupPage join flow
 
-    // Switch auth: tries to use existing token from SetupPage init/join
     configureAuth(mode);
   };
 
   const handleModeReset = async () => {
-    // Stop ALL running backend processes before returning to SetupPage
-    // The app screen must reflect the actual state — no hidden background work.
+    // Stop ALL running backend processes before returning to LoginPage
     if (isWorkerRunning) {
       try { await window.electron?.worker?.stop(); } catch { /* ignore */ }
       setIsWorkerRunning(false);
@@ -205,13 +203,6 @@ function App() {
         phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
       });
       workerThroughputRef.current = { windowTimes: [] };
-    }
-    if (serverRunning) {
-      try { await window.electron?.server?.stop(); } catch { /* ignore */ }
-      setServerRunning(false);
-      setServerLanUrl(null);
-      setServerLanAddresses([]);
-      clearTokens();
     }
     if (isProcessing) {
       window.electron?.pipeline?.stop();
@@ -233,10 +224,11 @@ function App() {
       discoverQueueRef.current = { folders: [], index: 0, scanning: false };
     }
 
-    setAppMode(null); // Show SetupPage
+    setAppMode(null);
     localStorage.removeItem('imagine-app-mode');
     setUseLocalBackend(false);
-    configureAuth(null); // Reset to local bypass
+    clearTokens();
+    logout();
   };
 
   const MAX_LOGS = 200;
@@ -1186,19 +1178,14 @@ function App() {
     );
   }
 
-  // First-run setup: no mode selected yet (Electron only)
-  if (isElectron && !appMode) {
-    return <SetupPage onComplete={handleSetupComplete} />;
-  }
-
-  // Show login page when auth required but not authenticated
-  // skipAuth: null=undetermined (still loading), true=bypass, false=JWT required
+  // Show login page when not authenticated (all modes)
   if (skipAuth === false && !isAuthenticated) {
     if (showDownloadPage) {
       return <DownloadPage onBack={() => setShowDownloadPage(false)} />;
     }
     return <LoginPage
-      onShowDownload={() => setShowDownloadPage(true)}
+      onShowDownload={!isElectron ? () => setShowDownloadPage(true) : undefined}
+      onLoginComplete={handleLoginComplete}
       serverRunning={serverRunning}
       serverPort={serverPort}
     />;
