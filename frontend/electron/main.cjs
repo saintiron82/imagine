@@ -605,6 +605,10 @@ ipcMain.on('updater-quit-and-install', () => {
     if (autoUpdater) autoUpdater.quitAndInstall(false, true);
 });
 
+ipcMain.on('app-quit', () => {
+    app.quit();
+});
+
 ipcMain.handle('updater-get-version', () => {
     return app.getVersion();
 });

@@ -484,6 +484,7 @@
   "action.retry_failed": "Retry Failed Jobs",
   "action.audit_integrity": "Audit Integrity",
   "action.close": "Close",
+  "action.quit": "Quit",
   "audit.title": "Data Integrity Audit",
   "audit.total_files": "Total files",
   "audit.complete": "Complete (MC+VV+MV)",

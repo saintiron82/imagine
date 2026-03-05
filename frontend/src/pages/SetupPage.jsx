@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Shield, Cpu, ArrowRight, ArrowLeft, Download, CheckCircle, AlertCircle, Loader2, SkipForward, Zap, Star, Rocket, Users, Globe, Lock, User } from 'lucide-react';
+import { Shield, Cpu, ArrowRight, ArrowLeft, Download, CheckCircle, AlertCircle, Loader2, SkipForward, Zap, Star, Rocket, Users, Globe, Lock, User, X, Languages } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron, setServerUrl as setClientServerUrl } from '../api/client';
 import { getServerInfo, initServer, register as apiRegister } from '../api/auth';
@@ -29,7 +29,7 @@ const TIERS = [
  *   'done'       — (Create only) Installation complete
  */
 const SetupPage = ({ onComplete }) => {
-    const { t } = useLocale();
+    const { t, locale, setLocale, availableLocales } = useLocale();
     const [phase, setPhase] = useState('select');
     const [selectedTier, setSelectedTier] = useState(null);
 
@@ -731,9 +731,56 @@ const SetupPage = ({ onComplete }) => {
         );
     }
 
+    // ── Locale label map ──
+    const localeLabels = { 'en-US': 'EN', 'ko-KR': '한국어' };
+
+    const handleQuit = () => {
+        if (isElectron && window.electron?.app?.quit) {
+            window.electron.app.quit();
+        } else if (isElectron) {
+            window.close();
+        }
+    };
+
     // ── Phase: Select mode (default) ──
     return (
-        <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+        <div className="relative flex items-center justify-center h-screen bg-gray-900 text-white">
+            {/* Top bar: drag region + language + close */}
+            <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-2 z-10"
+                 style={{ WebkitAppRegion: 'drag' }}>
+                {/* Left spacer (macOS traffic lights area) */}
+                <div className="w-20" />
+
+                {/* Right controls */}
+                <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
+                    {/* Language switcher */}
+                    <div className="flex items-center gap-1 bg-gray-800/60 rounded-lg px-1.5 py-1">
+                        <Languages size={13} className="text-gray-500 mr-0.5" />
+                        {availableLocales.map((loc) => (
+                            <button key={loc}
+                                onClick={() => setLocale(loc)}
+                                className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                                    locale === loc
+                                        ? 'bg-gray-600 text-white'
+                                        : 'text-gray-400 hover:text-white'
+                                }`}
+                            >
+                                {localeLabels[loc] || loc}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Quit button (Electron only) */}
+                    {isElectron && (
+                        <button onClick={handleQuit}
+                            className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-gray-800/60 transition-colors"
+                            title={t('action.quit') || 'Quit'}>
+                            <X size={16} />
+                        </button>
+                    )}
+                </div>
+            </div>
+
             <div className="max-w-2xl w-full px-8">
                 {/* Title */}
                 <div className="text-center mb-10">

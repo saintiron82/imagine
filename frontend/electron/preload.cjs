@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('electron', {
         electron: process.versions.electron,
     },
     projectRoot,
+    app: {
+        quit: () => ipcRenderer.send('app-quit'),
+    },
     fs: {
         // Get Home Directory
         getHomeDir: () => os.homedir(),

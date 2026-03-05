@@ -484,6 +484,7 @@
   "action.retry_failed": "실패 작업 재시도",
   "action.audit_integrity": "정합성 검사",
   "action.close": "닫기",
+  "action.quit": "종료",
   "audit.title": "데이터 정합성 검사",
   "audit.total_files": "전체 파일",
   "audit.complete": "완전 (MC+VV+MV)",
