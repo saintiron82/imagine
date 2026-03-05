@@ -31,56 +31,67 @@ def _hash_password(password: str) -> str:
 def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
     """Initialize server with group name, server password, and admin account.
     Can only be called once (before any admin exists)."""
-    cursor = db.conn.cursor()
+    try:
+        cursor = db.conn.cursor()
 
-    # Check if already initialized
-    cursor.execute("SELECT value FROM system_meta WHERE key = 'group_name'")
-    if cursor.fetchone():
-        raise HTTPException(status_code=409, detail="Server already initialized")
+        # Check if already initialized
+        cursor.execute("SELECT value FROM system_meta WHERE key = 'group_name'")
+        if cursor.fetchone():
+            raise HTTPException(status_code=409, detail="Server already initialized")
 
-    # Clean up residual data from partial init attempts
-    cursor.execute("DELETE FROM refresh_tokens")
-    cursor.execute("DELETE FROM users")
+        # Clean up residual data from partial init attempts
+        # Order matters: child tables first due to FK constraints
+        cursor.execute("DELETE FROM worker_sessions")
+        cursor.execute("DELETE FROM worker_tokens")
+        cursor.execute("DELETE FROM invite_uses")
+        cursor.execute("DELETE FROM invite_codes")
+        cursor.execute("DELETE FROM refresh_tokens")
+        cursor.execute("DELETE FROM users")
 
-    # Store group config
-    password_hash = _hash_password(req.server_password)
+        # Store group config
+        password_hash = _hash_password(req.server_password)
 
-    cursor.execute(
-        "INSERT OR REPLACE INTO system_meta (key, value) VALUES (?, ?)",
-        ("group_name", req.group_name)
-    )
-    cursor.execute(
-        "INSERT OR REPLACE INTO system_meta (key, value) VALUES (?, ?)",
-        ("server_password_hash", password_hash)
-    )
+        cursor.execute(
+            "INSERT OR REPLACE INTO system_meta (key, value) VALUES (?, ?)",
+            ("group_name", req.group_name)
+        )
+        cursor.execute(
+            "INSERT OR REPLACE INTO system_meta (key, value) VALUES (?, ?)",
+            ("server_password_hash", password_hash)
+        )
 
-    # Create admin user
-    admin_hash = _hash_password(req.admin_password)
-    cursor.execute(
-        """INSERT INTO users (username, password_hash, role, is_active, email)
-           VALUES (?, ?, 'admin', 1, '')""",
-        (req.admin_username, admin_hash)
-    )
-    user_id = cursor.lastrowid
+        # Create admin user
+        admin_hash = _hash_password(req.admin_password)
+        cursor.execute(
+            """INSERT INTO users (username, password_hash, role, is_active, email)
+               VALUES (?, ?, 'admin', 1, '')""",
+            (req.admin_username, admin_hash)
+        )
+        user_id = cursor.lastrowid
 
-    # Generate tokens for auto-login
-    access_token = create_access_token(user_id, req.admin_username, "admin")
-    refresh_token = create_refresh_token()
+        # Generate tokens for auto-login
+        access_token = create_access_token(user_id, req.admin_username, "admin")
+        refresh_token = create_refresh_token()
 
-    cursor.execute(
-        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-           VALUES (?, ?, ?)""",
-        (user_id, hash_refresh_token(refresh_token),
-         get_refresh_token_expiry().isoformat())
-    )
+        cursor.execute(
+            """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+               VALUES (?, ?, ?)""",
+            (user_id, hash_refresh_token(refresh_token),
+             get_refresh_token_expiry().isoformat())
+        )
 
-    db.conn.commit()
-    logger.info(f"Server initialized: group='{req.group_name}', admin='{req.admin_username}'")
+        db.conn.commit()
+        logger.info(f"Server initialized: group='{req.group_name}', admin='{req.admin_username}'")
 
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-    )
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Server init failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/info")
