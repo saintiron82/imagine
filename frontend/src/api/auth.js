@@ -109,7 +109,12 @@ export async function initServer(baseUrl, { group_name, server_password, admin_u
     body: JSON.stringify({ group_name, server_password, admin_username, admin_password }),
     signal: AbortSignal.timeout(10000),
   });
-  const data = await resp.json();
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error(`Server error (HTTP ${resp.status})`);
+  }
   if (!resp.ok) {
     throw new Error(data.detail || `HTTP ${resp.status}`);
   }
