@@ -592,6 +592,7 @@
   "group.server_password_hint": "Members need this password to join your group",
   "group.admin_account": "Admin Account",
   "group.your_account": "Your Account",
+  "group.resume": "Start Existing Group",
   "group.server_not_initialized": "This server has not been initialized yet",
   "auth.server_password": "Server Password",
   "auth.server_password_placeholder": "Enter server password",

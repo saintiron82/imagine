@@ -592,6 +592,7 @@
   "group.server_password_hint": "그룹에 참여하려면 이 비밀번호가 필요합니다",
   "group.admin_account": "관리자 계정",
   "group.your_account": "내 계정",
+  "group.resume": "기존 그룹 시작",
   "group.server_not_initialized": "이 서버는 아직 초기화되지 않았습니다",
   "auth.server_password": "서버 비밀번호",
   "auth.server_password_placeholder": "서버 비밀번호 입력",

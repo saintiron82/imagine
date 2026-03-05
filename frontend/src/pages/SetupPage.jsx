@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Shield, Cpu, ArrowRight, ArrowLeft, Download, CheckCircle, AlertCircle, Loader2, SkipForward, Zap, Star, Rocket, Users, Globe, Lock, User, X, Languages } from 'lucide-react';
+import { Shield, Cpu, ArrowRight, ArrowLeft, Download, CheckCircle, AlertCircle, Loader2, SkipForward, Zap, Star, Rocket, Users, Globe, Lock, User, X, Languages, Play } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron, setServerUrl as setClientServerUrl } from '../api/client';
 import { getServerInfo, initServer, register as apiRegister } from '../api/auth';
@@ -54,6 +54,12 @@ const SetupPage = ({ onComplete }) => {
     const [createError, setCreateError] = useState('');
     const [createSubmitting, setCreateSubmitting] = useState(false);
 
+    // Existing group detection
+    const [existingGroup, setExistingGroup] = useState(null); // { group_name }
+    const [existingLoading, setExistingLoading] = useState(false);
+    const [resumeError, setResumeError] = useState('');
+    const [resumeSubmitting, setResumeSubmitting] = useState(false);
+
     // Environment check state
     const [envStatus, setEnvStatus] = useState(null);
     const [installLogs, setInstallLogs] = useState([]);
@@ -63,6 +69,37 @@ const SetupPage = ({ onComplete }) => {
 
     // mDNS discovery (for join mode)
     const { servers: mdnsServers, browsing } = useMdnsDiscovery();
+
+    // Detect existing group on mount (Electron only)
+    useEffect(() => {
+        if (!isElectron) return;
+        let cancelled = false;
+
+        const detect = async () => {
+            setExistingLoading(true);
+            try {
+                // Try starting server to check if group exists
+                const port = 8000;
+                try {
+                    const status = await window.electron?.server?.getStatus();
+                    if (!status?.running) {
+                        await window.electron?.server?.start({ port });
+                        await new Promise(r => setTimeout(r, 1500));
+                    }
+                } catch { /* server start may fail, that's ok */ }
+
+                // Check if server has an initialized group
+                const info = await getServerInfo(`http://localhost:${port}`);
+                if (!cancelled && info.ok && info.initialized && info.group_name) {
+                    setExistingGroup({ group_name: info.group_name });
+                }
+            } catch { /* no existing group */ }
+            if (!cancelled) setExistingLoading(false);
+        };
+
+        detect();
+        return () => { cancelled = true; };
+    }, []);
 
     // Auto-scroll install logs
     useEffect(() => {
@@ -86,6 +123,28 @@ const SetupPage = ({ onComplete }) => {
         pipeline.onInstallLog?.(handler);
         return () => pipeline.offInstallLog?.();
     }, []);
+
+    // ── Resume existing group: start server + go to login ──
+    const handleResumeGroup = useCallback(async () => {
+        setResumeError('');
+        setResumeSubmitting(true);
+        try {
+            const port = 8000;
+            // Ensure server is running
+            const status = await window.electron?.server?.getStatus();
+            if (!status?.running) {
+                await window.electron?.server?.start({ port });
+                await new Promise(r => setTimeout(r, 1500));
+            }
+            const baseUrl = `http://localhost:${port}`;
+            setClientServerUrl(baseUrl);
+            // Complete as server mode — LoginPage will handle authentication
+            onComplete('server');
+        } catch (e) {
+            setResumeError(e.message || 'Failed to start server');
+            setResumeSubmitting(false);
+        }
+    }, [onComplete]);
 
     // ── Join: Check server ──
     const handleCheckJoinServer = useCallback(async (url) => {
@@ -849,12 +908,48 @@ const SetupPage = ({ onComplete }) => {
                 </div>
             </div>
 
-            <div className="max-w-2xl w-full px-8">
+            <div className="max-w-3xl w-full px-8">
                 {/* Title */}
                 <div className="text-center mb-10">
                     <h1 className="text-3xl font-bold mb-2">Imagine</h1>
                     <p className="text-gray-400 text-sm">{t('group.setup_subtitle')}</p>
                 </div>
+
+                {/* Existing group: prominent resume card */}
+                {existingGroup && (
+                    <div className="mb-6">
+                        <button
+                            onClick={handleResumeGroup}
+                            disabled={resumeSubmitting}
+                            className="w-full p-5 rounded-xl border-2 border-amber-600/60 bg-amber-900/10 hover:border-amber-500 hover:bg-amber-900/20 text-left transition-all"
+                        >
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2.5 rounded-lg bg-amber-600">
+                                        <Play size={22} className="text-white" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-lg font-bold">{t('group.resume')}</h2>
+                                        <p className="text-sm text-amber-300/70">{existingGroup.group_name}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 text-amber-400">
+                                    {resumeSubmitting ? <Loader2 size={18} className="animate-spin" /> : <ArrowRight size={18} />}
+                                </div>
+                            </div>
+                        </button>
+                        {resumeError && (
+                            <p className="text-xs text-red-400 mt-2 px-2">{resumeError}</p>
+                        )}
+                    </div>
+                )}
+
+                {existingLoading && (
+                    <div className="flex items-center justify-center gap-2 mb-6 text-gray-500 text-xs">
+                        <Loader2 size={14} className="animate-spin" />
+                        {t('status.loading')}
+                    </div>
+                )}
 
                 {/* Mode Cards */}
                 <div className="grid grid-cols-2 gap-6 mb-8">
