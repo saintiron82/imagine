@@ -39,14 +39,23 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
         if cursor.fetchone():
             raise HTTPException(status_code=409, detail="Server already initialized")
 
-        # Clean up residual data from partial init attempts
-        # Order matters: child tables first due to FK constraints
+        # Full reset: new group starts with clean slate
+        # Data tables (FK order: children first)
+        cursor.execute("DELETE FROM vec_files")
+        cursor.execute("DELETE FROM vec_text")
+        cursor.execute("DELETE FROM files_fts")
+        cursor.execute("DELETE FROM job_queue")
+        cursor.execute("DELETE FROM layers")
+        cursor.execute("DELETE FROM files")
+        # Auth tables
         cursor.execute("DELETE FROM worker_sessions")
         cursor.execute("DELETE FROM worker_tokens")
         cursor.execute("DELETE FROM invite_uses")
         cursor.execute("DELETE FROM invite_codes")
         cursor.execute("DELETE FROM refresh_tokens")
         cursor.execute("DELETE FROM users")
+        # Reset system meta
+        cursor.execute("DELETE FROM system_meta")
 
         # Store group config
         password_hash = _hash_password(req.server_password)
