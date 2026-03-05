@@ -601,5 +601,6 @@
   "validation.server_password_required": "Server password is required",
   "validation.group_name_required": "Group name is required",
   "validation.check_server_first": "Check server connection first",
-  "validation.field_required": "This field is required"
+  "validation.field_required": "This field is required",
+  "validation.password_min_4": "Password must be at least 4 characters"
 }

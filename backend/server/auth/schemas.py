@@ -18,8 +18,8 @@ class RegisterRequest(BaseModel):
 class ServerInitRequest(BaseModel):
     group_name: str = Field(..., min_length=1, max_length=100)
     server_password: str = Field(..., min_length=1, max_length=128)
-    admin_username: str = Field(..., min_length=1, max_length=50)
-    admin_password: str = Field(..., min_length=1, max_length=128)
+    admin_username: str = Field(..., min_length=2, max_length=50)
+    admin_password: str = Field(..., min_length=4, max_length=128)
 
 
 class LoginRequest(BaseModel):

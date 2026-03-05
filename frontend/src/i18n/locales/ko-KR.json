@@ -601,5 +601,6 @@
   "validation.server_password_required": "서버 비밀번호를 입력해주세요",
   "validation.group_name_required": "그룹 이름을 입력해주세요",
   "validation.check_server_first": "먼저 서버 연결을 확인하세요",
-  "validation.field_required": "필수 입력 항목입니다"
+  "validation.field_required": "필수 입력 항목입니다",
+  "validation.password_min_4": "비밀번호는 4자 이상이어야 합니다"
 }

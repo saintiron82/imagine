@@ -448,8 +448,8 @@ const SetupPage = ({ onComplete }) => {
         const checks = {
             groupName: groupName.trim().length > 0,
             serverPassword: serverPassword.trim().length >= 1,
-            adminUsername: adminUsername.trim().length >= 1,
-            adminPassword: adminPassword.trim().length >= 1,
+            adminUsername: adminUsername.trim().length >= 2,
+            adminPassword: adminPassword.length >= 4,
         };
         const canProceed = checks.groupName && checks.serverPassword && checks.adminUsername && checks.adminPassword;
         // Show hints after user has interacted (typed something)
@@ -536,7 +536,7 @@ const SetupPage = ({ onComplete }) => {
                                     maxLength={50}
                                 />
                                 {touched.adminUsername && !checks.adminUsername && (
-                                    <p className="text-[10px] text-red-400 mt-1">{t('validation.field_required')}</p>
+                                    <p className="text-[10px] text-red-400 mt-1">{t('validation.username_min')}</p>
                                 )}
                             </div>
 
@@ -554,7 +554,7 @@ const SetupPage = ({ onComplete }) => {
                                     maxLength={128}
                                 />
                                 {touched.adminPassword && !checks.adminPassword && (
-                                    <p className="text-[10px] text-red-400 mt-1">{t('validation.field_required')}</p>
+                                    <p className="text-[10px] text-red-400 mt-1">{t('validation.password_min_4')}</p>
                                 )}
                             </div>
                         </div>
