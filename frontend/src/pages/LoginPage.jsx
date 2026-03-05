@@ -258,22 +258,39 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
     setCreateError('');
     setCreateSubmitting(true);
 
-    // Pre-check if server already initialized
     try {
-      const info = await getServerInfo(`http://localhost:${serverPort || 8000}`);
+      const port = serverPort || 8000;
+
+      // 1. Electron: ensure server is running
+      if (isElectron) {
+        const status = await window.electron?.server?.getStatus();
+        if (!status?.running) {
+          await window.electron.server.start({ port });
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+
+      // 2. Verify server is reachable + check initialization status
+      const baseUrl = `http://localhost:${port}`;
+      const info = await getServerInfo(baseUrl);
       if (info.ok && info.initialized) {
         setCreateError(t('validation.server_already_initialized'));
         setCreateSubmitting(false);
         return;
       }
-    } catch { /* server not running — expected for fresh */ }
 
-    setCreateSubmitting(false);
+      // Server ready — proceed
+      setClientServerUrl(baseUrl);
+      setCreateSubmitting(false);
 
-    if (isElectron && window.electron?.pipeline?.checkEnv) {
-      setView('tier');
-    } else {
-      handleCreateFinalize();
+      if (isElectron && window.electron?.pipeline?.checkEnv) {
+        setView('tier');
+      } else {
+        handleCreateFinalize();
+      }
+    } catch (e) {
+      setCreateError(e.message || t('auth.server_unreachable') || 'Server connection failed');
+      setCreateSubmitting(false);
     }
   };
 
@@ -308,24 +325,7 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
     setCreateSubmitting(true);
 
     try {
-      const port = serverPort || 8000;
-      // Ensure server is running
-      if (isElectron) {
-        const status = await window.electron?.server?.getStatus();
-        if (!status?.running) {
-          await window.electron.server.start({ port });
-          await new Promise(r => setTimeout(r, 1500));
-        }
-      }
-
-      const baseUrl = `http://localhost:${port}`;
-      setClientServerUrl(baseUrl);
-
-      // Pre-check
-      const info = await getServerInfo(baseUrl);
-      if (info.ok && info.initialized) {
-        throw new Error(t('validation.server_already_initialized'));
-      }
+      const baseUrl = clientServerUrl || `http://localhost:${serverPort || 8000}`;
 
       // Initialize server (creates group + admin)
       await initServer(baseUrl, {
@@ -344,7 +344,7 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
       setCreateSubmitting(false);
       setView('createGroup');
     }
-  }, [createGroupName, createServerPassword, createAdminUsername, createAdminPassword, onLoginComplete, serverPort, t]);
+  }, [createGroupName, createServerPassword, createAdminUsername, createAdminPassword, onLoginComplete, serverPort, clientServerUrl, t]);
 
   const handleInstall = useCallback(() => {
     setView('installing');
