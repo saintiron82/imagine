@@ -90,8 +90,11 @@ function App() {
   const workerThroughputRef = useRef({ windowTimes: [] });
 
   // App mode: 'server' | 'client' | null (show SetupPage) | 'web'
-  // Electron: always starts null → SetupPage shown every launch
-  const [appMode, setAppMode] = useState(isElectron ? null : 'web');
+  // Electron: restore from localStorage if previously set (skip SetupPage on re-launch)
+  const [appMode, setAppMode] = useState(() => {
+    if (!isElectron) return 'web';
+    return localStorage.getItem('imagine-app-mode') || null;
+  });
 
   // Server mode state (Electron only)
   const [serverRunning, setServerRunning] = useState(false);
@@ -133,8 +136,43 @@ function App() {
     window.electron?.license?.get().catch(() => {});
   }, []);
 
+  // Auto-restore mode on re-launch: start server / configure auth
+  useEffect(() => {
+    if (!isElectron || !appMode) return;
+
+    const restore = async () => {
+      setUseLocalBackend(appMode === 'server');
+
+      if (appMode === 'server') {
+        // Auto-start embedded server
+        const port = serverPort || 8000;
+        try {
+          const status = await window.electron?.server?.getStatus();
+          if (!status?.running) {
+            await window.electron?.server?.start({ port });
+            // Wait for server to be ready
+            await new Promise(r => setTimeout(r, 1500));
+          }
+          setServerRunning(true);
+          setServerUrl(`http://localhost:${port}`);
+          const newStatus = await window.electron?.server?.getStatus();
+          if (newStatus?.lanAddresses) setServerLanAddresses(newStatus.lanAddresses);
+          if (newStatus?.primaryLanUrl) setServerLanUrl(newStatus.primaryLanUrl);
+        } catch (e) {
+          console.error('Failed to auto-start server:', e);
+        }
+      }
+
+      // Configure auth (will auto-authenticate if token exists)
+      configureAuth(appMode);
+    };
+
+    restore();
+  }, []); // Run once on mount
+
   const handleSetupComplete = async (mode) => {
     setAppMode(mode);
+    localStorage.setItem('imagine-app-mode', mode);
     setUseLocalBackend(mode === 'server');
 
     if (mode === 'server') {
@@ -196,6 +234,7 @@ function App() {
     }
 
     setAppMode(null); // Show SetupPage
+    localStorage.removeItem('imagine-app-mode');
     setUseLocalBackend(false);
     configureAuth(null); // Reset to local bypass
   };
