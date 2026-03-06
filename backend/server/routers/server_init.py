@@ -1,8 +1,9 @@
 """
 Server initialization and info endpoints.
 
-POST /server/init — First-time server setup (group name, password, admin account)
-GET  /server/info — Public server info (no auth required)
+POST /server/init        — First-time server setup (group name, password, admin account)
+POST /server/reset-group — Reset group (auth data) while preserving file data
+GET  /server/info        — Public server info (no auth required)
 """
 
 import logging
@@ -92,6 +93,19 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
         db.conn.commit()
         logger.info(f"Server initialized: group='{req.group_name}', admin='{req.admin_username}'")
 
+        # Best-effort: register group to Firebase for name-based discovery
+        try:
+            from backend.server.firebase_registry import register_group
+            import threading
+            port = 8000  # default; could be read from config
+            threading.Thread(
+                target=register_group,
+                args=(req.group_name, port),
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logger.debug(f"Firebase registration skipped: {e}")
+
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -100,6 +114,44 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"Server init failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/reset-group")
+def reset_group(db: SQLiteDB = Depends(get_db)):
+    """Reset group and auth data. File data is preserved.
+    No auth required — used when user cannot log in to existing group."""
+    try:
+        cursor = db.conn.cursor()
+
+        # Check if there's a group to reset
+        cursor.execute("SELECT value FROM system_meta WHERE key = 'group_name'")
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No group to reset")
+
+        group_name = row[0]
+
+        # Clear auth tables
+        cursor.execute("DELETE FROM worker_sessions")
+        cursor.execute("DELETE FROM worker_tokens")
+        if db._table_exists('invite_uses'):
+            cursor.execute("DELETE FROM invite_uses")
+        cursor.execute("DELETE FROM invite_codes")
+        cursor.execute("DELETE FROM refresh_tokens")
+        cursor.execute("DELETE FROM users")
+
+        # Clear group info from system_meta
+        cursor.execute("DELETE FROM system_meta WHERE key IN ('group_name', 'server_password_hash')")
+
+        db.conn.commit()
+        logger.info(f"Group reset: '{group_name}' removed (file data preserved)")
+
+        return {"success": True, "group_name": group_name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Group reset failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -115,5 +167,5 @@ def server_info(db: SQLiteDB = Depends(get_db)):
     return {
         "group_name": group_name,
         "initialized": group_name is not None,
-        "version": "0.6.3",
+        "version": "0.6.4",
     }

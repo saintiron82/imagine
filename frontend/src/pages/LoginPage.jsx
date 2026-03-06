@@ -17,7 +17,7 @@ import { isElectron } from '../api/client';
 import { setServerUrl as setClientServerUrl, getServerUrl } from '../api/client';
 import { lookupGroup } from '../api/firebase';
 import { useMdnsDiscovery } from '../hooks/useMdnsDiscovery';
-import { getServerInfo, initServer, getMe } from '../api/auth';
+import { getServerInfo, initServer, resetGroup, getMe } from '../api/auth';
 import {
   getServerHistory,
   addServerToHistory,
@@ -308,6 +308,7 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
       const baseUrl = `http://localhost:${port}`;
       const info = await getServerInfo(baseUrl);
       if (info.ok && info.initialized) {
+        setServerInitialized(true);
         setCreateError(t('validation.server_already_initialized'));
         setCreateSubmitting(false);
         return;
@@ -341,6 +342,20 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
     } catch (e) {
       setCreateError(e.message || 'Server initialization failed');
       setCreateSubmitting(false);
+    }
+  };
+
+  const handleResetGroup = async () => {
+    if (!window.confirm(t('group.reset_confirm'))) return;
+    try {
+      const port = serverPort || 8000;
+      const baseUrl = `http://localhost:${port}`;
+      await resetGroup(baseUrl);
+      setCreateError('');
+      setServerInitialized(false);
+      setGroupName('');
+    } catch (e) {
+      setCreateError(e.message || 'Reset failed');
     }
   };
 
@@ -704,7 +719,15 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
 
             {/* Error */}
             {createError && (
-              <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">{createError}</div>
+              <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">
+                {createError}
+                {serverInitialized && (
+                  <button onClick={handleResetGroup}
+                    className="mt-2 block w-full px-3 py-1.5 rounded text-xs font-medium bg-red-800/50 hover:bg-red-700/50 text-red-300 hover:text-red-200 transition-colors">
+                    {t('group.reset')}
+                  </button>
+                )}
+              </div>
             )}
 
             {/* Buttons */}

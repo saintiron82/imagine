@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, Cpu, ArrowRight, ArrowLeft, Download, CheckCircle, AlertCircle, Loader2, SkipForward, Zap, Star, Rocket, Users, Globe, Lock, User, X, Languages, Play } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron, setServerUrl as setClientServerUrl } from '../api/client';
-import { getServerInfo, initServer, register as apiRegister } from '../api/auth';
+import { getServerInfo, initServer, resetGroup, register as apiRegister } from '../api/auth';
 import { useMdnsDiscovery } from '../hooks/useMdnsDiscovery';
 import {
   getServerHistory,
@@ -281,6 +281,17 @@ const SetupPage = ({ onComplete }) => {
             setPhase('create');  // Return to form so error is visible
         }
     }, [groupName, serverPassword, adminUsername, adminPassword, onComplete]);
+
+    const handleResetGroup = useCallback(async () => {
+        if (!window.confirm(t('group.reset_confirm'))) return;
+        try {
+            const baseUrl = `http://localhost:8000`;
+            await resetGroup(baseUrl);
+            setCreateError('');
+        } catch (e) {
+            setCreateError(e.message || 'Reset failed');
+        }
+    }, [t]);
 
     const handleInstall = useCallback(() => {
         setPhase('installing');
@@ -661,6 +672,12 @@ const SetupPage = ({ onComplete }) => {
                         {createError && (
                             <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-400">
                                 {createError}
+                                {createError.includes(t('validation.server_already_initialized')) && (
+                                    <button onClick={handleResetGroup}
+                                        className="mt-2 block w-full px-3 py-1.5 rounded text-xs font-medium bg-red-800/50 hover:bg-red-700/50 text-red-300 hover:text-red-200 transition-colors">
+                                        {t('group.reset')}
+                                    </button>
+                                )}
                             </div>
                         )}
 

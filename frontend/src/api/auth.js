@@ -121,3 +121,24 @@ export async function initServer(baseUrl, { group_name, server_password, admin_u
   // Don't store tokens — user must login manually after group creation
   return data;
 }
+
+/**
+ * Reset group (auth data). File data is preserved.
+ * No auth required — used when user cannot log in.
+ */
+export async function resetGroup(baseUrl) {
+  const resp = await fetch(`${baseUrl}/api/v1/server/reset-group`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+  });
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error(`Server error (HTTP ${resp.status})`);
+  }
+  if (!resp.ok) {
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+  return data;
+}
