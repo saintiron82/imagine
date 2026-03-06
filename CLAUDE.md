@@ -1365,6 +1365,12 @@ analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
 - **Node**: v24.13.0
 - **Vite dev port**: 9274
 
+### 빌드 검증 (2026-03-06)
+- **PyInstaller 백엔드**: `.venv/bin/python -m PyInstaller backend_cli.spec --noconfirm` → 성공 (`dist/backend_cli/`)
+- **Electron 앱**: `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:build` → 성공 (`frontend/dist-electron/Imagine-0.6.4-arm64.dmg`, `.zip`)
+- **프론트엔드 Vite**: `npm run build` → 성공 (`frontend/dist/`)
+- **Electron dev**: `npm run electron:dev` → 정상 실행 확인
+
 ### 테스트 이미지 경로
 - **테스트 폴더**: `/Users/saintiron/imageDB/마캬베리즈무/실내소품`
   - PSD 파일 다수 (실내 소품 배경 원화)
