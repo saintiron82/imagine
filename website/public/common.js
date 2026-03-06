@@ -144,7 +144,7 @@ const commonI18n = {
 };
 
 let pageI18n = { en: {}, ko: {} };
-let currentLang = 'en';
+let currentLang = 'ko';
 
 function registerPageI18n(keys) {
   if (keys.en) Object.assign(pageI18n.en, keys.en);
@@ -180,7 +180,8 @@ function initLang() {
   const saved = localStorage.getItem('imagine-lang');
   if (saved && commonI18n[saved]) { setLang(saved); return; }
   const browserLang = (navigator.language || '').toLowerCase();
-  if (browserLang.startsWith('ko')) setLang('ko');
+  if (browserLang.startsWith('en')) { setLang('en'); return; }
+  setLang('ko');
 }
 
 /* ── Scroll Animations ───────────────────────────────── */
