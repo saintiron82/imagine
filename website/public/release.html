@@ -51,9 +51,6 @@
 .release-badge.latest {
   background: rgba(52,211,153,0.15); color: #34d399;
 }
-.release-badge.prerelease {
-  background: rgba(251,191,36,0.15); color: #fbbf24;
-}
 .release-date {
   font-size: 0.8rem; color: #6b7280; margin-left: auto;
 }
@@ -84,6 +81,12 @@
   border-color: rgba(56,189,248,0.4);
 }
 .asset-link small { color: #6b7280; }
+.asset-link.disabled {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.08);
+  color: #6b7280; cursor: default;
+  pointer-events: none;
+}
 </style>
 </head>
 <body>
@@ -98,6 +101,8 @@
       <span>Imagine</span>
     </a>
     <div class="nav-links">
+      <a href="guide.html" class="nav-page-link" data-i18n="nav.guide">Guide</a>
+      <a href="servers.html" class="nav-page-link" data-i18n="nav.servers">Servers</a>
       <a href="board.html" class="nav-page-link" data-i18n="nav.board">Board</a>
       <a href="release.html" class="nav-page-link" data-i18n="nav.release">Release</a>
       <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
@@ -123,13 +128,14 @@
 <!-- Footer -->
 <footer>
   <div class="container">
-    <p>&copy; 2026 Imagine &middot; All Rights Reserved</p>
+    <p>&copy; 2026 Imagine &middot; All Rights Reserved &middot; <a href="license.html" data-i18n="nav.license">License</a></p>
   </div>
 </footer>
 
-<!-- Firebase SDK (auth only for nav) -->
+<!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="common.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 
@@ -140,67 +146,79 @@ registerPageI18n({
     "release.title": "Releases",
     "release.subtitle": "Version history and changelogs",
     "release.empty": "No releases yet",
-    "release.assets": "Downloads"
+    "release.assets": "Downloads",
+    "release.coming_soon": "Coming Soon"
   },
   ko: {
     "release.title": "\ub9b4\ub9ac\uc988",
     "release.subtitle": "\ubc84\uc804 \uc774\ub825 \ubc0f \ubcc0\uacbd \ub0b4\uc5ed",
     "release.empty": "\uc544\uc9c1 \ub9b4\ub9ac\uc988\uac00 \uc5c6\uc2b5\ub2c8\ub2e4",
-    "release.assets": "\ub2e4\uc6b4\ub85c\ub4dc"
+    "release.assets": "\ub2e4\uc6b4\ub85c\ub4dc",
+    "release.coming_soon": "Coming Soon"
   }
 });
 
-/* ── Config ──────────────────────────────────────────── */
-const GITHUB_REPO = 'saintiron82/imagine';
-
-/* ── Load Releases ───────────────────────────────────── */
+/* ── Load Releases from Firestore ────────────────────── */
 async function loadReleases() {
   const container = document.getElementById('release-content');
+  const fsDb = getDb();
+
+  if (!fsDb) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">&#128230;</div><p>' + t('release.empty') + '</p></div>';
+    return;
+  }
 
   try {
-    const resp = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases`);
-    if (!resp.ok) throw new Error('GitHub API error: ' + resp.status);
+    const snap = await fsDb.collection('releases').orderBy('date', 'desc').get();
 
-    const releases = await resp.json();
-
-    if (!releases || releases.length === 0) {
+    if (snap.empty) {
       container.innerHTML = '<div class="empty-state"><div class="icon">&#128230;</div><p>' + t('release.empty') + '</p></div>';
       return;
     }
 
     let html = '<div class="release-list">';
-    releases.forEach((rel, idx) => {
-      const date = new Date(rel.published_at || rel.created_at).toLocaleDateString();
-      const badge = rel.prerelease
-        ? `<span class="release-badge prerelease">Pre-release</span>`
-        : (idx === 0 ? `<span class="release-badge latest">Latest</span>` : '');
+    snap.docs.forEach((doc, idx) => {
+      const rel = doc.data();
+      const date = rel.date ? new Date(rel.date).toLocaleDateString() : '';
+      const badge = idx === 0 ? '<span class="release-badge latest">Latest</span>' : '';
 
-      const body = (typeof marked !== 'undefined' && rel.body)
-        ? marked.parse(rel.body)
-        : (rel.body || '').replace(/\n/g, '<br>');
+      const body = (typeof marked !== 'undefined' && rel.notes)
+        ? marked.parse(rel.notes)
+        : (rel.notes || '').replace(/\n/g, '<br>');
 
       html += `
         <div class="release-card">
           <div class="release-card-head">
-            <span class="release-tag">${escHtml(rel.tag_name || rel.name || '')}</span>
+            <span class="release-tag">${escHtml(rel.version || '')}</span>
             ${badge}
             <span class="release-date">${date}</span>
           </div>`;
 
-      if (rel.body) {
+      if (rel.notes) {
         html += `<div class="release-body md-content">${body}</div>`;
       }
 
-      // Download assets (app builds only, no source code)
-      const assets = (rel.assets || []).filter(a => a.browser_download_url);
-      if (assets.length > 0) {
+      // Download assets
+      const assets = rel.assets || {};
+      const platformLabels = [
+        { key: 'windows', label: 'Windows' },
+        { key: 'macos', label: 'macOS' },
+        { key: 'linux', label: 'Linux' }
+      ];
+      const hasAnyAsset = platformLabels.some(p => assets[p.key]);
+
+      if (hasAnyAsset || Object.keys(assets).length > 0) {
         html += `<div class="release-assets">
           <div class="release-assets-title">${t('release.assets')}</div>
           <div class="asset-list">`;
 
-        assets.forEach(a => {
-          const size = a.size ? ` <small>(${formatSize(a.size)})</small>` : '';
-          html += `<a href="${escAttr(a.browser_download_url)}" class="asset-link">&#11015; ${escHtml(a.name)}${size}</a>`;
+        platformLabels.forEach(p => {
+          const url = assets[p.key] || '';
+          if (url.length > 0) {
+            html += `<a href="${escAttr(url)}" class="asset-link" target="_blank">&#11015; ${p.label}</a>`;
+          } else {
+            html += `<span class="asset-link disabled">${p.label} — ${t('release.coming_soon')}</span>`;
+          }
         });
 
         html += '</div></div>';
@@ -218,12 +236,6 @@ async function loadReleases() {
 }
 
 /* ── Helpers ─────────────────────────────────────────── */
-function formatSize(bytes) {
-  if (!bytes) return '';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
 function escHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;

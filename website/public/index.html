@@ -141,6 +141,8 @@
       <span>Imagine</span>
     </a>
     <div class="nav-links">
+      <a href="guide.html" class="nav-page-link" data-i18n="nav.guide">Guide</a>
+      <a href="servers.html" class="nav-page-link" data-i18n="nav.servers">Servers</a>
       <a href="board.html" class="nav-page-link" data-i18n="nav.board">Board</a>
       <a href="release.html" class="nav-page-link" data-i18n="nav.release">Release</a>
       <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
@@ -218,12 +220,13 @@
 <!-- Footer -->
 <footer>
   <div class="container">
-    <p>&copy; 2026 Imagine &middot; All Rights Reserved</p>
+    <p>&copy; 2026 Imagine &middot; All Rights Reserved &middot; <a href="license.html" data-i18n="nav.license">License</a></p>
   </div>
 </footer>
 
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="common.js"></script>
 <script>
 /* ── Page i18n ───────────────────────────────────────── */
@@ -252,7 +255,7 @@ registerPageI18n({
   }
 });
 
-/* ── GitHub Releases ─────────────────────────────────── */
+/* ── Firestore Releases ──────────────────────────────── */
 let releaseData = null;
 
 function onLangChange() { fetchRelease(); }
@@ -267,39 +270,47 @@ function fetchRelease() {
     return;
   }
 
-  fetch('https://api.github.com/repos/saintiron82/imagine/releases/latest')
-    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(data => { releaseData = data; renderRelease(data, infoEl, strings); })
-    .catch(() => { infoEl.textContent = strings['release.none'] || 'No releases yet'; });
+  const fsDb = getDb();
+  if (!fsDb) {
+    infoEl.textContent = strings['release.none'] || 'No releases yet';
+    return;
+  }
+
+  fsDb.collection('releases').orderBy('date', 'desc').limit(1).get()
+    .then(snap => {
+      if (snap.empty) throw new Error('No releases');
+      releaseData = snap.docs[0].data();
+      renderRelease(releaseData, infoEl, strings);
+    })
+    .catch(() => {
+      infoEl.textContent = strings['release.none'] || 'No releases yet';
+    });
 }
 
 function renderRelease(release, infoEl, strings) {
-  const tag = release.tag_name || '';
-  const date = release.published_at ? new Date(release.published_at).toLocaleDateString() : '';
-  infoEl.innerHTML = `${strings['release.latest'] || 'Latest release'}: <span class="version">${tag}</span> ${date ? '&middot; ' + date : ''}`;
+  const version = release.version || '';
+  const date = release.date ? new Date(release.date).toLocaleDateString() : '';
+  infoEl.innerHTML = `${strings['release.latest'] || 'Latest release'}: <span class="version">${escHtml(version)}</span> ${date ? '&middot; ' + date : ''}`;
 
-  const assets = release.assets || [];
-  const macAsset = assets.find(a => /\.dmg$/i.test(a.name));
-  const winAsset = assets.find(a => /\.exe$/i.test(a.name)) || assets.find(a => /win.*\.zip$/i.test(a.name));
-  const linuxAsset = assets.find(a => /\.AppImage$/i.test(a.name));
-
-  updateDownloadCard('dl-mac', macAsset, strings);
-  updateDownloadCard('dl-win', winAsset, strings);
-  updateDownloadCard('dl-linux', linuxAsset, strings);
+  const assets = release.assets || {};
+  updateDownloadCard('dl-mac', assets.macos, strings);
+  updateDownloadCard('dl-win', assets.windows, strings);
+  updateDownloadCard('dl-linux', assets.linux, strings);
 }
 
-function updateDownloadCard(id, asset, strings) {
+function updateDownloadCard(id, url, strings) {
   const card = document.getElementById(id);
   if (!card) return;
   const btn = card.querySelector('.dl-btn');
-  if (asset) {
+  if (url && url.length > 0) {
     btn.textContent = strings['dl.get'] || 'Download';
     btn.removeAttribute('data-i18n');
     btn.classList.remove('disabled');
-    card.dataset.url = asset.browser_download_url;
+    card.dataset.url = url;
   } else {
     btn.textContent = strings['dl.coming_soon'] || 'Coming Soon';
     btn.classList.add('disabled');
+    delete card.dataset.url;
   }
 }
 
@@ -330,6 +341,13 @@ if (authObj) {
   document.getElementById('dl-login-gate').style.display = 'none';
   document.getElementById('dl-content').style.display = '';
   fetchRelease();
+}
+
+/* ── Utilities ───────────────────────────────────────── */
+function escHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 </script>
 </body>

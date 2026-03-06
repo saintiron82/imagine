@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>License — Imagine</title>
+<meta name="description" content="Imagine software license and legal information.">
+<meta name="theme-color" content="#0a0a1a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css">
+<style>
+.license-wrap {
+  max-width: 860px; margin: 0 auto;
+  padding: 100px 24px 80px;
+  min-height: calc(100vh - 64px);
+}
+.license-header {
+  margin-bottom: 40px;
+}
+.license-header h1 {
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 700; margin-bottom: 8px;
+}
+.license-header p {
+  color: #6b7280; font-size: 0.95rem;
+}
+.license-section {
+  margin-bottom: 40px; padding: 28px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+}
+.license-section h2 {
+  font-size: 1.15rem; font-weight: 700;
+  margin-bottom: 16px; color: #e0e0ee;
+}
+.license-text {
+  font-size: 0.9rem; color: #d1d5e0; line-height: 1.8;
+  white-space: pre-line;
+}
+.license-section p {
+  font-size: 0.9rem; color: #d1d5e0; line-height: 1.8;
+  margin-bottom: 12px;
+}
+.license-section p:last-child { margin-bottom: 0; }
+.contact-link {
+  color: #38bdf8; text-decoration: none;
+  transition: color 0.2s;
+}
+.contact-link:hover { color: #7dd3fc; }
+</style>
+</head>
+<body>
+
+<div class="ambient"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">
+      <img src="icon.svg" alt="Imagine">
+      <span>Imagine</span>
+    </a>
+    <div class="nav-links">
+      <a href="guide.html" class="nav-page-link" data-i18n="nav.guide">Guide</a>
+      <a href="servers.html" class="nav-page-link" data-i18n="nav.servers">Servers</a>
+      <a href="board.html" class="nav-page-link" data-i18n="nav.board">Board</a>
+      <a href="release.html" class="nav-page-link" data-i18n="nav.release">Release</a>
+      <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" onclick="setLang('ko')">KO</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- License -->
+<div class="license-wrap">
+  <div class="license-header">
+    <h1><span class="gradient-text" data-i18n="license.title">License</span></h1>
+    <p data-i18n="license.subtitle">Software license and legal information</p>
+  </div>
+
+  <!-- License Terms -->
+  <div class="license-section">
+    <h2 data-i18n="license.terms_title">License Terms</h2>
+    <div class="license-text">Copyright (c) 2026 Imagine. All Rights Reserved.
+
+This software is proprietary and confidential.
+Unauthorized copying, distribution, modification, or use of this software,
+via any medium, is strictly prohibited.
+
+No part of this software may be reproduced, distributed, or transmitted
+in any form or by any means without the prior written permission of the author.</div>
+  </div>
+
+  <!-- Third-party Licenses -->
+  <div class="license-section">
+    <h2 data-i18n="license.thirdparty_title">Third-Party Licenses</h2>
+    <p data-i18n="license.thirdparty_desc">Imagine uses various open-source libraries and AI models internally. These components are governed by their own respective licenses (Apache 2.0, MIT, etc.). The use of these libraries within Imagine does not change the proprietary license of the Imagine software itself.</p>
+    <p data-i18n="license.thirdparty_note">Key open-source components include: PyTorch, Transformers (Hugging Face), SigLIP2 (Google), Qwen3-VL / Qwen3-Embedding (Alibaba), FastAPI, Electron, React, SQLite, and others. Each is used under its respective open-source license.</p>
+  </div>
+
+  <!-- Contact -->
+  <div class="license-section">
+    <h2 data-i18n="license.contact_title">Contact</h2>
+    <p data-i18n="license.contact_desc">For licensing inquiries, commercial use requests, or any questions regarding the use of this software, please contact:</p>
+    <p><a href="mailto:saintiron82@gmail.com" class="contact-link">saintiron82@gmail.com</a></p>
+  </div>
+</div>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>&copy; 2026 Imagine &middot; All Rights Reserved &middot; <a href="license.html" data-i18n="nav.license">License</a></p>
+  </div>
+</footer>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="common.js"></script>
+<script>
+registerPageI18n({
+  en: {
+    "license.title": "License",
+    "license.subtitle": "Software license and legal information",
+    "license.terms_title": "License Terms",
+    "license.thirdparty_title": "Third-Party Licenses",
+    "license.thirdparty_desc": "Imagine uses various open-source libraries and AI models internally. These components are governed by their own respective licenses (Apache 2.0, MIT, etc.). The use of these libraries within Imagine does not change the proprietary license of the Imagine software itself.",
+    "license.thirdparty_note": "Key open-source components include: PyTorch, Transformers (Hugging Face), SigLIP2 (Google), Qwen3-VL / Qwen3-Embedding (Alibaba), FastAPI, Electron, React, SQLite, and others. Each is used under its respective open-source license.",
+    "license.contact_title": "Contact",
+    "license.contact_desc": "For licensing inquiries, commercial use requests, or any questions regarding the use of this software, please contact:"
+  },
+  ko: {
+    "license.title": "\ub77c\uc774\uc120\uc2a4",
+    "license.subtitle": "\uc18c\ud504\ud2b8\uc6e8\uc5b4 \ub77c\uc774\uc120\uc2a4 \ubc0f \ubc95\uc801 \uc815\ubcf4",
+    "license.terms_title": "\ub77c\uc774\uc120\uc2a4 \uc870\uac74",
+    "license.thirdparty_title": "\uc11c\ub4dc\ud30c\ud2f0 \ub77c\uc774\uc120\uc2a4",
+    "license.thirdparty_desc": "Imagine\uc740 \ub2e4\uc591\ud55c \uc624\ud508\uc18c\uc2a4 \ub77c\uc774\ube0c\ub7ec\ub9ac\uc640 AI \ubaa8\ub378\uc744 \ub0b4\ubd80\uc801\uc73c\ub85c \uc0ac\uc6a9\ud569\ub2c8\ub2e4. \uc774\ub7ec\ud55c \ucef4\ud3ec\ub10c\ud2b8\ub294 \uac01\uc790\uc758 \ub77c\uc774\uc120\uc2a4(Apache 2.0, MIT \ub4f1)\uc5d0 \uc758\ud574 \uad00\ub9ac\ub429\ub2c8\ub2e4. \uc774\ub7ec\ud55c \ub77c\uc774\ube0c\ub7ec\ub9ac\uc758 \uc0ac\uc6a9\uc774 Imagine \uc18c\ud504\ud2b8\uc6e8\uc5b4 \uc790\uccb4\uc758 \ub77c\uc774\uc120\uc2a4\ub97c \ubcc0\uacbd\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.",
+    "license.thirdparty_note": "\uc8fc\uc694 \uc624\ud508\uc18c\uc2a4 \ucef4\ud3ec\ub10c\ud2b8: PyTorch, Transformers (Hugging Face), SigLIP2 (Google), Qwen3-VL / Qwen3-Embedding (Alibaba), FastAPI, Electron, React, SQLite \ub4f1. \uac01\uac01 \ud574\ub2f9 \uc624\ud508\uc18c\uc2a4 \ub77c\uc774\uc120\uc2a4\uc5d0 \ub530\ub77c \uc0ac\uc6a9\ub429\ub2c8\ub2e4.",
+    "license.contact_title": "\uc5f0\ub77d\ucc98",
+    "license.contact_desc": "\ub77c\uc774\uc120\uc2a4 \ubb38\uc758, \uc0c1\uc5c5\uc801 \uc0ac\uc6a9 \uc694\uccad, \ub610\ub294 \uc18c\ud504\ud2b8\uc6e8\uc5b4 \uc0ac\uc6a9\uc5d0 \uad00\ud55c \uc9c8\ubb38\uc740 \uc544\ub798\ub85c \uc5f0\ub77d\ud574 \uc8fc\uc138\uc694:"
+  }
+});
+</script>
+</body>
+</html>

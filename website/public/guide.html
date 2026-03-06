@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guide — Imagine</title>
+<meta name="description" content="Imagine usage guide — installation, setup, server mode, workers, and search.">
+<meta name="theme-color" content="#0a0a1a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css">
+<style>
+.guide-wrap {
+  max-width: 860px; margin: 0 auto;
+  padding: 100px 24px 80px;
+  min-height: calc(100vh - 64px);
+}
+.guide-header {
+  margin-bottom: 48px;
+}
+.guide-header h1 {
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 700; margin-bottom: 8px;
+}
+.guide-header p {
+  color: #6b7280; font-size: 0.95rem;
+}
+.guide-toc {
+  margin-bottom: 48px; padding: 24px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+}
+.guide-toc h3 {
+  font-size: 0.85rem; font-weight: 600; color: #9ca3bf;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+.guide-toc ol {
+  list-style: decimal; padding-left: 20px;
+}
+.guide-toc li {
+  margin-bottom: 6px;
+}
+.guide-toc a {
+  color: #38bdf8; font-size: 0.9rem; text-decoration: none;
+  transition: color 0.2s;
+}
+.guide-toc a:hover { color: #7dd3fc; }
+.guide-section {
+  margin-bottom: 48px;
+}
+.guide-section h2 {
+  font-size: 1.3rem; font-weight: 700;
+  margin-bottom: 16px; padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.guide-section h2 .section-num {
+  color: #38bdf8; margin-right: 8px;
+}
+.guide-section h3 {
+  font-size: 1.05rem; font-weight: 600;
+  margin: 20px 0 10px; color: #d1d5e0;
+}
+.guide-section p, .guide-section li {
+  font-size: 0.9rem; color: #b0b5c8; line-height: 1.8;
+  margin-bottom: 10px;
+}
+.guide-section ul, .guide-section ol {
+  padding-left: 20px; margin-bottom: 16px;
+}
+.guide-section code {
+  background: rgba(56,189,248,0.08);
+  border: 1px solid rgba(56,189,248,0.15);
+  border-radius: 5px; padding: 2px 6px;
+  font-size: 0.85rem; color: #38bdf8;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+.guide-card {
+  padding: 20px 24px; margin: 16px 0;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+}
+.guide-card.tip {
+  border-left: 3px solid #38bdf8;
+}
+.guide-card.warning {
+  border-left: 3px solid #fbbf24;
+}
+.guide-card .card-label {
+  font-size: 0.75rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.guide-card.tip .card-label { color: #38bdf8; }
+.guide-card.warning .card-label { color: #fbbf24; }
+.guide-card p { margin-bottom: 0; }
+.axis-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px; margin: 16px 0;
+}
+.axis-card {
+  padding: 20px; border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  text-align: center;
+}
+.axis-card .axis-icon { font-size: 1.8rem; margin-bottom: 8px; }
+.axis-card h4 { font-size: 0.95rem; font-weight: 700; margin-bottom: 6px; color: #38bdf8; }
+.axis-card p { font-size: 0.82rem; color: #9ca3bf; margin-bottom: 0; }
+.step-list {
+  counter-reset: step;
+  list-style: none; padding-left: 0;
+}
+.step-list li {
+  counter-increment: step;
+  position: relative; padding-left: 36px; margin-bottom: 16px;
+}
+.step-list li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 2px;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: rgba(56,189,248,0.15); color: #38bdf8;
+  font-size: 0.8rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+</style>
+</head>
+<body>
+
+<div class="ambient"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">
+      <img src="icon.svg" alt="Imagine">
+      <span>Imagine</span>
+    </a>
+    <div class="nav-links">
+      <a href="guide.html" class="nav-page-link" data-i18n="nav.guide">Guide</a>
+      <a href="servers.html" class="nav-page-link" data-i18n="nav.servers">Servers</a>
+      <a href="board.html" class="nav-page-link" data-i18n="nav.board">Board</a>
+      <a href="release.html" class="nav-page-link" data-i18n="nav.release">Release</a>
+      <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" onclick="setLang('ko')">KO</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- Guide -->
+<div class="guide-wrap">
+  <div class="guide-header">
+    <h1><span class="gradient-text" data-i18n="guide.title">Usage Guide</span></h1>
+    <p data-i18n="guide.subtitle">Everything you need to get started with Imagine</p>
+  </div>
+
+  <!-- Table of Contents -->
+  <div class="guide-toc">
+    <h3 data-i18n="guide.toc">Contents</h3>
+    <ol>
+      <li><a href="#installation" data-i18n="guide.s1_title">Installation</a></li>
+      <li><a href="#getting-started" data-i18n="guide.s2_title">Getting Started</a></li>
+      <li><a href="#server-mode" data-i18n="guide.s3_title">Server Mode</a></li>
+      <li><a href="#workers" data-i18n="guide.s4_title">Connecting Workers</a></li>
+      <li><a href="#group-search" data-i18n="guide.s5_title">Group Search</a></li>
+      <li><a href="#triaxis" data-i18n="guide.s6_title">Triaxis Search</a></li>
+    </ol>
+  </div>
+
+  <!-- 1. Installation -->
+  <div class="guide-section" id="installation">
+    <h2><span class="section-num">1.</span> <span data-i18n="guide.s1_title">Installation</span></h2>
+    <h3 data-i18n="guide.s1_win">Windows</h3>
+    <ol class="step-list">
+      <li data-i18n="guide.s1_win_1">Download the Windows (.zip) package from the Download page.</li>
+      <li data-i18n="guide.s1_win_2">Extract the zip file to any folder (e.g., <code>C:\Imagine</code>).</li>
+      <li data-i18n="guide.s1_win_3">Double-click <code>Imagine.exe</code> to launch the app.</li>
+      <li data-i18n="guide.s1_win_4">On first launch, the setup wizard will guide you through model installation.</li>
+    </ol>
+    <h3 data-i18n="guide.s1_mac">macOS</h3>
+    <ol class="step-list">
+      <li data-i18n="guide.s1_mac_1">Download the macOS (.dmg) package from the Download page.</li>
+      <li data-i18n="guide.s1_mac_2">Open the .dmg and drag Imagine to your Applications folder.</li>
+      <li data-i18n="guide.s1_mac_3">Launch Imagine from Applications. If prompted about unverified developer, go to System Settings > Privacy & Security and click "Open Anyway".</li>
+      <li data-i18n="guide.s1_mac_4">The setup wizard will handle AI model downloads automatically.</li>
+    </ol>
+    <div class="guide-card tip">
+      <div class="card-label" data-i18n="guide.tip">Tip</div>
+      <p data-i18n="guide.s1_tip">A GPU with 6GB+ VRAM is recommended for optimal performance. The app works on CPU but processing will be significantly slower.</p>
+    </div>
+  </div>
+
+  <!-- 2. Getting Started -->
+  <div class="guide-section" id="getting-started">
+    <h2><span class="section-num">2.</span> <span data-i18n="guide.s2_title">Getting Started</span></h2>
+    <ol class="step-list">
+      <li data-i18n="guide.s2_step1">On first launch, select your <strong>domain preset</strong> (Game Asset, Illustration, Stock Photo, or General). This determines how the AI categorizes and tags your images.</li>
+      <li data-i18n="guide.s2_step2">Choose your <strong>AI tier</strong> based on your hardware: Standard (6GB VRAM), Pro (8-16GB), or Ultra (20GB+).</li>
+      <li data-i18n="guide.s2_step3">Add folders containing your image assets (PSD, PNG, JPG) using the <strong>Discover</strong> button. The app will recursively scan and process all supported files.</li>
+      <li data-i18n="guide.s2_step4">Wait for the pipeline to complete. You can monitor progress in the status bar showing the current phase (Parse > Vision > Embed).</li>
+      <li data-i18n="guide.s2_step5">Once processing is done, use the <strong>Search</strong> tab to find images by text description, visual similarity, or keywords.</li>
+    </ol>
+  </div>
+
+  <!-- 3. Server Mode -->
+  <div class="guide-section" id="server-mode">
+    <h2><span class="section-num">3.</span> <span data-i18n="guide.s3_title">Server Mode</span></h2>
+    <p data-i18n="guide.s3_desc">Server mode lets your team search and manage assets together. One person runs the server, and others connect via web browser.</p>
+    <ol class="step-list">
+      <li data-i18n="guide.s3_step1">Click the <strong>[Server]</strong> toggle button in the top-right corner of the app.</li>
+      <li data-i18n="guide.s3_step2">Set a port number and create a <strong>Group Name</strong>. The group name helps team members find your server on the Servers page.</li>
+      <li data-i18n="guide.s3_step3">The server starts automatically. Your server address and group info will be registered to the public server directory.</li>
+      <li data-i18n="guide.s3_step4">Share the server address or group name with your team. They can access it by visiting <code>http://your-ip:port</code> in their browser, or by finding your group on the <a href="servers.html">Servers</a> page.</li>
+    </ol>
+    <div class="guide-card tip">
+      <div class="card-label" data-i18n="guide.tip">Tip</div>
+      <p data-i18n="guide.s3_tip">In server mode, the first user account becomes the admin. Use the Admin panel to manage users and invite codes.</p>
+    </div>
+  </div>
+
+  <!-- 4. Connecting Workers -->
+  <div class="guide-section" id="workers">
+    <h2><span class="section-num">4.</span> <span data-i18n="guide.s4_title">Connecting Workers</span></h2>
+    <p data-i18n="guide.s4_desc">Workers are separate machines that process images for the server. This allows you to distribute heavy AI processing across multiple GPUs.</p>
+    <ol class="step-list">
+      <li data-i18n="guide.s4_step1">In the Admin panel, go to <strong>Worker Tokens</strong> and create a new token.</li>
+      <li data-i18n="guide.s4_step2">Copy the generated setup command or download the setup script.</li>
+      <li data-i18n="guide.s4_step3">Run the setup script on the worker machine. It will automatically install dependencies and connect to the server.</li>
+      <li data-i18n="guide.s4_step4">The worker will start claiming and processing jobs from the server queue automatically.</li>
+    </ol>
+    <div class="guide-card warning">
+      <div class="card-label" data-i18n="guide.note">Note</div>
+      <p data-i18n="guide.s4_note">Each worker should run on a separate GPU machine. Running multiple workers on the same GPU does not improve throughput due to GPU time-sharing contention.</p>
+    </div>
+  </div>
+
+  <!-- 5. Group Search -->
+  <div class="guide-section" id="group-search">
+    <h2><span class="section-num">5.</span> <span data-i18n="guide.s5_title">Group Search</span></h2>
+    <p data-i18n="guide.s5_desc">The <a href="servers.html">Servers</a> page shows all registered Imagine servers. You can find your team's server by group name.</p>
+    <ol class="step-list">
+      <li data-i18n="guide.s5_step1">Visit the <a href="servers.html">Servers</a> page on this website.</li>
+      <li data-i18n="guide.s5_step2">Browse the server list or search by group name.</li>
+      <li data-i18n="guide.s5_step3">Find your team's server and note the connection address.</li>
+      <li data-i18n="guide.s5_step4">Enter the server address in your browser to access the shared Imagine workspace.</li>
+    </ol>
+  </div>
+
+  <!-- 6. Triaxis Search -->
+  <div class="guide-section" id="triaxis">
+    <h2><span class="section-num">6.</span> <span data-i18n="guide.s6_title">Triaxis Search</span></h2>
+    <p data-i18n="guide.s6_desc">Imagine uses a three-axis search system called Triaxis to find images with maximum accuracy. When you type a search query, all three axes work together to find the best results.</p>
+
+    <div class="axis-grid">
+      <div class="axis-card">
+        <div class="axis-icon">&#128065;</div>
+        <h4>VV (Visual Vector)</h4>
+        <p data-i18n="guide.s6_vv">Finds images that look visually similar. Powered by SigLIP2 AI vision model.</p>
+      </div>
+      <div class="axis-card">
+        <div class="axis-icon">&#128161;</div>
+        <h4>MV (Meaning Vector)</h4>
+        <p data-i18n="guide.s6_mv">Understands the meaning of your text query and matches it against AI-generated image descriptions.</p>
+      </div>
+      <div class="axis-card">
+        <div class="axis-icon">&#128270;</div>
+        <h4>FTS (Full-Text Search)</h4>
+        <p data-i18n="guide.s6_fts">Searches file names, layer names, and tags by exact keyword matching.</p>
+      </div>
+    </div>
+
+    <p data-i18n="guide.s6_rrf">Results from all three axes are combined using RRF (Reciprocal Rank Fusion) to give you the most relevant results. You can also use the search mode dropdown to prioritize specific axes for different use cases.</p>
+
+    <div class="guide-card tip">
+      <div class="card-label" data-i18n="guide.tip">Tip</div>
+      <p data-i18n="guide.s6_tip">For best results, try natural language queries like "fantasy knight holding a sword" rather than short keywords. The MV axis excels at understanding descriptive queries.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>&copy; 2026 Imagine &middot; All Rights Reserved &middot; <a href="license.html" data-i18n="nav.license">License</a></p>
+  </div>
+</footer>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="common.js"></script>
+<script>
+registerPageI18n({
+  en: {
+    "guide.title": "Usage Guide",
+    "guide.subtitle": "Everything you need to get started with Imagine",
+    "guide.toc": "Contents",
+    "guide.tip": "Tip",
+    "guide.note": "Note",
+    "guide.s1_title": "Installation",
+    "guide.s2_title": "Getting Started",
+    "guide.s3_title": "Server Mode",
+    "guide.s4_title": "Connecting Workers",
+    "guide.s5_title": "Group Search",
+    "guide.s6_title": "Triaxis Search"
+  },
+  ko: {
+    "guide.title": "\uc0ac\uc6a9 \uac00\uc774\ub4dc",
+    "guide.subtitle": "Imagine\uc744 \uc2dc\uc791\ud558\ub294 \ub370 \ud544\uc694\ud55c \ubaa8\ub4e0 \uac83",
+    "guide.toc": "\ubaa9\ucc28",
+    "guide.tip": "\ud301",
+    "guide.note": "\ucc38\uace0",
+    "guide.s1_title": "\uc124\uce58",
+    "guide.s2_title": "\uc2dc\uc791\ud558\uae30",
+    "guide.s3_title": "\uc11c\ubc84 \ubaa8\ub4dc",
+    "guide.s4_title": "\uc6cc\ucee4 \uc5f0\uacb0",
+    "guide.s5_title": "\uadf8\ub8f9 \uac80\uc0c9",
+    "guide.s6_title": "Triaxis \uac80\uc0c9"
+  }
+});
+</script>
+</body>
+</html>

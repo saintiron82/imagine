@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Servers — Imagine</title>
+<meta name="description" content="Imagine server directory — find and connect to shared Imagine servers.">
+<meta name="theme-color" content="#0a0a1a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css">
+<style>
+.servers-wrap {
+  max-width: 900px; margin: 0 auto;
+  padding: 100px 24px 80px;
+  min-height: calc(100vh - 64px);
+}
+.servers-header {
+  margin-bottom: 32px;
+}
+.servers-header h1 {
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 700; margin-bottom: 8px;
+}
+.servers-header p {
+  color: #6b7280; font-size: 0.95rem;
+}
+.servers-search {
+  margin-bottom: 24px;
+}
+.servers-search input {
+  width: 100%; padding: 12px 16px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px; font-size: 0.9rem;
+  color: #e0e0ee; font-family: inherit;
+  outline: none; transition: border-color 0.2s;
+}
+.servers-search input:focus {
+  border-color: rgba(56,189,248,0.4);
+}
+.servers-search input::placeholder { color: #6b7280; }
+.server-count {
+  font-size: 0.8rem; color: #6b7280; margin-bottom: 16px;
+}
+.server-list {
+  display: flex; flex-direction: column; gap: 12px;
+}
+.server-card {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center; gap: 16px;
+  padding: 18px 20px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  transition: border-color 0.2s;
+}
+.server-card:hover { border-color: rgba(56,189,248,0.2); }
+.server-name {
+  font-size: 1rem; font-weight: 600;
+}
+.server-name .group-badge {
+  display: inline-block; margin-left: 8px;
+  font-size: 0.7rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 12px;
+  background: rgba(56,189,248,0.12); color: #38bdf8;
+}
+.server-ip {
+  font-size: 0.85rem; color: #9ca3bf;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+.server-port {
+  font-size: 0.85rem; color: #818cf8;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+.server-updated {
+  font-size: 0.75rem; color: #6b7280;
+}
+.server-status {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; margin-right: 6px;
+}
+.server-status.online {
+  background: #34d399;
+  box-shadow: 0 0 6px rgba(52,211,153,0.4);
+}
+.server-status.stale {
+  background: #fbbf24;
+  box-shadow: 0 0 6px rgba(251,191,36,0.3);
+}
+.server-status.offline {
+  background: #6b7280;
+}
+.empty-state {
+  text-align: center; padding: 80px 24px; color: #6b7280;
+}
+.empty-state .icon {
+  font-size: 3rem; margin-bottom: 16px; opacity: 0.4;
+}
+@media (max-width: 640px) {
+  .server-card {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .server-updated { text-align: left; }
+}
+</style>
+</head>
+<body>
+
+<div class="ambient"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">
+      <img src="icon.svg" alt="Imagine">
+      <span>Imagine</span>
+    </a>
+    <div class="nav-links">
+      <a href="guide.html" class="nav-page-link" data-i18n="nav.guide">Guide</a>
+      <a href="servers.html" class="nav-page-link" data-i18n="nav.servers">Servers</a>
+      <a href="board.html" class="nav-page-link" data-i18n="nav.board">Board</a>
+      <a href="release.html" class="nav-page-link" data-i18n="nav.release">Release</a>
+      <a href="index.html#download" class="nav-page-link" data-i18n="nav.download">Download</a>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" onclick="setLang('ko')">KO</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- Servers -->
+<div class="servers-wrap">
+  <div class="servers-header">
+    <h1><span class="gradient-text" data-i18n="servers.title">Server Directory</span></h1>
+    <p data-i18n="servers.subtitle">Active Imagine servers registered by groups</p>
+  </div>
+
+  <div class="servers-search">
+    <input type="text" id="server-search" data-i18n-placeholder="servers.search_placeholder" placeholder="Search by group name..." oninput="filterServers(this.value)">
+  </div>
+
+  <div id="server-count" class="server-count"></div>
+  <div id="server-list">
+    <div class="loading" data-i18n="common.loading">Loading...</div>
+  </div>
+</div>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>&copy; 2026 Imagine &middot; All Rights Reserved &middot; <a href="license.html" data-i18n="nav.license">License</a></p>
+  </div>
+</footer>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<script src="common.js"></script>
+
+<script>
+/* ── Page i18n ───────────────────────────────────────── */
+registerPageI18n({
+  en: {
+    "servers.title": "Server Directory",
+    "servers.subtitle": "Active Imagine servers registered by groups",
+    "servers.search_placeholder": "Search by group name...",
+    "servers.count": "{count} servers online",
+    "servers.empty": "No servers registered yet",
+    "servers.empty_search": "No servers matching your search",
+    "servers.updated": "Updated",
+    "servers.port": "Port",
+    "servers.ago_min": "{n}m ago",
+    "servers.ago_hour": "{n}h ago",
+    "servers.ago_day": "{n}d ago",
+    "servers.now": "just now"
+  },
+  ko: {
+    "servers.title": "\uc11c\ubc84 \ubaa9\ub85d",
+    "servers.subtitle": "\uadf8\ub8f9\ubcc4\ub85c \ub4f1\ub85d\ub41c \ud65c\uc131 Imagine \uc11c\ubc84",
+    "servers.search_placeholder": "\uadf8\ub8f9 \uc774\ub984\uc73c\ub85c \uac80\uc0c9...",
+    "servers.count": "{count}\uac1c \uc11c\ubc84 \uc628\ub77c\uc778",
+    "servers.empty": "\uc544\uc9c1 \ub4f1\ub85d\ub41c \uc11c\ubc84\uac00 \uc5c6\uc2b5\ub2c8\ub2e4",
+    "servers.empty_search": "\uac80\uc0c9 \uacb0\uacfc\uac00 \uc5c6\uc2b5\ub2c8\ub2e4",
+    "servers.updated": "\uc5c5\ub370\uc774\ud2b8",
+    "servers.port": "\ud3ec\ud2b8",
+    "servers.ago_min": "{n}\ubd84 \uc804",
+    "servers.ago_hour": "{n}\uc2dc\uac04 \uc804",
+    "servers.ago_day": "{n}\uc77c \uc804",
+    "servers.now": "\ubc29\uae08"
+  }
+});
+
+/* ── State ───────────────────────────────────────────── */
+let allServers = [];
+let searchQuery = '';
+
+/* ── Mask IP for privacy ─────────────────────────────── */
+function maskIp(ip) {
+  if (!ip) return '---';
+  // Hide LAN IPs entirely
+  if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
+    return 'LAN';
+  }
+  // Mask last two octets of public IP
+  const parts = ip.split('.');
+  if (parts.length === 4) {
+    return parts[0] + '.' + parts[1] + '.xxx.xxx';
+  }
+  // IPv6 or other — mask most of it
+  if (ip.length > 8) {
+    return ip.substring(0, 8) + '...';
+  }
+  return ip;
+}
+
+/* ── Time ago ────────────────────────────────────────── */
+function timeAgo(timestamp) {
+  if (!timestamp) return '';
+  const now = Date.now();
+  const diff = now - timestamp;
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (mins < 1) return t('servers.now');
+  if (mins < 60) return t('servers.ago_min').replace('{n}', mins);
+  if (hours < 24) return t('servers.ago_hour').replace('{n}', hours);
+  return t('servers.ago_day').replace('{n}', days);
+}
+
+/* ── Server status based on last update ──────────────── */
+function getStatus(timestamp) {
+  if (!timestamp) return 'offline';
+  const diff = Date.now() - timestamp;
+  if (diff < 5 * 60 * 1000) return 'online';   // < 5 min
+  if (diff < 30 * 60 * 1000) return 'stale';    // < 30 min
+  return 'offline';
+}
+
+/* ── Render Servers ──────────────────────────────────── */
+function renderServers(servers) {
+  const container = document.getElementById('server-list');
+  const countEl = document.getElementById('server-count');
+
+  if (servers.length === 0) {
+    const msg = searchQuery
+      ? t('servers.empty_search')
+      : t('servers.empty');
+    container.innerHTML = `<div class="empty-state"><div class="icon">&#127760;</div><p>${msg}</p></div>`;
+    countEl.textContent = '';
+    return;
+  }
+
+  countEl.textContent = t('servers.count').replace('{count}', servers.length);
+
+  let html = '<div class="server-list">';
+  servers.forEach(s => {
+    const status = getStatus(s.updated_at);
+    const maskedIp = maskIp(s.public_ip);
+    const ago = timeAgo(s.updated_at);
+
+    html += `
+      <div class="server-card">
+        <div class="server-name">
+          <span class="server-status ${status}"></span>
+          ${escHtml(s.group_name || 'Unknown')}
+        </div>
+        <div class="server-ip">${escHtml(maskedIp)}</div>
+        <div class="server-port">:${escHtml(String(s.port || '8000'))}</div>
+        <div class="server-updated">${ago}</div>
+      </div>`;
+  });
+  html += '</div>';
+
+  container.innerHTML = html;
+}
+
+/* ── Filter ──────────────────────────────────────────── */
+function filterServers(query) {
+  searchQuery = (query || '').trim().toLowerCase();
+  if (!searchQuery) {
+    renderServers(allServers);
+    return;
+  }
+  const filtered = allServers.filter(s =>
+    (s.group_name || '').toLowerCase().includes(searchQuery)
+  );
+  renderServers(filtered);
+}
+
+/* ── Load from Firebase RTDB ─────────────────────────── */
+function loadServers() {
+  const database = getRtdb();
+  if (!database) {
+    renderServers([]);
+    return;
+  }
+
+  const ref = database.ref('/groups');
+  ref.on('value', snap => {
+    const data = snap.val();
+    allServers = [];
+
+    if (data) {
+      Object.keys(data).forEach(key => {
+        const entry = data[key];
+        // Skip entries with only LAN IPs (no public_ip)
+        allServers.push({
+          id: key,
+          group_name: entry.group_name || key,
+          public_ip: entry.public_ip || '',
+          port: entry.port || 8000,
+          updated_at: entry.updated_at || 0
+        });
+      });
+
+      // Sort by most recently updated
+      allServers.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    }
+
+    // Apply current search filter
+    if (searchQuery) {
+      filterServers(searchQuery);
+    } else {
+      renderServers(allServers);
+    }
+  }, err => {
+    console.error('Failed to load servers:', err);
+    renderServers([]);
+  });
+}
+
+/* ── Helpers ─────────────────────────────────────────── */
+function escHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function onLangChange() {
+  if (searchQuery) {
+    filterServers(searchQuery);
+  } else {
+    renderServers(allServers);
+  }
+}
+
+/* ── Init ────────────────────────────────────────────── */
+loadServers();
+</script>
+</body>
+</html>
