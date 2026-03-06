@@ -71,9 +71,9 @@ jobs:
           path: frontend/dist-electron/*
           retention-days: 7
 
-  # ── Release (tag push only) ──────────────────────────────────
-  # Windows: CI artifact
-  # macOS: manually uploaded via `gh release upload` after local build
+  # ── Release → Firebase Storage + Firestore ──────────────────
+  # Windows: CI artifact → Firebase Storage
+  # macOS: manually uploaded later (firebase-release.mjs --macos)
   release:
     needs: build-win
     if: startsWith(github.ref, 'refs/tags/')
@@ -107,15 +107,8 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           PREV_TAG="${{ steps.version.outputs.prev_tag }}"
 
-          cat > release_notes.md << HEADER
+          cat > release_notes.md << 'HEADER'
           ## Imagine ${TAG}
-
-          ### Downloads
-
-          | Platform | File | Note |
-          |----------|------|------|
-          | Windows | \`Imagine-*-win.zip\` | CI 자동 빌드 |
-          | macOS | \`Imagine-*-mac.dmg\` | 수동 업로드 (없으면 준비 중) |
 
           > Python 설치 불필요 — 백엔드가 바이너리로 포함되어 있습니다.
           > AI 모델은 첫 실행 시 자동 다운로드됩니다.
@@ -132,33 +125,31 @@ jobs:
             echo "" >> release_notes.md
           fi
 
-          echo "" >> release_notes.md
-          echo "---" >> release_notes.md
-          echo "*Windows: built by GitHub Actions / macOS: upload with \`gh release upload ${TAG} ./file.dmg\`*" >> release_notes.md
-
-      - name: List release files
+      - name: Find Windows zip
+        id: find-zip
         shell: bash
-        run: find artifacts/win -maxdepth 1 -type f || true
+        run: |
+          ZIP=$(find artifacts/win -maxdepth 1 -name '*.zip' -type f | head -1)
+          echo "Found: $ZIP"
+          echo "path=$ZIP" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install firebase-admin
+        run: npm install firebase-admin
+
+      - name: Upload to Firebase & update Firestore
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
+          WIN_ZIP="${{ steps.find-zip.outputs.path }}"
 
-          # collect distributable files only (not unpacked dirs)
-          FILES=()
-          for f in artifacts/win/*.{exe,zip,msi,dmg,blockmap,yml,yaml}; do
-            [ -f "$f" ] && FILES+=("$f")
-          done
+          ARGS="--tag $TAG --notes release_notes.md"
+          [ -n "$WIN_ZIP" ] && ARGS="$ARGS --windows $WIN_ZIP"
 
-          if [ ${#FILES[@]} -eq 0 ]; then
-            echo "WARNING: No distributable files found"
-            find artifacts/win -maxdepth 1 -type f || true
-          fi
-
-          gh release create "$TAG" \
-            --title "Imagine $TAG" \
-            --notes-file release_notes.md \
-            "${FILES[@]}"
+          node scripts/firebase-release.mjs $ARGS
