@@ -612,5 +612,14 @@
   "group.admin_password": "Admin Password",
   "auth.remote_server": "Remote Server",
   "auth.remote_server_desc": "Connect to another server",
-  "auth.connect": "Connect"
+  "auth.connect": "Connect",
+  "auth.connect_mode_group": "Group Search",
+  "auth.connect_mode_direct": "Direct URL",
+  "auth.group_name_placeholder": "Enter group name",
+  "auth.group_search": "Search",
+  "auth.group_searching": "Searching...",
+  "auth.group_not_found": "Group not found",
+  "auth.group_found": "Server found — {name}",
+  "auth.firebase_error": "Server lookup failed",
+  "auth.connect_other_server": "Connect to a different server"
 }

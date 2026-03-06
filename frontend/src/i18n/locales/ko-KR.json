@@ -612,5 +612,14 @@
   "group.admin_password": "관리자 비밀번호",
   "auth.remote_server": "원격 서버",
   "auth.remote_server_desc": "다른 서버에 접속합니다",
-  "auth.connect": "접속"
+  "auth.connect": "접속",
+  "auth.connect_mode_group": "그룹 검색",
+  "auth.connect_mode_direct": "직접 입력",
+  "auth.group_name_placeholder": "그룹 이름 입력",
+  "auth.group_search": "검색",
+  "auth.group_searching": "검색 중...",
+  "auth.group_not_found": "그룹을 찾을 수 없습니다",
+  "auth.group_found": "서버를 찾았습니다 — {name}",
+  "auth.firebase_error": "서버 검색 실패",
+  "auth.connect_other_server": "다른 서버에 접속"
 }

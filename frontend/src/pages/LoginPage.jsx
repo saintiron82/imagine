@@ -15,6 +15,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { setServerUrl as setClientServerUrl, getServerUrl } from '../api/client';
+import { lookupGroup } from '../api/firebase';
 import { useMdnsDiscovery } from '../hooks/useMdnsDiscovery';
 import { getServerInfo, initServer, getMe } from '../api/auth';
 import {
@@ -27,7 +28,7 @@ import {
   LogIn, UserPlus, Server, Eye, EyeOff, CheckCircle, XCircle,
   Download, Wifi, X, Clock, Radio, Loader, Users, Languages,
   Plus, ArrowLeft, ArrowRight, Zap, Star, Rocket, AlertCircle,
-  Loader2, SkipForward, Lock, User, Globe,
+  Loader2, SkipForward, Lock, User, Globe, Search,
 } from 'lucide-react';
 
 const TIERS = [
@@ -61,6 +62,13 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
   const [serverPassword, setServerPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // --- Firebase group search ---
+  const [serverConnectMode, setServerConnectMode] = useState('group'); // 'group' | 'direct'
+  const [firebaseGroupName, setFirebaseGroupName] = useState('');
+  const [firebaseLooking, setFirebaseLooking] = useState(false);
+  const [firebaseResult, setFirebaseResult] = useState(null); // { url, groupName, ... } | null
+  const [firebaseError, setFirebaseError] = useState('');
 
   // --- Create Group form ---
   const [createGroupName, setCreateGroupName] = useState('');
@@ -164,6 +172,31 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
       setServerStatus('error');
       setServerError(result.error);
     }
+  };
+
+  const handleGroupSearch = async () => {
+    const name = firebaseGroupName.trim();
+    if (!name) return;
+    setFirebaseLooking(true);
+    setFirebaseError('');
+    setFirebaseResult(null);
+
+    try {
+      const result = await lookupGroup(name);
+      if (result) {
+        setFirebaseResult(result);
+        // Auto-set the server URL and trigger health check
+        setServerUrlLocal(result.url);
+        setClientServerUrl(result.url);
+        localStorage.setItem('imagine-server-url', result.url);
+        handleCheckServer(result.url);
+      } else {
+        setFirebaseError(t('auth.group_not_found'));
+      }
+    } catch {
+      setFirebaseError(t('auth.firebase_error'));
+    }
+    setFirebaseLooking(false);
   };
 
   const handleSelectServer = (url) => {
@@ -425,9 +458,8 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
               const cm = colorMap[color];
               return (
                 <button key={id} onClick={() => setSelectedTier(id)}
-                  className={`p-5 rounded-xl border-2 text-left transition-all ${
-                    isSelected ? cm.active : 'border-gray-700 bg-gray-800/50 hover:border-gray-500'
-                  }`}>
+                  className={`p-5 rounded-xl border-2 text-left transition-all ${isSelected ? cm.active : 'border-gray-700 bg-gray-800/50 hover:border-gray-500'
+                    }`}>
                   <div className="flex items-center gap-3 mb-3">
                     <div className={`p-2 rounded-lg ${isSelected ? cm.icon : 'bg-gray-700'}`}>
                       <Icon size={20} />
@@ -458,9 +490,8 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
             <div className="flex items-center gap-4">
               <p className="text-xs text-gray-600">{t('setup.changeable_later')}</p>
               <button onClick={handleTierConfirm} disabled={!selectedTier}
-                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
-                  selectedTier ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                }`}>
+                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${selectedTier ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  }`}>
                 {t('setup.next')}
                 <ArrowRight size={16} />
               </button>
@@ -575,8 +606,8 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
               {installLogs.map((log, i) => (
                 <div key={i} className={
                   log.type === 'error' ? 'text-red-400' :
-                  log.type === 'success' ? 'text-green-400' :
-                  log.type === 'warning' ? 'text-yellow-400' : 'text-gray-400'
+                    log.type === 'success' ? 'text-green-400' :
+                      log.type === 'warning' ? 'text-yellow-400' : 'text-gray-400'
                 }>{log.message}</div>
               ))}
               <div ref={logEndRef} />
@@ -684,9 +715,8 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
               </button>
               <button onClick={handleCreateNext}
                 disabled={!canCreate || createSubmitting}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  canCreate && !createSubmitting ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                }`}>
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors ${canCreate && !createSubmitting ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  }`}>
                 {createSubmitting ? <Loader size={14} className="animate-spin" /> : null}
                 {t('setup.next')}
                 <ArrowRight size={16} />
@@ -727,9 +757,8 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
                       const isSelected = serverUrl === sUrl;
                       return (
                         <button key={s.name} type="button" onClick={() => handleSelectMdns(s)}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left text-sm transition-colors ${
-                            isSelected ? 'bg-blue-900/40 border border-blue-600' : 'bg-gray-900/50 border border-gray-700 hover:border-gray-500'
-                          }`}>
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left text-sm transition-colors ${isSelected ? 'bg-blue-900/40 border border-blue-600' : 'bg-gray-900/50 border border-gray-700 hover:border-gray-500'
+                            }`}>
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
                             <span className="text-white truncate font-medium">{s.serverName || s.name}</span>
@@ -757,9 +786,8 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
                     const isSelected = serverUrl === h.url;
                     return (
                       <button key={h.url} type="button" onClick={() => handleSelectServer(h.url)}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left text-sm transition-colors group ${
-                          isSelected ? 'bg-blue-900/40 border border-blue-600' : 'bg-gray-900/50 border border-gray-700 hover:border-gray-500'
-                        }`}>
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left text-sm transition-colors group ${isSelected ? 'bg-blue-900/40 border border-blue-600' : 'bg-gray-900/50 border border-gray-700 hover:border-gray-500'
+                          }`}>
                         <div className="min-w-0 flex-1">
                           <span className="text-white truncate text-sm">{h.name || h.url.replace(/^https?:\/\//, '')}</span>
                           <div className="flex items-center gap-2 mt-0.5">
@@ -780,32 +808,75 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
               </div>
             )}
 
-            {/* URL Input */}
+            {/* URL Input — with group search option */}
             <div>
               <label className="block text-xs text-gray-400 mb-1">{t('auth.server_url')}</label>
+
+              {/* Group Search input */}
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <Server size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-                  <input type="text" value={serverUrl}
-                    onChange={(e) => { setServerUrlLocal(e.target.value); setServerStatus(null); }}
-                    placeholder="http://192.168.1.10:8000"
-                    className="w-full pl-10 pr-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none font-mono" />
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <input type="text" value={firebaseGroupName}
+                    onChange={(e) => { setFirebaseGroupName(e.target.value); setFirebaseError(''); setFirebaseResult(null); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleGroupSearch(); } }}
+                    placeholder={t('auth.group_name_placeholder')}
+                    className="w-full pl-10 pr-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none" />
                 </div>
-                <button type="button" onClick={() => handleCheckServer()}
-                  disabled={!serverUrl.trim() || serverStatus === 'checking'}
-                  className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-50 transition-colors">
-                  {serverStatus === 'checking' ? '...' : t('auth.check')}
+                <button type="button" onClick={handleGroupSearch}
+                  disabled={!firebaseGroupName.trim() || firebaseLooking}
+                  className="px-3 py-2 bg-blue-700 border border-blue-600 rounded-lg text-xs text-white hover:bg-blue-600 disabled:opacity-50 transition-colors shrink-0">
+                  {firebaseLooking ? <Loader size={12} className="animate-spin" /> : t('auth.group_search')}
                 </button>
               </div>
-              {serverStatus === 'ok' && (
+              {firebaseResult && (
                 <div className="flex items-center gap-1 mt-1 text-xs text-green-400">
                   <CheckCircle size={12} />
+                  {t('auth.group_found', { name: firebaseResult.groupName })}
+                  <span className="text-gray-500 font-mono ml-1">{firebaseResult.url}</span>
+                </div>
+              )}
+              {firebaseError && (
+                <div className="flex items-center gap-1 mt-1 text-xs text-red-400">
+                  <XCircle size={12} /> {firebaseError}
+                </div>
+              )}
+
+              {/* Direct URL — compact, togglable */}
+              <details className="mt-2">
+                <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-300 select-none">
+                  {t('auth.connect_mode_direct')}
+                </summary>
+                <div className="flex gap-2 mt-1.5">
+                  <div className="relative flex-1">
+                    <Server size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                    <input type="text" value={serverUrl}
+                      onChange={(e) => {
+                        setServerUrlLocal(e.target.value);
+                        setServerStatus(null);
+                        setServerInitialized(null);
+                        setGroupName('');
+                      }}
+                      placeholder="http://192.168.1.10:8000"
+                      className="w-full pl-8 pr-3 py-1.5 bg-gray-900 border border-gray-700 rounded-md text-xs text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none font-mono" />
+                  </div>
+                  <button type="button" onClick={() => handleCheckServer()}
+                    disabled={!serverUrl.trim() || serverStatus === 'checking'}
+                    className="px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-md text-[10px] text-gray-300 hover:bg-gray-600 disabled:opacity-50 transition-colors shrink-0">
+                    {serverStatus === 'checking' ? <Loader size={12} className="animate-spin" /> : t('auth.check')}
+                  </button>
+                </div>
+              </details>
+
+              {/* Server connection status */}
+              {serverStatus === 'ok' && (
+                <div className="flex items-center gap-1 mt-1 text-[10px] text-green-400">
+                  <CheckCircle size={10} />
                   {groupName ? t('auth.connected_to', { name: groupName }) : t('auth.server_connected')}
                 </div>
               )}
               {serverStatus === 'error' && (
-                <div className="flex items-center gap-1 mt-1 text-xs text-red-400">
-                  <XCircle size={12} /> {serverError}
+                <div className="flex items-center gap-1 mt-1 text-[10px] text-red-400">
+                  <XCircle size={10} /> {serverError}
                 </div>
               )}
             </div>
@@ -852,9 +923,8 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
         )}
 
         {/* === Login Card === */}
-        <div className={`bg-gray-800 rounded-lg border border-gray-700 p-6 ${
-          serverWaiting ? 'opacity-50 pointer-events-none' : ''
-        }`}>
+        <div className={`bg-gray-800 rounded-lg border border-gray-700 p-6 ${serverWaiting ? 'opacity-50 pointer-events-none' : ''
+          }`}>
           {/* Top action buttons */}
           <div className="flex items-center gap-2 mb-4">
             {/* Group name badge */}
@@ -867,11 +937,10 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
             <div className="flex-1" />
             {/* Create Group — always visible */}
             <button onClick={() => setView('createGroup')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                serverInitialized === false
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${serverInitialized === false
                   ? 'bg-blue-600 text-white hover:bg-blue-500'
                   : 'text-gray-400 hover:text-white hover:bg-gray-700'
-              }`}>
+                }`}>
               <Plus size={12} />
               {t('group.create_title')}
             </button>
@@ -892,53 +961,108 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
             </div>
           )}
 
-          {/* Server URL — compact inline field */}
-          <div className="mb-4">
-            <label className="block text-[10px] text-gray-500 mb-1">{t('auth.server_url')}</label>
-            <div className="flex gap-1.5">
-              <div className="relative flex-1">
-                <Server size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
-                <input type="text" value={serverUrl}
-                  onChange={(e) => {
-                    setServerUrlLocal(e.target.value);
-                    setServerStatus(null);
-                    setServerInitialized(null);
-                    setGroupName('');
-                  }}
-                  placeholder="http://192.168.1.10:8000"
-                  className="w-full pl-8 pr-3 py-1.5 bg-gray-900 border border-gray-700 rounded-md text-xs text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none font-mono" />
+          {/* Server Connection — Group Search + Direct URL */}
+          {/* Web mode: hidden (browser URL = server URL). Electron: show search/URL. */}
+          {isElectron && (() => {
+            const isLocalConnected = serverStatus === 'ok' && (serverUrl.includes('localhost') || serverUrl.includes('127.0.0.1'));
+            const inner = (
+              <>
+                {/* Group Search input */}
+                <div className="flex gap-1.5">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                    <input type="text" value={firebaseGroupName}
+                      onChange={(e) => { setFirebaseGroupName(e.target.value); setFirebaseError(''); setFirebaseResult(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleGroupSearch(); } }}
+                      placeholder={t('auth.group_name_placeholder')}
+                      className="w-full pl-8 pr-3 py-1.5 bg-gray-900 border border-gray-700 rounded-md text-xs text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none" />
+                  </div>
+                  <button type="button" onClick={handleGroupSearch}
+                    disabled={!firebaseGroupName.trim() || firebaseLooking}
+                    className="px-2.5 py-1.5 bg-blue-700 border border-blue-600 rounded-md text-[10px] text-white hover:bg-blue-600 disabled:opacity-50 transition-colors shrink-0">
+                    {firebaseLooking ? <Loader size={12} className="animate-spin" /> : t('auth.group_search')}
+                  </button>
+                </div>
+                {firebaseResult && (
+                  <div className="flex items-center gap-1 mt-1 text-[10px] text-green-400">
+                    <CheckCircle size={10} />
+                    {t('auth.group_found', { name: firebaseResult.groupName })}
+                    <span className="text-gray-500 font-mono ml-1">{firebaseResult.url}</span>
+                  </div>
+                )}
+                {firebaseError && (
+                  <div className="flex items-center gap-1 mt-1 text-[10px] text-red-400">
+                    <XCircle size={10} /> {firebaseError}
+                  </div>
+                )}
+
+                {/* Direct URL — compact, togglable */}
+                <details className="mt-1.5">
+                  <summary className="text-[10px] text-gray-600 cursor-pointer hover:text-gray-400 select-none">
+                    {t('auth.connect_mode_direct')}
+                  </summary>
+                  <div className="flex gap-1.5 mt-1">
+                    <div className="relative flex-1">
+                      <Server size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                      <input type="text" value={serverUrl}
+                        onChange={(e) => {
+                          setServerUrlLocal(e.target.value);
+                          setServerStatus(null);
+                          setServerInitialized(null);
+                          setGroupName('');
+                        }}
+                        placeholder="http://192.168.1.10:8000"
+                        className="w-full pl-8 pr-3 py-1.5 bg-gray-900 border border-gray-700 rounded-md text-xs text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none font-mono" />
+                    </div>
+                    <button type="button" onClick={() => handleCheckServer()}
+                      disabled={!serverUrl.trim() || serverStatus === 'checking'}
+                      className="px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-md text-[10px] text-gray-300 hover:bg-gray-600 disabled:opacity-50 transition-colors shrink-0">
+                      {serverStatus === 'checking' ? <Loader size={12} className="animate-spin" /> : t('auth.check')}
+                    </button>
+                  </div>
+                </details>
+
+                {/* Server connection status */}
+                {serverStatus === 'ok' && (
+                  <div className="flex items-center gap-1 mt-1 text-[10px] text-green-400">
+                    <CheckCircle size={10} />
+                    {groupName ? t('auth.connected_to', { name: groupName }) : t('auth.server_connected')}
+                  </div>
+                )}
+                {serverStatus === 'error' && (
+                  <div className="flex items-center gap-1 mt-1 text-[10px] text-red-400">
+                    <XCircle size={10} /> {serverError}
+                  </div>
+                )}
+              </>
+            );
+
+            // Local server connected → collapse; otherwise show open
+            return isLocalConnected ? (
+              <details className="mb-4">
+                <summary className="text-[10px] text-gray-600 cursor-pointer hover:text-gray-400 select-none mb-1">
+                  {t('auth.connect_other_server')}
+                </summary>
+                {inner}
+              </details>
+            ) : (
+              <div className="mb-4">
+                <label className="block text-[10px] text-gray-500 mb-1">{t('auth.server_url')}</label>
+                {inner}
               </div>
-              <button type="button" onClick={() => handleCheckServer()}
-                disabled={!serverUrl.trim() || serverStatus === 'checking'}
-                className="px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-md text-[10px] text-gray-300 hover:bg-gray-600 disabled:opacity-50 transition-colors shrink-0">
-                {serverStatus === 'checking' ? <Loader size={12} className="animate-spin" /> : t('auth.check')}
-              </button>
-            </div>
-            {serverStatus === 'ok' && (
-              <div className="flex items-center gap-1 mt-1 text-[10px] text-green-400">
-                <CheckCircle size={10} />
-                {groupName ? t('auth.connected_to', { name: groupName }) : t('auth.server_connected')}
-              </div>
-            )}
-            {serverStatus === 'error' && (
-              <div className="flex items-center gap-1 mt-1 text-[10px] text-red-400">
-                <XCircle size={10} /> {serverError}
-              </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* Tab toggle */}
           <div className={`flex mb-4 bg-gray-900 rounded-lg p-1 ${serverInitialized === false ? 'opacity-40 pointer-events-none' : ''}`}>
             <button onClick={() => setMode('login')}
-              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                mode === 'login' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
-              }`}>
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${mode === 'login' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
+                }`}>
               <LogIn size={16} /> {t('auth.login')}
             </button>
             <button onClick={() => setMode('register')}
-              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                mode === 'register' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
-              }`}>
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${mode === 'register' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
+                }`}>
               <UserPlus size={16} /> {t('auth.register')}
             </button>
           </div>

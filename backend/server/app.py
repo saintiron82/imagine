@@ -133,6 +133,21 @@ async def startup():
     except Exception as e:
         logger.warning(f"mDNS registration failed: {e}")
 
+    # Firebase re-registration on restart (best-effort, non-blocking)
+    try:
+        from backend.server.deps import get_db
+        db = get_db()
+        cur = db.conn.execute("SELECT value FROM system_meta WHERE key='group_name'")
+        row = cur.fetchone()
+        if row:
+            from backend.server.firebase_registry import register_group
+            cfg = get_server_config()
+            port = cfg.get("port", 8000)
+            threading.Thread(target=register_group, args=(row[0], port), daemon=True).start()
+            logger.info(f"Firebase re-registration queued for '{row[0]}'")
+    except Exception as e:
+        logger.warning(f"Firebase re-registration skipped: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown():
