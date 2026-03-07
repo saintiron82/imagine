@@ -258,7 +258,7 @@ class TransformersEmbeddingProvider(EmbeddingProvider):
             self._hf_model_id, padding_side='left'
         )
         # Use device_map to load directly onto GPU/MPS, avoiding 2x memory peak
-        load_kwargs = {"torch_dtype": torch.float16}
+        load_kwargs = {"torch_dtype": torch.float16, "attn_implementation": "sdpa"}
         if self._device in ("cuda", "mps"):
             load_kwargs["device_map"] = {"": self._device}
         self._model = AutoModel.from_pretrained(

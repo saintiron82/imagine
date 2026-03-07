@@ -71,6 +71,7 @@ class VisionAnalyzer:
         self.vlm_max_gen_time_s = float(
             cfg.get("vision.vlm_max_gen_time_s", default_max_gen_time_s) or default_max_gen_time_s
         )
+        self._use_static_cache = False  # set after model load
 
         logger.info(
             f"VisionAnalyzer initialized (tier: {tier_name}, device: {self.device}, "
@@ -97,10 +98,13 @@ class VisionAnalyzer:
         kwargs = {"max_new_tokens": self.vlm_max_new_tokens}
         if self.vlm_max_gen_time_s > 0:
             kwargs["max_time"] = self.vlm_max_gen_time_s
+        if self._use_static_cache:
+            kwargs["cache_implementation"] = "static"
         try:
             return self.model.generate(**inputs, **kwargs)
         except TypeError:
             kwargs.pop("max_time", None)
+            kwargs.pop("cache_implementation", None)
             return self.model.generate(**inputs, **kwargs)
 
     def _configure_padding_for_decoder_generation(self):
@@ -199,6 +203,7 @@ class VisionAnalyzer:
                     self.model_id,
                     torch_dtype=torch.float16,
                     device_map=dm,
+                    attn_implementation="sdpa",
                     **hf_kwargs,
                 )
             else:
@@ -206,6 +211,7 @@ class VisionAnalyzer:
                 self.model = AutoModelForImageTextToText.from_pretrained(
                     self.model_id,
                     torch_dtype=torch.float32,
+                    attn_implementation="sdpa",
                     **hf_kwargs,
                 )
             logger.info(
@@ -224,6 +230,7 @@ class VisionAnalyzer:
             other_kwargs = {
                 "trust_remote_code": True,
                 "torch_dtype": other_dtype,
+                "attn_implementation": "sdpa",
                 **hf_kwargs,
             }
             if self.device in ("cuda", "mps"):
@@ -245,19 +252,23 @@ class VisionAnalyzer:
         try:
             self._load_model_with_kwargs(local_files_only=True)
             logger.info(f"{self.model_id} loaded from cache on {self.device}")
-            return
         except OSError:
             logger.info(f"{self.model_id} not in local cache, downloading from HuggingFace...")
-
-        # Stage 2: auto-download from HuggingFace
-        try:
-            self._load_model_with_kwargs(local_files_only=False)
-            logger.info(f"{self.model_id} downloaded and loaded on {self.device}")
-        except Exception as e:
-            if isinstance(e, TimeoutError) or e.__class__.__name__ == "_TimedOut":
+            # Stage 2: auto-download from HuggingFace
+            try:
+                self._load_model_with_kwargs(local_files_only=False)
+                logger.info(f"{self.model_id} downloaded and loaded on {self.device}")
+            except Exception as e:
+                if isinstance(e, TimeoutError) or e.__class__.__name__ == "_TimedOut":
+                    raise
+                logger.error(f"Failed to load {self.model_id}: {e}")
                 raise
-            logger.error(f"Failed to load {self.model_id}: {e}")
-            raise
+
+        # Enable static KV cache for Qwen VLMs on GPU (reduces allocation overhead)
+        self._use_static_cache = (
+            self.device in ("cuda", "mps")
+            and "qwen" in self.model_id.lower()
+        )
 
     def analyze(
         self,
