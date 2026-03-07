@@ -10,7 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_current_user
-from backend.server.rate_limit import check_login_rate, check_register_rate
+from backend.server.rate_limit import (
+    check_login_rate, check_register_rate,
+    check_refresh_rate, check_worker_token_rate,
+)
 from backend.server.auth.schemas import (
     RegisterRequest, LoginRequest, RefreshRequest,
     TokenResponse, UserResponse, WorkerTokenExchange,
@@ -145,7 +148,8 @@ def login(req: LoginRequest, db: SQLiteDB = Depends(get_db)):
     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post("/refresh", response_model=TokenResponse,
+              dependencies=[Depends(check_refresh_rate)])
 def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db)):
     """Refresh access token using a valid refresh token."""
     cursor = db.conn.cursor()
@@ -189,7 +193,8 @@ def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db)):
     )
 
 
-@router.post("/worker-token", response_model=TokenResponse)
+@router.post("/worker-token", response_model=TokenResponse,
+              dependencies=[Depends(check_worker_token_rate)])
 def exchange_worker_token(req: WorkerTokenExchange, db: SQLiteDB = Depends(get_db)):
     """Exchange a worker token secret for JWT access/refresh tokens."""
     import hashlib

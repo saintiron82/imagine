@@ -283,10 +283,15 @@ const SetupPage = ({ onComplete }) => {
     }, [groupName, serverPassword, adminUsername, adminPassword, onComplete]);
 
     const handleResetGroup = useCallback(async () => {
-        if (!window.confirm(t('group.reset_confirm'))) return;
+        const pw = window.prompt(t('group.reset_password_prompt'));
+        if (pw === null) return; // cancelled
+        if (!pw) {
+            setCreateError(t('group.reset_password_required'));
+            return;
+        }
         try {
             const baseUrl = `http://localhost:8000`;
-            await resetGroup(baseUrl);
+            await resetGroup(baseUrl, pw);
             setCreateError('');
         } catch (e) {
             setCreateError(e.message || 'Reset failed');

@@ -90,5 +90,9 @@ class WorkerTokenResponse(BaseModel):
     last_used_at: Optional[str] = None
 
 
+class ResetGroupRequest(BaseModel):
+    server_password: str = Field(..., min_length=1, max_length=128)
+
+
 class WorkerTokenExchange(BaseModel):
     token: str

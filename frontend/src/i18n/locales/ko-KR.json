@@ -608,6 +608,8 @@
   "group.reset": "그룹 초기화",
   "group.reset_confirm": "그룹 정보와 모든 사용자 계정이 삭제됩니다. 파일 데이터는 유지됩니다. 계속하시겠습니까?",
   "group.reset_success": "그룹이 초기화되었습니다.",
+  "group.reset_password_prompt": "그룹을 초기화하려면 서버 비밀번호를 입력하세요:",
+  "group.reset_password_required": "그룹 초기화에는 서버 비밀번호가 필요합니다.",
   "group.create_title": "새 그룹 만들기",
   "group.create_short_desc": "새 서버 그룹을 초기화합니다",
   "group.admin_username": "관리자 아이디",

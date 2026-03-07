@@ -124,11 +124,13 @@ export async function initServer(baseUrl, { group_name, server_password, admin_u
 
 /**
  * Reset group (auth data). File data is preserved.
- * No auth required — used when user cannot log in.
+ * Requires server password for security.
  */
-export async function resetGroup(baseUrl) {
+export async function resetGroup(baseUrl, serverPassword) {
   const resp = await fetch(`${baseUrl}/api/v1/server/reset-group`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ server_password: serverPassword }),
     signal: AbortSignal.timeout(10000),
   });
   let data;

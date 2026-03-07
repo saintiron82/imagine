@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db
-from backend.server.auth.schemas import ServerInitRequest, TokenResponse
+from backend.server.auth.schemas import ServerInitRequest, ResetGroupRequest, TokenResponse
 from backend.server.auth.jwt import (
     create_access_token, create_refresh_token,
     hash_refresh_token, get_refresh_token_expiry,
@@ -118,10 +118,12 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
 
 
 @router.post("/reset-group")
-def reset_group(db: SQLiteDB = Depends(get_db)):
+def reset_group(req: ResetGroupRequest, db: SQLiteDB = Depends(get_db)):
     """Reset group and auth data. File data is preserved.
-    No auth required — used when user cannot log in to existing group."""
+    Requires server password to prevent unauthorized resets."""
     try:
+        import bcrypt
+
         cursor = db.conn.cursor()
 
         # Check if there's a group to reset
@@ -131,6 +133,12 @@ def reset_group(db: SQLiteDB = Depends(get_db)):
             raise HTTPException(status_code=404, detail="No group to reset")
 
         group_name = row[0]
+
+        # Verify server password
+        cursor.execute("SELECT value FROM system_meta WHERE key = 'server_password_hash'")
+        pw_row = cursor.fetchone()
+        if not pw_row or not bcrypt.checkpw(req.server_password.encode(), pw_row[0].encode()):
+            raise HTTPException(status_code=403, detail="Invalid server password")
 
         # Clear auth tables
         cursor.execute("DELETE FROM worker_sessions")

@@ -346,11 +346,16 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
   };
 
   const handleResetGroup = async () => {
-    if (!window.confirm(t('group.reset_confirm'))) return;
+    const pw = window.prompt(t('group.reset_password_prompt'));
+    if (pw === null) return; // cancelled
+    if (!pw) {
+      setCreateError(t('group.reset_password_required'));
+      return;
+    }
     try {
       const port = serverPort || 8000;
       const baseUrl = `http://localhost:${port}`;
-      await resetGroup(baseUrl);
+      await resetGroup(baseUrl, pw);
       setCreateError('');
       setServerInitialized(false);
       setGroupName('');

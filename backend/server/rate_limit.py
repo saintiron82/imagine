@@ -13,9 +13,13 @@ from fastapi import Request, HTTPException
 # Per-endpoint stores: IP -> list of request timestamps
 _login_calls: dict[str, list[float]] = defaultdict(list)
 _register_calls: dict[str, list[float]] = defaultdict(list)
+_refresh_calls: dict[str, list[float]] = defaultdict(list)
+_worker_token_calls: dict[str, list[float]] = defaultdict(list)
 
 LOGIN_LIMIT = 5       # max login attempts per window
 REGISTER_LIMIT = 3    # max register attempts per window
+REFRESH_LIMIT = 10    # max refresh attempts per window
+WORKER_TOKEN_LIMIT = 5  # max worker-token exchanges per window
 WINDOW_SECONDS = 60   # 1-minute sliding window
 
 
@@ -58,3 +62,15 @@ async def check_register_rate(request: Request) -> None:
     """FastAPI dependency: rate-limit registration attempts (3/min per IP)."""
     ip = _get_client_ip(request)
     _check_rate(_register_calls, ip, REGISTER_LIMIT, WINDOW_SECONDS)
+
+
+async def check_refresh_rate(request: Request) -> None:
+    """FastAPI dependency: rate-limit token refresh attempts (10/min per IP)."""
+    ip = _get_client_ip(request)
+    _check_rate(_refresh_calls, ip, REFRESH_LIMIT, WINDOW_SECONDS)
+
+
+async def check_worker_token_rate(request: Request) -> None:
+    """FastAPI dependency: rate-limit worker token exchanges (5/min per IP)."""
+    ip = _get_client_ip(request)
+    _check_rate(_worker_token_calls, ip, WORKER_TOKEN_LIMIT, WINDOW_SECONDS)

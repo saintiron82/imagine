@@ -608,6 +608,8 @@
   "group.reset": "Reset Group",
   "group.reset_confirm": "Group info and all user accounts will be deleted. File data will be preserved. Continue?",
   "group.reset_success": "Group has been reset.",
+  "group.reset_password_prompt": "Enter the server password to reset the group:",
+  "group.reset_password_required": "Server password is required to reset the group.",
   "group.create_title": "Create New Group",
   "group.create_short_desc": "Initialize a new server group",
   "group.admin_username": "Admin Username",
