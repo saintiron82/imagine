@@ -122,6 +122,58 @@ export async function initServer(baseUrl, { group_name, server_password, admin_u
   return data;
 }
 
+// ── Firebase Auth integration ───────────────────────────────
+
+/**
+ * Login to group server using Firebase ID Token.
+ * Server verifies membership and returns server session JWT.
+ */
+export async function firebaseLogin(idToken) {
+  const data = await apiClient.post('/api/v1/auth/firebase-login', {
+    id_token: idToken,
+  });
+  if (data.access_token) {
+    setTokens(data.access_token, data.refresh_token);
+  }
+  return data;
+}
+
+/**
+ * Join a group using invite code + Firebase ID Token.
+ */
+export async function joinGroup(idToken, inviteCode) {
+  const data = await apiClient.post('/api/v1/auth/join', {
+    id_token: idToken,
+    invite_code: inviteCode,
+  });
+  if (data.access_token) {
+    setTokens(data.access_token, data.refresh_token);
+  }
+  return data;
+}
+
+/**
+ * Initialize server with Firebase Auth (Electron create group).
+ */
+export async function firebaseInitServer(baseUrl, { group_name, id_token }) {
+  const resp = await fetch(`${baseUrl}/api/v1/server/firebase-init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ group_name, id_token }),
+    signal: AbortSignal.timeout(10000),
+  });
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error(`Server error (HTTP ${resp.status})`);
+  }
+  if (!resp.ok) {
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+  return data;
+}
+
 /**
  * Reset group (auth data). File data is preserved.
  * Requires server password for security.

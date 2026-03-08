@@ -12,7 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db
-from backend.server.auth.schemas import ServerInitRequest, ResetGroupRequest, TokenResponse
+from backend.server.auth.schemas import (
+    ServerInitRequest, ResetGroupRequest, TokenResponse,
+    FirebaseServerInitRequest,
+)
 from backend.server.auth.jwt import (
     create_access_token, create_refresh_token,
     hash_refresh_token, get_refresh_token_expiry,
@@ -114,6 +117,105 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"Server init failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/firebase-init", response_model=TokenResponse)
+def firebase_init_server(req: FirebaseServerInitRequest, db: SQLiteDB = Depends(get_db)):
+    """Initialize server with Firebase Auth (no server password needed).
+
+    The first user (from Firebase ID Token) becomes the admin.
+    """
+    from backend.server.firebase_auth import verify_firebase_token
+
+    decoded = verify_firebase_token(req.id_token)
+    if decoded is None:
+        raise HTTPException(status_code=401, detail="Invalid Firebase token")
+
+    uid = decoded['uid']
+    email = decoded['email']
+    display_name = decoded.get('name', '') or email.split('@')[0]
+
+    try:
+        cursor = db.conn.cursor()
+
+        # Check if already initialized
+        cursor.execute("SELECT value FROM system_meta WHERE key = 'group_name'")
+        if cursor.fetchone():
+            raise HTTPException(status_code=409, detail="Server already initialized")
+
+        # Full reset: new group starts with clean slate
+        cursor.execute("DELETE FROM vec_files")
+        cursor.execute("DELETE FROM vec_text")
+        cursor.execute("DELETE FROM files_fts")
+        cursor.execute("DELETE FROM job_queue")
+        cursor.execute("DELETE FROM layers")
+        cursor.execute("DELETE FROM files")
+        cursor.execute("DELETE FROM worker_sessions")
+        cursor.execute("DELETE FROM worker_tokens")
+        if db._table_exists('invite_uses'):
+            cursor.execute("DELETE FROM invite_uses")
+        cursor.execute("DELETE FROM invite_codes")
+        cursor.execute("DELETE FROM refresh_tokens")
+        cursor.execute("DELETE FROM users")
+        if db._table_exists('members'):
+            cursor.execute("DELETE FROM members")
+        cursor.execute("DELETE FROM system_meta")
+
+        # Store group name
+        cursor.execute(
+            "INSERT OR REPLACE INTO system_meta (key, value) VALUES (?, ?)",
+            ("group_name", req.group_name)
+        )
+        # Mark as Firebase Auth mode
+        cursor.execute(
+            "INSERT OR REPLACE INTO system_meta (key, value) VALUES (?, ?)",
+            ("auth_mode", "firebase")
+        )
+
+        # Create admin member
+        cursor.execute(
+            """INSERT INTO members (firebase_uid, email, display_name, role, is_active)
+               VALUES (?, ?, ?, 'admin', 1)""",
+            (uid, email, display_name)
+        )
+        member_id = cursor.lastrowid
+
+        # Generate tokens for auto-login
+        access_token = create_access_token(member_id, display_name, "admin")
+        refresh_token = create_refresh_token()
+
+        cursor.execute(
+            """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+               VALUES (?, ?, ?)""",
+            (member_id, hash_refresh_token(refresh_token),
+             get_refresh_token_expiry().isoformat())
+        )
+
+        db.conn.commit()
+        logger.info(f"Server initialized (Firebase): group='{req.group_name}', admin='{email}'")
+
+        # Best-effort: register group to Firebase RTDB
+        try:
+            from backend.server.firebase_registry import register_group
+            import threading
+            port = 8000
+            threading.Thread(
+                target=register_group,
+                args=(req.group_name, port),
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logger.debug(f"Firebase registration skipped: {e}")
+
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Firebase server init failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

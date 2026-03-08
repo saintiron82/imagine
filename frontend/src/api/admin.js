@@ -136,6 +136,28 @@ export async function registerWorker() {
   return apiClient.post('/api/v1/worker/register');
 }
 
+// ── Members (Firebase Auth) ─────────────────────────────
+
+export async function listMembers() {
+  return apiClient.get('/api/v1/admin/members');
+}
+
+export async function updateMemberRole(memberId, role) {
+  return apiClient.patch(`/api/v1/admin/members/${memberId}/role`, { role });
+}
+
+export async function removeMember(memberId) {
+  return apiClient.delete(`/api/v1/admin/members/${memberId}`);
+}
+
+export async function deactivateMember(memberId) {
+  return apiClient.patch(`/api/v1/admin/members/${memberId}/deactivate`);
+}
+
+export async function activateMember(memberId) {
+  return apiClient.patch(`/api/v1/admin/members/${memberId}/activate`);
+}
+
 // ── Database Management ─────────────────────────────────
 
 export async function resetDatabase(password) {

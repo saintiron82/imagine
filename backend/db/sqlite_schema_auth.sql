@@ -151,3 +151,25 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
     ON job_queue(parse_status, priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed
     ON job_queue(mc_completed_at);
+
+-- ═══════════════════════════════════════════════════════════════
+-- Members (Firebase Auth based group membership)
+-- Replaces users table for Firebase Auth integration
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT NOT NULL,
+    email TEXT NOT NULL,
+    display_name TEXT,
+    role TEXT CHECK (role IN ('admin', 'user')) DEFAULT 'user',
+    is_active INTEGER DEFAULT 1,
+    invited_by INTEGER REFERENCES members(id),
+    joined_at TEXT DEFAULT (datetime('now')),
+    last_seen_at TEXT,
+    quota_files_per_day INTEGER DEFAULT 1000,
+    quota_search_per_min INTEGER DEFAULT 60
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_members_firebase_uid ON members(firebase_uid);
+CREATE INDEX IF NOT EXISTS idx_members_email ON members(email);
