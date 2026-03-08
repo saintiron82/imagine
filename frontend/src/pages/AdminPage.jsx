@@ -20,9 +20,10 @@ import {
   Shield, ShieldOff, Trash2, Copy, Plus, Square, Ban,
   RefreshCw, CheckCircle, XCircle, AlertTriangle,
   Folder, FolderOpen, ChevronRight, ArrowUp, Play, Loader2,
-  Tag, ChevronDown, Pencil, AlertOctagon,
+  Tag, ChevronDown, Pencil, AlertOctagon, Crown,
 } from 'lucide-react';
 import { listDomains, getDomainDetail, getActiveDomainConfig, setActiveDomain, saveDomainYaml } from '../services/bridge';
+import SubscriptionPanel from '../components/SubscriptionPanel';
 
 export default function AdminPage() {
   const { t } = useLocale();
@@ -37,6 +38,7 @@ export default function AdminPage() {
     { id: 'users', label: t('admin.tab_users'), icon: Users },
     { id: 'invites', label: t('admin.tab_invites'), icon: Key },
     { id: 'worker_tokens', label: t('admin.tab_worker_tokens'), icon: Terminal },
+    { id: 'subscription', label: t('admin.tab_subscription'), icon: Crown },
   ];
 
   return (
@@ -68,6 +70,7 @@ export default function AdminPage() {
         {activeTab === 'users' && <UsersPanel />}
         {activeTab === 'invites' && <InvitesPanel />}
         {activeTab === 'worker_tokens' && <WorkerTokensPanel />}
+        {activeTab === 'subscription' && <SubscriptionPanel />}
       </div>
     </div>
   );

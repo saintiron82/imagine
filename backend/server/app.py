@@ -121,6 +121,41 @@ async def startup():
     except Exception as e:
         logger.warning(f"Heartbeat watchdog failed to start: {e}")
 
+    # License manager: hybrid verification (Firebase RTDB → cache → offline JWT → free-tier)
+    try:
+        from backend.server.deps import get_db
+        from backend.server.licensing.license_manager import LicenseManager
+        from backend.server.licensing.enforcement import set_license_manager
+        db = get_db()
+        lm = LicenseManager(db)
+        set_license_manager(lm)
+        app.state.license_manager = lm
+        info = await lm.verify()
+        logger.info(f"License: {info.plan_id} / {info.status} (users={info.current_users}/{info.max_users})")
+
+        # Periodic re-verification (every 1 hour)
+        app.state.license_check_stop = threading.Event()
+        def _license_check():
+            import asyncio
+            stop = app.state.license_check_stop
+            while not stop.is_set():
+                stop.wait(3600)
+                if stop.is_set():
+                    break
+                try:
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(lm.verify())
+                    loop.close()
+                    logger.info("Periodic license re-verification complete")
+                except Exception as e:
+                    logger.warning(f"Periodic license check failed: {e}")
+
+        t = threading.Thread(target=_license_check, daemon=True, name="license-check")
+        t.start()
+        logger.info("License manager started (1h periodic check)")
+    except Exception as e:
+        logger.warning(f"License manager failed to start: {e}")
+
     # mDNS service registration (optional — requires zeroconf)
     try:
         from backend.server.mdns import ImagineServiceAnnouncer
@@ -162,6 +197,9 @@ async def shutdown():
         if hasattr(app.state.heartbeat_watchdog, "_stop_event"):
             app.state.heartbeat_watchdog._stop_event.set()
         logger.info("Heartbeat watchdog stopped")
+    if hasattr(app.state, "license_check_stop") and app.state.license_check_stop:
+        app.state.license_check_stop.set()
+        logger.info("License check stopped")
     if hasattr(app.state, "mdns") and app.state.mdns:
         app.state.mdns.stop()
     close_db()
@@ -183,6 +221,7 @@ from backend.server.routers.sync import router as sync_router
 from backend.server.routers.classification import router as classification_router
 from backend.server.routers.database import router as database_router
 from backend.server.routers.server_init import router as server_init_router
+from backend.server.routers.license import router as license_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -198,6 +237,7 @@ app.include_router(sync_router, prefix="/api/v1")
 app.include_router(classification_router, prefix="/api/v1")
 app.include_router(database_router, prefix="/api/v1")
 app.include_router(server_init_router, prefix="/api/v1")
+app.include_router(license_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

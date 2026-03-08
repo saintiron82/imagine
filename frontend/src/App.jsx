@@ -24,6 +24,7 @@ import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
 import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
+import SubscriptionBanner from './components/SubscriptionBanner';
 
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
@@ -1208,6 +1209,8 @@ function App() {
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden flex-col">
       {/* EOL Warning Banner */}
       <EolBanner />
+      {/* Subscription status banner (grace period, expired, etc.) */}
+      {isAuthenticated && <SubscriptionBanner />}
 
       {/* Update Notification Toast (top-right overlay) */}
       <UpdateNotification />
