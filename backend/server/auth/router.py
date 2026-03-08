@@ -17,6 +17,7 @@ from backend.server.rate_limit import (
 from backend.server.auth.schemas import (
     RegisterRequest, LoginRequest, RefreshRequest,
     TokenResponse, UserResponse, WorkerTokenExchange,
+    FirebaseLoginRequest, JoinGroupRequest, MemberResponse,
 )
 from backend.server.auth.jwt import (
     create_access_token, create_refresh_token,
@@ -267,6 +268,24 @@ def exchange_worker_token(req: WorkerTokenExchange, db: SQLiteDB = Depends(get_d
 def get_me(current_user: dict = Depends(get_current_user), db: SQLiteDB = Depends(get_db)):
     """Get current user info."""
     cursor = db.conn.cursor()
+
+    # Try members table first (Firebase Auth), fall back to users table (legacy)
+    cursor.execute(
+        """SELECT id, display_name, email, role, is_active, joined_at,
+                  last_seen_at, quota_files_per_day, quota_search_per_min
+           FROM members WHERE id = ?""",
+        (current_user["id"],)
+    )
+    row = cursor.fetchone()
+    if row:
+        return UserResponse(
+            id=row[0], username=row[1] or row[2],  # display_name or email
+            email=row[2], role=row[3],
+            is_active=bool(row[4]), created_at=row[5], last_login_at=row[6],
+            quota_files_per_day=row[7], quota_search_per_min=row[8],
+        )
+
+    # Legacy users table fallback
     cursor.execute(
         """SELECT id, username, email, role, is_active, created_at,
                   last_login_at, quota_files_per_day, quota_search_per_min
@@ -281,4 +300,160 @@ def get_me(current_user: dict = Depends(get_current_user), db: SQLiteDB = Depend
         id=row[0], username=row[1], email=row[2], role=row[3],
         is_active=bool(row[4]), created_at=row[5], last_login_at=row[6],
         quota_files_per_day=row[7], quota_search_per_min=row[8],
+    )
+
+
+# ── Firebase Auth endpoints ──────────────────────────────────
+
+@router.post("/firebase-login", response_model=TokenResponse,
+              dependencies=[Depends(check_login_rate)])
+def firebase_login(req: FirebaseLoginRequest, db: SQLiteDB = Depends(get_db)):
+    """Login to group server using Firebase ID Token.
+
+    Flow:
+    1. Verify Firebase ID Token → get uid, email
+    2. Check members table for membership
+    3. If member → issue server JWT (access + refresh)
+    4. If not member → 403
+    """
+    from backend.server.firebase_auth import verify_firebase_token
+
+    decoded = verify_firebase_token(req.id_token)
+    if decoded is None:
+        raise HTTPException(status_code=401, detail="Invalid Firebase token")
+
+    uid = decoded['uid']
+    email = decoded['email']
+
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """SELECT id, display_name, email, role, is_active
+           FROM members WHERE firebase_uid = ?""",
+        (uid,)
+    )
+    row = cursor.fetchone()
+
+    if row is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Not a member of this group"
+        )
+
+    member_id, display_name, db_email, role, is_active = row
+
+    if not is_active:
+        raise HTTPException(status_code=403, detail="Membership is deactivated")
+
+    # Update last_seen and email if changed
+    cursor.execute(
+        "UPDATE members SET last_seen_at = datetime('now'), email = ? WHERE id = ?",
+        (email, member_id)
+    )
+
+    # Generate server session tokens
+    username = display_name or email
+    access_token = create_access_token(member_id, username, role)
+    refresh_token = create_refresh_token()
+
+    cursor.execute(
+        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+           VALUES (?, ?, ?)""",
+        (member_id, hash_refresh_token(refresh_token),
+         get_refresh_token_expiry().isoformat())
+    )
+
+    db.conn.commit()
+    logger.info(f"Firebase login: {email} (member_id={member_id}, role={role})")
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
+
+
+@router.post("/join", response_model=TokenResponse,
+              dependencies=[Depends(check_register_rate)])
+def join_group(req: JoinGroupRequest, db: SQLiteDB = Depends(get_db)):
+    """Join a group using invite code + Firebase ID Token.
+
+    Flow:
+    1. Verify Firebase ID Token → get uid, email, display_name
+    2. Validate invite code (active, not expired, uses remaining)
+    3. Check not already a member
+    4. Register as member (role: user)
+    5. Issue server JWT
+    """
+    from backend.server.firebase_auth import verify_firebase_token
+
+    decoded = verify_firebase_token(req.id_token)
+    if decoded is None:
+        raise HTTPException(status_code=401, detail="Invalid Firebase token")
+
+    uid = decoded['uid']
+    email = decoded['email']
+    display_name = decoded.get('name', '')
+
+    cursor = db.conn.cursor()
+
+    # Validate invite code
+    cursor.execute(
+        """SELECT id, max_uses, use_count, expires_at, is_active
+           FROM invite_codes WHERE code = ?""",
+        (req.invite_code,)
+    )
+    code_row = cursor.fetchone()
+    if code_row is None:
+        raise HTTPException(status_code=404, detail="Invalid invite code")
+
+    code_id, max_uses, use_count, expires_at, code_active = code_row
+
+    if not code_active:
+        raise HTTPException(status_code=410, detail="Invite code is no longer active")
+
+    if use_count >= max_uses:
+        raise HTTPException(status_code=410, detail="Invite code has been fully used")
+
+    if expires_at:
+        from datetime import datetime, timezone
+        exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if exp < datetime.now(timezone.utc):
+            raise HTTPException(status_code=410, detail="Invite code has expired")
+
+    # Check if already a member
+    cursor.execute("SELECT id FROM members WHERE firebase_uid = ?", (uid,))
+    if cursor.fetchone():
+        raise HTTPException(status_code=409, detail="Already a member of this group")
+
+    # Register as member
+    cursor.execute(
+        """INSERT INTO members (firebase_uid, email, display_name, role, is_active)
+           VALUES (?, ?, ?, 'user', 1)""",
+        (uid, email, display_name)
+    )
+    member_id = cursor.lastrowid
+
+    # Update invite code usage
+    cursor.execute(
+        "UPDATE invite_codes SET use_count = use_count + 1 WHERE id = ?",
+        (code_id,)
+    )
+
+    # Generate server session tokens
+    username = display_name or email
+    access_token = create_access_token(member_id, username, "user")
+    refresh_token = create_refresh_token()
+
+    cursor.execute(
+        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+           VALUES (?, ?, ?)""",
+        (member_id, hash_refresh_token(refresh_token),
+         get_refresh_token_expiry().isoformat())
+    )
+
+    db.conn.commit()
+    logger.info(f"New member joined: {email} (member_id={member_id}, invite_code={req.invite_code})")
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
     )

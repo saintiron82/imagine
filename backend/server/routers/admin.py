@@ -16,6 +16,7 @@ from backend.server.auth.schemas import (
     InviteCodeCreate, InviteCodeResponse,
     UserResponse, UserUpdateRequest,
     WorkerTokenCreate, WorkerTokenResponse,
+    MemberResponse, MemberRoleUpdate,
 )
 from backend.server.auth.jwt import create_access_token, create_refresh_token, hash_refresh_token
 
@@ -169,6 +170,138 @@ def delete_user(
     db.conn.commit()
     logger.info(f"Admin {admin['username']} deleted user {user_id}")
     return {"success": True, "deleted_user_id": user_id}
+
+
+# ── Member Management (Firebase Auth) ────────────────────────
+
+@router.get("/members", response_model=List[MemberResponse])
+def list_members(
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """List all group members (admin only)."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """SELECT id, firebase_uid, email, display_name, role, is_active,
+                  joined_at, last_seen_at, quota_files_per_day, quota_search_per_min
+           FROM members ORDER BY joined_at DESC"""
+    )
+    return [
+        MemberResponse(
+            id=row[0], firebase_uid=row[1], email=row[2],
+            display_name=row[3], role=row[4], is_active=bool(row[5]),
+            joined_at=row[6], last_seen_at=row[7],
+            quota_files_per_day=row[8], quota_search_per_min=row[9],
+        )
+        for row in cursor.fetchall()
+    ]
+
+
+@router.patch("/members/{member_id}/role", response_model=MemberResponse)
+def update_member_role(
+    member_id: int,
+    req: MemberRoleUpdate,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Change a member's role (admin only)."""
+    if member_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "UPDATE members SET role = ? WHERE id = ?",
+        (req.role, member_id)
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    db.conn.commit()
+    logger.info(f"Admin {admin['username']} changed member {member_id} role to {req.role}")
+
+    cursor.execute(
+        """SELECT id, firebase_uid, email, display_name, role, is_active,
+                  joined_at, last_seen_at, quota_files_per_day, quota_search_per_min
+           FROM members WHERE id = ?""",
+        (member_id,)
+    )
+    row = cursor.fetchone()
+    return MemberResponse(
+        id=row[0], firebase_uid=row[1], email=row[2],
+        display_name=row[3], role=row[4], is_active=bool(row[5]),
+        joined_at=row[6], last_seen_at=row[7],
+        quota_files_per_day=row[8], quota_search_per_min=row[9],
+    )
+
+
+@router.delete("/members/{member_id}")
+def remove_member(
+    member_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Remove a member from the group (admin only). Cannot remove yourself."""
+    if member_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="Cannot remove yourself")
+
+    cursor = db.conn.cursor()
+
+    # Revoke all refresh tokens for this member
+    cursor.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (member_id,))
+
+    cursor.execute("DELETE FROM members WHERE id = ?", (member_id,))
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    db.conn.commit()
+    logger.info(f"Admin {admin['username']} removed member {member_id}")
+    return {"success": True, "removed_member_id": member_id}
+
+
+@router.patch("/members/{member_id}/deactivate")
+def deactivate_member(
+    member_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Deactivate a member (admin only). They can't login but data is preserved."""
+    if member_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="Cannot deactivate yourself")
+
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "UPDATE members SET is_active = 0 WHERE id = ?",
+        (member_id,)
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    # Revoke refresh tokens
+    cursor.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (member_id,))
+
+    db.conn.commit()
+    logger.info(f"Admin {admin['username']} deactivated member {member_id}")
+    return {"success": True}
+
+
+@router.patch("/members/{member_id}/activate")
+def activate_member(
+    member_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Re-activate a deactivated member (admin only)."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "UPDATE members SET is_active = 1 WHERE id = ?",
+        (member_id,)
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    db.conn.commit()
+    logger.info(f"Admin {admin['username']} activated member {member_id}")
+    return {"success": True}
 
 
 # ── Embedded Worker Control ──────────────────────────────────

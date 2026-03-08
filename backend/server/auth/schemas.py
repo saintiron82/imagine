@@ -97,3 +97,41 @@ class ResetGroupRequest(BaseModel):
 
 class WorkerTokenExchange(BaseModel):
     token: str
+
+
+# ── Firebase Auth schemas ────────────────────────────────────
+
+class FirebaseLoginRequest(BaseModel):
+    """Login to group server using Firebase ID Token."""
+    id_token: str = Field(..., min_length=1)
+
+
+class JoinGroupRequest(BaseModel):
+    """Join a group using invite code + Firebase ID Token."""
+    id_token: str = Field(..., min_length=1)
+    invite_code: str = Field(..., min_length=1, max_length=20)
+
+
+class FirebaseServerInitRequest(BaseModel):
+    """Initialize server with Firebase Auth (replaces ServerInitRequest)."""
+    group_name: str = Field(..., min_length=1, max_length=100)
+    id_token: str = Field(..., min_length=1)
+
+
+class MemberResponse(BaseModel):
+    """Response for a group member."""
+    id: int
+    firebase_uid: str
+    email: str
+    display_name: Optional[str] = None
+    role: str
+    is_active: bool
+    joined_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    quota_files_per_day: int = 1000
+    quota_search_per_min: int = 60
+
+
+class MemberRoleUpdate(BaseModel):
+    """Update a member's role."""
+    role: str = Field(..., pattern=r'^(admin|user)$')
