@@ -59,13 +59,13 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
-  const login = useCallback(async ({ username, password, serverUrl }) => {
+  const login = useCallback(async ({ server_password, username, password, serverUrl }) => {
     setError('');
     try {
       if (serverUrl) setServerUrl(serverUrl);
-      const data = await apiLogin({ username, password });
+      const data = await apiLogin({ server_password, username, password });
       // Store credentials in memory so worker can do independent login
-      storeWorkerCredentials(username, password);
+      storeWorkerCredentials(server_password, username, password);
       const me = await getMe();
       setUser(me.user || me);
       return true;

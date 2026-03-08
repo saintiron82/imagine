@@ -17,8 +17,8 @@ export async function register({ server_password, username, email, password }) {
   return data;
 }
 
-export async function login({ username, email, password }) {
-  const data = await apiClient.post('/api/v1/auth/login', { username, email, password });
+export async function login({ server_password, username, email, password }) {
+  const data = await apiClient.post('/api/v1/auth/login', { server_password, username, email, password });
   if (data.access_token) {
     setTokens(data.access_token, data.refresh_token);
   }
@@ -40,8 +40,8 @@ let _workerCredentials = null;
  * Store login credentials in memory (for worker to do independent login).
  * Called after successful login. Never persisted to localStorage.
  */
-export function storeWorkerCredentials(username, password) {
-  _workerCredentials = { username, password };
+export function storeWorkerCredentials(server_password, username, password) {
+  _workerCredentials = { server_password, username, password };
 }
 
 /** Retrieve stored worker credentials (one-time read, still kept in memory). */

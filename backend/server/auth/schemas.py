@@ -23,6 +23,7 @@ class ServerInitRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    server_password: str = Field(..., min_length=1, max_length=128)
     username: Optional[str] = None
     email: Optional[str] = None
     password: str

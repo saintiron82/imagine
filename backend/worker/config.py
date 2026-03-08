@@ -30,11 +30,12 @@ def get_server_url() -> str:
 
 def get_worker_credentials() -> dict:
     """Get worker login credentials from env or config."""
+    server_password = os.getenv("IMAGINE_SERVER_PASSWORD", "")
     username = os.getenv("IMAGINE_WORKER_USERNAME")
     email = os.getenv("IMAGINE_WORKER_EMAIL")
     password = os.getenv("IMAGINE_WORKER_PASSWORD")
     if (username or email) and password:
-        creds = {"password": password}
+        creds = {"server_password": server_password, "password": password}
         if username:
             creds["username"] = username
         if email:
@@ -42,6 +43,7 @@ def get_worker_credentials() -> dict:
         return creds
     cfg = get_worker_config()
     return {
+        "server_password": cfg.get("server_password", ""),
         "username": cfg.get("username", ""),
         "email": cfg.get("email", ""),
         "password": cfg.get("password", ""),

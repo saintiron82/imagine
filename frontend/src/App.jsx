@@ -7,8 +7,10 @@ import ImportDbDialog from './components/ImportDbDialog';
 import ServerArchiveView from './components/ServerArchiveView';
 import ClientWorkerView from './components/ClientWorkerView';
 import LoginPage from './pages/LoginPage';
+import LoginPageV2 from './pages/LoginPageV2';
 import AdminPage from './pages/AdminPage';
 // SetupPage removed — LoginPage is now the first screen
+const USE_LOGIN_V2 = true; // Toggle to switch between login page versions
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
 import UpdateNotification from './components/UpdateNotification';
@@ -136,9 +138,9 @@ function App() {
     window.electron?.license?.get().catch(() => {});
   }, []);
 
-  // Electron: always auto-start local server on mount
+  // Electron: auto-start local server on mount (V1 only — V2 handles its own startup)
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron || USE_LOGIN_V2) return;
 
     const startLocalServer = async () => {
       const port = serverPort || 8000;
@@ -1182,6 +1184,12 @@ function App() {
   if (skipAuth === false && !isAuthenticated) {
     if (showDownloadPage) {
       return <DownloadPage onBack={() => setShowDownloadPage(false)} />;
+    }
+    if (USE_LOGIN_V2) {
+      return <LoginPageV2
+        onLoginComplete={handleLoginComplete}
+        serverPort={serverPort}
+      />;
     }
     return <LoginPage
       onShowDownload={!isElectron ? () => setShowDownloadPage(true) : undefined}

@@ -99,8 +99,17 @@ def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse,
               dependencies=[Depends(check_login_rate)])
 def login(req: LoginRequest, db: SQLiteDB = Depends(get_db)):
-    """Login with username or email and password."""
+    """Login with server password + username/email + password."""
+    import bcrypt
     cursor = db.conn.cursor()
+
+    # Verify server password first
+    cursor.execute("SELECT value FROM system_meta WHERE key = 'server_password_hash'")
+    sp_row = cursor.fetchone()
+    if sp_row is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+    if not bcrypt.checkpw(req.server_password.encode(), sp_row[0].encode()):
+        raise HTTPException(status_code=403, detail="Invalid server password")
 
     # Try username first, then email
     identifier = req.username or req.email

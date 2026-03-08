@@ -231,7 +231,7 @@ export default function LoginPage({ onShowDownload, onLoginComplete, serverRunni
     let success;
 
     if (mode === 'login') {
-      success = await login({ username, password, serverUrl: trimmedUrl });
+      success = await login({ server_password: serverPassword, username, password, serverUrl: trimmedUrl });
     } else {
       success = await register({
         server_password: serverPassword,
