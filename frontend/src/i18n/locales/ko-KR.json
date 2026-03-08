@@ -694,5 +694,20 @@
   "subscription.suspended": "라이선스 일시 정지 — 고객지원에 문의하세요",
   "subscription.grace_period": "라이선스 만료 후 {days}일 경과 — 곧 갱신해주세요",
   "subscription.expiring_soon": "라이선스가 {days}일 후 만료됩니다",
-  "subscription.users_approaching": "멤버 한도에 근접 ({current}/{max})"
+  "subscription.users_approaching": "멤버 한도에 근접 ({current}/{max})",
+  "members.title": "멤버 관리",
+  "members.col_email": "이메일",
+  "members.col_display_name": "표시 이름",
+  "members.col_role": "역할",
+  "members.col_status": "상태",
+  "members.col_joined": "가입일",
+  "members.col_actions": "액션",
+  "members.status_active": "활성",
+  "members.status_inactive": "비활성",
+  "members.role_admin": "관리자",
+  "members.role_user": "사용자",
+  "members.confirm_remove": "이 멤버를 정말 삭제하시겠습니까?",
+  "members.no_members": "멤버가 없습니다",
+  "members.cannot_change_self": "자신의 계정은 변경할 수 없습니다",
+  "admin.tab_members": "멤버"
 }

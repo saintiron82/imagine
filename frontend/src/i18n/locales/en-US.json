@@ -694,5 +694,20 @@
   "subscription.suspended": "License suspended — contact support",
   "subscription.grace_period": "License expired {days} days ago — renew soon",
   "subscription.expiring_soon": "License expires in {days} days",
-  "subscription.users_approaching": "Member limit approaching ({current}/{max})"
+  "subscription.users_approaching": "Member limit approaching ({current}/{max})",
+  "members.title": "Member Management",
+  "members.col_email": "Email",
+  "members.col_display_name": "Display Name",
+  "members.col_role": "Role",
+  "members.col_status": "Status",
+  "members.col_joined": "Joined At",
+  "members.col_actions": "Actions",
+  "members.status_active": "Active",
+  "members.status_inactive": "Inactive",
+  "members.role_admin": "admin",
+  "members.role_user": "user",
+  "members.confirm_remove": "Are you sure you want to remove this member?",
+  "members.no_members": "No members found",
+  "members.cannot_change_self": "Cannot modify your own account",
+  "admin.tab_members": "Members"
 }
