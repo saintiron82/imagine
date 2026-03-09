@@ -336,7 +336,7 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
         try:
             firebase_admin.get_app()
         except ValueError:
-            firebase_admin.initialize_app()
+            firebase_admin.initialize_app(options={'projectId': 'imagine-b1e9c'})
 
         decoded = firebase_auth.verify_id_token(req.firebase_id_token)
         firebase_uid = decoded['uid']
