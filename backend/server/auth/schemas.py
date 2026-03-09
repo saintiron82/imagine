@@ -99,6 +99,12 @@ class WorkerTokenExchange(BaseModel):
     token: str
 
 
+class FirebaseConnectRequest(BaseModel):
+    """Connect to server using Firebase ID token + server password."""
+    firebase_id_token: str = Field(..., min_length=1)
+    server_password: str = Field(..., min_length=1, max_length=128)
+
+
 # ── Firebase Auth schemas ────────────────────────────────────
 
 class FirebaseLoginRequest(BaseModel):

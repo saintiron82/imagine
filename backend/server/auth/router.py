@@ -17,6 +17,7 @@ from backend.server.rate_limit import (
 from backend.server.auth.schemas import (
     RegisterRequest, LoginRequest, RefreshRequest,
     TokenResponse, UserResponse, WorkerTokenExchange,
+    FirebaseConnectRequest,
     FirebaseLoginRequest, JoinGroupRequest, MemberResponse,
 )
 from backend.server.auth.jwt import (
@@ -300,6 +301,118 @@ def get_me(current_user: dict = Depends(get_current_user), db: SQLiteDB = Depend
         id=row[0], username=row[1], email=row[2], role=row[3],
         is_active=bool(row[4]), created_at=row[5], last_login_at=row[6],
         quota_files_per_day=row[7], quota_search_per_min=row[8],
+    )
+
+
+# ── 2-Layer Auth: Firebase Identity + Server Password ────────
+
+@router.post("/connect", response_model=TokenResponse,
+              dependencies=[Depends(check_login_rate)])
+def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(get_db)):
+    """Connect to server using Firebase ID token + server password.
+
+    2-layer auth:
+    1. Firebase Auth verifies identity (ID token)
+    2. Server verifies authorization (server_password)
+
+    Auto-creates user on first connection.
+    """
+    cursor = db.conn.cursor()
+
+    # 1. Verify server password
+    cursor.execute("SELECT value FROM system_meta WHERE key = 'server_password_hash'")
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+    if not _verify_password(req.server_password, row[0]):
+        raise HTTPException(status_code=403, detail="Invalid server password")
+
+    # 2. Verify Firebase ID token
+    try:
+        import firebase_admin
+        from firebase_admin import auth as firebase_auth
+
+        # Initialize Firebase Admin if not already
+        try:
+            firebase_admin.get_app()
+        except ValueError:
+            firebase_admin.initialize_app()
+
+        decoded = firebase_auth.verify_id_token(req.firebase_id_token)
+        firebase_uid = decoded['uid']
+        email = decoded.get('email', '')
+        display_name = decoded.get('name', '') or email.split('@')[0]
+    except ImportError:
+        raise HTTPException(status_code=501, detail="firebase-admin not installed")
+    except Exception as e:
+        logger.warning(f"Firebase token verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid Firebase token")
+
+    # 3. Find or create user by firebase_uid
+    cursor.execute(
+        "SELECT id, username, role, is_active FROM users WHERE firebase_uid = ?",
+        (firebase_uid,)
+    )
+    user_row = cursor.fetchone()
+
+    if user_row:
+        user_id, username, role, is_active = user_row
+        if not is_active:
+            raise HTTPException(status_code=403, detail="Account is deactivated")
+        # Update last login
+        cursor.execute(
+            "UPDATE users SET last_login_at = datetime('now') WHERE id = ?",
+            (user_id,)
+        )
+    else:
+        # Check max_users limit (0 = unlimited)
+        cursor.execute("SELECT value FROM system_meta WHERE key = 'max_users'")
+        max_row = cursor.fetchone()
+        max_users = int(max_row[0]) if max_row else 0
+
+        if max_users > 0:
+            cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+            current_count = cursor.fetchone()[0]
+            if current_count >= max_users:
+                raise HTTPException(status_code=403, detail="Server user limit reached")
+
+        # Auto-create user (first user gets admin if no users exist)
+        cursor.execute("SELECT COUNT(*) FROM users")
+        is_first = cursor.fetchone()[0] == 0
+        role = 'admin' if is_first else 'user'
+
+        # Use display_name as username, ensure uniqueness
+        username = display_name
+        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+        if cursor.fetchone():
+            # Append short uid suffix for uniqueness
+            username = f"{display_name}_{firebase_uid[:6]}"
+
+        cursor.execute(
+            """INSERT INTO users (username, email, password_hash, role, is_active, firebase_uid)
+               VALUES (?, ?, '', ?, 1, ?)""",
+            (username, email, role, firebase_uid)
+        )
+        user_id = cursor.lastrowid
+        logger.info(f"Auto-created user: {username} (firebase_uid={firebase_uid[:8]}..., role={role})")
+
+    # 4. Issue JWT
+    access_token = create_access_token(user_id, username, role)
+    refresh_token = create_refresh_token()
+
+    cursor.execute(
+        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+           VALUES (?, ?, ?)""",
+        (user_id, hash_refresh_token(refresh_token),
+         get_refresh_token_expiry().isoformat())
+    )
+
+    db.conn.commit()
+    logger.info(f"Firebase connect: {username} (uid={firebase_uid[:8]}..., role={role})")
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
     )
 
 

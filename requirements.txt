@@ -53,3 +53,6 @@ psutil>=7.0.0
 # MLX (Apple Silicon native acceleration, macOS only)
 mlx>=0.22.0; sys_platform == 'darwin'
 mlx-vlm>=0.3.0; sys_platform == 'darwin'
+
+# Firebase Auth (2-layer auth: Firebase identity + server password)
+firebase-admin>=6.0.0

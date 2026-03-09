@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE,  -- nullable (email is optional for group-based registration)
+    firebase_uid TEXT,  -- Firebase Auth UID (for 2-layer auth: Firebase identity + server password)
     password_hash TEXT NOT NULL,
     role TEXT DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     is_active INTEGER DEFAULT 1,  -- boolean: 0/1
@@ -138,6 +139,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
 CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);

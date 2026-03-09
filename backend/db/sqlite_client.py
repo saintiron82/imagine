@@ -97,6 +97,7 @@ class SQLiteDB:
                 self._migrate_mc_completed_at()
                 self._migrate_backfill_parse_status()
                 self._migrate_users_email_nullable()
+                self._migrate_users_firebase_uid()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -326,6 +327,22 @@ class SQLiteDB:
         self.conn.execute("PRAGMA integrity_check")
         self.conn.commit()
         logger.info("✅ users.email is now nullable")
+
+    def _migrate_users_firebase_uid(self):
+        """Add firebase_uid column to users table for 2-layer auth (Firebase identity + server password)."""
+        if not self._table_exists('users'):
+            return
+        try:
+            self.conn.execute("SELECT firebase_uid FROM users LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding firebase_uid column to users...")
+            self.conn.execute("ALTER TABLE users ADD COLUMN firebase_uid TEXT")
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid "
+                "ON users(firebase_uid)"
+            )
+            self.conn.commit()
+            logger.info("✅ firebase_uid column + unique index added to users")
 
     def _migrate_mc_completed_at(self):
         """Add mc_completed_at column to job_queue for mc_only throughput measurement."""
