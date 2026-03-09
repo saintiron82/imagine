@@ -46,22 +46,37 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:build
 
 출력: `frontend/dist-electron/Imagine-M.m.p-arm64.dmg`
 
-### 5. CI 완료 후 Mac 업로드
+### 5. Firebase 릴리스 업로드 (Mac 빌드 후)
 ```bash
-gh run list --workflow=release.yml --limit=1
-gh release upload vM.m.p.YYYYMMDD_NN \
-  "/Users/saintiron/Projects/Imagine/frontend/dist-electron/Imagine-M.m.p-arm64.dmg" \
-  "/Users/saintiron/Projects/Imagine/frontend/dist-electron/Imagine-M.m.p-arm64-mac.zip"
+# macOS DMG 업로드 + Firestore 등록
+node scripts/firebase_release.mjs \
+  --version "vM.m.p.YYYYMMDD_NN" \
+  --macos "frontend/dist-electron/Imagine-M.m.p-arm64.dmg" \
+  --notes "릴리스 노트"
+
+# dry-run으로 먼저 확인 가능
+node scripts/firebase_release.mjs --version "vM.m.p.YYYYMMDD_NN" --macos "..." --dry-run
 ```
 
-### 6. GitHub Pages 갱신
+CI Windows 빌드 완료 후 Windows도 추가:
 ```bash
-git checkout release && git merge main --ff-only && git push origin release && git checkout main
+node scripts/firebase_release.mjs \
+  --version "vM.m.p.YYYYMMDD_NN" \
+  --windows "dist-win/Imagine-M.m.p-setup.exe" \
+  --notes "릴리스 노트"
+```
+
+릴리스 확인: https://imagine-b1e9c.web.app/release.html
+
+### 6. Firebase Hosting 갱신 (필요 시)
+```bash
+cd website && firebase deploy --only hosting && cd ..
 ```
 
 ## 롤백
 ```bash
 git tag -d vTAG && git push origin :refs/tags/vTAG
-gh release delete vTAG --yes
 git revert HEAD
+# Firestore에서 릴리스 문서 수동 삭제 (Firebase Console)
+# Storage에서 releases/vTAG/ 폴더 삭제
 ```
