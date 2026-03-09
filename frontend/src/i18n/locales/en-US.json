@@ -676,6 +676,7 @@
   "login2.set_server_password": "Set server password",
   "login2.confirm_password": "Confirm Password",
   "login2.confirm_password_placeholder": "Re-enter password",
+  "auth.google_login": "Sign in with Google",
   "auth.create_account": "Create Account",
   "auth.display_name": "Display Name",
   "auth.display_name_placeholder": "Your name",

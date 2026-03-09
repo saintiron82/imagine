@@ -328,25 +328,15 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
         raise HTTPException(status_code=403, detail="Invalid server password")
 
     # 2. Verify Firebase ID token
-    try:
-        import firebase_admin
-        from firebase_admin import auth as firebase_auth
+    from backend.server.firebase_auth import verify_firebase_token
 
-        # Initialize Firebase Admin if not already
-        try:
-            firebase_admin.get_app()
-        except ValueError:
-            firebase_admin.initialize_app(options={'projectId': 'imagine-b1e9c'})
-
-        decoded = firebase_auth.verify_id_token(req.firebase_id_token)
-        firebase_uid = decoded['uid']
-        email = decoded.get('email', '')
-        display_name = decoded.get('name', '') or email.split('@')[0]
-    except ImportError:
-        raise HTTPException(status_code=501, detail="firebase-admin not installed")
-    except Exception as e:
-        logger.warning(f"Firebase token verification failed: {e}")
+    decoded = verify_firebase_token(req.firebase_id_token)
+    if decoded is None:
         raise HTTPException(status_code=401, detail="Invalid Firebase token")
+
+    firebase_uid = decoded['uid']
+    email = decoded.get('email', '')
+    display_name = decoded.get('name', '') or email.split('@')[0]
 
     # 3. Find or create user by firebase_uid
     cursor.execute(

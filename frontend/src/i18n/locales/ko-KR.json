@@ -676,6 +676,7 @@
   "login2.set_server_password": "서버 비밀번호 설정",
   "login2.confirm_password": "비밀번호 확인",
   "login2.confirm_password_placeholder": "비밀번호 재입력",
+  "auth.google_login": "Google로 로그인",
   "auth.create_account": "계정 만들기",
   "auth.display_name": "표시 이름",
   "auth.display_name_placeholder": "이름",

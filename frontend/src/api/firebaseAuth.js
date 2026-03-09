@@ -5,11 +5,15 @@
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged as firebaseOnAuthStateChanged,
   updateProfile,
 } from 'firebase/auth';
 import { auth } from './firebaseApp';
+
+const googleProvider = new GoogleAuthProvider();
 
 /**
  * Create a new Firebase account.
@@ -24,6 +28,14 @@ export async function signUp(email, password, displayName) {
     await updateProfile(cred.user, { displayName });
   }
   return cred;
+}
+
+/**
+ * Sign in with Google (popup).
+ * @returns {Promise<import('firebase/auth').UserCredential>}
+ */
+export async function signInWithGoogle() {
+  return signInWithPopup(auth, googleProvider);
 }
 
 /**
