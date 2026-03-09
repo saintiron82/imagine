@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * Firebase release script — upload to Storage + register in Firestore.
+ * Hybrid release script — GitHub Releases (files) + Firestore (metadata).
  *
- * Uses Firebase CLI refresh token for OAuth2 access token.
- * Calls REST APIs directly (no service account key needed).
+ * 1. Uploads macOS DMG/zip to existing GitHub Release via `gh release upload`
+ * 2. Reads GitHub Release asset URLs
+ * 3. Registers release metadata in Firestore (REST API, Firebase CLI token)
  *
  * Usage:
  *   node scripts/firebase_release.mjs --version "v0.6.4.20260309_01" \
@@ -11,9 +12,10 @@
  *     --notes "Release notes here"
  */
 
-import { readFileSync, existsSync, statSync } from 'fs';
-import { basename, join } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import { homedir } from 'os';
+import { execSync } from 'child_process';
 import { parseArgs } from 'util';
 
 // ── Parse CLI args ──────────────────────────────────────
@@ -25,27 +27,28 @@ const { values } = parseArgs({
     windows:  { type: 'string', default: '' },
     linux:    { type: 'string', default: '' },
     'dry-run':{ type: 'boolean', default: false },
+    'skip-upload': { type: 'boolean', default: false },
   },
   strict: true,
 });
 
 if (!values.version) {
-  console.error('Usage: node firebase_release.mjs --version "vX.X.X" [--macos path] [--windows path] [--notes "..."]');
+  console.error('Usage: node firebase_release.mjs --version "vX.X.X" [--macos path] [--notes "..."]');
   process.exit(1);
 }
 
 const VERSION = values.version;
 const NOTES = values.notes;
 const DRY_RUN = values['dry-run'];
-const BUCKET = 'imagine-b1e9c.firebasestorage.app';
+const SKIP_UPLOAD = values['skip-upload'];
 const PROJECT_ID = 'imagine-b1e9c';
 
 // Firebase CLI OAuth2 client (public, embedded in firebase-tools)
 const FIREBASE_CLIENT_ID = '563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.googleusercontent.com';
 const FIREBASE_CLIENT_SECRET = 'j9iVZfS8kkCEFUPaAeJV0sAi';
 
-// ── Get access token from Firebase CLI refresh token ─────
-async function getAccessToken() {
+// ── Get Firebase access token ────────────────────────────
+async function getFirebaseAccessToken() {
   const configPath = join(homedir(), '.config', 'configstore', 'firebase-tools.json');
   if (!existsSync(configPath)) {
     throw new Error('Firebase CLI not logged in. Run: firebase login');
@@ -70,65 +73,68 @@ async function getAccessToken() {
   if (!resp.ok) {
     throw new Error(`Token refresh failed: ${resp.status} ${await resp.text()}`);
   }
-  const data = await resp.json();
-  return data.access_token;
+  return (await resp.json()).access_token;
 }
 
-// ── Upload file to Firebase Storage (REST API) ──────────
-async function uploadFile(localPath, platform, token) {
+// ── Upload file to GitHub Release ────────────────────────
+function uploadToGitHub(localPath, platform) {
   if (!localPath || !existsSync(localPath)) {
     console.log(`  [SKIP] ${platform}: no file`);
-    return null;
+    return;
   }
-
-  const fileName = basename(localPath);
-  const destPath = `releases/${VERSION}/${fileName}`;
-  const encodedPath = encodeURIComponent(destPath);
-  const fileSize = statSync(localPath).size;
-  const sizeMB = (fileSize / 1024 / 1024).toFixed(1);
 
   if (DRY_RUN) {
-    console.log(`  [DRY] Would upload ${localPath} (${sizeMB} MB) -> ${destPath}`);
-    return `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/${encodedPath}?alt=media`;
+    console.log(`  [DRY] Would upload ${localPath} to GitHub Release ${VERSION}`);
+    return;
   }
 
-  const contentType = localPath.endsWith('.dmg') ? 'application/x-apple-diskimage'
-    : localPath.endsWith('.zip') ? 'application/zip'
-    : localPath.endsWith('.exe') ? 'application/x-msdownload'
-    : 'application/octet-stream';
-
-  console.log(`  Uploading ${fileName} (${sizeMB} MB, ${platform})...`);
-
-  const fileData = readFileSync(localPath);
-  const url = `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o?uploadType=media&name=${encodedPath}`;
-
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': contentType,
-      'Content-Length': String(fileSize),
-    },
-    body: fileData,
-  });
-
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Upload failed (${resp.status}): ${err}`);
+  if (SKIP_UPLOAD) {
+    console.log(`  [SKIP-UPLOAD] ${platform}: ${localPath}`);
+    return;
   }
 
-  const result = await resp.json();
-  const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/${encodedPath}?alt=media`;
-  console.log(`  Done: ${downloadUrl}`);
-  return downloadUrl;
+  console.log(`  Uploading ${localPath} to GitHub Release ${VERSION}...`);
+  try {
+    execSync(`gh release upload "${VERSION}" "${localPath}" --clobber`, {
+      stdio: 'inherit',
+    });
+    console.log(`  Done: ${platform} uploaded to GitHub Release`);
+  } catch (err) {
+    console.error(`  WARNING: GitHub upload failed for ${platform}: ${err.message}`);
+    console.error(`  You may need to create the release first: gh release create "${VERSION}"`);
+  }
+}
+
+// ── Get GitHub Release asset URLs ────────────────────────
+function getGitHubAssetUrls() {
+  try {
+    const output = execSync(`gh release view "${VERSION}" --json assets --jq '.assets[].url'`, {
+      encoding: 'utf8',
+    }).trim();
+
+    const urls = {};
+    for (const url of output.split('\n').filter(Boolean)) {
+      const lower = url.toLowerCase();
+      if (lower.includes('arm64.dmg') || lower.includes('mac')) {
+        urls.macos = url;
+      } else if (lower.includes('win') || lower.includes('.exe')) {
+        urls.windows = url;
+      } else if (lower.includes('linux') || lower.includes('.appimage')) {
+        urls.linux = url;
+      }
+    }
+    return urls;
+  } catch {
+    console.warn('  Could not fetch GitHub Release assets (release may not exist yet)');
+    return {};
+  }
 }
 
 // ── Register in Firestore (REST API) ────────────────────
-async function registerRelease(assets, token) {
+async function registerInFirestore(assets, token) {
   const now = new Date().toISOString();
   const docId = VERSION.replace(/\./g, '_');
 
-  // Build Firestore document fields
   const fields = {
     version: { stringValue: VERSION },
     date: { stringValue: now },
@@ -142,7 +148,9 @@ async function registerRelease(assets, token) {
   };
 
   for (const [platform, url] of Object.entries(assets)) {
-    fields.assets.mapValue.fields[platform] = { stringValue: url };
+    if (url) {
+      fields.assets.mapValue.fields[platform] = { stringValue: url };
+    }
   }
 
   if (DRY_RUN) {
@@ -171,24 +179,26 @@ async function registerRelease(assets, token) {
 
 // ── Main ────────────────────────────────────────────────
 async function main() {
-  console.log(`\nFirebase Release: ${VERSION}\n`);
+  console.log(`\nHybrid Release: ${VERSION}\n`);
 
-  console.log('Getting access token...');
-  const token = await getAccessToken();
-  console.log('Authenticated.\n');
+  // Step 1: Upload files to GitHub Release
+  console.log('Step 1: Upload to GitHub Releases');
+  uploadToGitHub(values.macos, 'macos');
+  uploadToGitHub(values.windows, 'windows');
+  uploadToGitHub(values.linux, 'linux');
 
-  const assets = {};
+  // Step 2: Get asset URLs from GitHub Release
+  console.log('\nStep 2: Fetch GitHub Release asset URLs');
+  const assets = DRY_RUN ? {} : getGitHubAssetUrls();
+  console.log('  Assets:', JSON.stringify(assets, null, 2));
 
-  const macUrl = await uploadFile(values.macos, 'macos', token);
-  if (macUrl) assets.macos = macUrl;
+  // Step 3: Update Firestore metadata
+  console.log('\nStep 3: Update Firestore metadata');
+  console.log('  Getting Firebase access token...');
+  const token = await getFirebaseAccessToken();
+  console.log('  Authenticated.');
 
-  const winUrl = await uploadFile(values.windows, 'windows', token);
-  if (winUrl) assets.windows = winUrl;
-
-  const linuxUrl = await uploadFile(values.linux, 'linux', token);
-  if (linuxUrl) assets.linux = linuxUrl;
-
-  await registerRelease(assets, token);
+  await registerInFirestore(assets, token);
 
   console.log('\nDone.\n');
 }

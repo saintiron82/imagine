@@ -71,9 +71,9 @@ jobs:
           path: frontend/dist-electron/*
           retention-days: 7
 
-  # ── Release → Firebase Storage + Firestore ──────────────────
-  # Windows: CI artifact → Firebase Storage
-  # macOS: manually uploaded later (firebase-release.mjs --macos)
+  # ── Release → GitHub Releases (files) ────────────────────────
+  # Windows zip uploaded here; macOS DMG uploaded locally later.
+  # Firestore metadata updated by local script (firebase_release.mjs).
   release:
     needs: build-win
     if: startsWith(github.ref, 'refs/tags/')
@@ -97,7 +97,6 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
           PREV_TAG=$(git tag --sort=-v:refname | grep '^v' | sed -n '2p')
           echo "prev_tag=${PREV_TAG:-}" >> "$GITHUB_OUTPUT"
 
@@ -107,15 +106,15 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           PREV_TAG="${{ steps.version.outputs.prev_tag }}"
 
-          cat > release_notes.md << 'HEADER'
+          cat > release_notes.md << HEADER
           ## Imagine ${TAG}
 
           > Python 설치 불필요 — 백엔드가 바이너리로 포함되어 있습니다.
           > AI 모델은 첫 실행 시 자동 다운로드됩니다.
-
           HEADER
 
           if [ -n "$PREV_TAG" ]; then
+            echo "" >> release_notes.md
             echo "### Changes since ${PREV_TAG}" >> release_notes.md
             echo "" >> release_notes.md
             git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" \
@@ -133,23 +132,18 @@ jobs:
           echo "Found: $ZIP"
           echo "path=$ZIP" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Install firebase-admin
-        run: npm install firebase-admin
-
-      - name: Upload to Firebase & update Firestore
+      - name: Create GitHub Release & upload Windows zip
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           WIN_ZIP="${{ steps.find-zip.outputs.path }}"
 
-          ARGS="--tag $TAG --notes release_notes.md"
-          [ -n "$WIN_ZIP" ] && ARGS="$ARGS --windows $WIN_ZIP"
+          ARGS="--title \"Imagine ${TAG}\" --notes-file release_notes.md"
 
-          node scripts/firebase-release.mjs $ARGS
+          if [ -n "$WIN_ZIP" ]; then
+            gh release create "$TAG" "$WIN_ZIP" --title "Imagine ${TAG}" --notes-file release_notes.md
+          else
+            gh release create "$TAG" --title "Imagine ${TAG}" --notes-file release_notes.md
+          fi
