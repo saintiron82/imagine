@@ -1,23 +1,22 @@
 /**
- * LoginPageV2 — Two-stage Firebase Auth login.
+ * LoginPageV2 — Two-layer auth login.
  *
- * Stage 1: Firebase Auth (email/password) — personal account
- * Stage 2: Group selection / join / create
- *
- * Electron local mode uses legacy auth as fallback.
+ * Stage 1 (auth): Firebase Auth — email/password personal account
+ * Stage 2 (server_select): Server name + server password → connect
+ * Stage 2 (server_init): Create new server (Electron only)
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocale } from '../i18n';
 import { isElectron, setServerUrl as setClientServerUrl } from '../api/client';
-import { lookupGroup } from '../api/firebase';
-import { signUp, signIn, signOut, getIdToken } from '../api/firebaseAuth';
-import { getServerInfo, firebaseInitServer } from '../api/auth';
+import { signUp, signIn, getIdToken } from '../api/firebaseAuth';
+import { getServerInfo, initServer } from '../api/auth';
+import { registerGroup } from '../api/firebase';
 import {
-  LogIn, UserPlus, Plus, Eye, EyeOff, Loader2, ArrowLeft,
-  Zap, Star, Rocket, Languages, AlertCircle, CheckCircle, Server,
-  Users, LogOut, Key, Mail,
+  LogIn, UserPlus, Eye, EyeOff, Loader2, ArrowLeft,
+  Zap, Star, Rocket, Languages, AlertCircle, Server,
+  LogOut, Key, Mail, Shield,
 } from 'lucide-react';
 
 const TIERS = [
@@ -81,61 +80,22 @@ function SubmitButton({ children, loading, disabled }) {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function resolveServer(serverName, localGroupName, localPort) {
-  const trimmed = serverName.trim();
-  if (!trimmed) return { ok: false, error: 'empty' };
-
-  if (localGroupName && trimmed.toLowerCase() === localGroupName.toLowerCase()) {
-    return { ok: true, url: `http://localhost:${localPort || 8000}`, local: true };
-  }
-
-  try {
-    const result = await lookupGroup(trimmed);
-    if (!result) return { ok: false, error: 'not_found' };
-
-    const candidates = [];
-    if (result.lan_ip) candidates.push(`http://${result.lan_ip}:${result.port}`);
-    if (result.public_ip) candidates.push(`http://${result.public_ip}:${result.port}`);
-    if (result.url) candidates.push(result.url);
-
-    for (const url of candidates) {
-      try {
-        const info = await getServerInfo(url);
-        if (info.ok) return { ok: true, url, local: false, groupName: info.group_name };
-      } catch { /* try next */ }
-    }
-
-    if (candidates.length > 0) return { ok: true, url: candidates[0], local: false };
-    return { ok: false, error: 'unreachable' };
-  } catch {
-    return { ok: false, error: 'firebase_error' };
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
 
 export default function LoginPageV2({ onLoginComplete, serverPort }) {
   const {
     firebaseUser, isFirebaseAuthenticated,
-    connectToGroup, joinGroupWithCode, login,
-    fullLogout, disconnectGroup,
+    connectToServer, fullLogout,
     error: authError,
   } = useAuth();
   const { t, locale, setLocale, availableLocales } = useLocale();
 
-  // --- Stage: 'auth' (Firebase login) | 'groups' (group selection) ---
+  // --- Stage: 'auth' | 'server_select' | 'server_init' ---
   const [stage, setStage] = useState('auth');
 
   // --- Auth sub-view: 'login' | 'register' ---
   const [authView, setAuthView] = useState('login');
-
-  // --- Group sub-view: 'list' | 'join' | 'create' ---
-  const [groupView, setGroupView] = useState('list');
 
   // --- Local server detection ---
   const [localGroupName, setLocalGroupName] = useState(null);
@@ -148,45 +108,64 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   const [displayName, setDisplayName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // --- Group join fields ---
-  const [inviteCode, setInviteCode] = useState('');
-  const [joinGroupName, setJoinGroupName] = useState('');
+  // --- Server connect fields ---
+  const [serverName, setServerName] = useState('');
+  const [serverPassword, setServerPassword] = useState('');
+  const [isServerAdmin, setIsServerAdmin] = useState(false);
+  const [showServerPassword, setShowServerPassword] = useState(false);
 
   // --- Create server fields ---
   const [newGroupName, setNewGroupName] = useState('');
+  const [newServerPassword, setNewServerPassword] = useState('');
+  const [newServerPasswordConfirm, setNewServerPasswordConfirm] = useState('');
   const [selectedTier, setSelectedTier] = useState('pro');
-
-  // --- My groups (from Firebase RTDB) ---
-  const [myGroups, setMyGroups] = useState([]);
-  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [adminUsername, setAdminUsername] = useState('');
 
   // --- Status ---
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [connectingGroup, setConnectingGroup] = useState(null);
 
   const port = serverPort || 8000;
 
-  // ── When Firebase user is available, switch to groups stage ──
+  // --- Server history (localStorage) ---
+  const [serverHistory, setServerHistory] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('imagine-server-history') || '[]');
+    } catch { return []; }
+  });
+
+  const addToHistory = useCallback((name) => {
+    setServerHistory(prev => {
+      const filtered = prev.filter(s => s !== name);
+      const updated = [name, ...filtered].slice(0, 5);
+      localStorage.setItem('imagine-server-history', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  // ── When Firebase user is available, switch to server_select stage ──
   useEffect(() => {
     if (isFirebaseAuthenticated) {
-      setStage('groups');
-      loadMyGroups();
+      setStage('server_select');
     } else {
       setStage('auth');
     }
   }, [isFirebaseAuthenticated]);
 
-  // ── Local server detection (Electron) ──
+  // ── Local server detection (Electron + isServerAdmin) ──
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron || !isServerAdmin) {
+      setLocalServerReady(false);
+      setLocalGroupName(null);
+      return;
+    }
 
     const detectLocal = async () => {
       try {
         const status = await window.electron?.server?.getStatus();
         if (status?.running) {
           setLocalServerReady(true);
-          setClientServerUrl(`http://localhost:${port}`);
           const info = await getServerInfo(`http://localhost:${port}`);
           if (info.ok && info.group_name) {
             setLocalGroupName(info.group_name);
@@ -199,13 +178,11 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         await new Promise(r => setTimeout(r, 2000));
 
         const info = await getServerInfo(`http://localhost:${port}`);
-        if (info.ok && info.initialized && info.group_name) {
-          setLocalGroupName(info.group_name);
+        if (info.ok) {
           setLocalServerReady(true);
-          setClientServerUrl(`http://localhost:${port}`);
-        } else if (info.ok && !info.initialized) {
-          setLocalServerReady(true);
-          setClientServerUrl(`http://localhost:${port}`);
+          if (info.initialized && info.group_name) {
+            setLocalGroupName(info.group_name);
+          }
         } else {
           try { await window.electron?.server?.stop(); } catch { /* ignore */ }
         }
@@ -217,62 +194,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     };
 
     detectLocal();
-  }, [port]);
-
-  // ── Load user's groups from Firebase RTDB ──
-  const loadMyGroups = useCallback(async () => {
-    if (!firebaseUser) return;
-    setGroupsLoading(true);
-    try {
-      const uid = firebaseUser.uid;
-      const resp = await fetch(
-        `https://imagine-b1e9c-default-rtdb.firebaseio.com/users/${uid}/groups.json`,
-        { signal: AbortSignal.timeout(5000) }
-      );
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data) {
-          const groups = Object.entries(data).map(([key, val]) => ({
-            key,
-            group_name: val.group_name,
-            role: val.role || 'user',
-            joined_at: val.joined_at,
-          }));
-          setMyGroups(groups);
-        } else {
-          setMyGroups([]);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load groups:', e);
-    } finally {
-      setGroupsLoading(false);
-    }
-  }, [firebaseUser]);
-
-  // ── Save group to user's Firebase RTDB ──
-  const saveGroupToFirebase = useCallback(async (groupName, role) => {
-    if (!firebaseUser) return;
-    const uid = firebaseUser.uid;
-    const key = groupName.trim().toLowerCase().replace(/\s+/g, '_');
-    try {
-      await fetch(
-        `https://imagine-b1e9c-default-rtdb.firebaseio.com/users/${uid}/groups/${key}.json`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            group_name: groupName,
-            role,
-            joined_at: new Date().toISOString(),
-          }),
-          signal: AbortSignal.timeout(5000),
-        }
-      );
-    } catch (e) {
-      console.error('Failed to save group to Firebase:', e);
-    }
-  }, [firebaseUser]);
+  }, [isServerAdmin, port]);
 
   // -----------------------------------------------------------------------
   // Firebase Auth handlers
@@ -286,7 +208,6 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     setLoading(true);
     try {
       await signIn(email.trim(), password);
-      // onAuthStateChanged will trigger stage switch
     } catch (err) {
       const code = err.code;
       if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
@@ -310,7 +231,6 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     setLoading(true);
     try {
       await signUp(email.trim(), password, displayName.trim() || undefined);
-      // onAuthStateChanged will trigger stage switch
     } catch (err) {
       const code = err.code;
       if (code === 'auth/email-already-in-use') {
@@ -326,111 +246,98 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   }, [email, password, displayName, t]);
 
   // -----------------------------------------------------------------------
-  // Group handlers
+  // Server connect handler
   // -----------------------------------------------------------------------
-  const handleConnectGroup = useCallback(async (groupName) => {
+  const handleConnect = useCallback(async (e) => {
+    e.preventDefault();
     setError('');
-    setConnectingGroup(groupName);
+    const name = serverName.trim();
+    if (!name) { setError(t('login2.server_name_required')); return; }
+    if (!serverPassword) { setError(t('login2.server_password_required')); return; }
 
+    setLoading(true);
     try {
-      const resolved = await resolveServer(groupName, localGroupName, port);
-      if (!resolved.ok) {
-        setError(
-          resolved.error === 'not_found' ? t('auth.group_not_found') :
-          resolved.error === 'unreachable' ? t('login2.server_unreachable') :
-          t('auth.firebase_error')
-        );
-        return;
+      // Server admin (Electron): connect to localhost directly
+      let directUrl = null;
+      if (isServerAdmin && localServerReady) {
+        directUrl = `http://localhost:${port}`;
+        setClientServerUrl(directUrl);
+
+        // Check if server is initialized with matching group name
+        const info = await getServerInfo(directUrl);
+        if (info.ok && !info.initialized) {
+          // Not initialized — redirect to server_init
+          setNewGroupName(name);
+          setNewServerPassword(serverPassword);
+          setStage('server_init');
+          setLoading(false);
+          return;
+        }
       }
 
-      setClientServerUrl(resolved.url);
-      const success = await connectToGroup(resolved.url, groupName);
-
+      const success = await connectToServer(name, serverPassword, directUrl);
       if (success) {
-        const mode = resolved.local ? 'server' : 'client';
+        addToHistory(name);
+        const mode = isServerAdmin ? 'server' : 'client';
         onLoginComplete?.(mode);
       }
     } catch (err) {
       setError(err.message || 'Connection failed');
     } finally {
-      setConnectingGroup(null);
-    }
-  }, [localGroupName, port, connectToGroup, onLoginComplete, t]);
-
-  const handleJoinGroup = useCallback(async (e) => {
-    e.preventDefault();
-    setError('');
-    if (!joinGroupName.trim()) { setError(t('login2.server_name_required')); return; }
-    if (!inviteCode.trim()) { setError(t('validation.invite_code_required')); return; }
-
-    setLoading(true);
-    try {
-      const resolved = await resolveServer(joinGroupName, localGroupName, port);
-      if (!resolved.ok) {
-        setError(resolved.error === 'not_found' ? t('auth.group_not_found') : t('login2.server_unreachable'));
-        setLoading(false);
-        return;
-      }
-
-      setClientServerUrl(resolved.url);
-      const success = await joinGroupWithCode(resolved.url, inviteCode.trim(), joinGroupName.trim());
-
-      if (success) {
-        await saveGroupToFirebase(joinGroupName.trim(), 'user');
-        const mode = resolved.local ? 'server' : 'client';
-        onLoginComplete?.(mode);
-      }
-    } catch (err) {
-      setError(err.message || 'Join failed');
-    } finally {
       setLoading(false);
     }
-  }, [joinGroupName, inviteCode, localGroupName, port, joinGroupWithCode, saveGroupToFirebase, onLoginComplete, t]);
+  }, [serverName, serverPassword, isServerAdmin, localServerReady, port, connectToServer, addToHistory, onLoginComplete, t]);
 
+  // -----------------------------------------------------------------------
+  // Create server handler (Electron only)
+  // -----------------------------------------------------------------------
   const handleCreateServer = useCallback(async (e) => {
     e.preventDefault();
     setError('');
-    if (!newGroupName.trim()) { setError(t('validation.group_name_required')); return; }
-
-    if (!isElectron) {
-      setError(t('login2.create_requires_electron'));
-      return;
-    }
+    const name = newGroupName.trim();
+    if (!name) { setError(t('validation.group_name_required')); return; }
+    if (!newServerPassword) { setError(t('login2.server_password_required')); return; }
+    if (newServerPassword !== newServerPasswordConfirm) { setError(t('login2.password_mismatch')); return; }
+    if (!adminUsername.trim()) { setError(t('login2.admin_username_required')); return; }
 
     setLoading(true);
     try {
       if (!localServerReady) {
         await window.electron?.server?.start({ port });
         await new Promise(r => setTimeout(r, 2000));
+        setLocalServerReady(true);
       }
 
       const baseUrl = `http://localhost:${port}`;
       setClientServerUrl(baseUrl);
 
+      // Set tier
       try {
         await window.electron?.pipeline?.setTier(selectedTier);
       } catch { /* ignore */ }
 
-      // Get Firebase ID token for server init
-      const idToken = await getIdToken();
-      if (!idToken) {
-        setError('Firebase authentication required');
-        setLoading(false);
-        return;
-      }
-
-      await firebaseInitServer(baseUrl, {
-        group_name: newGroupName.trim(),
-        id_token: idToken,
+      // Initialize server with legacy /server/init (group_name + server_password + admin account)
+      await initServer(baseUrl, {
+        group_name: name,
+        server_password: newServerPassword,
+        admin_username: adminUsername.trim(),
+        admin_password: newServerPassword, // Same as server password for simplicity
       });
 
-      // Connect to the newly created server
-      const success = await connectToGroup(baseUrl, newGroupName.trim());
+      // Register to Firebase RTDB for discovery
+      try {
+        const localIp = await window.electron?.network?.getLocalIp?.();
+        await registerGroup(name, {
+          lan_ip: localIp || '',
+          port,
+        });
+      } catch { /* best-effort */ }
 
+      // Connect using 2-layer auth
+      const success = await connectToServer(name, newServerPassword, baseUrl);
       if (success) {
-        await saveGroupToFirebase(newGroupName.trim(), 'admin');
-        setLocalGroupName(newGroupName.trim());
-        setLocalServerReady(true);
+        addToHistory(name);
+        setLocalGroupName(name);
         onLoginComplete?.('server');
       }
     } catch (err) {
@@ -438,12 +345,11 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     } finally {
       setLoading(false);
     }
-  }, [newGroupName, selectedTier, port, localServerReady, connectToGroup, saveGroupToFirebase, onLoginComplete, t]);
+  }, [newGroupName, newServerPassword, newServerPasswordConfirm, adminUsername, selectedTier, port, localServerReady, connectToServer, addToHistory, onLoginComplete, t]);
 
   const handleFullLogout = useCallback(async () => {
     await fullLogout();
     setStage('auth');
-    setMyGroups([]);
     setEmail('');
     setPassword('');
   }, [fullLogout]);
@@ -547,9 +453,9 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   );
 
   // -----------------------------------------------------------------------
-  // Stage 2: Group Selection
+  // Stage 2: Server Select
   // -----------------------------------------------------------------------
-  const renderGroupStage = () => (
+  const renderServerSelect = () => (
     <div className="space-y-4">
       {/* User info bar */}
       <div className="flex items-center justify-between">
@@ -575,147 +481,121 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
 
       <div className="border-t border-zinc-700/40" />
 
-      {/* Group sub-views */}
-      {groupView === 'list' && renderGroupList()}
-      {groupView === 'join' && renderJoinGroup()}
-      {groupView === 'create' && renderCreateGroup()}
-    </div>
-  );
+      {/* Server connect form */}
+      <form onSubmit={handleConnect} className="space-y-3">
+        <InputField
+          icon={Server}
+          label={t('login2.server_name')}
+          value={serverName}
+          onChange={setServerName}
+          placeholder={t('login2.server_name_placeholder')}
+          autoFocus
+          disabled={loading}
+        />
+        <InputField
+          icon={Key}
+          label={t('login2.server_password')}
+          type="password"
+          value={serverPassword}
+          onChange={setServerPassword}
+          placeholder="••••••"
+          disabled={loading}
+          showPassword={showServerPassword}
+          onTogglePassword={() => setShowServerPassword(!showServerPassword)}
+        />
 
-  // ── Group List ──
-  const renderGroupList = () => (
-    <div className="space-y-3">
-      <p className="text-xs font-medium text-zinc-400">{t('login2.my_groups')}</p>
-
-      {groupsLoading ? (
-        <div className="flex items-center justify-center py-6">
-          <Loader2 size={18} className="animate-spin text-zinc-500" />
-        </div>
-      ) : myGroups.length > 0 ? (
-        <div className="space-y-2">
-          {myGroups.map(g => (
-            <button
-              key={g.key}
-              onClick={() => handleConnectGroup(g.group_name)}
-              disabled={!!connectingGroup}
-              className="w-full p-3 bg-zinc-800/60 border border-zinc-700/50 rounded-lg
-                hover:border-zinc-600 hover:bg-zinc-800/80 transition-colors
-                flex items-center gap-3 disabled:opacity-50 text-left"
-            >
-              <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center shrink-0">
-                <Users size={16} className="text-blue-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-zinc-200 font-medium truncate">{g.group_name}</p>
-                <p className="text-[10px] text-zinc-500">{g.role}</p>
-              </div>
-              {connectingGroup === g.group_name ? (
-                <Loader2 size={14} className="animate-spin text-blue-400 shrink-0" />
-              ) : (
-                <ArrowLeft size={14} className="text-zinc-600 rotate-180 shrink-0" />
-              )}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-6">
-          <Users size={24} className="mx-auto text-zinc-600 mb-2" />
-          <p className="text-xs text-zinc-500">{t('login2.no_groups')}</p>
-        </div>
-      )}
-
-      {/* Local server shortcut */}
-      {localGroupName && (
-        <button
-          onClick={() => handleConnectGroup(localGroupName)}
-          disabled={!!connectingGroup}
-          className="w-full p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg
-            hover:bg-emerald-500/15 transition-colors flex items-center gap-3 disabled:opacity-50"
-        >
-          <Server size={16} className="text-emerald-400 shrink-0" />
-          <div className="flex-1 text-left min-w-0">
-            <p className="text-xs text-emerald-300 font-medium truncate">{localGroupName}</p>
-            <p className="text-[10px] text-zinc-500">{t('login2.local_server')}</p>
-          </div>
-          {connectingGroup === localGroupName ? (
-            <Loader2 size={14} className="animate-spin text-emerald-400" />
-          ) : (
-            <CheckCircle size={14} className="text-emerald-500/50 shrink-0" />
-          )}
-        </button>
-      )}
-
-      {/* Action buttons */}
-      <div className="flex gap-2 pt-1">
-        <button
-          type="button"
-          onClick={() => { setError(''); setGroupView('join'); }}
-          className="flex-1 py-2 text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700/50 rounded-lg
-            hover:border-zinc-600 transition-colors flex items-center justify-center gap-1.5"
-        >
-          <Key size={13} />
-          {t('login2.join_with_code')}
-        </button>
+        {/* Server admin checkbox (Electron only) */}
         {isElectron && (
+          <label className="flex items-center gap-2 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={isServerAdmin}
+              onChange={e => setIsServerAdmin(e.target.checked)}
+              className="w-3.5 h-3.5 rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-blue-500/30"
+            />
+            <div className="flex items-center gap-1.5">
+              <Shield size={13} className={isServerAdmin ? 'text-blue-400' : 'text-zinc-500'} />
+              <span className={`text-xs ${isServerAdmin ? 'text-zinc-200' : 'text-zinc-500'}`}>
+                {t('login2.server_admin')}
+              </span>
+            </div>
+          </label>
+        )}
+
+        {/* Local server status */}
+        {isServerAdmin && localServerStarting && (
+          <div className="p-2 bg-blue-500/10 border border-blue-500/30 rounded-lg flex items-center gap-2">
+            <Loader2 size={14} className="text-blue-400 animate-spin" />
+            <p className="text-xs text-blue-300">{t('login2.starting_local_server')}</p>
+          </div>
+        )}
+
+        {isServerAdmin && localServerReady && localGroupName && (
+          <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex items-center gap-2">
+            <Server size={14} className="text-emerald-400" />
+            <p className="text-xs text-emerald-300">{localGroupName}</p>
+          </div>
+        )}
+
+        <SubmitButton loading={loading}>
+          <LogIn size={15} />
+          {t('login2.connect')}
+        </SubmitButton>
+      </form>
+
+      {/* Server history */}
+      {serverHistory.length > 0 && (
+        <div className="pt-1">
+          <p className="text-[10px] text-zinc-600 mb-1.5">{t('login2.recent_servers')}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {serverHistory.map(name => (
+              <button
+                key={name}
+                type="button"
+                onClick={() => setServerName(name)}
+                className="px-2 py-1 text-[11px] text-zinc-400 bg-zinc-800/60 border border-zinc-700/50
+                  rounded hover:border-zinc-600 hover:text-zinc-300 transition-colors"
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Create new server (Electron only) */}
+      {isElectron && (
+        <>
+          <div className="flex items-center gap-3 text-xs text-zinc-600">
+            <div className="flex-1 border-t border-zinc-700/40" />
+            <span>{t('login2.or')}</span>
+            <div className="flex-1 border-t border-zinc-700/40" />
+          </div>
           <button
             type="button"
-            onClick={() => { setError(''); setGroupView('create'); }}
-            className="flex-1 py-2 text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700/50 rounded-lg
+            onClick={() => { setError(''); setStage('server_init'); }}
+            className="w-full py-2 text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700/50 rounded-lg
               hover:border-zinc-600 transition-colors flex items-center justify-center gap-1.5"
           >
-            <Plus size={13} />
-            {t('login2.create_group')}
+            <Server size={13} />
+            {t('login2.create_new_server')}
           </button>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 
-  // ── Join Group ──
-  const renderJoinGroup = () => (
-    <form onSubmit={handleJoinGroup} className="space-y-4">
-      <button
-        type="button"
-        onClick={() => { setError(''); setGroupView('list'); }}
-        className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-1"
-      >
-        <ArrowLeft size={13} /> {t('login2.back_to_groups')}
-      </button>
-
-      <InputField
-        icon={Server}
-        label={t('login2.group_name')}
-        value={joinGroupName}
-        onChange={setJoinGroupName}
-        placeholder={t('login2.group_name_placeholder')}
-        autoFocus
-        disabled={loading}
-      />
-      <InputField
-        icon={Key}
-        label={t('login2.invite_code')}
-        value={inviteCode}
-        onChange={setInviteCode}
-        placeholder="ABC123..."
-        disabled={loading}
-      />
-
-      <SubmitButton loading={loading}>
-        <Users size={15} />
-        {t('login2.join_group')}
-      </SubmitButton>
-    </form>
-  );
-
-  // ── Create Group (Electron) ──
-  const renderCreateGroup = () => (
+  // -----------------------------------------------------------------------
+  // Stage 2b: Server Init (Electron only)
+  // -----------------------------------------------------------------------
+  const renderServerInit = () => (
     <form onSubmit={handleCreateServer} className="space-y-4">
       <button
         type="button"
-        onClick={() => { setError(''); setGroupView('list'); }}
+        onClick={() => { setError(''); setStage('server_select'); }}
         className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-1"
       >
-        <ArrowLeft size={13} /> {t('login2.back_to_groups')}
+        <ArrowLeft size={13} /> {t('login2.back_to_server_select')}
       </button>
 
       <InputField
@@ -726,6 +606,35 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         placeholder={t('group.name_placeholder')}
         autoFocus
         disabled={loading}
+      />
+      <InputField
+        label={t('login2.admin_username')}
+        value={adminUsername}
+        onChange={setAdminUsername}
+        placeholder="admin"
+        disabled={loading}
+      />
+      <InputField
+        icon={Key}
+        label={t('login2.server_password')}
+        type="password"
+        value={newServerPassword}
+        onChange={setNewServerPassword}
+        placeholder={t('login2.set_server_password')}
+        disabled={loading}
+        showPassword={showNewPassword}
+        onTogglePassword={() => setShowNewPassword(!showNewPassword)}
+      />
+      <InputField
+        icon={Key}
+        label={t('login2.confirm_password')}
+        type="password"
+        value={newServerPasswordConfirm}
+        onChange={setNewServerPasswordConfirm}
+        placeholder={t('login2.confirm_password_placeholder')}
+        disabled={loading}
+        showPassword={showNewPassword}
+        onTogglePassword={() => setShowNewPassword(!showNewPassword)}
       />
 
       {/* Tier selection */}
@@ -760,7 +669,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
       </div>
 
       <SubmitButton loading={loading}>
-        <Plus size={15} />
+        <Server size={15} />
         {t('login2.create_and_start')}
       </SubmitButton>
     </form>
@@ -776,7 +685,9 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-zinc-100 tracking-tight">Imagine</h1>
           <p className="text-xs text-zinc-500 mt-1">
-            {stage === 'auth' ? t('auth.subtitle') : t('login2.select_group')}
+            {stage === 'auth' ? t('auth.subtitle') :
+             stage === 'server_init' ? t('login2.create_new_server') :
+             t('login2.select_server')}
           </p>
         </div>
 
@@ -787,11 +698,8 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
             {stage === 'auth' && (
               authView === 'login' ? t('auth.login') : t('auth.create_account')
             )}
-            {stage === 'groups' && (
-              groupView === 'list' ? t('login2.my_groups') :
-              groupView === 'join' ? t('login2.join_group') :
-              t('login2.create_group')
-            )}
+            {stage === 'server_select' && t('login2.select_server')}
+            {stage === 'server_init' && t('login2.create_new_server')}
           </h2>
 
           {/* Error display */}
@@ -802,17 +710,10 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
             </div>
           )}
 
-          {/* Local server starting */}
-          {localServerStarting && (
-            <div className="mb-4 p-2.5 bg-blue-500/10 border border-blue-500/30 rounded-lg flex items-center gap-2">
-              <Loader2 size={14} className="text-blue-400 animate-spin" />
-              <p className="text-xs text-blue-300">{t('login2.detecting_local')}</p>
-            </div>
-          )}
-
           {/* Stage content */}
           {stage === 'auth' && renderAuthStage()}
-          {stage === 'groups' && renderGroupStage()}
+          {stage === 'server_select' && renderServerSelect()}
+          {stage === 'server_init' && renderServerInit()}
         </div>
 
         {/* Language switcher */}

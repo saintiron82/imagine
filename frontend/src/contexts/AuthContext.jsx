@@ -1,9 +1,8 @@
 /**
- * AuthContext — manages authentication state.
+ * AuthContext — manages 2-layer authentication state.
  *
- * Two-layer auth:
- *   1. Firebase Auth (personal account, persistent session)
- *   2. Group server JWT (membership-based, issued after Firebase login)
+ * Layer 1: Firebase Auth (personal identity — Google / email+password)
+ * Layer 2: Server JWT (group access — server_name + server_password via /auth/connect)
  *
  * Electron local mode: localhost auto-admin (no Firebase needed)
  */
@@ -13,18 +12,19 @@ import { isElectron, getAccessToken, setServerUrl, getServerUrl, setTokens, clea
 import {
   getMe, logout as apiLogout, checkServerHealth,
   storeWorkerCredentials, clearWorkerCredentials,
-  firebaseLogin, joinGroup, getServerInfo,
+  firebaseConnect, getServerInfo,
 } from '../api/auth';
 import { onAuthStateChanged, getIdToken, signOut as firebaseSignOut } from '../api/firebaseAuth';
+import { lookupGroup } from '../api/firebase';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  // Firebase user (personal account)
+  // Layer 1: Firebase user (personal identity)
   const [firebaseUser, setFirebaseUser] = useState(null);
   const [firebaseLoading, setFirebaseLoading] = useState(true);
 
-  // Group server user (after membership verified)
+  // Layer 2: Server user (group access, after /auth/connect)
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -32,13 +32,13 @@ export function AuthProvider({ children }) {
   // 'server' | 'client' | null
   const [authMode, setAuthMode] = useState(null);
 
-  // Connected group info
-  const [connectedGroup, setConnectedGroup] = useState(null);
+  // Connected server info { name, url }
+  const [connectedServer, setConnectedServer] = useState(null);
 
   // Track if we should skip Firebase (Electron localhost auto-admin)
   const skipFirebase = useRef(false);
 
-  // ── Firebase Auth state listener ──────────────────────────
+  // ── Layer 1: Firebase Auth state listener ──────────────────
   useEffect(() => {
     const unsub = onAuthStateChanged((fbUser) => {
       setFirebaseUser(fbUser);
@@ -49,15 +49,18 @@ export function AuthProvider({ children }) {
         clearTokens();
         clearWorkerCredentials();
         setUser(null);
+        setConnectedServer(null);
         setLoading(false);
         return;
       }
 
-      // Auto-reconnect to last group
-      const lastGroup = localStorage.getItem('imagine-last-group');
-      const lastGroupUrl = localStorage.getItem('imagine-last-group-url');
-      if (lastGroup && lastGroupUrl && !skipFirebase.current) {
-        connectToGroup(lastGroupUrl, lastGroup).finally(() => setLoading(false));
+      // Auto-reconnect to last server (Layer 2)
+      const lastServer = localStorage.getItem('imagine-last-server');
+      const lastServerUrl = localStorage.getItem('imagine-last-server-url');
+      const lastServerPw = sessionStorage.getItem('imagine-last-server-pw');
+      if (lastServer && lastServerUrl && lastServerPw && !skipFirebase.current) {
+        _reconnectServer(lastServerUrl, lastServer, lastServerPw)
+          .finally(() => setLoading(false));
       } else {
         setLoading(false);
       }
@@ -66,60 +69,67 @@ export function AuthProvider({ children }) {
     return unsub;
   }, []);
 
-  // ── Connect to group server with Firebase token ───────────
-  const connectToGroup = useCallback(async (serverUrl, groupName) => {
-    setError('');
+  // ── Internal: reconnect to a known server URL ──────────────
+  const _reconnectServer = useCallback(async (serverUrl, serverName, serverPassword) => {
     try {
       setServerUrl(serverUrl);
       const idToken = await getIdToken();
+      if (!idToken) return false;
+
+      await firebaseConnect(idToken, serverPassword);
+      const me = await getMe();
+      setUser(me.user || me);
+      setConnectedServer({ name: serverName, url: serverUrl });
+      return true;
+    } catch {
+      // Silent fail on auto-reconnect
+      setUser(null);
+      setConnectedServer(null);
+      return false;
+    }
+  }, []);
+
+  // ── Layer 2: Connect to server (RTDB lookup + /auth/connect) ──
+  const connectToServer = useCallback(async (serverName, serverPassword, directUrl) => {
+    setError('');
+    try {
+      let serverUrl = directUrl;
+
+      // If no direct URL provided, look up via Firebase RTDB
+      if (!serverUrl) {
+        const info = await lookupGroup(serverName);
+        if (!info) throw new Error('Server not found');
+        serverUrl = info.url;
+      }
+
+      setServerUrl(serverUrl);
+
+      // Get Firebase ID token for Layer 1 identity
+      const idToken = await getIdToken();
       if (!idToken) throw new Error('Firebase not authenticated');
 
-      const data = await firebaseLogin(idToken);
-      if (data.access_token) {
-        const me = await getMe();
-        setUser(me.user || me);
-        setConnectedGroup(groupName);
-        localStorage.setItem('imagine-last-group', groupName);
-        localStorage.setItem('imagine-last-group-url', serverUrl);
-        return true;
-      }
-      return false;
+      // POST /auth/connect — Layer 2 authentication
+      await firebaseConnect(idToken, serverPassword);
+      const me = await getMe();
+      setUser(me.user || me);
+      setConnectedServer({ name: serverName, url: serverUrl });
+
+      // Remember for auto-reconnect
+      localStorage.setItem('imagine-last-server', serverName);
+      localStorage.setItem('imagine-last-server-url', serverUrl);
+      sessionStorage.setItem('imagine-last-server-pw', serverPassword);
+
+      return true;
     } catch (e) {
       const detail = e.detail || e.message || 'Connection failed';
-      // Don't set error for auto-reconnect failures
-      if (detail !== 'Not a member of this group') {
-        setError(detail);
-      }
+      setError(detail);
       setUser(null);
+      setConnectedServer(null);
       return false;
     }
   }, []);
 
-  // ── Join group with invite code ───────────────────────────
-  const joinGroupWithCode = useCallback(async (serverUrl, inviteCode, groupName) => {
-    setError('');
-    try {
-      setServerUrl(serverUrl);
-      const idToken = await getIdToken();
-      if (!idToken) throw new Error('Firebase not authenticated');
-
-      const data = await joinGroup(idToken, inviteCode);
-      if (data.access_token) {
-        const me = await getMe();
-        setUser(me.user || me);
-        setConnectedGroup(groupName);
-        localStorage.setItem('imagine-last-group', groupName);
-        localStorage.setItem('imagine-last-group-url', serverUrl);
-        return true;
-      }
-      return false;
-    } catch (e) {
-      setError(e.detail || e.message || 'Join failed');
-      return false;
-    }
-  }, []);
-
-  // ── Legacy login (for backward compatibility / Electron local) ──
+  // ── Legacy login (Electron local mode / backward compat) ───
   const login = useCallback(async ({ server_password, username, password, serverUrl }) => {
     setError('');
     try {
@@ -137,7 +147,7 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // ── Legacy register ───────────────────────────────────────
+  // ── Legacy register ────────────────────────────────────────
   const register = useCallback(async ({ server_password, username, email, password, serverUrl }) => {
     setError('');
     try {
@@ -153,28 +163,26 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // ── Logout (both Firebase and server) ─────────────────────
-  const logout = useCallback(async () => {
-    apiLogout();
-    clearWorkerCredentials();
-    setUser(null);
-    setConnectedGroup(null);
-    localStorage.removeItem('imagine-last-group');
-    localStorage.removeItem('imagine-last-group-url');
-    skipFirebase.current = false;
-  }, []);
-
-  // ── Disconnect from group (keep Firebase session) ─────────
-  const disconnectGroup = useCallback(() => {
+  // ── Disconnect from server (keep Firebase session) ─────────
+  const disconnectServer = useCallback(() => {
     clearTokens();
     clearWorkerCredentials();
     setUser(null);
-    setConnectedGroup(null);
-    localStorage.removeItem('imagine-last-group');
-    localStorage.removeItem('imagine-last-group-url');
+    setConnectedServer(null);
+    localStorage.removeItem('imagine-last-server');
+    localStorage.removeItem('imagine-last-server-url');
+    sessionStorage.removeItem('imagine-last-server-pw');
   }, []);
 
-  // ── Full logout (Firebase + server) ───────────────────────
+  // ── Logout (server session only) ───────────────────────────
+  const logout = useCallback(async () => {
+    apiLogout();
+    clearWorkerCredentials();
+    disconnectServer();
+    skipFirebase.current = false;
+  }, [disconnectServer]);
+
+  // ── Full logout (Firebase + server) ────────────────────────
   const fullLogout = useCallback(async () => {
     await logout();
     try {
@@ -201,33 +209,33 @@ export function AuthProvider({ children }) {
   }, []);
 
   const value = {
-    // Firebase layer
+    // Layer 1: Firebase identity
     firebaseUser,
     firebaseLoading,
     isFirebaseAuthenticated: !!firebaseUser,
 
-    // Group server layer
+    // Layer 2: Server access
     user,
     loading: loading || firebaseLoading,
     error,
     isAuthenticated: !!user,
     isAdmin: user?.role === 'admin',
-    connectedGroup,
+    connectedServer,
 
     // Auth mode
     authMode,
     skipAuth: false,
 
     // Actions
+    connectToServer,    // Layer 2: RTDB lookup + /auth/connect
+    disconnectServer,   // Leave server, keep Firebase
     login,              // Legacy (server_password based)
     register,           // Legacy
     logout,             // Server session only
     fullLogout,         // Firebase + server
-    disconnectGroup,    // Leave group, keep Firebase
-    connectToGroup,     // Firebase token → server JWT
-    joinGroupWithCode,  // Invite code + Firebase token
     checkServerHealth,
     configureAuth,
+    getServerInfo,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

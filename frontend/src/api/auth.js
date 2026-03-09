@@ -125,26 +125,13 @@ export async function initServer(baseUrl, { group_name, server_password, admin_u
 // ── Firebase Auth integration ───────────────────────────────
 
 /**
- * Login to group server using Firebase ID Token.
- * Server verifies membership and returns server session JWT.
+ * Connect to server using Firebase ID Token + server password (2-layer auth).
+ * Server verifies both credentials and returns session JWT.
  */
-export async function firebaseLogin(idToken) {
-  const data = await apiClient.post('/api/v1/auth/firebase-login', {
-    id_token: idToken,
-  });
-  if (data.access_token) {
-    setTokens(data.access_token, data.refresh_token);
-  }
-  return data;
-}
-
-/**
- * Join a group using invite code + Firebase ID Token.
- */
-export async function joinGroup(idToken, inviteCode) {
-  const data = await apiClient.post('/api/v1/auth/join', {
-    id_token: idToken,
-    invite_code: inviteCode,
+export async function firebaseConnect(idToken, serverPassword) {
+  const data = await apiClient.post('/api/v1/auth/connect', {
+    firebase_id_token: idToken,
+    server_password: serverPassword,
   });
   if (data.access_token) {
     setTokens(data.access_token, data.refresh_token);
