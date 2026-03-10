@@ -260,7 +260,7 @@ def _ensure_builtin_worker_session(db: "SQLiteDB") -> int:
         logger.info(f"Builtin worker session reactivated (id={row[0]})")
         return row[0]
 
-    # Create new session (user_id=1 = default admin)
+    # Create new session — find the first admin user_id dynamically
     batch_size = 5
     try:
         from backend.utils.config import get_config
@@ -268,12 +268,17 @@ def _ensure_builtin_worker_session(db: "SQLiteDB") -> int:
     except Exception:
         pass
 
+    # Find an admin user_id (not hardcoded to 1)
+    cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
+    admin_row = cursor.fetchone()
+    admin_user_id = admin_row[0] if admin_row else 1
+
     cursor.execute(
         """INSERT INTO worker_sessions
            (user_id, worker_name, hostname, batch_capacity, status,
             processing_mode_override, connected_at, last_heartbeat)
-           VALUES (1, ?, 'server (built-in)', ?, 'online', 'full', ?, ?)""",
-        (BUILTIN_WORKER_NAME, batch_size, now, now),
+           VALUES (?, ?, 'server (built-in)', ?, 'online', 'full', ?, ?)""",
+        (admin_user_id, BUILTIN_WORKER_NAME, batch_size, now, now),
     )
     session_id = cursor.lastrowid
     db.conn.commit()
