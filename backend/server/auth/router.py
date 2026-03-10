@@ -270,23 +270,26 @@ def get_me(current_user: dict = Depends(get_current_user), db: SQLiteDB = Depend
     """Get current user info."""
     cursor = db.conn.cursor()
 
-    # Try members table first (Firebase Auth), fall back to users table (legacy)
-    cursor.execute(
-        """SELECT id, display_name, email, role, is_active, joined_at,
-                  last_seen_at, quota_files_per_day, quota_search_per_min
-           FROM members WHERE id = ?""",
-        (current_user["id"],)
-    )
-    row = cursor.fetchone()
-    if row:
-        return UserResponse(
-            id=row[0], username=row[1] or row[2],  # display_name or email
-            email=row[2], role=row[3],
-            is_active=bool(row[4]), created_at=row[5], last_login_at=row[6],
-            quota_files_per_day=row[7], quota_search_per_min=row[8],
+    # Try members table first (group-based Firebase Auth), fall back to users table
+    try:
+        cursor.execute(
+            """SELECT id, display_name, email, role, is_active, joined_at,
+                      last_seen_at, quota_files_per_day, quota_search_per_min
+               FROM members WHERE id = ?""",
+            (current_user["id"],)
         )
+        row = cursor.fetchone()
+        if row:
+            return UserResponse(
+                id=row[0], username=row[1] or row[2],  # display_name or email
+                email=row[2], role=row[3],
+                is_active=bool(row[4]), created_at=row[5], last_login_at=row[6],
+                quota_files_per_day=row[7], quota_search_per_min=row[8],
+            )
+    except Exception:
+        pass  # members table may not exist (2-layer auth uses users table only)
 
-    # Legacy users table fallback
+    # Users table (2-layer auth / legacy)
     cursor.execute(
         """SELECT id, username, email, role, is_active, created_at,
                   last_login_at, quota_files_per_day, quota_search_per_min
@@ -366,10 +369,10 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
             if current_count >= max_users:
                 raise HTTPException(status_code=403, detail="Server user limit reached")
 
-        # Auto-create user (first user gets admin if no users exist)
-        cursor.execute("SELECT COUNT(*) FROM users")
-        is_first = cursor.fetchone()[0] == 0
-        role = 'admin' if is_first else 'user'
+        # Determine role: first Firebase user gets admin if no Firebase-linked users exist
+        cursor.execute("SELECT COUNT(*) FROM users WHERE firebase_uid IS NOT NULL")
+        no_firebase_users = cursor.fetchone()[0] == 0
+        role = 'admin' if no_firebase_users else 'user'
 
         # Use display_name as username, ensure uniqueness
         username = display_name

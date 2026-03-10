@@ -102,11 +102,14 @@ export async function getServerInfo(baseUrl) {
 /**
  * Initialize server (first-time setup).
  */
-export async function initServer(baseUrl, { group_name, server_password, admin_username, admin_password }) {
+export async function initServer(baseUrl, { group_name, server_password, admin_username, admin_password, firebase_uid, firebase_email }) {
+  const body = { group_name, server_password, admin_username, admin_password };
+  if (firebase_uid) body.firebase_uid = firebase_uid;
+  if (firebase_email) body.firebase_email = firebase_email;
   const resp = await fetch(`${baseUrl}/api/v1/server/init`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ group_name, server_password, admin_username, admin_password }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(10000),
   });
   let data;

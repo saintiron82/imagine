@@ -121,7 +121,6 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   const [newServerPasswordConfirm, setNewServerPasswordConfirm] = useState('');
   const [selectedTier, setSelectedTier] = useState('pro');
   const [showNewPassword, setShowNewPassword] = useState(false);
-  const [adminUsername, setAdminUsername] = useState('');
 
   // --- Status ---
   const [loading, setLoading] = useState(false);
@@ -306,7 +305,6 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     if (!name) { setError(t('validation.group_name_required')); return; }
     if (!newServerPassword) { setError(t('login2.server_password_required')); return; }
     if (newServerPassword !== newServerPasswordConfirm) { setError(t('login2.password_mismatch')); return; }
-    if (!adminUsername.trim()) { setError(t('login2.admin_username_required')); return; }
 
     setLoading(true);
     try {
@@ -324,12 +322,15 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         await window.electron?.pipeline?.setTier(selectedTier);
       } catch { /* ignore */ }
 
-      // Initialize server with legacy /server/init (group_name + server_password + admin account)
+      // Initialize server — Firebase user becomes admin automatically
+      const adminName = firebaseUser?.displayName || firebaseUser?.email?.split('@')[0] || 'admin';
       await initServer(baseUrl, {
         group_name: name,
         server_password: newServerPassword,
-        admin_username: adminUsername.trim(),
-        admin_password: newServerPassword, // Same as server password for simplicity
+        admin_username: adminName,
+        admin_password: newServerPassword,
+        firebase_uid: firebaseUser?.uid || null,
+        firebase_email: firebaseUser?.email || null,
       });
 
       // Register to Firebase RTDB for discovery
@@ -353,7 +354,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     } finally {
       setLoading(false);
     }
-  }, [newGroupName, newServerPassword, newServerPasswordConfirm, adminUsername, selectedTier, port, localServerReady, connectToServer, addToHistory, onLoginComplete, t]);
+  }, [newGroupName, newServerPassword, newServerPasswordConfirm, firebaseUser, selectedTier, port, localServerReady, connectToServer, addToHistory, onLoginComplete, t]);
 
   const handleFullLogout = useCallback(async () => {
     await fullLogout();
@@ -628,13 +629,6 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         onChange={setNewGroupName}
         placeholder={t('group.name_placeholder')}
         autoFocus
-        disabled={loading}
-      />
-      <InputField
-        label={t('login2.admin_username')}
-        value={adminUsername}
-        onChange={setAdminUsername}
-        placeholder="admin"
         disabled={loading}
       />
       <InputField

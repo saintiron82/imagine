@@ -2507,6 +2507,24 @@ function createWindow() {
         },
     });
 
+    // ── Strip COOP headers so Firebase signInWithPopup works in Electron ──
+    mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+        const headers = { ...details.responseHeaders };
+        delete headers['cross-origin-opener-policy'];
+        delete headers['Cross-Origin-Opener-Policy'];
+        callback({ responseHeaders: headers });
+    });
+
+    // ── Allow Google OAuth popups for Firebase Auth ──
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (url.includes('accounts.google.com') || url.includes('firebaseapp.com') || url.includes('googleapis.com')) {
+            return { action: 'allow' };
+        }
+        const { shell } = require('electron');
+        shell.openExternal(url);
+        return { action: 'deny' };
+    });
+
     // ── Application Menu ──
     const isMac = process.platform === 'darwin';
     const sendMenuAction = (action) => {

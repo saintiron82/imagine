@@ -73,12 +73,14 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
             ("server_password_hash", password_hash)
         )
 
-        # Create admin user
+        # Create admin user (with Firebase UID if provided)
         admin_hash = _hash_password(req.admin_password)
+        firebase_uid = getattr(req, 'firebase_uid', None) or None
+        firebase_email = getattr(req, 'firebase_email', None) or ''
         cursor.execute(
-            """INSERT INTO users (username, password_hash, role, is_active, email)
-               VALUES (?, ?, 'admin', 1, '')""",
-            (req.admin_username, admin_hash)
+            """INSERT INTO users (username, password_hash, role, is_active, email, firebase_uid)
+               VALUES (?, ?, 'admin', 1, ?, ?)""",
+            (req.admin_username, admin_hash, firebase_email, firebase_uid)
         )
         user_id = cursor.lastrowid
 

@@ -20,6 +20,9 @@ class ServerInitRequest(BaseModel):
     server_password: str = Field(..., min_length=1, max_length=128)
     admin_username: str = Field(..., min_length=2, max_length=50)
     admin_password: str = Field(..., min_length=4, max_length=128)
+    # Optional: Firebase UID for 2-layer auth (server creator = admin)
+    firebase_uid: Optional[str] = None
+    firebase_email: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
