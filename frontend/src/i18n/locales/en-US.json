@@ -667,7 +667,7 @@
   "login2.select_server": "Connect to a server",
   "login2.connect": "Connect",
   "login2.create_new_server": "Create New Server",
-  "login2.recent_servers": "Recent servers",
+  "login2.recent_servers": "Recent groups",
   "login2.starting_local_server": "Starting local server...",
   "login2.back_to_server_select": "Back to server select",
   "login2.password_mismatch": "Passwords do not match",

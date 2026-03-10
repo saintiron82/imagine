@@ -667,7 +667,7 @@
   "login2.select_server": "서버에 접속하세요",
   "login2.connect": "접속",
   "login2.create_new_server": "새 서버 개설",
-  "login2.recent_servers": "최근 서버",
+  "login2.recent_servers": "최근 그룹",
   "login2.starting_local_server": "로컬 서버 시작 중...",
   "login2.back_to_server_select": "서버 선택으로",
   "login2.password_mismatch": "비밀번호가 일치하지 않습니다",
