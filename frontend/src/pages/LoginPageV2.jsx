@@ -6,14 +6,14 @@
  * Stage 2 (server_init): Create new server (Electron only)
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocale } from '../i18n';
 import { isElectron, setServerUrl as setClientServerUrl } from '../api/client';
 import { signUp, signIn, signInWithGoogle, getIdToken } from '../api/firebaseAuth';
 import { getServerInfo, initServer } from '../api/auth';
 import { registerGroup } from '../api/firebase';
-import { getServerHistory, addServerToHistory } from '../utils/serverHistory';
+import { getServerHistory, addServerToHistory, formatRelativeTime } from '../utils/serverHistory';
 import {
   LogIn, UserPlus, Eye, EyeOff, Loader2, ArrowLeft,
   Zap, Star, Rocket, Languages, AlertCircle, Server,
@@ -30,7 +30,7 @@ const TIERS = [
 // Shared UI
 // ---------------------------------------------------------------------------
 
-function InputField({ icon: Icon, label, type = 'text', value, onChange, placeholder, autoFocus, disabled, showPassword, onTogglePassword }) {
+function InputField({ icon: Icon, label, type = 'text', value, onChange, placeholder, autoFocus, disabled, showPassword, onTogglePassword, inputRef }) {
   const isPassword = type === 'password';
   const actualType = isPassword && showPassword ? 'text' : type;
   return (
@@ -39,6 +39,7 @@ function InputField({ icon: Icon, label, type = 'text', value, onChange, placeho
       <div className="relative">
         {Icon && <Icon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />}
         <input
+          ref={inputRef}
           type={actualType}
           value={value}
           onChange={e => onChange(e.target.value)}
@@ -127,6 +128,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   const [error, setError] = useState('');
 
   const port = serverPort || 8000;
+  const serverPwRef = useRef(null);
 
   // --- Server history (localStorage) ---
   const [serverHistory, setServerHistory] = useState(() => getServerHistory());
@@ -505,6 +507,46 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
 
       <div className="border-t border-zinc-700/40" />
 
+      {/* Quick reconnect — last connected server */}
+      {serverHistory.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">{t('login2.recent_servers')}</p>
+          {serverHistory.slice(0, 3).map(entry => {
+            const isSelected = serverName === (entry.name || '');
+            return (
+              <button
+                key={entry.url || entry.name}
+                type="button"
+                onClick={() => {
+                  setServerName(entry.name || '');
+                  setServerPassword('');
+                  setTimeout(() => serverPwRef.current?.focus(), 50);
+                }}
+                className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all
+                  ${isSelected
+                    ? 'bg-blue-500/15 border-blue-500/40 ring-1 ring-blue-500/20'
+                    : 'bg-zinc-800/40 border-zinc-700/40 hover:border-zinc-600 hover:bg-zinc-800/70'
+                  }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Server size={14} className={isSelected ? 'text-blue-400' : 'text-zinc-500'} />
+                    <span className={`text-sm font-medium truncate ${isSelected ? 'text-blue-200' : 'text-zinc-300'}`}>
+                      {entry.name || entry.url}
+                    </span>
+                  </div>
+                  {entry.lastConnected && (
+                    <span className="text-[10px] text-zinc-600 flex-shrink-0 ml-2">
+                      {formatRelativeTime(entry.lastConnected, t)}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Server connect form */}
       <form onSubmit={handleConnect} className="space-y-3">
         <InputField
@@ -513,7 +555,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
           value={serverName}
           onChange={setServerName}
           placeholder={t('login2.server_name_placeholder')}
-          autoFocus
+          autoFocus={serverHistory.length === 0}
           disabled={loading}
         />
         <InputField
@@ -526,6 +568,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
           disabled={loading}
           showPassword={showServerPassword}
           onTogglePassword={() => setShowServerPassword(!showServerPassword)}
+          inputRef={serverPwRef}
         />
 
         {/* Server admin checkbox (Electron only) */}
@@ -566,26 +609,6 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
           {t('login2.connect')}
         </SubmitButton>
       </form>
-
-      {/* Server history */}
-      {serverHistory.length > 0 && (
-        <div className="pt-1">
-          <p className="text-[10px] text-zinc-600 mb-1.5">{t('login2.recent_servers')}</p>
-          <div className="flex flex-wrap gap-1.5">
-            {serverHistory.map(entry => (
-              <button
-                key={entry.url || entry.name}
-                type="button"
-                onClick={() => setServerName(entry.name || '')}
-                className="px-2 py-1 text-[11px] text-zinc-400 bg-zinc-800/60 border border-zinc-700/50
-                  rounded hover:border-zinc-600 hover:text-zinc-300 transition-colors"
-              >
-                {entry.name || entry.url}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Create new server (Electron only) */}
       {isElectron && (
