@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .webdav_client import RemoteFileInfo, WebDAVClient
+from backend.remote.webdav_client import RemoteFileInfo, WebDAVClient
 
 logger = logging.getLogger("WebDAVSync")
 

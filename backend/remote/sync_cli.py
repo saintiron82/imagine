@@ -10,7 +10,13 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
+
+# Ensure project root is on sys.path for absolute imports
+_project_root = os.environ.get('PYTHONPATH', os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 
 def _emit(data: dict):
@@ -20,7 +26,7 @@ def _emit(data: dict):
 
 def cmd_test(config: dict):
     """Test WebDAV connection."""
-    from .webdav_client import WebDAVClient
+    from backend.remote.webdav_client import WebDAVClient
 
     client = WebDAVClient(
         base_url=config['url'],
@@ -36,7 +42,7 @@ def cmd_test(config: dict):
 
 def cmd_list(config: dict):
     """List remote files."""
-    from .webdav_client import WebDAVClient
+    from backend.remote.webdav_client import WebDAVClient
 
     client = WebDAVClient(
         base_url=config['url'],
@@ -60,7 +66,7 @@ def cmd_list(config: dict):
 
 def cmd_sync(config: dict):
     """Run full sync."""
-    from .sync_engine import WebDAVSyncEngine
+    from backend.remote.sync_engine import WebDAVSyncEngine
     from dataclasses import asdict
 
     def progress_cb(event_type: str, data: dict):

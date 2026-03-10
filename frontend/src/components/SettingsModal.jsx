@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Loader2, CheckCircle, AlertTriangle, Terminal, X, Download } from 'lucide-react';
 import { useLocale } from '../i18n';
 import RegisteredFoldersPanel from './RegisteredFoldersPanel';
-import WebDAVSourcesPanel from './WebDAVSourcesPanel';
 
 const SettingsModal = ({ onClose, onScanFolder, isBusy }) => {
     const { t } = useLocale();
@@ -253,7 +252,6 @@ const SettingsModal = ({ onClose, onScanFolder, isBusy }) => {
 
                             {/* Registered Folders */}
                             <RegisteredFoldersPanel onScanFolder={onScanFolder} isBusy={isBusy} />
-                            <WebDAVSourcesPanel onScanFolder={onScanFolder} isBusy={isBusy} />
 
                             {/* Install Button */}
                             {!installing && !status?.dependencies_ok && (

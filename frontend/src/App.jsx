@@ -24,6 +24,7 @@ import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
 import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
+import WebDAVSourcesPanel from './components/WebDAVSourcesPanel';
 import SubscriptionBanner from './components/SubscriptionBanner';
 
 function App() {
@@ -1641,6 +1642,7 @@ function App() {
                 onFolderToggle={handleFolderToggle}
                 reloadSignal={folderStatsVersion}
               />
+              <WebDAVSourcesPanel onScanFolder={handleScanFolders} isBusy={isProcessing || isDiscovering} />
             </div>
           </div>
         )}
