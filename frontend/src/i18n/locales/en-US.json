@@ -606,6 +606,7 @@
   "validation.field_required": "This field is required",
   "validation.password_min_4": "Password must be at least 4 characters",
   "validation.server_already_initialized": "This server is already initialized. Use 'Join Group' instead, or reset the group.",
+  "validation.group_name_taken": "This group name is already taken. Please choose a different name.",
   "group.reset": "Reset Group",
   "group.reset_confirm": "Group info and all user accounts will be deleted. File data will be preserved. Continue?",
   "group.reset_success": "Group has been reset.",

@@ -335,14 +335,21 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         firebase_email: firebaseUser?.email || null,
       });
 
-      // Register to Firebase RTDB for discovery
+      // Register to Firebase RTDB for discovery (reject duplicate names)
       try {
         const localIp = await window.electron?.network?.getLocalIp?.();
         await registerGroup(name, {
           lan_ip: localIp || '',
           port,
         });
-      } catch { /* best-effort */ }
+      } catch (regErr) {
+        if (regErr.message === 'GROUP_NAME_TAKEN') {
+          setError(t('validation.group_name_taken'));
+          setLoading(false);
+          return;
+        }
+        // Other registration errors are best-effort (network issues etc.)
+      }
 
       // Connect using 2-layer auth
       const success = await connectToServer(name, newServerPassword, baseUrl);

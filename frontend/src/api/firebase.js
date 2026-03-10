@@ -47,8 +47,25 @@ export async function lookupGroup(groupName) {
  * @param {string} groupName
  * @param {{lan_ip: string, public_ip?: string, port: number}} info
  */
+/**
+ * Check if a group name is already taken in Firebase RTDB.
+ * @param {string} groupName
+ * @returns {Promise<boolean>} true if name already exists
+ */
+export async function isGroupNameTaken(groupName) {
+    const existing = await lookupGroup(groupName);
+    return existing !== null;
+}
+
 export async function registerGroup(groupName, info) {
     const key = encodeURIComponent(groupName.trim().toLowerCase().replace(/\s+/g, '_'));
+
+    // Reject duplicate group names
+    const taken = await isGroupNameTaken(groupName);
+    if (taken) {
+        throw new Error('GROUP_NAME_TAKEN');
+    }
+
     const payload = {
         group_name: groupName,
         lan_ip: info.lan_ip || '',

@@ -606,6 +606,7 @@
   "validation.field_required": "필수 입력 항목입니다",
   "validation.password_min_4": "비밀번호는 4자 이상이어야 합니다",
   "validation.server_already_initialized": "이미 초기화된 서버입니다. '그룹 참여'를 사용하거나, 그룹을 초기화하세요.",
+  "validation.group_name_taken": "이미 사용 중인 그룹 이름입니다. 다른 이름을 선택해주세요.",
   "group.reset": "그룹 초기화",
   "group.reset_confirm": "그룹 정보와 모든 사용자 계정이 삭제됩니다. 파일 데이터는 유지됩니다. 계속하시겠습니까?",
   "group.reset_success": "그룹이 초기화되었습니다.",
