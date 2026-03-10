@@ -1,11 +1,11 @@
 """
-CLI entry point for WebDAV sync operations.
+CLI entry point for WebDAV remote operations.
 Called by Electron main process via subprocess.
 
 Usage:
   python -m backend.remote.sync_cli --test '{"url":"...","username":"...","password":"...","remote_path":"/"}'
-  python -m backend.remote.sync_cli --sync '{"id":"...","url":"...","username":"...","password":"...","remote_path":"/"}'
   python -m backend.remote.sync_cli --list '{"url":"...","username":"...","password":"...","remote_path":"/"}'
+  python -m backend.remote.sync_cli --folders '{"url":"...","username":"...","password":"...","path":"/"}'
 """
 
 import argparse
@@ -64,29 +64,33 @@ def cmd_list(config: dict):
     })
 
 
-def cmd_sync(config: dict):
-    """Run full sync."""
-    from backend.remote.sync_engine import WebDAVSyncEngine
-    from dataclasses import asdict
+def cmd_folders(config: dict):
+    """List subdirectories under a given path."""
+    from backend.remote.webdav_client import WebDAVClient
 
-    def progress_cb(event_type: str, data: dict):
-        _emit({"event": event_type, **data})
-
-    engine = WebDAVSyncEngine()
-    result = engine.sync(config, progress_callback=progress_cb)
+    client = WebDAVClient(
+        base_url=config['url'],
+        username=config['username'],
+        password=config['password'],
+        remote_path=config.get('remote_path', '/'),
+        verify_ssl=config.get('verify_ssl', True),
+    )
+    # Browse a specific sub-path if provided
+    browse_path = config.get('path')
+    folders = client.list_folders(path=browse_path)
+    client.close()
 
     _emit({
-        "event": "sync_result",
-        "success": result.failed == 0,
-        **asdict(result),
+        "success": True,
+        "folders": folders,
     })
 
 
 def main():
-    parser = argparse.ArgumentParser(description="WebDAV sync CLI")
+    parser = argparse.ArgumentParser(description="WebDAV remote CLI")
     parser.add_argument('--test', type=str, help='Test connection (JSON config)')
     parser.add_argument('--list', type=str, help='List remote files (JSON config)')
-    parser.add_argument('--sync', type=str, help='Run sync (JSON config)')
+    parser.add_argument('--folders', type=str, help='List subdirectories (JSON config with optional path)')
     args = parser.parse_args()
 
     try:
@@ -94,8 +98,8 @@ def main():
             cmd_test(json.loads(args.test))
         elif args.list:
             cmd_list(json.loads(args.list))
-        elif args.sync:
-            cmd_sync(json.loads(args.sync))
+        elif args.folders:
+            cmd_folders(json.loads(args.folders))
         else:
             parser.print_help()
             sys.exit(1)

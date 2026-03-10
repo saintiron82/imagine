@@ -729,7 +729,7 @@
   "admin.tab_members": "Members",
 
   "webdav.title": "WebDAV Sources",
-  "webdav.desc": "Connect to remote folders via WebDAV. Files are synced to local cache before processing.",
+  "webdav.desc": "Connect to remote folders via WebDAV. Files stay on the server — only metadata and thumbnails are stored locally.",
   "webdav.add": "Add WebDAV",
   "webdav.remove": "Remove",
   "webdav.no_sources": "No WebDAV sources configured",
@@ -745,11 +745,10 @@
   "webdav.testing": "Testing...",
   "webdav.test_success": "Connected ({count} files found)",
   "webdav.test_fail": "Connection failed",
-  "webdav.sync": "Sync",
-  "webdav.sync_and_scan": "Sync + Scan",
-  "webdav.listing": "Listing remote files...",
-  "webdav.comparing": "Comparing with local cache...",
-  "webdav.sync_progress": "Downloading {index}/{total}",
-  "webdav.never_synced": "Never synced",
-  "webdav.just_now": "Just now"
+  "webdav.scan": "Scan",
+  "webdav.never_scanned": "Never scanned",
+  "webdav.just_now": "Just now",
+  "webdav.select_folder": "Select Folder",
+  "webdav.no_subfolders": "No subfolders",
+  "webdav.use_current_folder": "Use this folder"
 }

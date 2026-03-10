@@ -729,7 +729,7 @@
   "admin.tab_members": "멤버",
 
   "webdav.title": "WebDAV 소스",
-  "webdav.desc": "WebDAV로 원격 폴더에 연결합니다. 파일은 로컬 캐시로 동기화 후 처리됩니다.",
+  "webdav.desc": "WebDAV로 원격 폴더에 연결합니다. 파일은 서버에 유지되며 메타데이터와 썸네일만 로컬에 저장됩니다.",
   "webdav.add": "WebDAV 추가",
   "webdav.remove": "제거",
   "webdav.no_sources": "구성된 WebDAV 소스가 없습니다",
@@ -745,11 +745,10 @@
   "webdav.testing": "테스트 중...",
   "webdav.test_success": "연결 성공 ({count}개 파일)",
   "webdav.test_fail": "연결 실패",
-  "webdav.sync": "동기화",
-  "webdav.sync_and_scan": "동기화 + 스캔",
-  "webdav.listing": "원격 파일 목록 조회 중...",
-  "webdav.comparing": "로컬 캐시와 비교 중...",
-  "webdav.sync_progress": "다운로드 {index}/{total}",
-  "webdav.never_synced": "동기화 안 됨",
-  "webdav.just_now": "방금"
+  "webdav.scan": "스캔",
+  "webdav.never_scanned": "스캔 안 됨",
+  "webdav.just_now": "방금",
+  "webdav.select_folder": "폴더 선택",
+  "webdav.no_subfolders": "하위 폴더 없음",
+  "webdav.use_current_folder": "이 폴더 사용"
 }

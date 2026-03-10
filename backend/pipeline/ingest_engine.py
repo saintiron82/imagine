@@ -2426,6 +2426,132 @@ def run_discovery(
                 pass
 
 
+def run_from_container(
+    container,
+    skip_processed: bool = True,
+    current_tier: Optional[str] = None,
+):
+    """
+    Process files from a FileContainer (source-agnostic).
+    Supplier fills the container; this function takes batches and runs
+    the standard pipeline on each. After each batch, remaps DB paths
+    and cleans up temp files.
+
+    Works with any supplier: LocalSupplier, WebDAVSupplier, etc.
+    """
+    from backend.pipeline.file_container import BatchInfo
+
+    db = None
+    if skip_processed:
+        try:
+            from backend.db.sqlite_client import SQLiteDB
+            db = SQLiteDB()
+            _ensure_fts_rebuild_if_needed(db)
+        except Exception as e:
+            logger.warning(f"Cannot open DB for smart skip: {e}")
+
+    total_stored = 0
+    total_errors = 0
+    batch_num = 0
+
+    try:
+        while True:
+            batch = container.take_batch(timeout=60.0)
+            if batch is None:
+                break
+
+            if container.has_error:
+                logger.error(f"[CONTAINER] Supplier error: {container.error_message}")
+                break
+
+            batch_num += 1
+            count = len(batch.file_infos)
+            logger.info(f"[CONTAINER] Processing batch {batch_num} ({count} files)")
+
+            # Run pipeline on this batch (same as _run_common_batch)
+            to_process = []
+            skipped = 0
+
+            for fp, folder, depth, tags in batch.file_infos:
+                if skip_processed and db is not None:
+                    # For WebDAV files, check by the canonical path (webdav://...)
+                    check_path = fp
+                    if batch.path_remap:
+                        canonical = batch.path_remap.get(str(fp))
+                        if canonical:
+                            check_path = Path(canonical)
+
+                    if current_tier:
+                        skip = should_skip_file_enhanced(check_path, db, current_tier)
+                    else:
+                        skip = should_skip_file(check_path, db)
+                    if skip:
+                        skipped += 1
+                        continue
+
+                to_process.append((fp, folder, depth, tags))
+
+            if skipped > 0:
+                logger.info(f"[CONTAINER] Batch {batch_num}: {skipped} skipped (already processed)")
+
+            if to_process:
+                stored, parse_err, store_err = process_batch_phased(
+                    to_process,
+                    allow_phase_skip=skip_processed,
+                )
+                total_stored += stored
+                total_errors += parse_err + store_err
+
+                # Remap DB file_path from temp local to canonical path
+                if batch.path_remap and db is not None:
+                    _remap_db_paths(batch.path_remap, batch.source_id, db)
+
+            # Cleanup temp files immediately
+            container.cleanup_batch(batch)
+
+    finally:
+        if db is not None:
+            try:
+                _log_rebuild_status(db)
+                db.close()
+            except Exception:
+                pass
+
+    logger.info(
+        f"[CONTAINER] Complete: {total_stored} stored, "
+        f"{total_errors} errors across {batch_num} batches"
+    )
+    return total_stored, total_errors
+
+
+def _remap_db_paths(
+    path_remap: dict,
+    source_id: Optional[str],
+    db,
+):
+    """
+    After pipeline stores files with temp local paths, update DB
+    to use canonical webdav:// paths.
+    """
+    storage_root = f"webdav://{source_id}" if source_id else None
+
+    for local_str, canonical_path in path_remap.items():
+        try:
+            # Normalize local path the same way the pipeline does
+            local_nfc = _nfc(local_str)
+            db.conn.execute(
+                "UPDATE files SET file_path = ?, storage_root = ? WHERE file_path = ?",
+                (canonical_path, storage_root, local_nfc)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to remap path {local_str} -> {canonical_path}: {e}")
+
+    try:
+        db.conn.commit()
+    except Exception as e:
+        logger.warning(f"Failed to commit path remap: {e}")
+
+
 def start_watcher(path: str):
     """Start directory watcher with initial scan."""
     path_obj = Path(path)
@@ -2478,6 +2604,7 @@ def main():
     parser.add_argument("--files", help="Process multiple files (JSON array)")
     parser.add_argument("--watch", help="Watch a directory for changes (includes initial scan)")
     parser.add_argument("--discover", help="DFS scan directory and process all supported images")
+    parser.add_argument("--webdav", help="Process files from WebDAV source (JSON config)")
     parser.add_argument("--no-skip", action="store_true", help="Disable smart skip (reprocess all files)")
     # v3.2: --batch-size kept for backward compat but ignored (Phase pipeline handles batching)
     parser.add_argument("--batch-size", type=parse_batch_size, default='adaptive',
@@ -2537,7 +2664,29 @@ def main():
     db.close()
 
     try:
-        if args.discover:
+        if args.webdav:
+            # WebDAV remote processing via FileContainer
+            import json as _json_cli
+            try:
+                source_config = _json_cli.loads(args.webdav)
+            except _json_cli.JSONDecodeError as e:
+                logger.error(f"Invalid WebDAV JSON config: {e}")
+                sys.exit(1)
+
+            from backend.pipeline.file_container import FileContainer, WebDAVSupplier
+
+            container = FileContainer(buffer_size=2)
+            supplier = WebDAVSupplier(source_config, batch_size=5)
+            supplier.start(container)
+
+            run_from_container(
+                container,
+                skip_processed=not args.no_skip,
+                current_tier=tier_name,
+            )
+            supplier.join(timeout=10)
+
+        elif args.discover:
             # v3.2: Always use Phase-based pipeline (ignore legacy batch_size)
             run_discovery(args.discover, skip_processed=not args.no_skip, current_tier=tier_name)
         elif args.files:

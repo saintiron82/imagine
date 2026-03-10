@@ -1642,7 +1642,7 @@ function App() {
                 onFolderToggle={handleFolderToggle}
                 reloadSignal={folderStatsVersion}
               />
-              <WebDAVSourcesPanel onScanFolder={handleScanFolders} isBusy={isProcessing || isDiscovering} />
+              <WebDAVSourcesPanel isBusy={isProcessing || isDiscovering} />
             </div>
           </div>
         )}

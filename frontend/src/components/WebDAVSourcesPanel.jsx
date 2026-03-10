@@ -1,22 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Globe, Trash2, RefreshCw, Loader2, Download, Plus } from 'lucide-react';
+import { Globe, Trash2, Play, Loader2, Plus } from 'lucide-react';
 import { useLocale } from '../i18n';
 import WebDAVConnectDialog from './WebDAVConnectDialog';
 
 /**
- * WebDAV Sources panel — shown alongside RegisteredFoldersPanel in Settings.
+ * WebDAV Sources panel — shown in Archive tab sidebar.
+ * Fetch-and-Process: files stay on NAS, pipeline processes them via FileContainer.
  *
  * Props:
- *  - onScanFolder([path]): triggers App-level discover pipeline on cache folder
  *  - isBusy: true if pipeline/discover is running
  */
-const WebDAVSourcesPanel = ({ onScanFolder, isBusy }) => {
+const WebDAVSourcesPanel = ({ isBusy }) => {
     const { t } = useLocale();
     const [sources, setSources] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showAddDialog, setShowAddDialog] = useState(false);
-    const [syncingSource, setSyncingSource] = useState(null);
-    const [syncProgress, setSyncProgress] = useState(null);
+    const [processingSrc, setProcessingSrc] = useState(null);
+    const [progress, setProgress] = useState(null);
 
     const loadSources = useCallback(async () => {
         setLoading(true);
@@ -36,23 +36,18 @@ const WebDAVSourcesPanel = ({ onScanFolder, isBusy }) => {
         loadSources();
     }, [loadSources]);
 
-    // Listen to sync events
+    // Listen to process events
     useEffect(() => {
         if (!window.electron?.webdav) return;
 
         const handleProgress = (data) => {
-            setSyncProgress(data);
+            setProgress(data);
         };
 
         const handleComplete = (data) => {
-            setSyncingSource(null);
-            setSyncProgress(null);
-            loadSources(); // Refresh last_sync times
-
-            // Auto-discover after successful sync
-            if (data?.sourceId && !data?.error) {
-                handleDiscoverAfterSync(data.sourceId);
-            }
+            setProcessingSrc(null);
+            setProgress(null);
+            loadSources();
         };
 
         window.electron.webdav.onSyncProgress(handleProgress);
@@ -64,23 +59,11 @@ const WebDAVSourcesPanel = ({ onScanFolder, isBusy }) => {
         };
     }, [loadSources]);
 
-    const handleDiscoverAfterSync = async (sourceId) => {
-        if (!onScanFolder) return;
-        try {
-            const cachePath = await window.electron?.webdav?.getCachePath(sourceId);
-            if (cachePath) {
-                onScanFolder([cachePath]);
-            }
-        } catch (e) {
-            console.error('Failed to get cache path:', e);
-        }
-    };
-
-    const handleSync = (sourceId) => {
-        if (syncingSource) return;
-        setSyncingSource(sourceId);
-        setSyncProgress(null);
-        window.electron?.webdav?.syncSource(sourceId);
+    const handleProcess = (sourceId) => {
+        if (processingSrc) return;
+        setProcessingSrc(sourceId);
+        setProgress(null);
+        window.electron?.webdav?.processSource(sourceId);
     };
 
     const handleRemove = async (sourceId) => {
@@ -98,8 +81,8 @@ const WebDAVSourcesPanel = ({ onScanFolder, isBusy }) => {
         loadSources();
     };
 
-    const formatLastSync = (iso) => {
-        if (!iso) return t('webdav.never_synced');
+    const formatLastScan = (iso) => {
+        if (!iso) return t('webdav.never_scanned');
         try {
             const d = new Date(iso);
             const now = new Date();
@@ -160,26 +143,26 @@ const WebDAVSourcesPanel = ({ onScanFolder, isBusy }) => {
                                     </div>
                                 </div>
                                 <div className="text-[10px] text-gray-500 flex-shrink-0">
-                                    {formatLastSync(source.last_sync)}
+                                    {formatLastScan(source.last_scan || source.last_sync)}
                                 </div>
 
-                                {/* Sync button */}
+                                {/* Scan button */}
                                 <button
-                                    onClick={() => handleSync(source.id)}
-                                    disabled={isBusy || syncingSource === source.id}
-                                    className="text-gray-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 disabled:opacity-40"
-                                    title={t('webdav.sync_and_scan')}
+                                    onClick={() => handleProcess(source.id)}
+                                    disabled={isBusy || processingSrc === source.id}
+                                    className="text-gray-500 hover:text-green-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 disabled:opacity-40"
+                                    title={t('webdav.scan')}
                                 >
-                                    {syncingSource === source.id
+                                    {processingSrc === source.id
                                         ? <Loader2 size={12} className="animate-spin" />
-                                        : <Download size={12} />
+                                        : <Play size={12} />
                                     }
                                 </button>
 
                                 {/* Remove button */}
                                 <button
                                     onClick={() => handleRemove(source.id)}
-                                    disabled={isBusy || syncingSource === source.id}
+                                    disabled={isBusy || processingSrc === source.id}
                                     className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 disabled:opacity-40"
                                     title={t('webdav.remove')}
                                 >
@@ -187,26 +170,10 @@ const WebDAVSourcesPanel = ({ onScanFolder, isBusy }) => {
                                 </button>
                             </div>
 
-                            {/* Sync progress (when syncing this source) */}
-                            {syncingSource === source.id && syncProgress && (
-                                <div className="mt-2 text-[10px] text-blue-400">
-                                    {syncProgress.event === 'listing' && t('webdav.listing')}
-                                    {syncProgress.event === 'comparing' && t('webdav.comparing')}
-                                    {syncProgress.event === 'downloading' && (
-                                        <div className="flex items-center gap-2">
-                                            <span>{t('webdav.sync_progress', {
-                                                index: syncProgress.index,
-                                                total: syncProgress.total,
-                                            })}</span>
-                                            <div className="flex-1 h-1 bg-gray-700 rounded overflow-hidden">
-                                                <div
-                                                    className="h-full bg-blue-500 transition-all"
-                                                    style={{ width: `${(syncProgress.index / syncProgress.total) * 100}%` }}
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                    {syncProgress.event === 'cleaning' && syncProgress.message}
+                            {/* Processing progress */}
+                            {processingSrc === source.id && progress && (
+                                <div className="mt-2 text-[10px] text-blue-400 truncate">
+                                    {progress.message || 'Processing...'}
                                 </div>
                             )}
                         </div>

@@ -1894,9 +1894,10 @@ function _decryptWebdavPassword(source) {
     }
 }
 
-ipcMain.on('sync-webdav-source', (event, sourceId) => {
+// WebDAV Process: Run pipeline on remote files via FileContainer (fetch-and-process)
+ipcMain.on('process-webdav-source', (event, sourceId) => {
     if (activeWebdavSyncs.has(sourceId)) {
-        event.reply('webdav-sync-progress', { event: 'error', message: 'Sync already in progress' });
+        event.reply('webdav-sync-progress', { event: 'error', message: 'Processing already in progress' });
         return;
     }
 
@@ -1907,7 +1908,7 @@ ipcMain.on('sync-webdav-source', (event, sourceId) => {
         return;
     }
 
-    const syncConfig = JSON.stringify({
+    const webdavConfig = JSON.stringify({
         id: source.id,
         url: source.url,
         username: source.username,
@@ -1916,40 +1917,60 @@ ipcMain.on('sync-webdav-source', (event, sourceId) => {
         verify_ssl: source.verify_ssl !== false,
     });
 
-    const proc = spawnBackend('remote.sync_cli', ['--sync', syncConfig], {
-        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+    // Use ingest_engine --webdav (FileContainer + WebDAVSupplier)
+    const proc = spawnBackend('pipeline.ingest_engine', ['--webdav', webdavConfig], {
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
         stdio: ['pipe', 'pipe', 'pipe'],
-    }, 'backend/remote/sync_cli.py', ['--sync', syncConfig]);
+    }, 'backend/pipeline/ingest_engine.py', ['--webdav', webdavConfig]);
 
     activeWebdavSyncs.set(sourceId, proc);
+
+    // Reuse existing discover progress parsing (same stdout format)
+    let processedCount = 0;
+    let totalFiles = 0;
+    let cumParse = 0, cumMC = 0, cumVV = 0, cumMV = 0;
 
     proc.stdout.on('data', (data) => {
         const lines = data.toString().split('\n').filter(l => l.trim());
         for (const line of lines) {
-            try {
-                const parsed = JSON.parse(line);
-                event.reply('webdav-sync-progress', parsed);
-
-                if (parsed.event === 'sync_result') {
-                    // Update last_sync in config
-                    const uc = readYamlFile(userSettingsPath);
-                    const src = (uc.webdav_sources || []).find(s => s.id === sourceId);
-                    if (src) {
-                        src.last_sync = new Date().toISOString();
-                        writeYamlFile(userSettingsPath, uc);
-                    }
+            // Parse pipeline progress from log lines (same as discover handler)
+            if (line.includes('[DISCOVER] Found') || line.includes('[CONTAINER]')) {
+                const m = line.match(/(\d+)\s+(files|stored)/);
+                if (m) {
+                    const n = parseInt(m[1]);
+                    if (line.includes('Found')) totalFiles = n;
                 }
-            } catch {
-                // Non-JSON output, ignore
             }
+
+            // Forward as progress event
+            event.reply('webdav-sync-progress', {
+                event: 'progress',
+                message: line,
+                processedCount,
+                totalFiles,
+            });
+
+            // Track phase completion for UI
+            if (line.includes('STEP 1/4') && line.includes('completed')) cumParse++;
+            if (line.includes('STEP 2/4') && line.includes('completed')) cumMC++;
+            if (line.includes('STEP 3a') && line.includes('completed')) cumVV++;
+            if (line.includes('STEP 3b') && line.includes('completed')) cumMV++;
+            if (line.includes('[OK]')) processedCount++;
         }
     });
 
-    proc.stderr.on('data', (d) => console.error('[WebDAV Sync]', d.toString()));
+    proc.stderr.on('data', (d) => console.error('[WebDAV Process]', d.toString()));
 
     proc.on('close', (code) => {
         activeWebdavSyncs.delete(sourceId);
-        event.reply('webdav-sync-complete', { sourceId, code });
+        // Update last_scan in config
+        const uc = readYamlFile(userSettingsPath);
+        const src = (uc.webdav_sources || []).find(s => s.id === sourceId);
+        if (src) {
+            src.last_scan = new Date().toISOString();
+            writeYamlFile(userSettingsPath, uc);
+        }
+        event.reply('webdav-sync-complete', { sourceId, code, processedCount });
     });
 
     proc.on('error', (err) => {
@@ -1958,9 +1979,37 @@ ipcMain.on('sync-webdav-source', (event, sourceId) => {
     });
 });
 
-ipcMain.handle('get-webdav-cache-path', async (_, sourceId) => {
-    const homedir = require('os').homedir();
-    return path.join(homedir, '.imagine-cache', 'webdav', sourceId);
+// WebDAV Folder Browser
+ipcMain.handle('browse-webdav-folders', async (_, config) => {
+    return new Promise((resolve) => {
+        const folderConfig = JSON.stringify({
+            url: config.url,
+            username: config.username,
+            password: config.password,
+            remote_path: config.remote_path || '/',
+            verify_ssl: config.verify_ssl !== false,
+            path: config.path || null,
+        });
+
+        const proc = spawnBackend('remote.sync_cli', ['--folders', folderConfig], {
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }, 'backend/remote/sync_cli.py', ['--folders', folderConfig]);
+
+        let output = '';
+        proc.stdout.on('data', (d) => { output += d.toString(); });
+        proc.stderr.on('data', (d) => console.error('[WebDAV Folders]', d.toString()));
+
+        proc.on('close', () => {
+            try {
+                const lines = output.trim().split('\n').filter(l => l.trim());
+                const lastLine = lines[lines.length - 1];
+                resolve(JSON.parse(lastLine));
+            } catch {
+                resolve({ success: false, folders: [] });
+            }
+        });
+    });
 });
 
 // IPC Handler: Update config — routes personal keys to user-settings.yaml, system keys to config.yaml
