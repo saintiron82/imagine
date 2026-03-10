@@ -20,6 +20,7 @@
   "action.open_file": "파일 열기",
   "action.stop_processing": "처리 중지",
   "action.add_folder": "폴더 추가",
+  "action.cancel": "취소",
   "action.remove_folder": "제거",
   "action.scan_now": "지금 스캔",
   "action.scan_all": "전체 스캔",
@@ -750,5 +751,7 @@
   "webdav.just_now": "방금",
   "webdav.select_folder": "폴더 선택",
   "webdav.no_subfolders": "하위 폴더 없음",
-  "webdav.use_current_folder": "이 폴더 사용"
+  "webdav.use_current_folder": "이 폴더 사용",
+  "sidebar.add_local_folder": "로컬 폴더...",
+  "sidebar.add_nas_connection": "+ NAS 연결 추가..."
 }

@@ -24,7 +24,6 @@ import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
 import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
-import WebDAVSourcesPanel from './components/WebDAVSourcesPanel';
 import SubscriptionBanner from './components/SubscriptionBanner';
 
 function App() {
@@ -897,6 +896,12 @@ function App() {
       type: 'info'
     });
 
+    // WebDAV folder: route through WebDAV processSource
+    if (folderPath.startsWith('webdav://') && window.electron?.webdav) {
+      window.electron.webdav.processSource(folderPath);
+      return;
+    }
+
     // Server mode Electron: scan folder → create jobs in queue via IPC (direct DB)
     if (appMode === 'server' && isElectron && window.electron?.queue) {
       try {
@@ -1642,7 +1647,6 @@ function App() {
                 onFolderToggle={handleFolderToggle}
                 reloadSignal={folderStatsVersion}
               />
-              <WebDAVSourcesPanel isBusy={isProcessing || isDiscovering} />
             </div>
           </div>
         )}

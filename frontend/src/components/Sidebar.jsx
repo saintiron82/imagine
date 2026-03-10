@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare, Globe, Plus, Monitor } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { browseFolders } from '../api/admin';
+import WebDAVFolderPicker from './WebDAVFolderPicker';
+import WebDAVConnectDialog from './WebDAVConnectDialog';
 
 /** Aggregate phase stats for entries whose storage_root starts with prefix */
 function aggregateStats(phaseStats, folderPath) {
@@ -36,13 +38,16 @@ function aggregateStats(phaseStats, folderPath) {
     });
 }
 
-const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, onRemoveRoot, phaseStats }) => {
+const isWebDAVPath = (p) => p && p.startsWith('webdav://');
+
+const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, isWebDAV = false, onRemoveRoot, phaseStats }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(isRoot); // Roots start open
     const [children, setChildren] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const isCtrlSelected = selectedPaths.has(path);
     const isCurrentPath = currentPath === path;
+    const webdav = isWebDAV || isWebDAVPath(path);
 
     // Aggregate stats for this node's subtree
     const myStats = useMemo(() => aggregateStats(phaseStats, path), [phaseStats, path]);
@@ -57,7 +62,17 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
     const loadChildren = async () => {
         setIsLoading(true);
         try {
-            if (isElectron && window.electron?.fs) {
+            if (webdav) {
+                // WebDAV: browse remote folders via PROPFIND
+                const result = await window.electron?.webdav?.browseFolders({ webdavPath: path });
+                if (result?.success) {
+                    setChildren((result.folders || []).map(f => ({
+                        name: f.name,
+                        path: f.path.startsWith('webdav://') ? f.path : path.replace(/\/$/, '') + '/' + f.name,
+                        isDirectory: true,
+                    })));
+                }
+            } else if (isElectron && window.electron?.fs) {
                 const items = await window.electron.fs.listDir(path);
                 const folders = items.filter(item => item.isDirectory);
                 setChildren(folders);
@@ -115,7 +130,9 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                     <CheckSquare size={14} className="text-purple-400 mr-1.5 flex-shrink-0" />
                 )}
 
-                {isOpen ? (
+                {webdav && isRoot ? (
+                    <Globe size={16} className="mr-2 text-blue-400" />
+                ) : isOpen ? (
                     <FolderOpen size={16} className={`mr-2 ${isRoot ? 'text-blue-400' : 'text-yellow-500'}`} />
                 ) : (
                     <Folder size={16} className={`mr-2 ${isRoot ? 'text-blue-400' : 'text-yellow-500'}`} />
@@ -183,6 +200,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                             onSelect={onSelect}
                             currentPath={currentPath}
                             level={level + 1}
+                            isWebDAV={webdav}
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
                             phaseStats={phaseStats}
@@ -205,6 +223,36 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
     const [loading, setLoading] = useState(true);
     const [rootPhaseStats, setRootPhaseStats] = useState({});
 
+    // WebDAV integration state
+    const [webdavSources, setWebdavSources] = useState([]);
+    const [showAddMenu, setShowAddMenu] = useState(false);
+    const [showNASPicker, setShowNASPicker] = useState(null); // source object or null
+    const [showNASConnect, setShowNASConnect] = useState(false);
+    const addMenuRef = useRef(null);
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        if (!showAddMenu) return;
+        const handleClickOutside = (e) => {
+            if (addMenuRef.current && !addMenuRef.current.contains(e.target)) {
+                setShowAddMenu(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showAddMenu]);
+
+    const loadWebDAVSources = useCallback(async () => {
+        try {
+            const result = await window.electron?.webdav?.getSources();
+            if (result?.success) {
+                setWebdavSources(result.sources || []);
+            }
+        } catch (e) {
+            // WebDAV not available — ignore
+        }
+    }, []);
+
     const loadRoots = useCallback(async () => {
         setLoading(true);
         try {
@@ -212,13 +260,16 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
             if (result?.success) {
                 const validRoots = (result.folders || []).filter(f => f.exists).map(f => ({
                     path: f.path,
-                    name: f.path.split(/[/\\]/).pop() || f.path,
+                    name: isWebDAVPath(f.path)
+                        ? _webdavDisplayName(f.path, webdavSources)
+                        : (f.path.split(/[/\\]/).pop() || f.path),
+                    isWebDAV: !!f.isWebDAV,
                 }));
                 setRoots(validRoots);
 
-                // Load phase stats for all roots in parallel
+                // Load phase stats for local roots only (WebDAV folders don't have local phase stats)
                 const statsMap = {};
-                await Promise.all(validRoots.map(async (root) => {
+                await Promise.all(validRoots.filter(r => !r.isWebDAV).map(async (root) => {
                     try {
                         const statsResult = await window.electron?.pipeline?.getFolderPhaseStats(root.path);
                         if (statsResult?.success) {
@@ -235,21 +286,32 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [webdavSources]);
+
+    useEffect(() => {
+        loadWebDAVSources();
+    }, [loadWebDAVSources]);
 
     useEffect(() => {
         loadRoots();
     }, [loadRoots, reloadSignal]);
 
     const handleAddFolder = async () => {
+        // If WebDAV sources exist, show dropdown menu
+        if (webdavSources.length > 0) {
+            setShowAddMenu(prev => !prev);
+            return;
+        }
+        // No NAS → directly open Finder dialog
+        await addLocalFolder();
+    };
+
+    const addLocalFolder = async () => {
+        setShowAddMenu(false);
         try {
             const result = await window.electron?.pipeline?.addRegisteredFolder();
             if (result?.success && result.folders) {
-                setRoots(result.folders.filter(f => f.exists).map(f => ({
-                    path: f.path,
-                    name: f.path.split(/[/\\]/).pop() || f.path,
-                })));
-                // Auto-select the first newly added folder
+                await loadRoots();
                 if (result.added?.length > 0) {
                     onFolderSelect(result.added[0]);
                 }
@@ -259,14 +321,30 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
         }
     };
 
+    const handleNASFolderSelect = async (webdavPath) => {
+        setShowNASPicker(null);
+        setShowAddMenu(false);
+        try {
+            const result = await window.electron?.pipeline?.addRegisteredWebDAVFolder(webdavPath);
+            if (result?.success) {
+                await loadRoots();
+                onFolderSelect(webdavPath);
+            }
+        } catch (e) {
+            console.error('Failed to add WebDAV folder:', e);
+        }
+    };
+
+    const handleNASConnected = () => {
+        setShowNASConnect(false);
+        loadWebDAVSources();
+    };
+
     const handleRemoveRoot = async (folderPath) => {
         try {
             const result = await window.electron?.pipeline?.removeRegisteredFolder(folderPath);
             if (result?.success) {
-                setRoots((result.folders || []).filter(f => f.exists).map(f => ({
-                    path: f.path,
-                    name: f.path.split(/[/\\]/).pop() || f.path,
-                })));
+                await loadRoots();
             }
         } catch (e) {
             console.error('Failed to remove folder:', e);
@@ -276,7 +354,7 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
     return (
         <div>
             {/* Add Folder Button */}
-            <div className="mb-2">
+            <div className="mb-2 relative" ref={addMenuRef}>
                 <button
                     onClick={handleAddFolder}
                     className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded flex items-center justify-center space-x-2"
@@ -284,6 +362,50 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
                     <FolderPlus size={16} />
                     <span>{t('action.add_folder')}</span>
                 </button>
+
+                {/* Dropdown menu (visible when WebDAV sources exist) */}
+                {showAddMenu && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-30 overflow-hidden">
+                        {/* Local folder option */}
+                        <button
+                            onClick={addLocalFolder}
+                            className="w-full px-3 py-2 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2 text-left"
+                        >
+                            <Monitor size={14} className="text-yellow-500" />
+                            {t('sidebar.add_local_folder')}
+                        </button>
+
+                        {/* Divider + NAS sources */}
+                        <div className="border-t border-gray-700 mx-2" />
+                        <div className="px-3 py-1">
+                            <span className="text-[10px] text-gray-500 uppercase tracking-wider">NAS</span>
+                        </div>
+
+                        {webdavSources.map(source => (
+                            <button
+                                key={source.id}
+                                onClick={() => { setShowAddMenu(false); setShowNASPicker(source); }}
+                                className="w-full px-3 py-2 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2 text-left"
+                            >
+                                <Globe size={14} className="text-blue-400" />
+                                <div className="flex-1 min-w-0">
+                                    <div className="truncate">{source.name || source.url}</div>
+                                    <div className="text-[10px] text-gray-500 truncate">{source.url}</div>
+                                </div>
+                            </button>
+                        ))}
+
+                        {/* Add new NAS */}
+                        <div className="border-t border-gray-700 mx-2" />
+                        <button
+                            onClick={() => { setShowAddMenu(false); setShowNASConnect(true); }}
+                            className="w-full px-3 py-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200 flex items-center gap-2 text-left"
+                        >
+                            <Plus size={14} />
+                            {t('sidebar.add_nas_connection')}
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Ctrl+click multi-select info */}
@@ -308,6 +430,7 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
                             onSelect={onFolderSelect}
                             currentPath={currentPath}
                             isRoot={true}
+                            isWebDAV={root.isWebDAV}
                             onRemoveRoot={handleRemoveRoot}
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
@@ -316,8 +439,39 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
                     ))}
                 </div>
             )}
+
+            {/* NAS Folder Picker Modal */}
+            {showNASPicker && (
+                <WebDAVFolderPicker
+                    source={showNASPicker}
+                    onSelect={handleNASFolderSelect}
+                    onClose={() => setShowNASPicker(null)}
+                />
+            )}
+
+            {/* NAS Connect Dialog */}
+            {showNASConnect && (
+                <WebDAVConnectDialog
+                    onClose={() => setShowNASConnect(false)}
+                    onAdded={handleNASConnected}
+                />
+            )}
         </div>
     );
 };
+
+/** Build display name for a webdav:// path */
+function _webdavDisplayName(webdavPath, sources) {
+    const withoutScheme = webdavPath.replace('webdav://', '');
+    const slashIdx = withoutScheme.indexOf('/');
+    const sourceId = slashIdx === -1 ? withoutScheme : withoutScheme.substring(0, slashIdx);
+    const subPath = slashIdx === -1 ? '/' : withoutScheme.substring(slashIdx);
+
+    const source = sources.find(s => s.id === sourceId);
+    const sourceName = source?.name || source?.url || sourceId;
+    const folderName = subPath === '/' ? '' : subPath.split('/').filter(Boolean).pop();
+
+    return folderName ? `${folderName} (${sourceName})` : sourceName;
+}
 
 export default Sidebar;

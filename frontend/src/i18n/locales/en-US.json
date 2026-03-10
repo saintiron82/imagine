@@ -20,6 +20,7 @@
   "action.open_file": "Open File",
   "action.stop_processing": "Stop processing",
   "action.add_folder": "Add Folder",
+  "action.cancel": "Cancel",
   "action.remove_folder": "Remove",
   "action.scan_now": "Scan Now",
   "action.scan_all": "Scan All",
@@ -750,5 +751,7 @@
   "webdav.just_now": "Just now",
   "webdav.select_folder": "Select Folder",
   "webdav.no_subfolders": "No subfolders",
-  "webdav.use_current_folder": "Use this folder"
+  "webdav.use_current_folder": "Use this folder",
+  "sidebar.add_local_folder": "Local Folder...",
+  "sidebar.add_nas_connection": "+ Add NAS Connection..."
 }

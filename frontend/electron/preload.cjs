@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('electron', {
         // Registered Folders
         getRegisteredFolders: () => ipcRenderer.invoke('get-registered-folders'),
         addRegisteredFolder: () => ipcRenderer.invoke('add-registered-folder'),
+        addRegisteredWebDAVFolder: (webdavPath) => ipcRenderer.invoke('add-registered-webdav-folder', webdavPath),
         removeRegisteredFolder: (folderPath) => ipcRenderer.invoke('remove-registered-folder', folderPath),
 
         // Discover (DFS folder scan)

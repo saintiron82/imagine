@@ -1713,10 +1713,14 @@ ipcMain.handle('get-registered-folders', async () => {
         const userConfig = readYamlFile(userSettingsPath);
         const systemConfig = readYamlFile(path.join(configRoot, 'config.yaml'));
         const regFolders = userConfig.registered_folders || systemConfig.registered_folders || { folders: [], auto_scan: true };
-        const folders = (regFolders.folders || []).map(fp => ({
-            path: fp,
-            exists: fs.existsSync(fp),
-        }));
+        const folders = (regFolders.folders || []).map(fp => {
+            const isWebDAV = fp.startsWith('webdav://');
+            return {
+                path: fp,
+                exists: isWebDAV ? true : fs.existsSync(fp),
+                isWebDAV,
+            };
+        });
         return { success: true, folders, autoScan: regFolders.auto_scan !== false };
     } catch (err) {
         console.error('[Get Registered Folders Error]', err);
@@ -1773,6 +1777,41 @@ ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
         return { success: true, folders };
     } catch (err) {
         console.error('[Remove Registered Folder Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
+// IPC Handler: Add a WebDAV folder path to registered folders (no OS dialog)
+ipcMain.handle('add-registered-webdav-folder', async (_, webdavPath) => {
+    try {
+        if (!webdavPath || !webdavPath.startsWith('webdav://')) {
+            return { success: false, error: 'Invalid WebDAV path' };
+        }
+
+        const userConfig = readYamlFile(userSettingsPath);
+        if (!userConfig.registered_folders) userConfig.registered_folders = { folders: [], auto_scan: true };
+        if (!userConfig.registered_folders.folders) userConfig.registered_folders.folders = [];
+
+        const existing = new Set(userConfig.registered_folders.folders);
+        if (existing.has(webdavPath)) {
+            // Already registered — return current list without adding
+            const folders = userConfig.registered_folders.folders.map(fp => {
+                const isWebDAV = fp.startsWith('webdav://');
+                return { path: fp, exists: isWebDAV ? true : fs.existsSync(fp), isWebDAV };
+            });
+            return { success: true, added: [], folders };
+        }
+
+        userConfig.registered_folders.folders.push(webdavPath);
+        writeYamlFile(userSettingsPath, userConfig);
+
+        const folders = userConfig.registered_folders.folders.map(fp => {
+            const isWebDAV = fp.startsWith('webdav://');
+            return { path: fp, exists: isWebDAV ? true : fs.existsSync(fp), isWebDAV };
+        });
+        return { success: true, added: [webdavPath], folders };
+    } catch (err) {
+        console.error('[Add WebDAV Folder Error]', err);
         return { success: false, error: err.message };
     }
 });
@@ -1895,7 +1934,23 @@ function _decryptWebdavPassword(source) {
 }
 
 // WebDAV Process: Run pipeline on remote files via FileContainer (fetch-and-process)
-ipcMain.on('process-webdav-source', (event, sourceId) => {
+// Accepts either sourceId (string) or { sourceId, folderPath } (object with webdav:// path)
+ipcMain.on('process-webdav-source', (event, arg) => {
+    let sourceId, remotePath;
+
+    if (typeof arg === 'string' && arg.startsWith('webdav://')) {
+        // webdav://source-id/sub/path format
+        const parsed = _parseWebDAVPath(arg);
+        sourceId = parsed.sourceId;
+        remotePath = parsed.subPath;
+    } else if (typeof arg === 'object' && arg.sourceId) {
+        sourceId = arg.sourceId;
+        remotePath = arg.folderPath || null;
+    } else {
+        sourceId = arg;
+        remotePath = null;
+    }
+
     if (activeWebdavSyncs.has(sourceId)) {
         event.reply('webdav-sync-progress', { event: 'error', message: 'Processing already in progress' });
         return;
@@ -1913,7 +1968,7 @@ ipcMain.on('process-webdav-source', (event, sourceId) => {
         url: source.url,
         username: source.username,
         password: _decryptWebdavPassword(source),
-        remote_path: source.remote_path || '/',
+        remote_path: remotePath || source.remote_path || '/',
         verify_ssl: source.verify_ssl !== false,
     });
 
@@ -1979,22 +2034,44 @@ ipcMain.on('process-webdav-source', (event, sourceId) => {
     });
 });
 
-// WebDAV Folder Browser
+// WebDAV Folder Browser — accepts either direct config or webdav:// path
 ipcMain.handle('browse-webdav-folders', async (_, config) => {
     return new Promise((resolve) => {
-        const folderConfig = JSON.stringify({
-            url: config.url,
-            username: config.username,
-            password: config.password,
-            remote_path: config.remote_path || '/',
-            verify_ssl: config.verify_ssl !== false,
-            path: config.path || null,
-        });
+        let browseConfig;
 
-        const proc = spawnBackend('remote.sync_cli', ['--folders', folderConfig], {
+        if (config.webdavPath) {
+            // Parse webdav://source-id/some/path format — resolve source credentials
+            const { sourceId, subPath } = _parseWebDAVPath(config.webdavPath);
+            const userConfig = readYamlFile(userSettingsPath);
+            const source = (userConfig.webdav_sources || []).find(s => s.id === sourceId);
+            if (!source) {
+                return resolve({ success: false, folders: [], message: 'Source not found' });
+            }
+            browseConfig = {
+                url: source.url,
+                username: source.username,
+                password: _decryptWebdavPassword(source),
+                remote_path: '/',
+                verify_ssl: source.verify_ssl !== false,
+                path: subPath || null,
+            };
+        } else {
+            // Direct config (used by WebDAVConnectDialog / WebDAVFolderPicker)
+            browseConfig = {
+                url: config.url,
+                username: config.username,
+                password: config.password,
+                remote_path: config.remote_path || '/',
+                verify_ssl: config.verify_ssl !== false,
+                path: config.path || null,
+            };
+        }
+
+        const folderConfigJson = JSON.stringify(browseConfig);
+        const proc = spawnBackend('remote.sync_cli', ['--folders', folderConfigJson], {
             env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
             stdio: ['pipe', 'pipe', 'pipe'],
-        }, 'backend/remote/sync_cli.py', ['--folders', folderConfig]);
+        }, 'backend/remote/sync_cli.py', ['--folders', folderConfigJson]);
 
         let output = '';
         proc.stdout.on('data', (d) => { output += d.toString(); });
@@ -2011,6 +2088,20 @@ ipcMain.handle('browse-webdav-folders', async (_, config) => {
         });
     });
 });
+
+/** Parse webdav://source-id/sub/path into { sourceId, subPath } */
+function _parseWebDAVPath(webdavPath) {
+    // webdav://source-id/sub/path → sourceId=source-id, subPath=/sub/path
+    const withoutScheme = webdavPath.replace('webdav://', '');
+    const slashIdx = withoutScheme.indexOf('/');
+    if (slashIdx === -1) {
+        return { sourceId: withoutScheme, subPath: '/' };
+    }
+    return {
+        sourceId: withoutScheme.substring(0, slashIdx),
+        subPath: withoutScheme.substring(slashIdx) || '/',
+    };
+}
 
 // IPC Handler: Update config — routes personal keys to user-settings.yaml, system keys to config.yaml
 ipcMain.handle('update-config', async (_, key, value) => {
