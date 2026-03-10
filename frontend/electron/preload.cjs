@@ -147,6 +147,20 @@ contextBridge.exposeInMainWorld('electron', {
         offServerEvent: () => ipcRenderer.removeAllListeners('mdns-server-event'),
     },
 
+    // WebDAV Remote Sources
+    webdav: {
+        getSources: () => ipcRenderer.invoke('get-webdav-sources'),
+        addSource: (config) => ipcRenderer.invoke('add-webdav-source', config),
+        removeSource: (sourceId) => ipcRenderer.invoke('remove-webdav-source', sourceId),
+        testConnection: (config) => ipcRenderer.invoke('test-webdav-connection', config),
+        syncSource: (sourceId) => ipcRenderer.send('sync-webdav-source', sourceId),
+        getCachePath: (sourceId) => ipcRenderer.invoke('get-webdav-cache-path', sourceId),
+        onSyncProgress: (cb) => ipcRenderer.on('webdav-sync-progress', (_, data) => cb(data)),
+        offSyncProgress: () => ipcRenderer.removeAllListeners('webdav-sync-progress'),
+        onSyncComplete: (cb) => ipcRenderer.on('webdav-sync-complete', (_, data) => cb(data)),
+        offSyncComplete: () => ipcRenderer.removeAllListeners('webdav-sync-complete'),
+    },
+
     // Folder Sync (DB ↔ disk reconciliation)
     sync: {
         scanFolder: (folderPath) => ipcRenderer.invoke('sync-folder', { folderPath }),

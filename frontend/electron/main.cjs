@@ -125,7 +125,7 @@ const USER_SETTING_PREFIXES = [
     'ai_mode.override', 'ai_mode.auto_detect',
     'ai_mode.vlm_backend',
     'batch_processing.enabled', 'batch_processing.adaptive',
-    'registered_folders', 'last_session',
+    'registered_folders', 'last_session', 'webdav_sources',
     'worker.claim_batch_size', 'worker.gpu_memory_percent',
     'worker.cpu_cores', 'worker.batch_capacity',
     'worker.schedule', 'worker.idle_unload_minutes',
@@ -1775,6 +1775,192 @@ ipcMain.handle('remove-registered-folder', async (_, folderPath) => {
         console.error('[Remove Registered Folder Error]', err);
         return { success: false, error: err.message };
     }
+});
+
+// ── WebDAV Source Management ─────────────────────────────────────
+
+const activeWebdavSyncs = new Map(); // sourceId → child process
+
+ipcMain.handle('get-webdav-sources', async () => {
+    try {
+        const userConfig = readYamlFile(userSettingsPath);
+        const sources = (userConfig.webdav_sources || []).map(s => ({
+            id: s.id,
+            name: s.name,
+            url: s.url,
+            remote_path: s.remote_path,
+            verify_ssl: s.verify_ssl !== false,
+            last_sync: s.last_sync || null,
+            // password is NOT returned for security
+        }));
+        return { success: true, sources };
+    } catch (err) {
+        console.error('[Get WebDAV Sources Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('add-webdav-source', async (_, sourceConfig) => {
+    try {
+        const { safeStorage } = require('electron');
+        const { randomUUID } = require('crypto');
+
+        const userConfig = readYamlFile(userSettingsPath);
+        if (!userConfig.webdav_sources) userConfig.webdav_sources = [];
+
+        // Encrypt password
+        let encryptedPassword = sourceConfig.password;
+        if (safeStorage.isEncryptionAvailable()) {
+            encryptedPassword = safeStorage.encryptString(sourceConfig.password).toString('base64');
+        }
+
+        const source = {
+            id: sourceConfig.id || randomUUID().slice(0, 8),
+            name: sourceConfig.name || 'WebDAV',
+            url: sourceConfig.url,
+            remote_path: sourceConfig.remote_path || '/',
+            username: sourceConfig.username,
+            encrypted_password: encryptedPassword,
+            password_encrypted: safeStorage.isEncryptionAvailable(),
+            verify_ssl: sourceConfig.verify_ssl !== false,
+            last_sync: null,
+        };
+
+        userConfig.webdav_sources.push(source);
+        writeYamlFile(userSettingsPath, userConfig);
+
+        return { success: true, source: { ...source, encrypted_password: undefined } };
+    } catch (err) {
+        console.error('[Add WebDAV Source Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('remove-webdav-source', async (_, sourceId) => {
+    try {
+        const userConfig = readYamlFile(userSettingsPath);
+        if (!userConfig.webdav_sources) return { success: true };
+
+        userConfig.webdav_sources = userConfig.webdav_sources.filter(s => s.id !== sourceId);
+        writeYamlFile(userSettingsPath, userConfig);
+
+        // Clean up cache directory
+        const homedir = require('os').homedir();
+        const cachePath = path.join(homedir, '.imagine-cache', 'webdav', sourceId);
+        if (fs.existsSync(cachePath)) {
+            fs.rmSync(cachePath, { recursive: true, force: true });
+        }
+
+        return { success: true };
+    } catch (err) {
+        console.error('[Remove WebDAV Source Error]', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('test-webdav-connection', async (_, config) => {
+    return new Promise((resolve) => {
+        const configJson = JSON.stringify(config);
+        const proc = spawnBackend('remote.sync_cli', ['--test', configJson], {
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }, 'backend/remote/sync_cli.py', ['--test', configJson]);
+
+        let output = '';
+        proc.stdout.on('data', (d) => output += d.toString());
+        proc.stderr.on('data', (d) => console.error('[WebDAV Test]', d.toString()));
+        proc.on('close', () => {
+            try {
+                resolve(JSON.parse(output.trim()));
+            } catch {
+                resolve({ success: false, message: 'Failed to parse response' });
+            }
+        });
+        proc.on('error', (err) => {
+            resolve({ success: false, message: err.message });
+        });
+    });
+});
+
+function _decryptWebdavPassword(source) {
+    if (!source.encrypted_password) return '';
+    if (!source.password_encrypted) return source.encrypted_password;
+    try {
+        const { safeStorage } = require('electron');
+        const buf = Buffer.from(source.encrypted_password, 'base64');
+        return safeStorage.decryptString(buf);
+    } catch {
+        return source.encrypted_password;
+    }
+}
+
+ipcMain.on('sync-webdav-source', (event, sourceId) => {
+    if (activeWebdavSyncs.has(sourceId)) {
+        event.reply('webdav-sync-progress', { event: 'error', message: 'Sync already in progress' });
+        return;
+    }
+
+    const userConfig = readYamlFile(userSettingsPath);
+    const source = (userConfig.webdav_sources || []).find(s => s.id === sourceId);
+    if (!source) {
+        event.reply('webdav-sync-progress', { event: 'error', message: 'Source not found' });
+        return;
+    }
+
+    const syncConfig = JSON.stringify({
+        id: source.id,
+        url: source.url,
+        username: source.username,
+        password: _decryptWebdavPassword(source),
+        remote_path: source.remote_path || '/',
+        verify_ssl: source.verify_ssl !== false,
+    });
+
+    const proc = spawnBackend('remote.sync_cli', ['--sync', syncConfig], {
+        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+    }, 'backend/remote/sync_cli.py', ['--sync', syncConfig]);
+
+    activeWebdavSyncs.set(sourceId, proc);
+
+    proc.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n').filter(l => l.trim());
+        for (const line of lines) {
+            try {
+                const parsed = JSON.parse(line);
+                event.reply('webdav-sync-progress', parsed);
+
+                if (parsed.event === 'sync_result') {
+                    // Update last_sync in config
+                    const uc = readYamlFile(userSettingsPath);
+                    const src = (uc.webdav_sources || []).find(s => s.id === sourceId);
+                    if (src) {
+                        src.last_sync = new Date().toISOString();
+                        writeYamlFile(userSettingsPath, uc);
+                    }
+                }
+            } catch {
+                // Non-JSON output, ignore
+            }
+        }
+    });
+
+    proc.stderr.on('data', (d) => console.error('[WebDAV Sync]', d.toString()));
+
+    proc.on('close', (code) => {
+        activeWebdavSyncs.delete(sourceId);
+        event.reply('webdav-sync-complete', { sourceId, code });
+    });
+
+    proc.on('error', (err) => {
+        activeWebdavSyncs.delete(sourceId);
+        event.reply('webdav-sync-complete', { sourceId, error: err.message });
+    });
+});
+
+ipcMain.handle('get-webdav-cache-path', async (_, sourceId) => {
+    const homedir = require('os').homedir();
+    return path.join(homedir, '.imagine-cache', 'webdav', sourceId);
 });
 
 // IPC Handler: Update config — routes personal keys to user-settings.yaml, system keys to config.yaml
