@@ -158,6 +158,8 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
                     app.state.parse_ahead._processing_mode = "auto"
                     if old_mode != "auto":
                         logger.info("No workers online, auto-processing enabled")
+                    # Create builtin worker session so it appears in worker list
+                    _ensure_builtin_worker_session(db)
                 else:
                     app.state.parse_ahead._processing_mode = "distribute"
         elif global_mode == "mc_only":
