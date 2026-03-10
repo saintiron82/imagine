@@ -338,7 +338,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         firebase_email: firebaseUser?.email || null,
       });
 
-      // Register to Firebase RTDB for discovery (reject duplicate names)
+      // Register to Firestore for discovery (reject duplicate names)
       try {
         const localIp = await window.electron?.network?.getLocalIp?.();
         await registerGroup(name, {
