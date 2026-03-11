@@ -62,7 +62,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
     const loadChildren = async () => {
         setIsLoading(true);
         try {
-            if (webdav) {
+            if (isWebDAVPath(path)) {
                 // WebDAV: browse remote folders via PROPFIND
                 const result = await window.electron?.webdav?.browseFolders({ webdavPath: path });
                 if (result?.success) {
