@@ -959,181 +959,142 @@ class WorkerDaemon:
         elapsed_parse = 0.0
         fpm_parse = 0.0
 
-        # ── Phase V: Vision (VLM, 1-by-1 — MLX batch_size=1) ──
-        # Skip vision for jobs where server already generated MC (gap-fill).
-        # vision_data is attached by claim when phase_completed.vision = 1.
-        needs_vision = [c for c in active if not c.job.get("vision_data")]
-        already_vision = [c for c in active if c.job.get("vision_data")]
+        # ── Phase V → VV → MV via unified PhaseRunner ──
+        from backend.pipeline.protocols import PhaseItem, FixedBatchStrategy
+        from backend.pipeline.model_manager import ModelManager
+        from backend.pipeline.phase_runner import PhaseRunner
 
-        if already_vision:
-            for ctx in already_vision:
+        # Convert _JobContext → PhaseItem
+        phase_items = []
+        for ctx in active:
+            has_vision = bool(ctx.job.get("vision_data"))
+            item = PhaseItem(
+                job_id=ctx.job["job_id"],
+                file_id=ctx.job["file_id"],
+                file_path=ctx.job["file_path"],
+                thumb_path=ctx.thumb_path,
+                mc_raw=ctx.job.get("mc_raw"),
+                skip_vision=has_vision,
+            )
+            # If server already provided vision data (gap-fill), populate mc_raw
+            if has_vision:
                 vd = ctx.job["vision_data"]
+                item.mc_raw = vd
+                item.vision_result = vd
+                # Also update context metadata with server-provided vision data
                 ctx.metadata.update(vd)
                 ctx.vision_fields = vd
+            phase_items.append(item)
+
+        if [it for it in phase_items if not it.skip_vision]:
             logger.info(
-                f"Phase V: skipped {len(already_vision)} vision-done jobs "
-                f"(server gap-fill MC)"
+                f"Phase V: {sum(1 for it in phase_items if not it.skip_vision)} "
+                f"need VLM, {sum(1 for it in phase_items if it.skip_vision)} "
+                f"already have MC (server gap-fill)"
             )
 
-        if needs_vision:
-            elapsed_vision = self._run_vision_phase(needs_vision, progress_callback)
-            fpm_vision = (len(needs_vision) / elapsed_vision * 60) if elapsed_vision > 0 else 0
-        else:
-            elapsed_vision = 0.0
-            fpm_vision = 0.0
+        # No-op storage — results accumulate on PhaseItem, uploaded later
+        class _AccumulatorStorage:
+            def save_vision(self, item, result): pass
+            def save_vv(self, item, vv_vec, structure_vec=None): pass
+            def save_mv(self, item, mv_vec, text): pass
+            def flush(self): pass
 
-        # Unload VLM to free GPU memory for embedding phases
-        if needs_vision:
-            self._unload_vlm()
+        # Worker progress reporter → IPC _notify bridge
+        class _WorkerProgress:
+            _PHASE_MAP = {"vision": "vision", "vv": "embed_vv", "mv": "embed_mv"}
 
-        # Check stop signal between phases
+            def __init__(self, cb, daemon):
+                self._cb = cb
+                self._daemon = daemon
+
+            def phase_start(self, phase, count):
+                _notify(self._cb, "phase_start", {
+                    "phase": self._PHASE_MAP.get(phase, phase), "count": count})
+
+            def file_done(self, phase, index, count, file_name, success):
+                mapped = self._PHASE_MAP.get(phase, phase)
+                self._daemon._current_phase = mapped
+                self._daemon._current_file = file_name
+                _notify(self._cb, "file_done", {
+                    "phase": mapped, "file_name": file_name,
+                    "index": index + 1, "count": count, "success": success,
+                })
+
+            def phase_complete(self, phase, elapsed_s):
+                mapped = self._PHASE_MAP.get(phase, phase)
+                _notify(self._cb, "phase_complete", {
+                    "phase": mapped, "count": 0,
+                    "elapsed_s": round(elapsed_s, 2),
+                    "files_per_min": 0,
+                })
+
+        models = ModelManager()
+        storage = _AccumulatorStorage()
+        batch_strategy = FixedBatchStrategy(vision=1, vv=8, mv=16)
+        runner = PhaseRunner(
+            models=models,
+            storage=storage,
+            batch_strategy=batch_strategy,
+            stop_check=lambda: self._stop_requested,
+            progress=_WorkerProgress(progress_callback, self),
+        )
+
+        # Phase V
+        t_v = time.perf_counter()
+        phase_items = runner.run_vision(phase_items)
+        elapsed_vision = time.perf_counter() - t_v
+        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
+
         if self._stop_requested:
             logger.info("Stop requested after Vision phase — aborting batch")
             return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
 
-        # ── Phase VV: SigLIP2 (real batch via encode_image_batch) ──
-        t_phase = time.perf_counter()
-        vv_batch_size = 8  # SigLIP2 sub-batch size
-        _notify(progress_callback, "phase_start", {"phase": "embed_vv", "count": len(active)})
-
-        # Load SigLIP2 encoder once
-        from backend.vector.siglip2_encoder import SigLIP2Encoder
-        from PIL import Image as PILImage
-        if WorkerDaemon._vv_encoder is None:
-            WorkerDaemon._vv_encoder = SigLIP2Encoder()
-        encoder = WorkerDaemon._vv_encoder
-
-        processed_vv = 0
-        for chunk_start in range(0, len(active), vv_batch_size):
-            chunk = active[chunk_start:chunk_start + vv_batch_size]
-            images = []
-            chunk_valid = []
-
-            for ctx in chunk:
-                if ctx.thumb_path and Path(ctx.thumb_path).exists():
-                    try:
-                        img = PILImage.open(ctx.thumb_path).convert("RGB")
-                        images.append(img)
-                        chunk_valid.append(ctx)
-                    except Exception as e:
-                        logger.warning(f"VV load failed: {ctx.job['file_path']}: {e}")
-
-            if images:
-                try:
-                    vv_vectors = encoder.encode_image_batch(images)
-                    for j, vec in enumerate(vv_vectors):
-                        chunk_valid[j].vv_vec = vec
-                        # Structure vector (if available)
-                        if hasattr(encoder, 'encode_structure'):
-                            chunk_valid[j].structure_vec = encoder.encode_structure(images[j])
-                except Exception as e:
-                    logger.warning(f"VV batch encode failed: {e}")
-                    # Fallback: individual encoding
-                    for j, img in enumerate(images):
-                        try:
-                            chunk_valid[j].vv_vec = encoder.encode_image(img)
-                        except Exception:
-                            pass
-                finally:
-                    for img in images:
-                        img.close()
-                    del images
-
-            processed_vv += len(chunk)
-            self._current_phase = "embed"
-            last_name = Path(chunk[-1].job["file_path"]).name if chunk else ""
-            self._current_file = last_name
-            _notify(progress_callback, "file_done", {
-                "phase": "embed_vv", "file_name": last_name,
-                "index": processed_vv, "count": len(active),
-                "success": True, "batch_size": len(chunk),
-            })
-            gc.collect()
-
-        elapsed_vv = time.perf_counter() - t_phase
+        # Phase VV
+        t_vv = time.perf_counter()
+        phase_items = runner.run_vv(phase_items)
+        elapsed_vv = time.perf_counter() - t_vv
         fpm_vv = (len(active) / elapsed_vv * 60) if elapsed_vv > 0 else 0
-        _notify(progress_callback, "phase_complete", {
-            "phase": "embed_vv", "count": len(active),
-            "elapsed_s": round(elapsed_vv, 2), "files_per_min": round(fpm_vv, 1),
-        })
 
-        # Unload SigLIP2 to free GPU memory for MV phase
-        self._unload_vv()
-
-        # Check stop signal between phases
         if self._stop_requested:
             logger.info("Stop requested after VV phase — aborting batch")
             return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
 
-        # ── Phase MV: Qwen3-Embedding (real batch via encode_batch) ──
-        t_phase = time.perf_counter()
-        mv_batch_size = 16  # Text embedding sub-batch size
-        _notify(progress_callback, "phase_start", {"phase": "embed_mv", "count": len(active)})
+        # Phase MV
+        t_mv = time.perf_counter()
+        phase_items = runner.run_mv(phase_items)
+        elapsed_mv = time.perf_counter() - t_mv
+        fpm_mv = (len(active) / elapsed_mv * 60) if elapsed_mv > 0 else 0
 
-        from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
-        mv_provider = get_text_embedding_provider()
-
-        # Prepare texts for all active contexts
-        mv_items = []  # (ctx_index, text)
-        for i, ctx in enumerate(active):
-            mc_caption = ctx.metadata.get("mc_caption", "")
-            ai_tags = ctx.metadata.get("ai_tags", "")
-            if isinstance(ai_tags, list):
-                ai_tags_str = ", ".join(str(t) for t in ai_tags)
-            else:
-                ai_tags_str = ai_tags or ""
-
-            facts = {
-                "image_type": ctx.metadata.get("image_type"),
-                "scene_type": ctx.metadata.get("scene_type"),
-                "art_style": ctx.metadata.get("art_style"),
-            }
-            doc_text = build_document_text(mc_caption, ai_tags, facts=facts)
-            if doc_text:
-                mv_items.append((i, doc_text))
-
-        processed_mv = 0
-        for chunk_start in range(0, len(mv_items), mv_batch_size):
-            chunk = mv_items[chunk_start:chunk_start + mv_batch_size]
-            texts = [text for _, text in chunk]
-
-            try:
-                if hasattr(mv_provider, 'encode_batch'):
-                    vecs = mv_provider.encode_batch(texts)
-                else:
-                    vecs = [mv_provider.encode(t) for t in texts]
-
-                for j, vec in enumerate(vecs):
-                    ctx_idx = chunk[j][0]
-                    active[ctx_idx].mv_vec = vec
-            except Exception as e:
-                logger.warning(f"MV batch encode failed: {e}, falling back to individual")
-                for j, (ctx_idx, text) in enumerate(chunk):
-                    try:
-                        active[ctx_idx].mv_vec = mv_provider.encode(text)
-                    except Exception:
-                        pass
-
-            processed_mv += len(chunk)
-            self._current_phase = "embed"
-            last_name = Path(active[chunk[-1][0]].job["file_path"]).name if chunk else ""
-            self._current_file = last_name
-            _notify(progress_callback, "file_done", {
-                "phase": "embed_mv", "file_name": last_name,
-                "index": processed_mv, "count": len(mv_items),
-                "success": True, "batch_size": len(chunk),
-            })
-            gc.collect()
-
-        elapsed_mv = time.perf_counter() - t_phase
-        fpm_mv = (len(mv_items) / elapsed_mv * 60) if elapsed_mv > 0 else 0
-        _notify(progress_callback, "phase_complete", {
-            "phase": "embed_mv", "count": len(mv_items),
-            "elapsed_s": round(elapsed_mv, 2), "files_per_min": round(fpm_mv, 1),
-        })
-
-        # Unload MV model
-        self._unload_mv()
+        # Map PhaseItem results back to _JobContext for upload
+        for i, item in enumerate(phase_items):
+            ctx = active[i]
+            if item.vision_result and not ctx.vision_fields:
+                # PhaseRunner's vision_result has raw keys (caption, tags)
+                # Convert to DB column names for metadata
+                fields = {}
+                vr = item.vision_result
+                if isinstance(vr, dict):
+                    if "caption" in vr:
+                        fields["mc_caption"] = vr["caption"]
+                    if "tags" in vr:
+                        fields["ai_tags"] = vr["tags"]
+                    for key in ("image_type", "art_style", "scene_type", "ocr_text",
+                                "dominant_color", "character_type", "item_type", "ui_type"):
+                        if vr.get(key) is not None:
+                            fields[key] = vr[key]
+                if fields:
+                    ctx.metadata.update(fields)
+                    ctx.vision_fields = fields
+            if item.vv_embedding is not None:
+                ctx.vv_vec = item.vv_embedding
+            if item.structure_embedding is not None:
+                ctx.structure_vec = item.structure_embedding
+            if item.mv_embedding is not None:
+                ctx.mv_vec = item.mv_embedding
+            if item.error and not ctx.failed:
+                ctx.failed = True
+                ctx.error = item.error
 
         # ── Upload all results ──
         t_phase = time.perf_counter()

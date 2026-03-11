@@ -1,31 +1,38 @@
 """
 FileContainer — Source-agnostic file supply buffer for the pipeline.
 
-Producer-Consumer pattern:
-  - Suppliers (Local/WebDAV/...) put batches into the container
-  - Pipeline takes batches out and processes them
-  - After processing, cleanup callback removes temp files
+Two container types:
 
-Usage:
-    container = FileContainer(buffer_size=2)
-    supplier = WebDAVSupplier(source_config)
-    supplier.start(container)   # BG thread starts downloading
+1. FileContainer (legacy, batch-based):
+   Suppliers put BatchInfo batches → pipeline takes batch → cleanup.
+
+2. BufferPool (new, item-based):
+   Multiple suppliers put individual PhaseItems → pipeline takes N items.
+   Source-agnostic: local + NAS files mix naturally in one pool.
+   Backpressure: maxsize prevents excess downloads.
+   Streaming: only batch_capacity × 2 files on disk at any time.
+
+Usage (BufferPool):
+    pool = BufferPool(capacity=10)
+    local_supplier.start(pool)    # instant put
+    webdav_supplier.start(pool)   # background download + put
 
     while True:
-        batch = container.take_batch()
-        if batch is None:
+        items = pool.take_batch(5)
+        if not items:
             break
-        process_batch_phased(batch.file_infos, ...)
-        container.cleanup_batch(batch)
+        runner.run_all(items)
+        pool.cleanup(items)
 """
 
 import logging
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Queue, Empty
-from threading import Thread, Event
+from threading import Thread, Event, Lock
 from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("FileContainer")
@@ -290,3 +297,164 @@ class WebDAVSupplier:
         except Exception as e:
             logger.error(f"WebDAVSupplier error: {e}")
             container.mark_error(str(e))
+
+
+# ---------------------------------------------------------------------------
+# BufferPool — Source-agnostic individual-item buffer
+# ---------------------------------------------------------------------------
+
+class BufferPool:
+    """
+    Source-agnostic file buffer pool for streaming pipeline.
+
+    Multiple suppliers (Local/WebDAV/JobQueue) put individual items.
+    Pipeline takes batch_capacity items at a time for processing.
+    After processing, cleanup deletes temp files.
+
+    Key properties:
+    - Source mixing: local + NAS items coexist naturally
+    - Backpressure: maxsize blocks suppliers when pool is full
+    - Streaming: only capacity items on disk at any time
+    - Auto-refill: take() frees slots → suppliers unblock → auto refill
+
+    Usage:
+        pool = BufferPool(capacity=10)  # batch_capacity × 2
+
+        local_supplier.start_pool(pool)     # puts items immediately
+        webdav_supplier.start_pool(pool)    # puts after download
+
+        while True:
+            items = pool.take_batch(5)      # blocks until 5 ready
+            if not items:
+                break
+            runner.run_all(items)
+            pool.cleanup(items)
+    """
+
+    def __init__(self, capacity: int = 10):
+        """
+        Args:
+            capacity: Maximum items in the pool (batch_capacity × 2).
+                      Suppliers block when pool is full.
+        """
+        self._queue: Queue = Queue(maxsize=capacity)
+        self._lock = Lock()
+        self._suppliers_total = 0
+        self._suppliers_done = 0
+        self._error: Optional[str] = None
+        self._stats = {"put": 0, "taken": 0, "cleaned": 0}
+
+    def register_supplier(self) -> None:
+        """Register a supplier. Call before supplier.start()."""
+        with self._lock:
+            self._suppliers_total += 1
+
+    def put(self, item) -> None:
+        """
+        Supplier adds one ready item to the pool.
+        Blocks if pool is full (backpressure).
+
+        Args:
+            item: PhaseItem instance
+        """
+        self._queue.put(item)
+        with self._lock:
+            self._stats["put"] += 1
+
+    def take_batch(self, size: int, timeout: float = 60.0) -> list:
+        """
+        Pipeline takes up to `size` items from the pool.
+
+        Collects items until:
+        - `size` items gathered, OR
+        - all suppliers done and pool empty, OR
+        - timeout reached
+
+        Returns:
+            List of PhaseItems. Empty list = all work complete.
+        """
+        items = []
+        deadline = time.time() + timeout
+
+        while len(items) < size:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+
+            try:
+                item = self._queue.get(timeout=min(remaining, 2.0))
+                items.append(item)
+            except Empty:
+                # Check if all suppliers are done
+                with self._lock:
+                    if (self._suppliers_done >= self._suppliers_total
+                            and self._suppliers_total > 0
+                            and self._queue.empty()):
+                        break
+                # Otherwise keep waiting
+                continue
+
+        with self._lock:
+            self._stats["taken"] += len(items)
+
+        return items
+
+    def cleanup(self, items: list) -> None:
+        """
+        Clean up temp files after processing.
+        Deletes item.temp_dir if set.
+        """
+        cleaned = 0
+        for item in items:
+            if hasattr(item, "temp_dir") and item.temp_dir:
+                temp_dir = Path(item.temp_dir)
+                if temp_dir.exists():
+                    try:
+                        shutil.rmtree(temp_dir)
+                        cleaned += 1
+                    except OSError as e:
+                        logger.warning(f"Cleanup failed {temp_dir}: {e}")
+
+        with self._lock:
+            self._stats["cleaned"] += cleaned
+
+    def supplier_done(self) -> None:
+        """Supplier signals completion. Called by each supplier when finished."""
+        with self._lock:
+            self._suppliers_done += 1
+            done = self._suppliers_done
+            total = self._suppliers_total
+        logger.info(f"Supplier done ({done}/{total})")
+
+    def supplier_error(self, message: str) -> None:
+        """Supplier signals fatal error."""
+        with self._lock:
+            self._error = message
+            self._suppliers_done += 1
+        logger.error(f"Supplier error: {message}")
+
+    @property
+    def all_done(self) -> bool:
+        with self._lock:
+            return (self._suppliers_done >= self._suppliers_total
+                    and self._suppliers_total > 0
+                    and self._queue.empty())
+
+    @property
+    def has_error(self) -> bool:
+        with self._lock:
+            return self._error is not None
+
+    @property
+    def error_message(self) -> Optional[str]:
+        with self._lock:
+            return self._error
+
+    @property
+    def pool_size(self) -> int:
+        return self._queue.qsize()
+
+    @property
+    def stats(self) -> dict:
+        with self._lock:
+            return dict(self._stats)

@@ -200,52 +200,52 @@ class ParseAheadPool(BaseAheadPool):
         if not contexts or not self._running or self._processing_mode != "auto":
             return len(contexts)
 
-        # ── Phase V: Vision/VLM (MC generation) — skip already-done ──
-        vision_needed = [c for c in contexts if not job_phases.get(c[0], {}).get("vision")]
-        if vision_needed:
-            logger.info(f"Auto Phase V: processing {len(vision_needed)}/{len(contexts)} files with VLM")
-            self._update_builtin_session("vision", f"batch({len(vision_needed)})")
-            self._auto_run_vision_batch(vision_needed)
-            self._auto_unload_vlm()
-        else:
-            logger.info(f"Auto Phase V: all {len(contexts)} files already have MC, skipping VLM")
+        # ── Phase V → VV → MV via unified PhaseRunner ──
+        from backend.pipeline.protocols import PhaseItem, FixedBatchStrategy
+        from backend.pipeline.model_manager import ModelManager
+        from backend.pipeline.phase_runner import PhaseRunner
+        from backend.pipeline.storage_direct import DirectSQLStorage
 
-        if not self._running or self._processing_mode != "auto":
-            return len(contexts)
+        # Convert contexts to PhaseItems
+        phase_items = []
+        for ctx in contexts:
+            job_id, file_id, file_path, thumb_path, mc_raw = ctx
+            phases_done = job_phases.get(job_id, {})
+            phase_items.append(PhaseItem(
+                job_id=job_id,
+                file_id=file_id,
+                file_path=file_path,
+                thumb_path=thumb_path,
+                mc_raw=mc_raw if phases_done.get("vision") else None,
+                skip_vision=bool(phases_done.get("vision")),
+                skip_vv=bool(phases_done.get("embed")),
+                skip_mv=bool(phases_done.get("embed")),
+            ))
 
-        # ── Phase VV: SigLIP2 visual embedding — skip already-done ──
-        vv_needed = [c for c in contexts if not job_phases.get(c[0], {}).get("embed")]
-        if vv_needed:
-            logger.info(f"Auto Phase VV: processing {len(vv_needed)}/{len(contexts)} files with SigLIP2")
-            self._update_builtin_session("embed_vv", f"batch({len(vv_needed)})")
-            for ctx in vv_needed:
-                job_id, file_id, file_path, thumb_path, _ = ctx
-                if not self._running or self._processing_mode != "auto":
-                    break
-                if thumb_path:
-                    try:
-                        self._run_vv_embedding(
-                            file_id, Path(file_path),
-                            Path(thumb_path) if thumb_path else None,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Auto VV failed for job {job_id}: {e}")
-        else:
-            logger.info(f"Auto Phase VV: all {len(contexts)} files already have VV, skipping")
-        # VV encoder stays loaded (lightweight, reusable for next batch)
+        # Create PhaseRunner with DirectSQL storage
+        models = ModelManager()
+        storage = DirectSQLStorage(self.db)
+        batch_strategy = FixedBatchStrategy(vision=1, vv=batch_size, mv=batch_size)
+        runner = PhaseRunner(
+            models=models,
+            storage=storage,
+            batch_strategy=batch_strategy,
+            stop_check=lambda: not self._running or self._processing_mode != "auto",
+        )
 
-        if not self._running or self._processing_mode != "auto":
-            return len(contexts)
+        # Run V → VV → MV (PhaseRunner handles skip flags and model unloading)
+        self._update_builtin_session("vision", f"batch({len(phase_items)})")
+        phase_items = runner.run_vision(phase_items)
 
-        # ── Phase MV: Qwen3-Embedding text embedding — skip already-done ──
-        mv_needed = [c for c in contexts if not job_phases.get(c[0], {}).get("embed")]
-        if mv_needed:
-            logger.info(f"Auto Phase MV: processing {len(mv_needed)}/{len(contexts)} files with text embedder")
-            self._update_builtin_session("embed_mv", f"batch({len(mv_needed)})")
-            self._auto_run_mv_batch(mv_needed)
-            self._auto_unload_mv()
-        else:
-            logger.info(f"Auto Phase MV: all {len(contexts)} files already have MV, skipping")
+        if self._running and self._processing_mode == "auto":
+            self._update_builtin_session("embed_vv", f"batch({len(phase_items)})")
+            phase_items = runner.run_vv(phase_items)
+
+        if self._running and self._processing_mode == "auto":
+            self._update_builtin_session("embed_mv", f"batch({len(phase_items)})")
+            phase_items = runner.run_mv(phase_items)
+
+        storage.flush()
 
         # ── Mark completed with per-file integrity verification ──
         now = _utcnow_sql()
@@ -389,44 +389,6 @@ class ParseAheadPool(BaseAheadPool):
             except Exception as e:
                 logger.warning(f"Auto Vision failed for job {job_id}: {e}")
 
-    def _auto_run_mv_batch(self, contexts: list):
-        """Phase MV: Generate meaning vectors from MC text with Qwen3-Embedding."""
-        try:
-            from backend.vector.text_embedding import get_text_embedding_provider
-            provider = get_text_embedding_provider()
-        except Exception as e:
-            logger.error(f"Auto MV: failed to load text embedder: {e}")
-            return
-
-        for ctx in contexts:
-            job_id, file_id, _, _, _ = ctx
-            if not self._running:
-                break
-
-            cursor = self.db.conn.cursor()
-            cursor.execute(
-                "SELECT mc_caption, ai_tags FROM files WHERE id = ?", (file_id,)
-            )
-            row = cursor.fetchone()
-            if not row or not (row[0] or row[1]):
-                continue
-
-            mc_caption = row[0] or ""
-            ai_tags = row[1] or ""
-            if isinstance(ai_tags, list):
-                ai_tags = ", ".join(str(t) for t in ai_tags)
-
-            mv_text = f"{mc_caption} {ai_tags}".strip()
-            if not mv_text:
-                continue
-
-            try:
-                mv_vec = provider.encode(mv_text)
-                self.db.upsert_vectors(file_id, mv_vec=mv_vec)
-                logger.debug(f"Auto MV: job {job_id} embedded OK")
-            except Exception as e:
-                logger.warning(f"Auto MV failed for job {job_id}: {e}")
-
     def _auto_unload_vlm(self):
         """Unload VLM after Phase V to free GPU memory."""
         try:
@@ -436,16 +398,6 @@ class ParseAheadPool(BaseAheadPool):
             logger.info("Auto: VLM unloaded")
         except Exception as e:
             logger.warning(f"Auto: VLM unload failed: {e}")
-
-    def _auto_unload_mv(self):
-        """Unload MV text embedder after Phase MV to free GPU memory."""
-        try:
-            from backend.vector.text_embedding import reset_provider
-            reset_provider()
-            self._gc_cleanup()
-            logger.info("Auto: MV text embedder unloaded")
-        except Exception as e:
-            logger.warning(f"Auto: MV unload failed: {e}")
 
     @staticmethod
     def _gc_cleanup():
