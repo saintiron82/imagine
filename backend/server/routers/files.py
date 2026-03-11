@@ -99,6 +99,7 @@ def list_files(
     format: Optional[str] = None,
     image_type: Optional[str] = None,
     storage_root: Optional[str] = None,
+    include_incomplete: bool = Query(False, description="Include files still being processed"),
     _user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db),
 ):
@@ -107,6 +108,11 @@ def list_files(
 
     conditions = []
     params = []
+
+    # Hide incomplete files by default (Phase V not done yet)
+    if not include_incomplete:
+        conditions.append("mc_caption IS NOT NULL")
+
     if format:
         conditions.append("format = ?")
         params.append(format)
