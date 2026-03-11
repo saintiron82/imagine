@@ -2046,62 +2046,106 @@ def process_batch_phased(
     else:
         logger.info("[SKIP:Phase] disabled (--no-skip): forcing MC/VV/MV reprocessing")
 
-    # ── Phase 2: VLM (adaptive batch) → MC generation ──
-    def _on_vision_progress(count, batch_size=2):
-        nonlocal cum_mc, active_batch_info
-        cum_mc = count
-        active_batch_info = f"B:{batch_size}"
-        _emit_phase_progress()
+    # ── Phase 2/3a/3b: V → VV → MV via unified PhaseRunner ──
+    from backend.pipeline.protocols import PhaseItem, AdaptiveBatchStrategy
+    from backend.pipeline.model_manager import ModelManager
+    from backend.pipeline.phase_runner import PhaseRunner
+    from backend.pipeline.storage_local import LocalDBStorage
 
-    phase2_vision_adaptive(
-        parsed, controller, monitor,
-        progress_callback=progress_callback,
-        phase_progress_callback=_on_vision_progress,
+    # Convert ParsedFile → PhaseItem
+    phase_items = []
+    pf_indices = []  # parallel index: phase_items[i] corresponds to parsed[pf_indices[i]]
+    for i, pf in enumerate(parsed):
+        if pf.error is not None:
+            continue
+        phase_items.append(PhaseItem(
+            file_id=pf.db_file_id,
+            file_path=str(pf.file_path),
+            thumb_path=str(pf.thumb_path) if pf.thumb_path else None,
+            mc_raw=pf.mc_raw,
+            skip_vision=pf.skip_vision,
+            skip_vv=pf.skip_embed_vv,
+            skip_mv=pf.skip_embed_mv,
+            folder_path=pf.folder_path or "",
+            folder_depth=pf.folder_depth,
+            folder_tags=pf.folder_tags or [],
+        ))
+        pf_indices.append(i)
+
+    # Progress reporter bridging to [PHASE] stdout format
+    progress_state = {"cum_mc": cum_mc, "cum_vv": cum_vv, "cum_mv": cum_mv, "batch_info": ""}
+
+    class _LocalProgress:
+        def phase_start(self, phase, count):
+            logger.info(f"STEP {'2' if phase == 'vision' else '3a' if phase == 'vv' else '3b'}/4 "
+                        f"{'AI Vision' if phase == 'vision' else 'VV Embedding' if phase == 'vv' else 'MV Embedding'} "
+                        f"({count} items, adaptive batch)")
+
+        def file_done(self, phase, index, count, file_name, success):
+            if phase == "vision":
+                progress_state["cum_mc"] = index + 1
+            elif phase == "vv":
+                progress_state["cum_vv"] = index + 1
+            elif phase == "mv":
+                progress_state["cum_mv"] = index + 1
+            nonlocal cum_mc, cum_vv, cum_mv, active_batch_info
+            cum_mc = progress_state["cum_mc"]
+            cum_vv = progress_state["cum_vv"]
+            cum_mv = progress_state["cum_mv"]
+            active_batch_info = progress_state["batch_info"]
+            _emit_phase_progress()
+
+        def phase_complete(self, phase, elapsed_s):
+            nonlocal active_batch_info
+            active_batch_info = ""
+
+    # Wrap AdaptiveBatchController and track batch size for progress
+    class _TrackedAdaptiveBatch(AdaptiveBatchStrategy):
+        def get_batch_size(self, phase):
+            bs = super().get_batch_size(phase)
+            progress_state["batch_info"] = f"B:{bs}"
+            return bs
+
+    models = ModelManager()
+    storage = LocalDBStorage(_get_db_writer())
+    batch_strategy = _TrackedAdaptiveBatch(controller)
+    runner = PhaseRunner(
+        models=models,
+        storage=storage,
+        batch_strategy=batch_strategy,
+        progress=_LocalProgress(),
     )
+
+    # Phase 2: Vision (VLM → MC)
+    phase_items = runner.run_vision(phase_items)
+    monitor.log_status("after_vlm_unload")
     cum_mc = valid_count
     active_batch_info = ""
     _emit_phase_progress()
 
-    # Phase 2 vision fields already saved incrementally per sub-batch
-
-    # Unload VLM completely + verify
-    _unload_vlm_verified(monitor)
-
-    # ── Phase 3a: VV (adaptive batch) ──
-    def _on_vv_progress(count, kind, batch_size=4):
-        nonlocal cum_vv, active_batch_info
-        cum_vv = count
-        active_batch_info = f"B:{batch_size}"
-        _emit_phase_progress()
-
-    phase3a_vv_adaptive(
-        parsed, controller, monitor,
-        phase_progress_callback=_on_vv_progress,
-    )
+    # Phase 3a: VV (SigLIP2)
+    phase_items = runner.run_vv(phase_items)
+    monitor.log_status("after_siglip2_unload")
     cum_vv = valid_count
     active_batch_info = ""
     _emit_phase_progress()
 
-    # Unload SigLIP2 completely + verify
-    _unload_siglip2_verified(monitor)
-
-    # ── Phase 3b: MV (adaptive batch) ──
-    def _on_mv_progress(count, kind, batch_size=16):
-        nonlocal cum_mv, active_batch_info
-        cum_mv = count
-        active_batch_info = f"B:{batch_size}"
-        _emit_phase_progress()
-
-    phase3b_mv_adaptive(
-        parsed, controller, monitor,
-        phase_progress_callback=_on_mv_progress,
-    )
+    # Phase 3b: MV (Qwen3-Embedding)
+    phase_items = runner.run_mv(phase_items)
+    monitor.log_status("after_mv_unload")
     cum_mv = valid_count
     active_batch_info = ""
     _emit_phase_progress()
 
-    # Unload MV completely
-    _unload_mv_verified(monitor)
+    # Map results back to ParsedFile for Phase 4 tracking
+    for pi_idx, item in enumerate(phase_items):
+        pf = parsed[pf_indices[pi_idx]]
+        if item.vv_embedding is not None:
+            pf.stored_vv = True
+        if item.mv_embedding is not None:
+            pf.stored_mv = True
+        if item.error and pf.error is None:
+            pf.error = item.error
 
     # ── Phase 4: Summary (all data already stored per sub-batch) ──
     # Ensure queued DB writes are fully drained

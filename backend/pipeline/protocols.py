@@ -145,6 +145,31 @@ class FixedBatchStrategy:
         pass  # fixed — no adjustment
 
 
+class AdaptiveBatchStrategy:
+    """Adapter wrapping AdaptiveBatchController as BatchStrategy.
+
+    Maps PhaseRunner phase names (vision/vv/mv) to controller phase names (vlm/vv/mv).
+    """
+
+    # PhaseRunner → controller phase name mapping
+    _PHASE_MAP = {"vision": "vlm", "vv": "vv", "mv": "mv"}
+
+    def __init__(self, controller):
+        """
+        Args:
+            controller: AdaptiveBatchController instance
+        """
+        self._controller = controller
+
+    def get_batch_size(self, phase: str) -> int:
+        mapped = self._PHASE_MAP.get(phase, phase)
+        return self._controller.get_batch_size(mapped)
+
+    def after_sub_batch(self, phase: str, elapsed_s: float, count: int) -> None:
+        mapped = self._PHASE_MAP.get(phase, phase)
+        self._controller.after_sub_batch(mapped, count, elapsed_s)
+
+
 class NullProgressReporter:
     """No-op progress reporter (logging only)."""
 
