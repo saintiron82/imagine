@@ -58,6 +58,16 @@ const StatusBar = ({
     const [isOpen, setIsOpen] = useState(false);
     const [aiTier, setAiTier] = useState(null);
     const endRef = useRef(null);
+    const logContainerRef = useRef(null);
+    const isAtBottomRef = useRef(true);
+
+    // Track whether user has scrolled away from bottom
+    const handleLogScroll = () => {
+        const el = logContainerRef.current;
+        if (!el) return;
+        // Consider "at bottom" if within 30px of the end
+        isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+    };
 
     // Load AI Tier info
     useEffect(() => {
@@ -79,9 +89,9 @@ const StatusBar = ({
         loadTierInfo();
     }, []);
 
-    // Auto scroll to bottom
+    // Auto scroll to bottom only if user is already at the bottom
     useEffect(() => {
-        if (endRef.current && isOpen) {
+        if (endRef.current && isOpen && isAtBottomRef.current) {
             endRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [logs, isOpen]);
@@ -419,7 +429,7 @@ const StatusBar = ({
 
             {/* Expanded Log View */}
             {isOpen && (
-                <div className="h-56 overflow-y-auto p-2 font-mono text-xs bg-black text-gray-300">
+                <div ref={logContainerRef} onScroll={handleLogScroll} className="h-56 overflow-y-auto p-2 font-mono text-xs bg-black text-gray-300">
                     {logs.length === 0 && <div className="text-gray-600 italic">{t('msg.no_logs')}</div>}
                     {logs.map((log, i) => (
                         <div key={i} className={`mb-1 break-words ${log.type === 'error' ? 'text-red-400' :
