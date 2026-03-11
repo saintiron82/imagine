@@ -531,6 +531,8 @@
   "admin.queue_phase_parse": "Parse",
   "admin.queue_phase_vision": "Vision (MC)",
   "admin.queue_phase_embed": "Embed (VV+MV)",
+  "admin.queue_phase_thumb": "Thumbnail",
+  "admin.queue_buffer": "버퍼",
   "admin.queue_parse_ahead": "서버 풀",
   "admin.queue_parse_ahead_parsed": "선파싱 완료",
   "admin.queue_parse_ahead_parsing": "파싱 중",

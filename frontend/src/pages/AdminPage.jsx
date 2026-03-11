@@ -1546,13 +1546,20 @@ function ThumbnailsPanel() {
 function QueuePanel() {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
+  const [thumbStats, setThumbStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [cleanupMsg, setCleanupMsg] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const data = await getJobStats();
-      setStats(data);
+      const [jobData, thumbData] = await Promise.all([
+        getJobStats(),
+        getThumbnailStats().catch(() => null),
+      ]);
+      setStats(jobData);
+      if (thumbData && thumbData.success !== false) {
+        setThumbStats(thumbData);
+      }
     } catch (e) {
       console.error('Failed to load queue stats:', e);
     }
@@ -1578,8 +1585,10 @@ function QueuePanel() {
 
   if (loading) return <div className="text-gray-400 text-sm">{t('status.loading')}</div>;
 
+  const bufferReady = (stats?.parse_ahead_parsed || 0);
   const statItems = [
     { key: 'pending', label: t('admin.queue_pending'), color: 'bg-yellow-500' },
+    ...(bufferReady > 0 ? [{ key: 'parse_ahead_parsed', label: t('admin.queue_buffer'), color: 'bg-teal-500' }] : []),
     { key: 'assigned', label: t('admin.queue_assigned'), color: 'bg-blue-500' },
     { key: 'processing', label: t('admin.queue_processing'), color: 'bg-cyan-500' },
     { key: 'completed', label: t('admin.queue_completed'), color: 'bg-green-500' },
@@ -1669,9 +1678,18 @@ function QueuePanel() {
               { key: 'phase_parse_done', label: t('admin.queue_phase_parse'), color: 'bg-green-500', textColor: 'text-green-400' },
               { key: 'phase_vision_done', label: t('admin.queue_phase_vision'), color: 'bg-purple-500', textColor: 'text-purple-400' },
               { key: 'phase_embed_done', label: t('admin.queue_phase_embed'), color: 'bg-blue-500', textColor: 'text-blue-400' },
-            ].map(({ key, label, color, textColor }) => {
-              const done = stats[key] || 0;
-              const pct = stats.total > 0 ? (done / stats.total) * 100 : 0;
+              ...(thumbStats ? [{
+                key: '_thumb',
+                label: t('admin.queue_phase_thumb'),
+                color: 'bg-orange-500',
+                textColor: 'text-orange-400',
+                done: thumbStats.grand_has_thumb || 0,
+                total: thumbStats.grand_total || 0,
+              }] : []),
+            ].map(({ key, label, color, textColor, done: overrideDone, total: overrideTotal }) => {
+              const itemTotal = overrideTotal ?? stats.total;
+              const done = overrideDone ?? (stats[key] || 0);
+              const pct = itemTotal > 0 ? (done / itemTotal) * 100 : 0;
               return (
                 <div key={key} className="flex items-center gap-3">
                   <span className={`text-xs w-24 flex-shrink-0 ${textColor}`}>{label}</span>
@@ -1682,7 +1700,7 @@ function QueuePanel() {
                     />
                   </div>
                   <span className="text-xs text-gray-400 font-mono w-24 text-right flex-shrink-0">
-                    {done}/{stats.total}
+                    {done}/{itemTotal}
                   </span>
                 </div>
               );

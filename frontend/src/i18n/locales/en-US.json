@@ -531,6 +531,8 @@
   "admin.queue_phase_parse": "Parse",
   "admin.queue_phase_vision": "Vision (MC)",
   "admin.queue_phase_embed": "Embed (VV+MV)",
+  "admin.queue_phase_thumb": "Thumbnail",
+  "admin.queue_buffer": "Buffer",
   "admin.queue_parse_ahead": "Server Pools",
   "admin.queue_parse_ahead_parsed": "Pre-parsed",
   "admin.queue_parse_ahead_parsing": "Parsing",
