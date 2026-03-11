@@ -2089,6 +2089,52 @@ ipcMain.handle('browse-webdav-folders', async (_, config) => {
     });
 });
 
+// WebDAV Directory Listing — list files + folders (non-recursive PROPFIND)
+ipcMain.handle('list-webdav-dir', async (_, config) => {
+    return new Promise((resolve) => {
+        let listConfig;
+
+        if (config.webdavPath) {
+            const { sourceId, subPath } = _parseWebDAVPath(config.webdavPath);
+            const userConfig = readYamlFile(userSettingsPath);
+            const source = (userConfig.webdav_sources || []).find(s => s.id === sourceId);
+            if (!source) {
+                return resolve({ success: false, folders: [], files: [], message: 'Source not found' });
+            }
+            listConfig = {
+                url: source.url,
+                username: source.username,
+                password: _decryptWebdavPassword(source),
+                remote_path: '/',
+                verify_ssl: source.verify_ssl !== false,
+                path: subPath || null,
+            };
+        } else {
+            return resolve({ success: false, folders: [], files: [], message: 'webdavPath required' });
+        }
+
+        const configJson = JSON.stringify(listConfig);
+        const proc = spawnBackend('remote.sync_cli', ['--list-dir', configJson], {
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }, 'backend/remote/sync_cli.py', ['--list-dir', configJson]);
+
+        let output = '';
+        proc.stdout.on('data', (d) => { output += d.toString(); });
+        proc.stderr.on('data', (d) => console.error('[WebDAV ListDir]', d.toString()));
+
+        proc.on('close', () => {
+            try {
+                const lines = output.trim().split('\n').filter(l => l.trim());
+                const lastLine = lines[lines.length - 1];
+                resolve(JSON.parse(lastLine));
+            } catch {
+                resolve({ success: false, folders: [], files: [] });
+            }
+        });
+    });
+});
+
 /** Parse webdav://source-id/sub/path into { sourceId, subPath } */
 function _parseWebDAVPath(webdavPath) {
     // webdav://source-id/sub/path → sourceId=source-id, subPath=/sub/path

@@ -156,6 +156,7 @@ contextBridge.exposeInMainWorld('electron', {
         testConnection: (config) => ipcRenderer.invoke('test-webdav-connection', config),
         processSource: (sourceId) => ipcRenderer.send('process-webdav-source', sourceId),
         browseFolders: (config) => ipcRenderer.invoke('browse-webdav-folders', config),
+        listDir: (config) => ipcRenderer.invoke('list-webdav-dir', config),
         onSyncProgress: (cb) => ipcRenderer.on('webdav-sync-progress', (_, data) => cb(data)),
         offSyncProgress: () => ipcRenderer.removeAllListeners('webdav-sync-progress'),
         onSyncComplete: (cb) => ipcRenderer.on('webdav-sync-complete', (_, data) => cb(data)),

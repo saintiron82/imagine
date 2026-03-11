@@ -86,11 +86,28 @@ def cmd_folders(config: dict):
     })
 
 
+def cmd_list_dir(config: dict):
+    """List files + folders in a specific directory (non-recursive)."""
+    from backend.remote.webdav_client import WebDAVClient
+
+    client = WebDAVClient(
+        base_url=config['url'],
+        username=config['username'],
+        password=config['password'],
+        remote_path=config.get('remote_path', '/'),
+        verify_ssl=config.get('verify_ssl', True),
+    )
+    result = client.list_dir(path=config.get('path'))
+    client.close()
+    _emit({"success": True, **result})
+
+
 def main():
     parser = argparse.ArgumentParser(description="WebDAV remote CLI")
     parser.add_argument('--test', type=str, help='Test connection (JSON config)')
     parser.add_argument('--list', type=str, help='List remote files (JSON config)')
     parser.add_argument('--folders', type=str, help='List subdirectories (JSON config with optional path)')
+    parser.add_argument('--list-dir', type=str, help='List files + folders non-recursively (JSON config)')
     args = parser.parse_args()
 
     try:
@@ -100,6 +117,8 @@ def main():
             cmd_list(json.loads(args.list))
         elif args.folders:
             cmd_folders(json.loads(args.folders))
+        elif getattr(args, 'list_dir', None):
+            cmd_list_dir(json.loads(args.list_dir))
         else:
             parser.print_help()
             sys.exit(1)

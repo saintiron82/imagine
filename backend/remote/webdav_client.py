@@ -142,6 +142,38 @@ class WebDAVClient:
                 folders.append({"name": self._nfc(name), "path": href})
         return folders
 
+    def list_dir(self, path: Optional[str] = None) -> dict:
+        """
+        List immediate contents (folders + files) under the given path.
+        Uses PROPFIND Depth:1 — non-recursive, fast (~100ms).
+
+        Returns:
+            {"folders": [{"name", "path"}], "files": [{"name", "path", "size", "extension"}]}
+        """
+        target = path or self.remote_path
+        try:
+            entries = self._propfind(target, depth=1)
+        except Exception as e:
+            logger.error(f"Failed to list dir at {target}: {e}")
+            return {"folders": [], "files": []}
+
+        folders, files = [], []
+        for entry in entries:
+            href = entry['href']
+            if self._paths_equal(href, target):
+                continue
+            name = self._nfc(href.rstrip('/').rsplit('/', 1)[-1])
+            if entry['is_collection']:
+                folders.append({"name": name, "path": href})
+            elif self._is_supported(href):
+                files.append({
+                    "name": name,
+                    "path": href,
+                    "size": entry.get('size', 0),
+                    "extension": PurePosixPath(name).suffix.lower(),
+                })
+        return {"folders": folders, "files": files}
+
     def list_files_recursive(self) -> List[RemoteFileInfo]:
         """
         Recursively list all supported image files under remote_path.

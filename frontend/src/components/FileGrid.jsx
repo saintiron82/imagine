@@ -629,7 +629,14 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         Promise.all(
             paths.map(p =>
                 p.startsWith('webdav://')
-                    ? Promise.resolve([])  // WebDAV files are remote — view via Search after scanning
+                    ? window.electron?.webdav?.listDir({ webdavPath: p })
+                        .then(r => (r?.files || []).map(f => ({
+                            name: f.name,
+                            path: f.path,
+                            extension: f.extension,
+                            isDirectory: false,
+                        })))
+                        .catch(() => [])
                     : window.electron?.fs?.listDir(p).catch(() => [])
             )
         )
