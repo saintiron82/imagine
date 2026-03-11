@@ -1353,18 +1353,21 @@ function App() {
               )}
             </div>
             <div className="flex justify-end gap-2">
-              {isAdmin && (
+              {isAdmin && auditResult.incomplete_files > 0 && (
                 <button
-                  onClick={handleRetryFailed}
-                  disabled={retryLoading}
-                  className="flex items-center gap-1.5 px-4 py-2 text-sm bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                  onClick={() => {
+                    setAuditResult(null);
+                    if (!isWorkerRunning) {
+                      handleWorkerStart();
+                      showToast(t('audit.worker_started'), 'success');
+                    } else {
+                      showToast(t('audit.worker_already_running'), 'info');
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
                 >
-                  {retryLoading ? (
-                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <RotateCcw size={14} />
-                  )}
-                  {t('action.retry_failed')}
+                  <Play size={14} />
+                  {t('audit.start_processing')}
                 </button>
               )}
               <button
