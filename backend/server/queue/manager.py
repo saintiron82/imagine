@@ -805,7 +805,8 @@ class JobQueueManager:
             SELECT f.id, f.file_path,
                    (f.mc_caption IS NOT NULL AND f.mc_caption != '') AS has_mc,
                    EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) AS has_vv,
-                   EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) AS has_mv
+                   EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) AS has_mv,
+                   f.thumbnail_url
             FROM files f
         """)
         all_files = cursor.fetchall()
@@ -813,7 +814,7 @@ class JobQueueManager:
         complete_files = 0
         incomplete_file_ids = set()
 
-        for file_id, file_path, has_mc, has_vv, has_mv in all_files:
+        for file_id, file_path, has_mc, has_vv, has_mv, thumbnail_url in all_files:
             if has_mc and has_vv and has_mv:
                 complete_files += 1
                 continue
@@ -834,9 +835,16 @@ class JobQueueManager:
                 "embed": bool(has_vv and has_mv),
             })
 
+            # Build parsed_metadata so workers recognize this as pre-parsed
+            parsed_metadata = json.dumps({
+                "metadata": {},
+                "thumb_path": thumbnail_url,
+                "mc_raw": {},
+            }, ensure_ascii=False)
+
             # Check what jobs exist for this file
             cursor.execute("""
-                SELECT id, status, phase_completed
+                SELECT id, status, phase_completed, parsed_metadata
                 FROM job_queue WHERE file_id = ?
                 ORDER BY
                     CASE status
@@ -852,46 +860,52 @@ class JobQueueManager:
 
             # Ensure this file has a pending job for re-processing
             if job_row is None:
-                # No job at all — create one
+                # No job at all — create one with parsed_metadata
                 try:
                     cursor.execute(
                         """INSERT INTO job_queue
                            (file_id, file_path, status, priority,
-                            phase_completed, parse_status)
-                           VALUES (?, ?, 'pending', 0, ?, 'parsed')""",
-                        (file_id, file_path, actual_phases)
+                            phase_completed, parse_status, parsed_metadata)
+                           VALUES (?, ?, 'pending', 0, ?, 'parsed', ?)""",
+                        (file_id, file_path, actual_phases, parsed_metadata)
                     )
                 except Exception as e:
                     logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
 
             elif job_row[1] == 'completed':
-                # False-completed — reset to pending
+                # False-completed — reset to pending, fill parsed_metadata if missing
+                pm_update = parsed_metadata if not job_row[3] else job_row[3]
                 cursor.execute(
                     """UPDATE job_queue
                        SET status = 'pending', phase_completed = ?,
+                           parsed_metadata = COALESCE(parsed_metadata, ?),
                            assigned_to = NULL, assigned_at = NULL,
                            worker_session_id = NULL
                        WHERE id = ?""",
-                    (actual_phases, job_row[0])
+                    (actual_phases, pm_update, job_row[0])
                 )
 
             elif job_row[1] == 'failed':
-                # Stuck in failed — reset to pending
+                # Stuck in failed — reset to pending, fill parsed_metadata if missing
                 cursor.execute(
                     """UPDATE job_queue
                        SET status = 'pending', phase_completed = ?,
+                           parsed_metadata = COALESCE(parsed_metadata, ?),
                            retry_count = 0, error_message = NULL,
                            assigned_to = NULL, assigned_at = NULL,
                            worker_session_id = NULL
                        WHERE id = ?""",
-                    (actual_phases, job_row[0])
+                    (actual_phases, parsed_metadata, job_row[0])
                 )
 
             elif job_row[1] in ('pending', 'assigned', 'processing'):
-                # Already in pipeline — just fix phase_completed
+                # Already in pipeline — fix phase_completed, fill parsed_metadata if missing
                 cursor.execute(
-                    "UPDATE job_queue SET phase_completed = ? WHERE id = ?",
-                    (actual_phases, job_row[0])
+                    """UPDATE job_queue
+                       SET phase_completed = ?,
+                           parsed_metadata = COALESCE(parsed_metadata, ?)
+                       WHERE id = ?""",
+                    (actual_phases, parsed_metadata, job_row[0])
                 )
 
             repaired_files += 1
