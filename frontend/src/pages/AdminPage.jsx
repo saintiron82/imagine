@@ -6,11 +6,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocale } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  listUsers, updateUser, deleteUser,
-  listInviteCodes, createInviteCode,
   cleanupStaleJobs, getJobStats,
   browseFolders, scanFolder,
-  listWorkerTokens, createWorkerToken, revokeWorkerToken,
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
   updateWorkerConfig, updateGlobalProcessingMode,
   getAutoProcessing, updateAutoProcessing,
@@ -18,14 +15,13 @@ import {
   getThumbnailStats,
 } from '../api/admin';
 import {
-  Users, Key, Activity, FolderSearch, Terminal, Server,
+  Users, Key, Activity, FolderSearch, Server,
   Shield, ShieldOff, Trash2, Copy, Plus, Square, Ban, UserCheck,
   RefreshCw, CheckCircle, XCircle, AlertTriangle,
   Folder, FolderOpen, ChevronRight, ArrowUp, Play, Loader2,
-  Tag, ChevronDown, Pencil, AlertOctagon, Crown, Image,
+  Tag, ChevronDown, Pencil, AlertOctagon, Image,
 } from 'lucide-react';
 import { listDomains, getDomainDetail, getActiveDomainConfig, setActiveDomain, saveDomainYaml } from '../services/bridge';
-import SubscriptionPanel from '../components/SubscriptionPanel';
 
 export default function AdminPage() {
   const { t } = useLocale();
@@ -38,11 +34,7 @@ export default function AdminPage() {
     { id: 'thumbnails', label: t('admin.tab_thumbnails'), icon: Image },
     { id: 'workers', label: t('admin.tab_workers'), icon: Server },
     { id: 'classification', label: t('admin.tab_classification'), icon: Tag },
-    { id: 'users', label: t('admin.tab_users'), icon: Users },
     { id: 'members', label: t('admin.tab_members'), icon: UserCheck },
-    { id: 'invites', label: t('admin.tab_invites'), icon: Key },
-    { id: 'worker_tokens', label: t('admin.tab_worker_tokens'), icon: Terminal },
-    { id: 'subscription', label: t('admin.tab_subscription'), icon: Crown },
   ];
 
   return (
@@ -72,11 +64,7 @@ export default function AdminPage() {
         {activeTab === 'thumbnails' && <ThumbnailsPanel />}
         {activeTab === 'workers' && <WorkersPanel />}
         {activeTab === 'classification' && <ClassificationPanel />}
-        {activeTab === 'users' && <UsersPanel />}
         {activeTab === 'members' && <MembersPanel currentUser={currentUser} />}
-        {activeTab === 'invites' && <InvitesPanel />}
-        {activeTab === 'worker_tokens' && <WorkerTokensPanel />}
-        {activeTab === 'subscription' && <SubscriptionPanel />}
       </div>
     </div>
   );
@@ -621,119 +609,6 @@ function WorkersPanel() {
 
 // ── Users Panel ──────────────────────────────────────────
 
-function UsersPanel() {
-  const { t } = useLocale();
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await listUsers();
-      setUsers(data.users || []);
-    } catch (e) {
-      console.error('Failed to load users:', e);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const handleToggleActive = async (u) => {
-    await updateUser(u.id, { is_active: !u.is_active });
-    load();
-  };
-
-  const handleToggleRole = async (u) => {
-    await updateUser(u.id, { role: u.role === 'admin' ? 'user' : 'admin' });
-    load();
-  };
-
-  const handleDelete = async (u) => {
-    if (!confirm(t('admin.confirm_delete_user'))) return;
-    await deleteUser(u.id);
-    load();
-  };
-
-  if (loading) return <div className="text-gray-400 text-sm">{t('status.loading')}</div>;
-
-  return (
-    <div>
-      <h2 className="text-lg font-semibold mb-4">{t('admin.users_title')}</h2>
-      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-700 text-gray-400">
-              <th className="text-left px-4 py-3">ID</th>
-              <th className="text-left px-4 py-3">{t('auth.username')}</th>
-              <th className="text-left px-4 py-3">{t('auth.email')}</th>
-              <th className="text-left px-4 py-3">{t('admin.user_role')}</th>
-              <th className="text-left px-4 py-3">{t('admin.user_active')}</th>
-              <th className="text-left px-4 py-3">{t('admin.user_created')}</th>
-              <th className="text-right px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                <td className="px-4 py-3 text-gray-500">{u.id}</td>
-                <td className="px-4 py-3 font-medium">{u.username}</td>
-                <td className="px-4 py-3 text-gray-400">{u.email}</td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded text-xs ${
-                    u.role === 'admin' ? 'bg-purple-900/50 text-purple-300' : 'bg-gray-700 text-gray-300'
-                  }`}>
-                    {u.role}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  {u.is_active ? (
-                    <CheckCircle size={16} className="text-green-400" />
-                  ) : (
-                    <XCircle size={16} className="text-red-400" />
-                  )}
-                </td>
-                <td className="px-4 py-3 text-gray-500 text-xs">
-                  {u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex gap-1 justify-end">
-                    <button
-                      onClick={() => handleToggleActive(u)}
-                      className="p-1.5 rounded hover:bg-gray-600 text-gray-400 hover:text-white"
-                      title={u.is_active ? t('admin.action_deactivate') : t('admin.action_activate')}
-                    >
-                      {u.is_active ? <ShieldOff size={14} /> : <Shield size={14} />}
-                    </button>
-                    <button
-                      onClick={() => handleToggleRole(u)}
-                      className="p-1.5 rounded hover:bg-gray-600 text-gray-400 hover:text-white"
-                      title={u.role === 'admin' ? t('admin.action_make_user') : t('admin.action_make_admin')}
-                    >
-                      <Shield size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(u)}
-                      className="p-1.5 rounded hover:bg-red-900/50 text-gray-400 hover:text-red-400"
-                      title={t('admin.action_delete_user')}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {users.length === 0 && (
-          <div className="text-center text-gray-500 py-8 text-sm">No users found</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-
 // ── Members Panel ────────────────────────────────────────
 
 function MembersPanel({ currentUser }) {
@@ -888,160 +763,6 @@ function MembersPanel({ currentUser }) {
 }
 
 
-// ── Invites Panel ────────────────────────────────────────
-
-function InvitesPanel() {
-  const { t } = useLocale();
-  const [codes, setCodes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [maxUses, setMaxUses] = useState(1);
-  const [expiresDays, setExpiresDays] = useState(7);
-  const [note, setNote] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [copiedId, setCopiedId] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await listInviteCodes();
-      setCodes(data.codes || []);
-    } catch (e) {
-      console.error('Failed to load invite codes:', e);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const handleCreate = async () => {
-    setCreating(true);
-    try {
-      await createInviteCode({ max_uses: maxUses, expires_days: expiresDays, note });
-      setNote('');
-      load();
-    } catch (e) {
-      console.error('Failed to create invite:', e);
-    }
-    setCreating(false);
-  };
-
-  const handleCopy = (code) => {
-    navigator.clipboard.writeText(code);
-    setCopiedId(code);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  return (
-    <div>
-      <h2 className="text-lg font-semibold mb-4">{t('admin.invites_title')}</h2>
-
-      {/* Create form */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-        <div className="flex gap-3 items-end flex-wrap">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">{t('admin.invite_max_uses')}</label>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={maxUses}
-              onChange={(e) => setMaxUses(parseInt(e.target.value) || 1)}
-              className="w-20 px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">{t('admin.invite_expires_days')}</label>
-            <input
-              type="number"
-              min={1}
-              max={365}
-              value={expiresDays}
-              onChange={(e) => setExpiresDays(parseInt(e.target.value) || 7)}
-              className="w-20 px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white"
-            />
-          </div>
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs text-gray-400 mb-1">{t('admin.invite_note')}</label>
-            <input
-              type="text"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Optional note..."
-              className="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white placeholder-gray-500"
-            />
-          </div>
-          <button
-            onClick={handleCreate}
-            disabled={creating}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white rounded text-sm"
-          >
-            <Plus size={14} />
-            {t('admin.create_invite')}
-          </button>
-        </div>
-      </div>
-
-      {/* Codes list */}
-      {loading ? (
-        <div className="text-gray-400 text-sm">{t('status.loading')}</div>
-      ) : (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-700 text-gray-400">
-                <th className="text-left px-4 py-3">{t('admin.invite_code')}</th>
-                <th className="text-left px-4 py-3">{t('admin.invite_uses')}</th>
-                <th className="text-left px-4 py-3">{t('admin.invite_note')}</th>
-                <th className="text-left px-4 py-3">{t('admin.invite_expires_days')}</th>
-                <th className="text-right px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {codes.map((c) => {
-                const isExpired = c.expires_at && new Date(c.expires_at) < new Date();
-                const isExhausted = c.use_count >= c.max_uses;
-                return (
-                  <tr key={c.code} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                    <td className="px-4 py-3">
-                      <code className="font-mono text-xs bg-gray-900 px-2 py-1 rounded">{c.code}</code>
-                    </td>
-                    <td className="px-4 py-3 text-gray-400">
-                      {c.use_count} / {c.max_uses}
-                    </td>
-                    <td className="px-4 py-3 text-gray-400 text-xs">{c.note || '-'}</td>
-                    <td className="px-4 py-3 text-xs">
-                      {isExpired ? (
-                        <span className="text-red-400">{t('admin.invite_expired')}</span>
-                      ) : isExhausted ? (
-                        <span className="text-yellow-400">Full</span>
-                      ) : (
-                        <span className="text-green-400">
-                          {c.expires_at ? new Date(c.expires_at).toLocaleDateString() : '-'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => handleCopy(c.code)}
-                        className="p-1.5 rounded hover:bg-gray-600 text-gray-400 hover:text-white"
-                        title="Copy"
-                      >
-                        {copiedId === c.code ? <CheckCircle size={14} className="text-green-400" /> : <Copy size={14} />}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {codes.length === 0 && (
-            <div className="text-center text-gray-500 py-8 text-sm">No invite codes</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 
 // ── Discover Panel ──────────────────────────────────────
@@ -1242,214 +963,6 @@ function DiscoverPanel() {
     </div>
   );
 }
-
-
-// ── Worker Tokens Panel ──────────────────────────────────
-
-function WorkerTokensPanel() {
-  const { t } = useLocale();
-  const [tokens, setTokens] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [tokenName, setTokenName] = useState('');
-  const [expiresDays, setExpiresDays] = useState(30);
-  const [creating, setCreating] = useState(false);
-  const [newToken, setNewToken] = useState(null); // just-created token info
-  const [copiedField, setCopiedField] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await listWorkerTokens();
-      setTokens(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error('Failed to load worker tokens:', e);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const handleCreate = async () => {
-    if (!tokenName.trim()) return;
-    setCreating(true);
-    try {
-      const data = await createWorkerToken({ name: tokenName.trim(), expires_in_days: expiresDays });
-      setNewToken(data);
-      setTokenName('');
-      load();
-    } catch (e) {
-      console.error('Failed to create worker token:', e);
-    }
-    setCreating(false);
-  };
-
-  const handleRevoke = async (tokenId) => {
-    if (!confirm(t('admin.worker_token_confirm_revoke'))) return;
-    try {
-      await revokeWorkerToken(tokenId);
-      load();
-    } catch (e) {
-      console.error('Failed to revoke token:', e);
-    }
-  };
-
-  const handleCopy = (text, field) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  const serverUrl = window.location.origin;
-  const runCommand = newToken?.token
-    ? `python -m backend.worker.worker_daemon --server ${serverUrl} --token ${newToken.token}`
-    : '';
-
-  return (
-    <div>
-      <h2 className="text-lg font-semibold mb-4">{t('admin.worker_tokens_title')}</h2>
-
-      {/* Create form */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-        <div className="flex gap-3 items-end flex-wrap">
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs text-gray-400 mb-1">{t('admin.worker_token_name')}</label>
-            <input
-              type="text"
-              value={tokenName}
-              onChange={(e) => setTokenName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && tokenName.trim()) handleCreate(); }}
-              placeholder={t('admin.worker_token_name_placeholder')}
-              className="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white placeholder-gray-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">{t('admin.worker_token_expires')}</label>
-            <input
-              type="number"
-              min={1}
-              max={365}
-              value={expiresDays}
-              onChange={(e) => setExpiresDays(parseInt(e.target.value) || 30)}
-              className="w-20 px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white"
-            />
-          </div>
-          <button
-            onClick={handleCreate}
-            disabled={creating || !tokenName.trim()}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white rounded text-sm"
-          >
-            <Plus size={14} />
-            {t('admin.create_worker_token')}
-          </button>
-        </div>
-      </div>
-
-      {/* New token display (shown once) */}
-      {newToken?.token && (
-        <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 mb-4">
-          <div className="flex items-center gap-2 mb-3 text-yellow-300 text-sm font-medium">
-            <AlertTriangle size={16} />
-            {t('admin.worker_token_warning')}
-          </div>
-
-          {/* Token value */}
-          <div className="mb-3">
-            <label className="block text-xs text-gray-400 mb-1">Token</label>
-            <div className="flex gap-2">
-              <code className="flex-1 px-3 py-2 bg-gray-900 rounded text-xs font-mono text-green-300 break-all select-all">
-                {newToken.token}
-              </code>
-              <button
-                onClick={() => handleCopy(newToken.token, 'token')}
-                className="flex items-center gap-1 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-xs text-white flex-shrink-0"
-              >
-                {copiedField === 'token' ? <CheckCircle size={12} className="text-green-400" /> : <Copy size={12} />}
-                {copiedField === 'token' ? t('admin.worker_token_copied') : t('admin.worker_token_copy')}
-              </button>
-            </div>
-          </div>
-
-          {/* Run command */}
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">{t('admin.worker_token_command')}</label>
-            <div className="flex gap-2">
-              <code className="flex-1 px-3 py-2 bg-gray-900 rounded text-xs font-mono text-blue-300 break-all select-all">
-                {runCommand}
-              </code>
-              <button
-                onClick={() => handleCopy(runCommand, 'command')}
-                className="flex items-center gap-1 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-xs text-white flex-shrink-0"
-              >
-                {copiedField === 'command' ? <CheckCircle size={12} className="text-green-400" /> : <Copy size={12} />}
-                {copiedField === 'command' ? t('admin.worker_token_copied') : t('admin.worker_token_copy')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Token list */}
-      {loading ? (
-        <div className="text-gray-400 text-sm">{t('status.loading')}</div>
-      ) : (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-700 text-gray-400">
-                <th className="text-left px-4 py-3">ID</th>
-                <th className="text-left px-4 py-3">{t('admin.worker_token_name')}</th>
-                <th className="text-left px-4 py-3">{t('admin.user_active')}</th>
-                <th className="text-left px-4 py-3">{t('admin.worker_token_created')}</th>
-                <th className="text-left px-4 py-3">{t('admin.worker_token_last_used')}</th>
-                <th className="text-right px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {tokens.map((tk) => (
-                <tr key={tk.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                  <td className="px-4 py-3 text-gray-500">{tk.id}</td>
-                  <td className="px-4 py-3 font-medium">{tk.name}</td>
-                  <td className="px-4 py-3">
-                    {tk.is_active ? (
-                      <span className="px-2 py-0.5 rounded text-xs bg-green-900/50 text-green-300">
-                        {t('admin.worker_token_active')}
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded text-xs bg-red-900/50 text-red-300">
-                        {t('admin.worker_token_revoked')}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {tk.created_at ? new Date(tk.created_at).toLocaleDateString() : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {tk.last_used_at ? new Date(tk.last_used_at).toLocaleString() : t('admin.worker_token_never_used')}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {tk.is_active && (
-                      <button
-                        onClick={() => handleRevoke(tk.id)}
-                        className="p-1.5 rounded hover:bg-red-900/50 text-gray-400 hover:text-red-400"
-                        title={t('admin.worker_token_revoke')}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {tokens.length === 0 && (
-            <div className="text-center text-gray-500 py-8 text-sm">No worker tokens</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 // ── Thumbnails Panel ────────────────────────────────────
 
