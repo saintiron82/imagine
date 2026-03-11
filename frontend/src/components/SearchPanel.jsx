@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink } from 'lucide-react';
-import SettingsModal from './SettingsModal';
+// SettingsModal removed — settings now in dedicated Settings tab
 import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
@@ -811,7 +811,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
 
 // Search Result Card, SearchInput, SearchResults...
 
-function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, reloadSignal = 0 }) {
+function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, reloadSignal = 0, onOpenSettings }) {
     const { t } = useLocale();
     // query stores the last *submitted* search text (not live typing)
     const [query, setQuery] = useState('');
@@ -827,7 +827,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [threshold, setThreshold] = useState(0);
     const [contextMenu, setContextMenu] = useState(null); // { x, y, result }
     const [metadata, setMetadata] = useState(null);
-    const [showSettings, setShowSettings] = useState(false);
+    // showSettings removed — settings now in dedicated tab
     const [dbStats, setDbStats] = useState(null);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [currentLimit, setCurrentLimit] = useState(20);
@@ -1079,8 +1079,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     }, []);
 
     const openSettings = useCallback(() => {
-        setShowSettings(true);
-    }, []);
+        onOpenSettings?.();
+    }, [onOpenSettings]);
 
     const handleShowMeta = useCallback(async (filePathOrId) => {
         try {
@@ -1384,7 +1384,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 </div>
             )}
 
-            {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onScanFolder={onScanFolder} isBusy={isBusy} />}
+            {/* SettingsModal removed — now in Settings tab */}
         </div>
     );
 }

@@ -9,6 +9,7 @@ import ClientWorkerView from './components/ClientWorkerView';
 import LoginPage from './pages/LoginPage';
 import LoginPageV2 from './pages/LoginPageV2';
 import AdminPage from './pages/AdminPage';
+import SettingsPage from './pages/SettingsPage';
 // SetupPage removed — LoginPage is now the first screen
 const USE_LOGIN_V2 = true; // Toggle to switch between login page versions
 import DownloadPage from './pages/DownloadPage';
@@ -1445,6 +1446,18 @@ function App() {
             </button>
           )}
 
+          {/* Settings tab — all users */}
+          <button
+            onClick={() => setCurrentTab('settings')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'settings'
+              ? 'bg-gray-600 text-white'
+              : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+              }`}
+          >
+            <Settings size={16} />
+            <span>{t('tab.settings')}</span>
+          </button>
+
           {currentTab === 'archive' && isAdmin && (
             <>
               <div className="w-px h-6 bg-gray-600 mx-1" />
@@ -1657,6 +1670,11 @@ function App() {
           <div className="flex-1 overflow-hidden">
             {currentTab === 'download' && !isElectron ? (
               <DownloadPage onBack={() => setCurrentTab('search')} />
+            ) : currentTab === 'settings' ? (
+              <SettingsPage
+                onScanFolder={handleScanFolders}
+                isBusy={isProcessing || isDiscovering}
+              />
             ) : currentTab === 'admin' && isAdmin ? (
               <AdminPage />
             ) : currentTab === 'search' ? (
@@ -1666,6 +1684,7 @@ function App() {
                 initialSearch={pendingSearch}
                 onSearchConsumed={() => setPendingSearch(null)}
                 reloadSignal={folderStatsVersion}
+                onOpenSettings={() => setCurrentTab('settings')}
               />
             ) : currentTab === 'archive' && !isAdmin ? (
               <ClientWorkerView

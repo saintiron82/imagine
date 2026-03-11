@@ -130,6 +130,8 @@ const USER_SETTING_PREFIXES = [
     'worker.cpu_cores', 'worker.batch_capacity',
     'worker.schedule', 'worker.idle_unload_minutes',
     'worker.processing_mode',
+    'ui.locale', 'ui.theme', 'ui.grid_density',
+    'webdav.auto_process',
 ];
 
 function isUserSetting(key) {
