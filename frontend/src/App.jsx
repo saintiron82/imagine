@@ -710,6 +710,14 @@ function App() {
     if (!w) return;
 
     try {
+      // Check if server is in builtin_worker mode — no separate worker needed
+      const cfgResult = await window.electron?.pipeline?.getConfig();
+      const processingMode = cfgResult?.config?.server?.processing_mode;
+      if (processingMode === 'builtin_worker') {
+        showToast(t('audit.worker_already_running'), 'info');
+        return;
+      }
+
       const creds = getWorkerCredentials();
       const result = await w.start({
         serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
