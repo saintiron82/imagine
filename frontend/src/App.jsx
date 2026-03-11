@@ -57,6 +57,7 @@ function App() {
     etaMs: null
   });
   const [selectedPaths, setSelectedPaths] = useState(new Set());
+  const [expandToPath, setExpandToPath] = useState(null);
   const [resumeStats, setResumeStats] = useState(null);
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -784,6 +785,17 @@ function App() {
     }
   };
 
+
+  const handleNavigateToFolder = (folderPath) => {
+    if (!folderPath) return;
+    setCurrentTab('archive');
+    setCurrentPath(folderPath);
+    setExpandToPath(folderPath);
+    setSelectedPaths(new Set());
+    setSelectedFiles(new Set());
+    // Clear expandToPath after a tick so re-triggering same path works
+    setTimeout(() => setExpandToPath(null), 500);
+  };
 
   const handleFolderSelect = (path) => {
     setCurrentPath(path);
@@ -1659,6 +1671,7 @@ function App() {
                 selectedPaths={selectedPaths}
                 onFolderToggle={handleFolderToggle}
                 reloadSignal={folderStatsVersion}
+                expandToPath={expandToPath}
               />
             </div>
           </div>
@@ -1685,6 +1698,7 @@ function App() {
                 onSearchConsumed={() => setPendingSearch(null)}
                 reloadSignal={folderStatsVersion}
                 onOpenSettings={() => setCurrentTab('settings')}
+                onNavigateToFolder={handleNavigateToFolder}
               />
             ) : currentTab === 'archive' && !isAdmin ? (
               <ClientWorkerView

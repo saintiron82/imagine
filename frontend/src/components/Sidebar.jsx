@@ -40,7 +40,7 @@ function aggregateStats(phaseStats, folderPath) {
 
 const isWebDAVPath = (p) => p && p.startsWith('webdav://');
 
-const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, isWebDAV = false, onRemoveRoot, phaseStats }) => {
+const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, isWebDAV = false, onRemoveRoot, phaseStats, expandToPath }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(isRoot); // Roots start open
     const [children, setChildren] = useState([]);
@@ -51,6 +51,20 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
 
     // Aggregate stats for this node's subtree
     const myStats = useMemo(() => aggregateStats(phaseStats, path), [phaseStats, path]);
+
+    // Auto-expand when expandToPath targets a descendant of this node
+    useEffect(() => {
+        if (!expandToPath) return;
+        const normExpand = expandToPath.replace(/\\/g, '/').replace(/\/$/, '');
+        const normPath = path.replace(/\\/g, '/').replace(/\/$/, '');
+        // This node is an ancestor of the target path — expand it
+        if (normExpand.startsWith(normPath + '/') && !isOpen) {
+            (async () => {
+                if (children.length === 0) await loadChildren();
+                setIsOpen(true);
+            })();
+        }
+    }, [expandToPath]);
 
     // Auto-load children for root nodes
     useEffect(() => {
@@ -204,6 +218,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
                             phaseStats={phaseStats}
+                            expandToPath={expandToPath}
                         />
                     ))}
                     {children.length === 0 && !isLoading && (
@@ -217,7 +232,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
     );
 };
 
-const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFolderToggle, reloadSignal = 0 }) => {
+const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFolderToggle, reloadSignal = 0, expandToPath }) => {
     const { t } = useLocale();
     const [roots, setRoots] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -435,6 +450,7 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
                             phaseStats={rootPhaseStats[root.path] || null}
+                            expandToPath={expandToPath}
                         />
                     ))}
                 </div>

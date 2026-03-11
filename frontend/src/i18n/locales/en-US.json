@@ -18,6 +18,7 @@
   "action.load_more": "Load More (Lower Threshold)",
   "action.show_in_folder": "Show in Explorer",
   "action.open_file": "Open File",
+  "action.browse_in_archive": "Browse in Archive",
   "action.stop_processing": "Stop processing",
   "action.add_folder": "Add Folder",
   "action.cancel": "Cancel",

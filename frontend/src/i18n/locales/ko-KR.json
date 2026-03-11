@@ -18,6 +18,7 @@
   "action.load_more": "더 보기",
   "action.show_in_folder": "탐색기에서 보기",
   "action.open_file": "파일 열기",
+  "action.browse_in_archive": "아카이브에서 보기",
   "action.stop_processing": "처리 중지",
   "action.add_folder": "폴더 추가",
   "action.cancel": "취소",

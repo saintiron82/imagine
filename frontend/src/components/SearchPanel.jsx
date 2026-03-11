@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink } from 'lucide-react';
+import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink, Archive } from 'lucide-react';
 // SettingsModal removed — settings now in dedicated Settings tab
 import ImageSearchInput from './ImageSearchInput';
 import { useLocale } from '../i18n';
@@ -33,7 +33,7 @@ const META_CATEGORY_OPTIONS = [
 ];
 
 // Metadata Modal (reused from FileGrid - imported inline to avoid circular deps)
-const MetadataModal = ({ metadata, onClose }) => {
+const MetadataModal = ({ metadata, onClose, onNavigateToFolder }) => {
     const { t } = useLocale();
     const [lang, setLang] = useState('kr');
     const [editedData, setEditedData] = useState({
@@ -190,19 +190,31 @@ const MetadataModal = ({ metadata, onClose }) => {
                                         </div>
                                     )}
                                 </div>
-                                {/* File Actions (Electron only) */}
-                                {isElectron && (
-                                    <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
-                                        <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
-                                            className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
-                                            <FolderOpen size={12} /> {t('action.show_in_folder')}
+                                {/* File Actions */}
+                                <div className="flex flex-wrap gap-2 mt-2 pt-2 border-t border-gray-700/30">
+                                    {isElectron && (
+                                        <>
+                                            <button onClick={() => window.electron?.fs?.showInFolder(metadata.file_path)}
+                                                className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                                <FolderOpen size={12} /> {t('action.show_in_folder')}
+                                            </button>
+                                            <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
+                                                className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
+                                                <ExternalLink size={12} /> {t('action.open_file')}
+                                            </button>
+                                        </>
+                                    )}
+                                    {onNavigateToFolder && (
+                                        <button onClick={() => {
+                                            const folderPath = metadata.file_path.replace(/[/\\][^/\\]+$/, '');
+                                            onNavigateToFolder(folderPath);
+                                            onClose();
+                                        }}
+                                            className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-900/30 hover:bg-blue-800/50 rounded text-[11px] text-blue-400 hover:text-blue-300 transition-colors">
+                                            <Archive size={12} /> {t('action.browse_in_archive')}
                                         </button>
-                                        <button onClick={() => window.electron?.fs?.openFile(metadata.file_path)}
-                                            className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-700/50 hover:bg-gray-600 rounded text-[11px] text-gray-400 hover:text-white transition-colors">
-                                            <ExternalLink size={12} /> {t('action.open_file')}
-                                        </button>
-                                    </div>
-                                )}
+                                    )}
+                                </div>
                             </div>
                         )}
 
@@ -425,7 +437,7 @@ const MetadataModal = ({ metadata, onClose }) => {
 };
 
 // Search Result Card Component (memoized to avoid re-renders on scroll/parent update)
-const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu }) => {
+const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavigateToFolder }) => {
     const { t } = useLocale();
     const dbPath = result.db_path || result.path;
     const localPath = result.resolved_path || result.path;
@@ -538,7 +550,17 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu }) => {
                     )}
                 </div>
                 {result.folder_path && (
-                    <div className="text-[10px] text-gray-500 truncate mt-0.5" title={localPath || dbPath}>
+                    <div
+                        className={`text-[10px] text-gray-500 truncate mt-0.5 ${onNavigateToFolder ? 'hover:text-blue-400 cursor-pointer' : ''}`}
+                        title={localPath || dbPath}
+                        onClick={onNavigateToFolder ? (e) => {
+                            e.stopPropagation();
+                            // Derive absolute folder path from file path
+                            const filePath = localPath || dbPath;
+                            const folderPath = filePath.replace(/[/\\][^/\\]+$/, '');
+                            onNavigateToFolder(folderPath);
+                        } : undefined}
+                    >
                         {result.folder_path}
                     </div>
                 )}
@@ -679,7 +701,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -796,6 +818,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                                                 result={result}
                                                 onShowMeta={onShowMeta}
                                                 onContextMenu={(e) => onContextMenu(e, result)}
+                                                onNavigateToFolder={onNavigateToFolder}
                                             />
                                         </div>
                                     ))}
@@ -811,7 +834,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
 
 // Search Result Card, SearchInput, SearchResults...
 
-function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, reloadSignal = 0, onOpenSettings }) {
+function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, reloadSignal = 0, onOpenSettings, onNavigateToFolder }) {
     const { t } = useLocale();
     // query stores the last *submitted* search text (not live typing)
     const [query, setQuery] = useState('');
@@ -1340,10 +1363,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 noMoreResults={noMoreResults}
                 isLoadingMore={isLoadingMore}
                 onLoadMore={handleLoadMore}
+                onNavigateToFolder={onNavigateToFolder}
             />
 
             {/* Metadata Modal */}
-            {metadata && <MetadataModal metadata={metadata} onClose={() => setMetadata(null)} />}
+            {metadata && <MetadataModal metadata={metadata} onClose={() => setMetadata(null)} onNavigateToFolder={onNavigateToFolder} />}
 
             {/* Context Menu */}
             {contextMenu && (
