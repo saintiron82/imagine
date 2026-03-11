@@ -133,16 +133,21 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         # Ensure virtual worker session exists
         _ensure_builtin_worker_session(db)
 
-        # Send stop command to all external online workers
+        # Force all external workers offline immediately and send stop command
+        # (pending_command='stop' alone is not enough — if the worker process is
+        # already dead, the session stays 'online' until the heartbeat watchdog
+        # catches it, which can take up to 3 minutes.)
+        now = _utcnow_sql()
         cursor = db.conn.cursor()
         cursor.execute(
-            """UPDATE worker_sessions SET pending_command = 'stop'
+            """UPDATE worker_sessions
+               SET status = 'offline', pending_command = 'stop', disconnected_at = ?
                WHERE status = 'online' AND worker_name != ?""",
-            (BUILTIN_WORKER_NAME,)
+            (now, BUILTIN_WORKER_NAME)
         )
         if cursor.rowcount > 0:
             db.conn.commit()
-            logger.info(f"Sent stop to {cursor.rowcount} external worker(s): builtin_worker mode")
+            logger.info(f"Forced {cursor.rowcount} external worker(s) offline: builtin_worker mode")
 
         return
 
