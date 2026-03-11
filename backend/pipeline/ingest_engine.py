@@ -1881,6 +1881,8 @@ def run_from_container(
     current_tier: Optional[str] = None,
 ):
     """
+    Legacy batch-based container consumer. Use run_from_pool() for new code.
+
     Process files from a FileContainer (source-agnostic).
     Supplier fills the container; this function takes batches and runs
     the standard pipeline on each. After each batch, remaps DB paths
@@ -1968,6 +1970,125 @@ def run_from_container(
 
     logger.info(
         f"[CONTAINER] Complete: {total_stored} stored, "
+        f"{total_errors} errors across {batch_num} batches"
+    )
+    return total_stored, total_errors
+
+
+def run_from_pool(
+    pool,
+    batch_capacity: int = 5,
+    skip_processed: bool = True,
+    current_tier: Optional[str] = None,
+):
+    """
+    Process files from a BufferPool (source-agnostic, item-based).
+
+    Multiple suppliers fill the pool with individual PoolItems.
+    This function takes batch_capacity items at a time and runs
+    the standard pipeline on each batch. After each batch, remaps
+    DB paths for WebDAV items and cleans up temp files.
+
+    Sources (local, WebDAV) mix naturally in the pool.
+    Local files are available instantly; WebDAV files arrive as downloads
+    complete. The GPU never waits if the pool is pre-filled.
+
+    Args:
+        pool: BufferPool instance (suppliers already started)
+        batch_capacity: Number of items to process per batch
+        skip_processed: Skip files unchanged since last processing
+        current_tier: Current AI tier for enhanced skip checks
+    """
+    from backend.pipeline.file_container import PoolItem
+
+    db = None
+    if skip_processed:
+        try:
+            from backend.db.sqlite_client import SQLiteDB
+            db = SQLiteDB()
+            _ensure_fts_rebuild_if_needed(db)
+        except Exception as e:
+            logger.warning(f"Cannot open DB for smart skip: {e}")
+
+    total_stored = 0
+    total_errors = 0
+    batch_num = 0
+
+    try:
+        while True:
+            items = pool.take_batch(batch_capacity, timeout=60.0)
+            if not items:
+                break
+
+            if pool.has_error:
+                logger.error(f"[POOL] Supplier error: {pool.error_message}")
+                break
+
+            batch_num += 1
+            logger.info(f"[POOL] Processing batch {batch_num} ({len(items)} files)")
+
+            # Filter with smart skip + build file_infos for process_batch_phased
+            to_process = []
+            path_remap = {}
+            skipped = 0
+
+            for item in items:
+                check_path = item.file_path
+                if item.canonical_path:
+                    check_path = Path(item.canonical_path)
+
+                if skip_processed and db is not None:
+                    if current_tier:
+                        skip = should_skip_file_enhanced(check_path, db, current_tier)
+                    else:
+                        skip = should_skip_file(check_path, db)
+                    if skip:
+                        skipped += 1
+                        continue
+
+                to_process.append((
+                    item.file_path,
+                    item.folder_path,
+                    item.folder_depth,
+                    item.folder_tags,
+                ))
+
+                if item.canonical_path:
+                    path_remap[str(item.file_path)] = item.canonical_path
+
+            if skipped > 0:
+                logger.info(f"[POOL] Batch {batch_num}: {skipped} skipped (already processed)")
+
+            if to_process:
+                stored, parse_err, store_err = process_batch_phased(
+                    to_process,
+                    allow_phase_skip=skip_processed,
+                )
+                total_stored += stored
+                total_errors += parse_err + store_err
+
+                # Remap DB file_path for WebDAV items
+                if path_remap and db is not None:
+                    source_id = None
+                    for item in items:
+                        if item.source_id:
+                            source_id = item.source_id
+                            break
+                    _remap_db_paths(path_remap, source_id, db)
+
+            # Cleanup temp files immediately
+            pool.cleanup(items)
+
+    finally:
+        if db is not None:
+            try:
+                _log_rebuild_status(db)
+                db.close()
+            except Exception:
+                pass
+
+    logger.info(
+        f"[POOL] Complete: {total_stored} stored, "
         f"{total_errors} errors across {batch_num} batches"
     )
     return total_stored, total_errors
@@ -2122,14 +2243,16 @@ def main():
                 logger.error(f"Invalid WebDAV JSON config: {e}")
                 sys.exit(1)
 
-            from backend.pipeline.file_container import FileContainer, WebDAVSupplier
+            from backend.pipeline.file_container import BufferPool, WebDAVSupplier
 
-            container = FileContainer(buffer_size=2)
+            pool = BufferPool(capacity=10)
+            pool.register_supplier()
             supplier = WebDAVSupplier(source_config, batch_size=5)
-            supplier.start(container)
+            supplier.start_pool(pool)
 
-            run_from_container(
-                container,
+            run_from_pool(
+                pool,
+                batch_capacity=5,
                 skip_processed=not args.no_skip,
                 current_tier=tier_name,
             )

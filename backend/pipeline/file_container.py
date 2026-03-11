@@ -39,8 +39,23 @@ logger = logging.getLogger("FileContainer")
 
 
 @dataclass
+class PoolItem:
+    """A single file unit in a BufferPool (individual-item supply)."""
+    file_path: Path
+    folder_path: str = ""
+    folder_depth: int = 0
+    folder_tags: List[str] = field(default_factory=list)
+    # WebDAV: canonical_path for DB storage (e.g. "webdav://nas-1/foo.psd")
+    canonical_path: Optional[str] = None
+    # WebDAV: temp directory to delete after processing
+    temp_dir: Optional[Path] = None
+    # Source identifier (e.g., "webdav://nas-1")
+    source_id: Optional[str] = None
+
+
+@dataclass
 class BatchInfo:
-    """A batch of files ready for pipeline processing."""
+    """A batch of files ready for pipeline processing (legacy batch-based)."""
     file_infos: List[Tuple[Path, Optional[str], int, List[str]]]
     # Maps local temp path (str) -> canonical path for DB storage.
     # Empty dict for local files (no remapping needed).
@@ -141,6 +156,26 @@ class LocalSupplier:
             container.put_batch(BatchInfo(file_infos=batch_slice))
         container.mark_done()
 
+    def start_pool(
+        self,
+        pool: "BufferPool",
+        file_infos: List[Tuple[Path, Optional[str], int, List[str]]],
+    ):
+        """
+        Feed local file_infos into a BufferPool as individual PoolItems.
+        Runs synchronously (local files need no background work).
+        """
+        try:
+            for fp, folder, depth, tags in file_infos:
+                pool.put(PoolItem(
+                    file_path=fp,
+                    folder_path=folder or "",
+                    folder_depth=depth,
+                    folder_tags=tags or [],
+                ))
+        finally:
+            pool.supplier_done()
+
 
 class WebDAVSupplier:
     """
@@ -175,6 +210,20 @@ class WebDAVSupplier:
         )
         self._thread.start()
 
+    def start_pool(self, pool: "BufferPool",
+                   progress_callback: Optional[Callable] = None):
+        """
+        Start background thread that downloads files individually
+        into a BufferPool.
+        """
+        self._thread = Thread(
+            target=self._run_pool,
+            args=(pool, progress_callback),
+            daemon=True,
+            name="WebDAVSupplier-pool",
+        )
+        self._thread.start()
+
     def stop(self):
         """Signal the supplier to stop."""
         self._stop_event.set()
@@ -183,6 +232,91 @@ class WebDAVSupplier:
         """Wait for supplier thread to finish."""
         if self._thread:
             self._thread.join(timeout=timeout)
+
+    def _run_pool(self, pool: "BufferPool",
+                  progress_callback: Optional[Callable]):
+        """Background thread: discover → download individual files → put into pool."""
+        from backend.remote.webdav_client import WebDAVClient
+
+        source_id = self.source_config.get('id', 'webdav')
+
+        try:
+            client = WebDAVClient(
+                base_url=self.source_config['url'],
+                username=self.source_config['username'],
+                password=self.source_config['password'],
+                remote_path=self.source_config.get('remote_path', '/'),
+                verify_ssl=self.source_config.get('verify_ssl', True),
+            )
+
+            if progress_callback:
+                progress_callback("listing", {"message": "Listing remote files..."})
+
+            remote_files = client.list_files_recursive()
+            total = len(remote_files)
+
+            if progress_callback:
+                progress_callback("discover_total", {
+                    "total": total,
+                    "message": f"Found {total} files on remote",
+                })
+
+            if total == 0:
+                client.close()
+                return
+
+            for idx, rf in enumerate(remote_files):
+                if self._stop_event.is_set():
+                    logger.info("WebDAVSupplier: stop requested")
+                    break
+
+                # Each file gets its own temp dir for independent cleanup
+                temp_dir = Path(tempfile.mkdtemp(
+                    prefix=f"imagine_wdav_{source_id}_"
+                ))
+                local_path = temp_dir / rf.relative_path
+
+                success = client.download_file(
+                    rf.remote_path, local_path, expected_size=rf.size
+                )
+
+                if success:
+                    rel_parts = Path(rf.relative_path).parts
+                    if len(rel_parts) > 1:
+                        folder_path = str(Path(*rel_parts[:-1]))
+                        folder_depth = len(rel_parts) - 2
+                        folder_tags = list(rel_parts[:-1])
+                    else:
+                        folder_path = ""
+                        folder_depth = 0
+                        folder_tags = []
+
+                    pool.put(PoolItem(
+                        file_path=local_path,
+                        folder_path=folder_path,
+                        folder_depth=folder_depth,
+                        folder_tags=folder_tags,
+                        canonical_path=f"webdav://{source_id}/{rf.relative_path}",
+                        temp_dir=temp_dir,
+                        source_id=source_id,
+                    ))
+                else:
+                    logger.warning(f"Download failed: {rf.relative_path}")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
+            client.close()
+
+            if progress_callback:
+                progress_callback("supply_complete", {
+                    "total": total,
+                    "message": "All files supplied",
+                })
+
+        except Exception as e:
+            logger.error(f"WebDAVSupplier error: {e}")
+            pool.supplier_error(str(e))
+        finally:
+            pool.supplier_done()
 
     def _run(self, container: FileContainer,
              progress_callback: Optional[Callable]):
