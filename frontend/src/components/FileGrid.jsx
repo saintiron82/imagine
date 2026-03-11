@@ -63,7 +63,7 @@ async function runQueue() {
 // --- WebDAV Remote Thumbnail Queue (separate from local queue) ---
 const webdavThumbQueue = [];
 let webdavQueueRunning = false;
-const WEBDAV_CONCURRENCY = 5; // pro tier: 5 concurrent downloads
+const WEBDAV_CONCURRENCY = 1; // sequential: one file at a time to maximize per-file download speed
 let webdavThumbTotal = 0;
 let webdavThumbDone = 0;
 const webdavProgressListeners = new Set();
