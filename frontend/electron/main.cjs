@@ -2589,6 +2589,16 @@ async function startEmbeddedServer(port = 8000) {
     let _serverLogDropped = 0;
 
     function throttledServerLog(msg, type) {
+        // Errors ALWAYS pass through — never throttle error messages
+        if (type === 'error') {
+            try {
+                if (serverMainWindow && !serverMainWindow.isDestroyed()) {
+                    serverMainWindow.webContents.send('server-log', { message: msg, type });
+                }
+            } catch (e) { /* window may be closed */ }
+            return;
+        }
+
         const now = Date.now();
         if (now - _serverLogWindowStart > 1000) {
             if (_serverLogDropped > 0) {
@@ -2621,10 +2631,10 @@ async function startEmbeddedServer(port = 8000) {
     serverProc.stderr.on('data', (chunk) => {
         const msg = chunk.toString().trim();
         if (msg) {
-            writeLog('INFO', '[Server:stderr]', msg);
             // uvicorn logs to stderr by default
-            const type = /\bERROR\b|Traceback|Exception:/i.test(msg) ? 'error' : 'info';
-            throttledServerLog(msg, type);
+            const isError = /\bERROR\b|\bCRITICAL\b|Traceback|Exception:|FAIL/i.test(msg);
+            writeLog(isError ? 'ERROR' : 'INFO', '[Server:stderr]', msg);
+            throttledServerLog(msg, isError ? 'error' : 'info');
         }
     });
 

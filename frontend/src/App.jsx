@@ -259,6 +259,13 @@ function App() {
 
     if (window.electron) {
 
+      // Server log listener — forward server stderr to StatusBar logs
+      if (window.electron.server) {
+        window.electron.server.onLog((data) => {
+          appendLog({ message: data.message, type: data.type || 'info' });
+        });
+      }
+
       if (window.electron.pipeline) {
         // Stable log listener - feeds StatusBar (never removed mid-session)
         window.electron.pipeline.onLog((data) => {

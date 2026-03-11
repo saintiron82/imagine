@@ -9,9 +9,14 @@ Or via CLI:
 """
 
 import logging
+import os
 import sys
 import threading
 from pathlib import Path
+
+# Suppress HuggingFace/transformers progress bars (floods stderr)
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
