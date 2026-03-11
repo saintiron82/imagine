@@ -86,15 +86,35 @@ def cmd_folders(config: dict):
     })
 
 
+def _webdav_thumb_path(source_id: str, remote_path: str):
+    """Unique thumbnail path for a WebDAV remote file: {THUMB_DIR}/webdav_{source_id}_{hash}_thumb.png"""
+    import hashlib
+    from pathlib import Path
+    THUMB_DIR = Path(__file__).parent.parent.parent / "output" / "thumbnails"
+    path_hash = hashlib.md5(remote_path.encode('utf-8')).hexdigest()[:12]
+    stem = Path(remote_path).stem
+    return THUMB_DIR / f"webdav_{source_id}_{stem}_{path_hash}_thumb.png"
+
+
 def cmd_thumbnail(config: dict):
-    """Download remote file → generate thumbnail → delete temp → return path."""
+    """Download remote file → generate thumbnail → delete temp → return path.
+    If thumbnail already exists on disk, return immediately without downloading."""
     import tempfile
     import shutil
-    import logging
     from pathlib import Path, PurePosixPath
     from backend.remote.webdav_client import WebDAVClient
 
-    logger = logging.getLogger("WebDAVThumb")
+    file_path = config['file_path']  # e.g., "/shared/sub/hero.psd"
+    source_id = config.get('source_id', 'unknown')
+
+    # Check if thumbnail already exists on disk
+    thumb_path = _webdav_thumb_path(source_id, file_path)
+    if thumb_path.exists():
+        print(f"[WebDAV Thumb] cache HIT: {file_path} → {thumb_path}", file=sys.stderr, flush=True)
+        _emit({"success": True, "thumb_path": str(thumb_path)})
+        return
+
+    print(f"[WebDAV Thumb] cache MISS, downloading {file_path}...", file=sys.stderr, flush=True)
 
     client = WebDAVClient(
         base_url=config['url'],
@@ -104,10 +124,7 @@ def cmd_thumbnail(config: dict):
         verify_ssl=config.get('verify_ssl', True),
     )
 
-    file_path = config['file_path']  # e.g., "/shared/sub/hero.psd"
     file_name = PurePosixPath(file_path).name
-    logger.info(f"Thumbnail: downloading {file_path}...")
-    print(f"[WebDAV Thumb] downloading {file_path}", file=sys.stderr, flush=True)
 
     # 1. Download to temp directory
     temp_dir = Path(tempfile.mkdtemp(prefix='imagine_thumb_'))
@@ -122,12 +139,14 @@ def cmd_thumbnail(config: dict):
             _emit({"success": False, "message": "Download failed"})
             return
 
-        print(f"[WebDAV Thumb] downloaded {file_path} → {local_path} ({local_path.stat().st_size} bytes)", file=sys.stderr, flush=True)
+        print(f"[WebDAV Thumb] downloaded {file_path} ({local_path.stat().st_size} bytes)", file=sys.stderr, flush=True)
 
-        # 2. Generate thumbnail (reuse existing thumbnail_generator)
-        from backend.utils.thumbnail_generator import generate_single, get_thumb_path
-        generate_single(str(local_path), size=256)
-        thumb_path = get_thumb_path(str(local_path))
+        # 2. Generate thumbnail → save to unique WebDAV path
+        from backend.utils.thumbnail_generator import process_single
+        img, _ = process_single(str(local_path), size=256)
+        if img is not None:
+            thumb_path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(str(thumb_path), format='PNG', optimize=True)
 
         if thumb_path.exists():
             print(f"[WebDAV Thumb] generated {thumb_path}", file=sys.stderr, flush=True)
@@ -136,7 +155,7 @@ def cmd_thumbnail(config: dict):
             print(f"[WebDAV Thumb] generation FAILED for {file_path}", file=sys.stderr, flush=True)
             _emit({"success": False, "message": "Thumbnail generation failed"})
     finally:
-        # 3. Delete temp file
+        # 3. Delete temp file (original PSD), thumbnail persists on disk
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 

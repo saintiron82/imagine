@@ -2157,6 +2157,7 @@ ipcMain.handle('generate-webdav-thumbnail', async (_, config) => {
         remote_path: '/',
         verify_ssl: source.verify_ssl !== false,
         file_path: subPath,
+        source_id: sourceId,
     });
 
     return new Promise((resolve) => {
