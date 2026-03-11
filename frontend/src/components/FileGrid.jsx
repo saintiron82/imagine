@@ -64,6 +64,9 @@ async function runQueue() {
 const webdavThumbQueue = [];
 let webdavQueueRunning = false;
 const WEBDAV_CONCURRENCY = 5; // pro tier: 5 concurrent downloads
+let webdavThumbTotal = 0;
+let webdavThumbDone = 0;
+const webdavProgressListeners = new Set();
 
 function prioritizeWebDAV(filePaths) {
     const needed = filePaths.filter(fp => !thumbnailPathCache.has(fp) && !inFlightPaths.has(fp));
@@ -74,6 +77,13 @@ function prioritizeWebDAV(filePaths) {
 
     webdavThumbQueue.length = 0;
     webdavThumbQueue.push(...needed, ...remaining);
+
+    // Reset progress when new batch starts
+    if (!webdavQueueRunning) {
+        webdavThumbTotal = needed.length + remaining.length;
+        webdavThumbDone = 0;
+        webdavProgressListeners.forEach(cb => cb());
+    }
 
     runWebDAVQueue();
 }
@@ -112,9 +122,12 @@ async function runWebDAVQueue() {
         // Also clean up any rejected
         chunk.forEach(fp => inFlightPaths.delete(fp));
 
+        webdavThumbDone += chunk.length;
+        webdavProgressListeners.forEach(cb => cb());
         queueListeners.forEach(cb => cb());
     }
     webdavQueueRunning = false;
+    webdavProgressListeners.forEach(cb => cb());
 }
 
 // Category options (value keys for DB storage, labels via i18n)
@@ -593,12 +606,15 @@ const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loa
             <div className="aspect-square bg-gray-900 rounded mb-2 overflow-hidden flex items-center justify-center pointer-events-none">
                 {canPreviewNatively ? (
                     <img src={toFileUrl(file.path)} alt={file.name} className="w-full h-full object-cover" onError={e => { e.target.style.display = 'none'; }} />
-                ) : loading ? (
-                    <Loader2 size={32} className="animate-spin text-gray-500" />
                 ) : thumbnail ? (
                     <img src={toFileUrl(thumbnail)} alt={file.name} className="w-full h-full object-cover" onError={e => { e.target.style.display = 'none'; }} />
+                ) : loading ? (
+                    <div className="flex flex-col items-center gap-2">
+                        <Loader2 size={28} className="animate-spin text-blue-400" />
+                        {isRemote && <span className="text-[10px] text-gray-500">{t('status.downloading')}</span>}
+                    </div>
                 ) : (
-                    <div className="flex flex-col items-center text-gray-500"><File size={48} /><span className="text-xs font-bold mt-1">PSD</span></div>
+                    <div className="flex flex-col items-center text-gray-500"><File size={48} /><span className="text-xs font-bold mt-1">{file.extension.replace('.', '').toUpperCase()}</span></div>
                 )}
             </div>
             <div className="text-xs text-gray-300 truncate font-medium pointer-events-none">{file.name}</div>
@@ -625,6 +641,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
     const [loading, setLoading] = useState(false);
     const [thumbnails, setThumbnails] = useState({});
     const [loadingThumbnails, setLoadingThumbnails] = useState(true);
+    const [webdavProgress, setWebdavProgress] = useState({ done: 0, total: 0, active: false });
     const [metadataStatus, setMetadataStatus] = useState({});
     const [dragStart, setDragStart] = useState(null);
     const [dragEnd, setDragEnd] = useState(null);
@@ -720,6 +737,19 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
             .catch(console.error)
             .finally(() => setLoading(false));
     }, [currentPath, selectedPaths]);
+
+    // Track WebDAV thumbnail progress
+    useEffect(() => {
+        const onProgress = () => {
+            setWebdavProgress({
+                done: webdavThumbDone,
+                total: webdavThumbTotal,
+                active: webdavQueueRunning,
+            });
+        };
+        webdavProgressListeners.add(onProgress);
+        return () => { webdavProgressListeners.delete(onProgress); };
+    }, []);
 
     // Viewport-based metadata polling
     useEffect(() => {
@@ -1039,7 +1069,13 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                 <div className="flex items-center justify-between bg-gray-900 py-2 gap-4 shrink-0">
                     <h2 className="text-lg font-semibold text-gray-300 whitespace-nowrap">
                         {t('label.files', { count: files.length })}
-                        {loadingThumbnails && <span className="text-xs text-blue-400 ml-2">{t('status.loading_thumbnails')}</span>}
+                        {loadingThumbnails && !webdavProgress.active && <span className="text-xs text-blue-400 ml-2">{t('status.loading_thumbnails')}</span>}
+                        {webdavProgress.active && webdavProgress.total > 0 && (
+                            <span className="text-xs text-blue-400 ml-2 inline-flex items-center gap-1">
+                                <Loader2 size={12} className="animate-spin" />
+                                {t('status.downloading')} {webdavProgress.done}/{webdavProgress.total}
+                            </span>
+                        )}
                     </h2>
                     <button onClick={handleSelectAll} className="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300 whitespace-nowrap">
                         {selectedFiles.size === files.length ? t('action.deselect_all') : t('action.select_all')}
@@ -1127,7 +1163,11 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                                                         onMouseDown={(e) => handleCardMouseDown(e, file, globalIdx)}
                                                         onContextMenu={(e) => handleCardContextMenu(e, file)}
                                                         thumbnail={thumbnails[file.path]}
-                                                        loading={loadingThumbnails && file.extension === '.psd' && !thumbnails[file.path]}
+                                                        loading={
+                                                            (file.isRemote || file.path?.startsWith('webdav://'))
+                                                                ? !thumbnails[file.path]
+                                                                : loadingThumbnails && file.extension === '.psd' && !thumbnails[file.path]
+                                                        }
                                                         onShowMeta={handleShowMeta}
                                                         hasMetadata={metadataStatus[file.path]}
                                                     />
