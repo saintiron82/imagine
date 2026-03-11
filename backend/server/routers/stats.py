@@ -44,7 +44,7 @@ def get_folder_phase_stats(
 
 @router.get("/thumbnails")
 def get_thumbnail_stats(
-    _user: dict = Depends(require_admin),
+    _user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db),
 ):
     """Get thumbnail availability stats grouped by storage_root."""
