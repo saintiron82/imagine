@@ -2139,14 +2139,16 @@ ipcMain.handle('list-webdav-dir', async (_, config) => {
 // WebDAV Thumbnail — download remote file, generate thumbnail, delete temp
 ipcMain.handle('generate-webdav-thumbnail', async (_, config) => {
     // config: { webdavPath: 'webdav://source-id/path/to/file.psd' }
-    console.log('[WebDAV Thumb] request:', config.webdavPath);
+    console.log('[WebDAV Thumb] IPC received:', config.webdavPath);
     const { sourceId, subPath } = _parseWebDAVPath(config.webdavPath);
+    console.log('[WebDAV Thumb] parsed: sourceId=', sourceId, 'subPath=', subPath);
     const userConfig = readYamlFile(userSettingsPath);
     const source = (userConfig.webdav_sources || []).find(s => s.id === sourceId);
     if (!source) {
-        console.log('[WebDAV Thumb] source not found:', sourceId);
+        console.log('[WebDAV Thumb] ERROR: source not found for id:', sourceId);
         return null;
     }
+    console.log('[WebDAV Thumb] source found:', source.name || source.url);
 
     const thumbConfig = JSON.stringify({
         url: source.url,
@@ -2158,24 +2160,30 @@ ipcMain.handle('generate-webdav-thumbnail', async (_, config) => {
     });
 
     return new Promise((resolve) => {
+        console.log('[WebDAV Thumb] spawning Python process for:', subPath);
         const proc = spawnBackend('remote.sync_cli', ['--thumbnail', thumbConfig], {
             env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
             stdio: ['pipe', 'pipe', 'pipe'],
         }, 'backend/remote/sync_cli.py', ['--thumbnail', thumbConfig]);
 
         let output = '';
-        proc.stdout.on('data', (d) => { output += d.toString(); });
-        proc.stderr.on('data', (d) => console.error('[WebDAV Thumb]', d.toString().trim()));
+        proc.stdout.on('data', (d) => {
+            const chunk = d.toString();
+            output += chunk;
+            console.log('[WebDAV Thumb] stdout:', chunk.trim());
+        });
+        proc.stderr.on('data', (d) => console.error('[WebDAV Thumb] stderr:', d.toString().trim()));
 
-        proc.on('close', () => {
+        proc.on('close', (code) => {
+            console.log('[WebDAV Thumb] process exited with code:', code, 'output length:', output.length);
             try {
                 const lines = output.trim().split('\n').filter(l => l.trim());
                 const lastLine = lines[lines.length - 1];
                 const result = JSON.parse(lastLine);
-                console.log('[WebDAV Thumb] result:', config.webdavPath, result.success ? result.thumb_path : 'FAIL');
+                console.log('[WebDAV Thumb] result:', config.webdavPath, result.success ? result.thumb_path : ('FAIL: ' + result.message));
                 resolve(result?.thumb_path || null);
-            } catch {
-                console.log('[WebDAV Thumb] parse error for:', config.webdavPath);
+            } catch (e) {
+                console.log('[WebDAV Thumb] parse error for:', config.webdavPath, 'raw output:', output.substring(0, 500));
                 resolve(null);
             }
         });

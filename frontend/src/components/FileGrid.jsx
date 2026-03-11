@@ -88,13 +88,18 @@ async function runWebDAVQueue() {
         console.log('[WebDAV] thumb queue: processing', chunk.length, 'files, concurrency:', WEBDAV_CONCURRENCY);
 
         const results = await Promise.allSettled(
-            chunk.map(fp =>
-                window.electron?.webdav?.generateThumbnail({ webdavPath: fp })
+            chunk.map(fp => {
+                console.log('[WebDAV] thumb request:', fp);
+                return window.electron?.webdav?.generateThumbnail({ webdavPath: fp })
                     .then(thumbPath => {
-                        console.log('[WebDAV] thumb done:', fp, thumbPath ? 'OK' : 'FAIL');
+                        console.log('[WebDAV] thumb done:', fp, thumbPath ? 'OK → ' + thumbPath : 'FAIL (null)');
                         return { fp, thumbPath };
                     })
-            )
+                    .catch(err => {
+                        console.error('[WebDAV] thumb error:', fp, err);
+                        return { fp, thumbPath: null };
+                    });
+            })
         );
 
         results.forEach(r => {
