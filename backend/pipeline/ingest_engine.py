@@ -1881,6 +1881,8 @@ def run_from_container(
     current_tier: Optional[str] = None,
 ):
     """
+    Legacy batch-based container consumer. Use run_from_pool() for new code.
+
     Process files from a FileContainer (source-agnostic).
     Supplier fills the container; this function takes batches and runs
     the standard pipeline on each. After each batch, remaps DB paths
@@ -2241,14 +2243,16 @@ def main():
                 logger.error(f"Invalid WebDAV JSON config: {e}")
                 sys.exit(1)
 
-            from backend.pipeline.file_container import FileContainer, WebDAVSupplier
+            from backend.pipeline.file_container import BufferPool, WebDAVSupplier
 
-            container = FileContainer(buffer_size=2)
+            pool = BufferPool(capacity=10)
+            pool.register_supplier()
             supplier = WebDAVSupplier(source_config, batch_size=5)
-            supplier.start(container)
+            supplier.start_pool(pool)
 
-            run_from_container(
-                container,
+            run_from_pool(
+                pool,
+                batch_capacity=5,
                 skip_processed=not args.no_skip,
                 current_tier=tier_name,
             )
