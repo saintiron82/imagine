@@ -51,7 +51,8 @@ const StatusBar = ({
     cumParse = 0, cumMC = 0, cumVV = 0, cumMV = 0,
     activePhase = 0, phaseSubCount = 0, phaseSubTotal = 0,
     batchInfo = '', fileStep = {}, onStop,
-    isWorkerProcessing = false, workerProgress = {}, onWorkerStop
+    isWorkerProcessing = false, workerProgress = {}, onWorkerStop,
+    serverQueueStats = null
 }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(false);
@@ -344,6 +345,54 @@ const StatusBar = ({
                             >
                                 <Square size={12} />
                             </button>
+                        </div>
+                    );
+                })()}
+
+                {/* Server queue progress — visible when server is running with active jobs */}
+                {serverQueueStats && serverQueueStats.total > 0 && !isWorkerProcessing && !isProcessing && !isDiscovering && (() => {
+                    const sq = serverQueueStats;
+                    const active = sq.pending + sq.assigned + sq.processing;
+                    const pct = sq.total > 0 ? Math.round((sq.completed / sq.total) * 100) : 0;
+                    const failPct = sq.total > 0 ? Math.round((sq.failed / sq.total) * 100) : 0;
+                    const allDone = active === 0 && sq.completed > 0;
+                    const perMin = sq.throughput || 0;
+
+                    return (
+                        <div className="flex items-center space-x-2 flex-shrink-0 mx-3">
+                            {allDone ? (
+                                <span className="text-green-400 text-[10px]">✓</span>
+                            ) : (
+                                <Loader2 className="animate-spin text-cyan-400" size={12} />
+                            )}
+
+                            <span className="text-emerald-300 font-mono font-bold text-[11px]">
+                                {sq.completed}/{sq.total}
+                            </span>
+                            {sq.failed > 0 && (
+                                <span className="text-red-400 font-mono font-bold text-[11px]">
+                                    {sq.failed}F
+                                </span>
+                            )}
+                            {perMin > 0 && (
+                                <span className="text-yellow-300 font-mono text-[10px]">
+                                    {perMin.toFixed(1)}/min
+                                </span>
+                            )}
+                            {sq.etaSeconds != null && sq.etaSeconds > 0 && (
+                                <span className="text-emerald-300 font-mono text-[11px]">~{formatEta(sq.etaSeconds * 1000)}</span>
+                            )}
+
+                            {/* Mini progress bar */}
+                            <div className="w-20 bg-gray-700 rounded-full h-1.5 overflow-hidden flex">
+                                {pct > 0 && (
+                                    <div className="bg-emerald-500 h-full" style={{ width: `${pct}%` }} />
+                                )}
+                                {failPct > 0 && (
+                                    <div className="bg-red-500 h-full" style={{ width: `${failPct}%` }} />
+                                )}
+                            </div>
+                            <span className="text-gray-500 font-mono text-[9px]">{pct}%</span>
                         </div>
                     );
                 })()}

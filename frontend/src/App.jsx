@@ -683,6 +683,35 @@ function App() {
     return () => clearInterval(interval);
   }, [appMode, isWorkerRunning]);
 
+  // Server queue stats polling (server mode, 5s interval)
+  const [serverQueueStats, setServerQueueStats] = useState(null);
+  useEffect(() => {
+    if (!serverRunning) {
+      setServerQueueStats(null);
+      return;
+    }
+    const fetchStats = async () => {
+      try {
+        const data = await getJobStats();
+        if (data && data.success !== false) {
+          setServerQueueStats({
+            total: data.total || 0,
+            completed: data.completed || 0,
+            failed: data.failed || 0,
+            pending: data.pending || 0,
+            assigned: data.assigned || 0,
+            processing: data.processing || 0,
+            throughput: data.throughput || 0,
+            etaSeconds: data.eta_seconds,
+          });
+        }
+      } catch { /* ignore */ }
+    };
+    fetchStats();
+    const interval = setInterval(fetchStats, 5000);
+    return () => clearInterval(interval);
+  }, [serverRunning]);
+
   // Domain setup check — show selection modal if no domain configured
   const domainCheckedRef = useRef(false);
   useEffect(() => {
@@ -1770,6 +1799,7 @@ function App() {
             isWorkerProcessing={isWorkerRunning && appMode === 'client'}
             workerProgress={workerProgress}
             onWorkerStop={handleWorkerStop}
+            serverQueueStats={serverQueueStats}
           />
         </div>
       </div>

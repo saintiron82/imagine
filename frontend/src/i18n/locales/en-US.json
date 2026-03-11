@@ -790,5 +790,15 @@
   "settings.rest_between_desc": "Cooldown seconds after each auto-processing batch",
   "settings.webdav_auto": "WebDAV Auto-Process",
   "settings.webdav_auto_desc": "Auto-generate thumbnails and metadata when browsing WebDAV folders",
-  "settings.restart_required": "Restart required"
+  "settings.restart_required": "Restart required",
+  "status.server_queue": "Server Queue",
+  "status.server_queue_done": "All jobs completed",
+  "admin.tab_thumbnails": "Thumbnails",
+  "admin.thumb_title": "Thumbnail Status",
+  "admin.thumb_source": "Source",
+  "admin.thumb_total": "Total",
+  "admin.thumb_has_thumb": "Has Thumbnail",
+  "admin.thumb_missing": "Missing",
+  "admin.thumb_progress": "Progress",
+  "admin.thumb_no_data": "No files found"
 }

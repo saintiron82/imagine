@@ -164,3 +164,9 @@ export async function resetDatabase(password) {
   return apiClient.post('/api/v1/admin/database/reset', { password });
 }
 
+// ── Thumbnail Stats ──────────────────────────────────────
+
+export async function getThumbnailStats() {
+  return apiClient.get('/api/v1/stats/thumbnails');
+}
+

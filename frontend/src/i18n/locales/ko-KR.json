@@ -790,5 +790,15 @@
   "settings.rest_between_desc": "자동 처리 배치 완료 후 대기 시간 (초)",
   "settings.webdav_auto": "WebDAV 자동 처리",
   "settings.webdav_auto_desc": "WebDAV 폴더 탐색 시 썸네일 및 메타데이터 자동 생성",
-  "settings.restart_required": "재시작 필요"
+  "settings.restart_required": "재시작 필요",
+  "status.server_queue": "서버 큐",
+  "status.server_queue_done": "모든 작업 완료",
+  "admin.tab_thumbnails": "썸네일",
+  "admin.thumb_title": "썸네일 현황",
+  "admin.thumb_source": "소스",
+  "admin.thumb_total": "전체",
+  "admin.thumb_has_thumb": "보유",
+  "admin.thumb_missing": "미보유",
+  "admin.thumb_progress": "진행률",
+  "admin.thumb_no_data": "파일 없음"
 }

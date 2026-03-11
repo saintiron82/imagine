@@ -15,13 +15,14 @@ import {
   updateWorkerConfig, updateGlobalProcessingMode,
   getAutoProcessing, updateAutoProcessing,
   listMembers, updateMemberRole, removeMember, deactivateMember, activateMember,
+  getThumbnailStats,
 } from '../api/admin';
 import {
   Users, Key, Activity, FolderSearch, Terminal, Server,
   Shield, ShieldOff, Trash2, Copy, Plus, Square, Ban, UserCheck,
   RefreshCw, CheckCircle, XCircle, AlertTriangle,
   Folder, FolderOpen, ChevronRight, ArrowUp, Play, Loader2,
-  Tag, ChevronDown, Pencil, AlertOctagon, Crown,
+  Tag, ChevronDown, Pencil, AlertOctagon, Crown, Image,
 } from 'lucide-react';
 import { listDomains, getDomainDetail, getActiveDomainConfig, setActiveDomain, saveDomainYaml } from '../services/bridge';
 import SubscriptionPanel from '../components/SubscriptionPanel';
@@ -34,6 +35,7 @@ export default function AdminPage() {
   const tabs = [
     { id: 'discover', label: t('admin.tab_discover'), icon: FolderSearch },
     { id: 'queue', label: t('admin.tab_queue'), icon: Activity },
+    { id: 'thumbnails', label: t('admin.tab_thumbnails'), icon: Image },
     { id: 'workers', label: t('admin.tab_workers'), icon: Server },
     { id: 'classification', label: t('admin.tab_classification'), icon: Tag },
     { id: 'users', label: t('admin.tab_users'), icon: Users },
@@ -67,6 +69,7 @@ export default function AdminPage() {
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === 'discover' && <DiscoverPanel />}
         {activeTab === 'queue' && <QueuePanel />}
+        {activeTab === 'thumbnails' && <ThumbnailsPanel />}
         {activeTab === 'workers' && <WorkersPanel />}
         {activeTab === 'classification' && <ClassificationPanel />}
         {activeTab === 'users' && <UsersPanel />}
@@ -1443,6 +1446,96 @@ function WorkerTokensPanel() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ── Thumbnails Panel ────────────────────────────────────
+
+function ThumbnailsPanel() {
+  const { t } = useLocale();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const result = await getThumbnailStats();
+      if (result?.success) setData(result);
+    } catch (e) {
+      console.error('Failed to fetch thumbnail stats:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  if (loading && !data) {
+    return <div className="flex items-center gap-2 text-gray-400"><Loader2 className="animate-spin" size={16} /> Loading...</div>;
+  }
+  if (!data || !data.sources?.length) {
+    return <div className="text-gray-500">{t('admin.thumb_no_data')}</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">{t('admin.thumb_title')}</h2>
+        <button onClick={fetchData} className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+          <RefreshCw size={16} />
+        </button>
+      </div>
+
+      {/* Grand total */}
+      <div className="bg-gray-800 rounded-lg p-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm text-gray-400">{t('admin.thumb_total')}</span>
+          <span className="font-mono font-bold text-white">{data.grand_total.toLocaleString()}</span>
+        </div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm text-green-400">{t('admin.thumb_has_thumb')}</span>
+          <span className="font-mono font-bold text-green-400">{data.grand_has_thumb.toLocaleString()}</span>
+        </div>
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-sm text-amber-400">{t('admin.thumb_missing')}</span>
+          <span className="font-mono font-bold text-amber-400">{data.grand_missing.toLocaleString()}</span>
+        </div>
+        <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden flex">
+          <div className="bg-green-500 h-full transition-all" style={{ width: `${data.grand_total > 0 ? (data.grand_has_thumb / data.grand_total * 100) : 0}%` }} />
+          <div className="bg-amber-500 h-full transition-all" style={{ width: `${data.grand_total > 0 ? (data.grand_missing / data.grand_total * 100) : 0}%` }} />
+        </div>
+        <div className="text-right text-[10px] text-gray-500 mt-1">
+          {data.grand_total > 0 ? Math.round(data.grand_has_thumb / data.grand_total * 100) : 0}%
+        </div>
+      </div>
+
+      {/* Per-source breakdown */}
+      <div className="space-y-2">
+        {data.sources.map(src => {
+          const pct = src.total > 0 ? Math.round(src.has_thumb / src.total * 100) : 0;
+          return (
+            <div key={src.source} className="bg-gray-800/50 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-sm font-medium text-gray-300 truncate max-w-[300px]" title={src.source}>
+                  {src.source.startsWith('webdav://') ? src.source.replace('webdav://', '📁 ') : src.source}
+                </span>
+                <span className="text-xs text-gray-500">{src.total.toLocaleString()} files</span>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="text-green-400">{src.has_thumb}</span>
+                <span className="text-gray-600">/</span>
+                <span className="text-amber-400">{src.missing} {t('admin.thumb_missing')}</span>
+                <div className="flex-1 bg-gray-700 rounded-full h-1.5 overflow-hidden flex">
+                  <div className="bg-green-500 h-full" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="font-mono text-gray-400 text-[10px]">{pct}%</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
