@@ -60,6 +60,58 @@ async function runQueue() {
     isQueueRunning = false;
 }
 
+// --- WebDAV Remote Thumbnail Queue (separate from local queue) ---
+const webdavThumbQueue = [];
+let webdavQueueRunning = false;
+const WEBDAV_CONCURRENCY = 5; // pro tier: 5 concurrent downloads
+
+function prioritizeWebDAV(filePaths) {
+    const needed = filePaths.filter(fp => !thumbnailPathCache.has(fp) && !inFlightPaths.has(fp));
+    if (needed.length === 0) return;
+
+    const needSet = new Set(needed);
+    const remaining = webdavThumbQueue.filter(fp => !needSet.has(fp));
+
+    webdavThumbQueue.length = 0;
+    webdavThumbQueue.push(...needed, ...remaining);
+
+    runWebDAVQueue();
+}
+
+async function runWebDAVQueue() {
+    if (webdavQueueRunning) return;
+    webdavQueueRunning = true;
+
+    while (webdavThumbQueue.length > 0) {
+        const chunk = webdavThumbQueue.splice(0, WEBDAV_CONCURRENCY);
+        chunk.forEach(fp => inFlightPaths.add(fp));
+        console.log('[WebDAV] thumb queue: processing', chunk.length, 'files, concurrency:', WEBDAV_CONCURRENCY);
+
+        const results = await Promise.allSettled(
+            chunk.map(fp =>
+                window.electron?.webdav?.generateThumbnail({ webdavPath: fp })
+                    .then(thumbPath => {
+                        console.log('[WebDAV] thumb done:', fp, thumbPath ? 'OK' : 'FAIL');
+                        return { fp, thumbPath };
+                    })
+            )
+        );
+
+        results.forEach(r => {
+            if (r.status === 'fulfilled' && r.value) {
+                const { fp, thumbPath } = r.value;
+                inFlightPaths.delete(fp);
+                if (thumbPath) thumbnailPathCache.set(fp, thumbPath);
+            }
+        });
+        // Also clean up any rejected
+        chunk.forEach(fp => inFlightPaths.delete(fp));
+
+        queueListeners.forEach(cb => cb());
+    }
+    webdavQueueRunning = false;
+}
+
 // Category options (value keys for DB storage, labels via i18n)
 const CATEGORY_OPTIONS = [
     { value: '', key: 'category.uncategorized' },
@@ -481,7 +533,8 @@ const MetadataModal = ({ metadata, onClose }) => {
 // FileCard Component
 const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loading, onShowMeta, hasMetadata }) => {
     const { t } = useLocale();
-    const canPreviewNatively = IMAGE_PREVIEW_EXTS.includes(file.extension);
+    const isRemote = file.isRemote || file.path?.startsWith('webdav://');
+    const canPreviewNatively = !isRemote && IMAGE_PREVIEW_EXTS.includes(file.extension);
 
     const toFileUrl = (p) => {
         const normalized = p.replace(/\\/g, '/');
@@ -630,12 +683,19 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
             paths.map(p =>
                 p.startsWith('webdav://')
                     ? window.electron?.webdav?.listDir({ webdavPath: p })
-                        .then(r => (r?.files || []).map(f => ({
-                            name: f.name,
-                            path: f.path,
-                            extension: f.extension,
-                            isDirectory: false,
-                        })))
+                        .then(r => {
+                            const match = p.match(/^webdav:\/\/([^/]+)/);
+                            const prefix = match ? `webdav://${match[1]}` : '';
+                            const files = (r?.files || []).map(f => ({
+                                name: f.name,
+                                path: prefix + f.path,
+                                extension: f.extension,
+                                isDirectory: false,
+                                isRemote: true,
+                            }));
+                            console.log('[WebDAV] listDir:', p, files.length, 'files');
+                            return files;
+                        })
                         .catch(() => [])
                     : window.electron?.fs?.listDir(p).catch(() => [])
             )
@@ -644,9 +704,12 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                 const supportedFiles = results.flat().filter(i => !i.isDirectory && SUPPORTED_EXTS.includes(i.extension));
                 setFiles(supportedFiles);
                 if (window.electron?.pipeline?.checkMetadataExists) {
-                    window.electron.pipeline.checkMetadataExists(supportedFiles.map(f => f.path))
-                        .then(setMetadataStatus)
-                        .catch(console.error);
+                    const localFiles = supportedFiles.filter(f => !f.isRemote && !f.path?.startsWith('webdav://'));
+                    if (localFiles.length > 0) {
+                        window.electron.pipeline.checkMetadataExists(localFiles.map(f => f.path))
+                            .then(setMetadataStatus)
+                            .catch(console.error);
+                    }
                 }
             })
             .catch(console.error)
@@ -659,7 +722,9 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         const interval = setInterval(() => {
             if (!window.electron?.pipeline?.checkMetadataExists) return;
             const { start, end } = getVisibleRange();
-            const visiblePaths = files.slice(start, end).map(f => f.path);
+            const visiblePaths = files.slice(start, end)
+                .filter(f => !f.isRemote && !f.path?.startsWith('webdav://'))
+                .map(f => f.path);
             if (visiblePaths.length === 0) return;
             window.electron.pipeline.checkMetadataExists(visiblePaths)
                 .then(status => {
@@ -673,9 +738,55 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         return () => clearInterval(interval);
     }, [files, getVisibleRange]);
 
+    // Load thumbnails for remote (WebDAV) files — all extensions need thumbnails
+    useEffect(() => {
+        const remoteFiles = files.filter(f => f.isRemote || f.path?.startsWith('webdav://'));
+        if (remoteFiles.length === 0) return;
+
+        // Show cached immediately
+        const cached = {};
+        remoteFiles.forEach(f => {
+            if (thumbnailPathCache.has(f.path)) cached[f.path] = thumbnailPathCache.get(f.path);
+        });
+        if (Object.keys(cached).length > 0) {
+            setThumbnails(prev => ({ ...prev, ...cached }));
+        }
+
+        const uncached = remoteFiles.filter(f => !thumbnailPathCache.has(f.path));
+        if (uncached.length === 0) return;
+
+        // Prioritize viewport files
+        const { start, end } = getVisibleRange();
+        const visible = [], rest = [];
+        uncached.forEach(f => {
+            const idx = files.indexOf(f);
+            if (idx >= start && idx < end) visible.push(f.path);
+            else rest.push(f.path);
+        });
+        console.log('[WebDAV] thumb queue:', uncached.length, 'total,', visible.length, 'visible first');
+        prioritizeWebDAV([...visible, ...rest]);
+
+        // Listen for WebDAV thumbnail completions
+        const onRemoteChunkDone = () => {
+            setThumbnails(prev => {
+                const merged = { ...prev };
+                let changed = false;
+                remoteFiles.forEach(f => {
+                    if (!merged[f.path] && thumbnailPathCache.has(f.path)) {
+                        merged[f.path] = thumbnailPathCache.get(f.path);
+                        changed = true;
+                    }
+                });
+                return changed ? merged : prev;
+            });
+        };
+        queueListeners.add(onRemoteChunkDone);
+        return () => { queueListeners.delete(onRemoteChunkDone); };
+    }, [files]);
+
     // Load thumbnails: check disk for all, generate via viewport-priority queue
     useEffect(() => {
-        const psdFiles = files.filter(f => f.extension === '.psd');
+        const psdFiles = files.filter(f => !f.isRemote && !f.path?.startsWith('webdav://') && f.extension === '.psd');
         if (psdFiles.length === 0) {
             setLoadingThumbnails(false);
             return;
@@ -761,7 +872,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         return () => { queueListeners.delete(onChunkDone); };
     }, [files]);
 
-    // Re-prioritize visible thumbnails on scroll
+    // Re-prioritize visible thumbnails on scroll (local + WebDAV)
     useEffect(() => {
         const el = scrollRef.current;
         if (!el || files.length === 0) return;
@@ -769,18 +880,21 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         const handler = () => {
             clearTimeout(debounceId);
             debounceId = setTimeout(() => {
-                if (missingThumbnails.current.size === 0) return;
                 const { start, end } = getVisibleRange();
-                const visibleMissing = [];
+                const localMissing = [];
+                const remoteMissing = [];
                 for (let i = start; i < end; i++) {
                     const f = files[i];
-                    if (f && f.extension === '.psd' && missingThumbnails.current.has(f.path)) {
-                        visibleMissing.push(f.path);
+                    if (!f || thumbnailPathCache.has(f.path) || inFlightPaths.has(f.path)) continue;
+                    const isRemote = f.isRemote || f.path?.startsWith('webdav://');
+                    if (isRemote) {
+                        remoteMissing.push(f.path);
+                    } else if (f.extension === '.psd' && missingThumbnails.current.has(f.path)) {
+                        localMissing.push(f.path);
                     }
                 }
-                if (visibleMissing.length > 0) {
-                    prioritizeFolder(visibleMissing);
-                }
+                if (localMissing.length > 0) prioritizeFolder(localMissing);
+                if (remoteMissing.length > 0) prioritizeWebDAV(remoteMissing);
             }, 200);
         };
         el.addEventListener('scroll', handler, { passive: true });
