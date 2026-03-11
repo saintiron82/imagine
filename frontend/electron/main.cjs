@@ -2196,6 +2196,74 @@ ipcMain.handle('generate-webdav-thumbnail', async (_, config) => {
     });
 });
 
+// WebDAV Browse — single Python process per folder: PROPFIND + DB check + download+parse uncached
+ipcMain.handle('browse-webdav-folder', async (event, config) => {
+    // config: { sourceId, path }
+    const { sourceId, path: browsePath } = config;
+    console.log('[WebDAV Browse] IPC received: sourceId=', sourceId, 'path=', browsePath);
+    const userConfig = readYamlFile(userSettingsPath);
+    const source = (userConfig.webdav_sources || []).find(s => s.id === sourceId);
+    if (!source) {
+        console.log('[WebDAV Browse] ERROR: source not found for id:', sourceId);
+        return { error: 'Source not found' };
+    }
+
+    const browseConfig = JSON.stringify({
+        url: source.url,
+        username: source.username,
+        password: _decryptWebdavPassword(source),
+        remote_path: '/',
+        verify_ssl: source.verify_ssl !== false,
+        source_id: sourceId,
+        path: browsePath || '/',
+    });
+
+    return new Promise((resolve) => {
+        const proc = spawnBackend('remote.sync_cli', ['--browse', browseConfig], {
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }, 'backend/remote/sync_cli.py', ['--browse', browseConfig]);
+
+        let buffer = '';
+        proc.stdout.on('data', (d) => {
+            buffer += d.toString();
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep incomplete last line
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const evt = JSON.parse(line);
+                    console.log('[WebDAV Browse] event:', evt.event,
+                        evt.event === 'cached' ? `${evt.files?.length} files` :
+                        evt.event === 'processed' ? evt.name :
+                        evt.event === 'done' ? `cached=${evt.cached} processed=${evt.processed}` : '');
+                    event.sender.send('webdav-browse-event', evt);
+                } catch (e) {
+                    console.error('[WebDAV Browse] JSON parse error:', line.substring(0, 200));
+                }
+            }
+        });
+        proc.stderr.on('data', (d) => console.error('[WebDAV Browse] stderr:', d.toString().trim()));
+
+        proc.on('close', (code) => {
+            // Process remaining buffer
+            if (buffer.trim()) {
+                try {
+                    const evt = JSON.parse(buffer);
+                    event.sender.send('webdav-browse-event', evt);
+                } catch {}
+            }
+            console.log('[WebDAV Browse] process exited with code:', code);
+            resolve({ code });
+        });
+
+        proc.on('error', (err) => {
+            console.error('[WebDAV Browse] spawn error:', err);
+            resolve({ error: err.message });
+        });
+    });
+});
+
 /** Parse webdav://source-id/sub/path into { sourceId, subPath } */
 function _parseWebDAVPath(webdavPath) {
     // webdav://source-id/sub/path → sourceId=source-id, subPath=/sub/path

@@ -60,75 +60,10 @@ async function runQueue() {
     isQueueRunning = false;
 }
 
-// --- WebDAV Remote Thumbnail Queue (separate from local queue) ---
-const webdavThumbQueue = [];
-let webdavQueueRunning = false;
-const WEBDAV_CONCURRENCY = 1; // sequential: one file at a time to maximize per-file download speed
-let webdavThumbTotal = 0;
-let webdavThumbDone = 0;
+// --- WebDAV Browse Progress (single Python process per folder) ---
+let webdavBrowseTotal = 0;
+let webdavBrowseDone = 0;
 const webdavProgressListeners = new Set();
-
-function prioritizeWebDAV(filePaths) {
-    const needed = filePaths.filter(fp => !thumbnailPathCache.has(fp) && !inFlightPaths.has(fp));
-    if (needed.length === 0) return;
-
-    const needSet = new Set(needed);
-    const remaining = webdavThumbQueue.filter(fp => !needSet.has(fp));
-
-    webdavThumbQueue.length = 0;
-    webdavThumbQueue.push(...needed, ...remaining);
-
-    // Reset progress when new batch starts
-    if (!webdavQueueRunning) {
-        webdavThumbTotal = needed.length + remaining.length;
-        webdavThumbDone = 0;
-        webdavProgressListeners.forEach(cb => cb());
-    }
-
-    runWebDAVQueue();
-}
-
-async function runWebDAVQueue() {
-    if (webdavQueueRunning) return;
-    webdavQueueRunning = true;
-
-    while (webdavThumbQueue.length > 0) {
-        const chunk = webdavThumbQueue.splice(0, WEBDAV_CONCURRENCY);
-        chunk.forEach(fp => inFlightPaths.add(fp));
-        console.log('[WebDAV] thumb queue: processing', chunk.length, 'files, concurrency:', WEBDAV_CONCURRENCY);
-
-        const results = await Promise.allSettled(
-            chunk.map(fp => {
-                console.log('[WebDAV] thumb request:', fp);
-                return window.electron?.webdav?.generateThumbnail({ webdavPath: fp })
-                    .then(thumbPath => {
-                        console.log('[WebDAV] thumb done:', fp, thumbPath ? 'OK → ' + thumbPath : 'FAIL (null)');
-                        return { fp, thumbPath };
-                    })
-                    .catch(err => {
-                        console.error('[WebDAV] thumb error:', fp, err);
-                        return { fp, thumbPath: null };
-                    });
-            })
-        );
-
-        results.forEach(r => {
-            if (r.status === 'fulfilled' && r.value) {
-                const { fp, thumbPath } = r.value;
-                inFlightPaths.delete(fp);
-                if (thumbPath) thumbnailPathCache.set(fp, thumbPath);
-            }
-        });
-        // Also clean up any rejected
-        chunk.forEach(fp => inFlightPaths.delete(fp));
-
-        webdavThumbDone += chunk.length;
-        webdavProgressListeners.forEach(cb => cb());
-        queueListeners.forEach(cb => cb());
-    }
-    webdavQueueRunning = false;
-    webdavProgressListeners.forEach(cb => cb());
-}
 
 // Category options (value keys for DB storage, labels via i18n)
 const CATEGORY_OPTIONS = [
@@ -743,13 +678,13 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
             .finally(() => setLoading(false));
     }, [currentPath, selectedPaths]);
 
-    // Track WebDAV thumbnail progress
+    // Track WebDAV browse progress
     useEffect(() => {
         const onProgress = () => {
             setWebdavProgress({
-                done: webdavThumbDone,
-                total: webdavThumbTotal,
-                active: webdavQueueRunning,
+                done: webdavBrowseDone,
+                total: webdavBrowseTotal,
+                active: webdavBrowseTotal > 0,
             });
         };
         webdavProgressListeners.add(onProgress);
@@ -778,51 +713,76 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         return () => clearInterval(interval);
     }, [files, getVisibleRange]);
 
-    // Load thumbnails for remote (WebDAV) files — all extensions need thumbnails
+    // WebDAV browse: trigger browseFolder + listen for streaming events
     useEffect(() => {
-        const remoteFiles = files.filter(f => f.isRemote || f.path?.startsWith('webdav://'));
-        if (remoteFiles.length === 0) return;
+        if (!currentPath?.startsWith('webdav://')) return;
 
-        // Show cached immediately
-        const cached = {};
-        remoteFiles.forEach(f => {
-            if (thumbnailPathCache.has(f.path)) cached[f.path] = thumbnailPathCache.get(f.path);
-        });
-        if (Object.keys(cached).length > 0) {
-            setThumbnails(prev => ({ ...prev, ...cached }));
+        // Show in-memory cached thumbnails immediately
+        const remoteFiles = files.filter(f => f.isRemote || f.path?.startsWith('webdav://'));
+        if (remoteFiles.length > 0) {
+            const cached = {};
+            remoteFiles.forEach(f => {
+                if (thumbnailPathCache.has(f.path)) cached[f.path] = thumbnailPathCache.get(f.path);
+            });
+            if (Object.keys(cached).length > 0) {
+                setThumbnails(prev => ({ ...prev, ...cached }));
+            }
         }
 
-        const uncached = remoteFiles.filter(f => !thumbnailPathCache.has(f.path));
-        if (uncached.length === 0) return;
+        // Parse sourceId and subPath from currentPath
+        const match = currentPath.match(/^webdav:\/\/([^/]+)(.*)/);
+        if (!match) return;
+        const sourceId = match[1];
+        const subPath = match[2] || '/';
 
-        // Prioritize viewport files
-        const { start, end } = getVisibleRange();
-        const visible = [], rest = [];
-        uncached.forEach(f => {
-            const idx = files.indexOf(f);
-            if (idx >= start && idx < end) visible.push(f.path);
-            else rest.push(f.path);
-        });
-        console.log('[WebDAV] thumb queue:', uncached.length, 'total,', visible.length, 'visible first');
-        prioritizeWebDAV([...visible, ...rest]);
+        // Start browse (single Python process: DB check + download + parse)
+        console.log('[WebDAV] browseFolder:', sourceId, subPath);
+        window.electron?.webdav?.browseFolder({ sourceId, path: subPath });
 
-        // Listen for WebDAV thumbnail completions
-        const onRemoteChunkDone = () => {
-            setThumbnails(prev => {
-                const merged = { ...prev };
-                let changed = false;
-                remoteFiles.forEach(f => {
-                    if (!merged[f.path] && thumbnailPathCache.has(f.path)) {
-                        merged[f.path] = thumbnailPathCache.get(f.path);
-                        changed = true;
+        // Listen for streaming events
+        const handler = (evt) => {
+            if (evt.event === 'cached') {
+                // DB-cached files → show thumbnails immediately
+                const thumbMap = {};
+                (evt.files || []).forEach(f => {
+                    if (f.thumb_path) {
+                        thumbMap[f.path] = f.thumb_path;
+                        thumbnailPathCache.set(f.path, f.thumb_path);
                     }
                 });
-                return changed ? merged : prev;
-            });
+                if (Object.keys(thumbMap).length > 0) {
+                    setThumbnails(prev => ({ ...prev, ...thumbMap }));
+                }
+                console.log('[WebDAV] cached:', evt.files?.length, 'files');
+            } else if (evt.event === 'processing') {
+                inFlightPaths.add(evt.path);
+                webdavBrowseTotal = evt.total;
+                webdavBrowseDone = evt.index - 1;
+                webdavProgressListeners.forEach(cb => cb());
+            } else if (evt.event === 'processed') {
+                inFlightPaths.delete(evt.path);
+                if (evt.thumb_path) {
+                    thumbnailPathCache.set(evt.path, evt.thumb_path);
+                    setThumbnails(prev => ({ ...prev, [evt.path]: evt.thumb_path }));
+                }
+                webdavBrowseDone = (webdavBrowseDone || 0) + 1;
+                webdavProgressListeners.forEach(cb => cb());
+                console.log('[WebDAV] processed:', evt.name);
+            } else if (evt.event === 'done') {
+                setWebdavProgress({ done: 0, total: 0, active: false });
+                webdavBrowseTotal = 0;
+                webdavBrowseDone = 0;
+                webdavProgressListeners.forEach(cb => cb());
+                console.log('[WebDAV] done: cached=', evt.cached, 'processed=', evt.processed);
+            } else if (evt.event === 'error') {
+                inFlightPaths.delete(evt.path);
+                console.error('[WebDAV] error:', evt.path, evt.message);
+            }
         };
-        queueListeners.add(onRemoteChunkDone);
-        return () => { queueListeners.delete(onRemoteChunkDone); };
-    }, [files]);
+
+        window.electron?.webdav?.onBrowseEvent(handler);
+        return () => { window.electron?.webdav?.offBrowseEvent(); };
+    }, [files, currentPath]);
 
     // Load thumbnails: check disk for all, generate via viewport-priority queue
     useEffect(() => {
@@ -934,7 +894,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                     }
                 }
                 if (localMissing.length > 0) prioritizeFolder(localMissing);
-                if (remoteMissing.length > 0) prioritizeWebDAV(remoteMissing);
+                // Remote thumbnails are handled by browse events, no separate queue
             }, 200);
         };
         el.addEventListener('scroll', handler, { passive: true });

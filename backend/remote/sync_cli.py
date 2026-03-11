@@ -159,6 +159,227 @@ def cmd_thumbnail(config: dict):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _parse_file(local_path):
+    """Phase P equivalent: run parser → return metadata dict."""
+    from pathlib import Path
+
+    ext = Path(local_path).suffix.lower()
+    meta = {"file_name": Path(local_path).name, "format": ext}
+
+    try:
+        if ext == '.psd':
+            from backend.parser.psd_parser import PSDParser
+            if PSDParser.can_parse(str(local_path)):
+                result = PSDParser().parse(str(local_path))
+                if result.success and result.asset_meta:
+                    return result.asset_meta.model_dump()
+        else:
+            from backend.parser.image_parser import ImageParser
+            if ImageParser.can_parse(str(local_path)):
+                result = ImageParser().parse(str(local_path))
+                if result.success and result.asset_meta:
+                    return result.asset_meta.model_dump()
+    except Exception as e:
+        print(f"[WebDAV Browse] parse error: {e}", file=sys.stderr, flush=True)
+
+    # Fallback: basic metadata
+    try:
+        from PIL import Image
+        with Image.open(str(local_path)) as img:
+            meta['resolution'] = list(img.size)
+        meta['file_size'] = Path(local_path).stat().st_size
+    except Exception:
+        meta['file_size'] = Path(local_path).stat().st_size
+    return meta
+
+
+def _generate_thumb(local_path, source_id, remote_path):
+    """Generate thumbnail → save to unique WebDAV path."""
+    from pathlib import Path
+    thumb_path = _webdav_thumb_path(source_id, remote_path)
+    if thumb_path.exists():
+        return thumb_path
+    try:
+        from backend.utils.thumbnail_generator import process_single
+        img, _ = process_single(str(local_path), size=256)
+        if img is not None:
+            thumb_path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(str(thumb_path), format='PNG', optimize=True)
+            return thumb_path
+    except Exception as e:
+        print(f"[WebDAV Browse] thumb error: {e}", file=sys.stderr, flush=True)
+    return None
+
+
+def _compute_content_hash(file_path):
+    """SHA256 content hash (file_size + first 8KB + last 8KB)."""
+    import hashlib
+    from pathlib import Path
+    p = Path(file_path)
+    size = p.stat().st_size
+    h = hashlib.sha256()
+    h.update(str(size).encode())
+    with open(p, 'rb') as f:
+        h.update(f.read(8192))
+        if size > 8192:
+            f.seek(-8192, 2)
+            h.update(f.read(8192))
+    return h.hexdigest()
+
+
+def cmd_browse(config: dict):
+    """
+    Browse a WebDAV folder: PROPFIND → DB check → download+parse uncached.
+    Streams JSON events to stdout for Electron IPC.
+
+    Events:
+      {"event":"cached", "files":[{path, name, extension, thumb_path}, ...]}
+      {"event":"processing", "path":"...", "index":N, "total":M}
+      {"event":"processed", "path":"...", "name":"...", "thumb_path":"..."}
+      {"event":"error", "path":"...", "message":"..."}
+      {"event":"done", "cached":N, "processed":M}
+    """
+    import tempfile
+    import shutil
+    from pathlib import Path, PurePosixPath
+    from queue import Queue
+    from threading import Thread
+    from backend.remote.webdav_client import WebDAVClient
+
+    source_id = config['source_id']
+    browse_path = config['path']
+
+    print(f"[WebDAV Browse] start: source={source_id}, path={browse_path}", file=sys.stderr, flush=True)
+
+    # 1. PROPFIND — file list
+    client = WebDAVClient(
+        base_url=config['url'],
+        username=config['username'],
+        password=config['password'],
+        remote_path=config.get('remote_path', '/'),
+        verify_ssl=config.get('verify_ssl', True),
+    )
+    result = client.list_dir(path=browse_path)
+    files = result.get('files', [])
+    print(f"[WebDAV Browse] PROPFIND: {len(files)} files", file=sys.stderr, flush=True)
+
+    if not files:
+        _emit({"event": "done", "cached": 0, "processed": 0})
+        client.close()
+        return
+
+    # 2. DB check — which files already have thumbnails?
+    try:
+        from backend.db.sqlite_client import SQLiteDB
+        db = SQLiteDB()
+    except Exception as e:
+        print(f"[WebDAV Browse] DB open failed: {e}, will process all", file=sys.stderr, flush=True)
+        db = None
+
+    cached = []
+    uncached = []
+    for f in files:
+        canonical = f"webdav://{source_id}{f['path']}"
+        if db is not None:
+            try:
+                row = db.conn.execute(
+                    "SELECT thumbnail_url FROM files WHERE file_path = ? AND thumbnail_url IS NOT NULL",
+                    (canonical,)
+                ).fetchone()
+                if row and row[0] and Path(row[0]).exists():
+                    cached.append({"path": canonical, "name": f['name'],
+                                   "extension": f['extension'], "thumb_path": row[0]})
+                    continue
+            except Exception:
+                pass
+        uncached.append(f)
+
+    print(f"[WebDAV Browse] cached={len(cached)}, uncached={len(uncached)}", file=sys.stderr, flush=True)
+
+    if cached:
+        _emit({"event": "cached", "files": cached})
+
+    if not uncached:
+        _emit({"event": "done", "cached": len(cached), "processed": 0})
+        if db:
+            db.close()
+        client.close()
+        return
+
+    # 3. Producer-Consumer: download (background) + parse (main)
+    download_queue = Queue(maxsize=2)
+
+    def downloader():
+        for f in uncached:
+            if not f.get('path'):
+                continue
+            temp_dir = Path(tempfile.mkdtemp(prefix='imagine_browse_'))
+            local_path = temp_dir / PurePosixPath(f['path']).name
+            try:
+                success = client.download_file(f['path'], local_path)
+                download_queue.put((f, local_path, temp_dir, success))
+            except Exception as e:
+                print(f"[WebDAV Browse] download error: {f['path']} - {e}", file=sys.stderr, flush=True)
+                download_queue.put((f, None, temp_dir, False))
+        download_queue.put(None)  # sentinel
+        client.close()
+
+    dl_thread = Thread(target=downloader, daemon=True)
+    dl_thread.start()
+
+    processed = 0
+    total = len(uncached)
+    while True:
+        item = download_queue.get()
+        if item is None:
+            break
+        f, local_path, temp_dir, success = item
+        canonical = f"webdav://{source_id}{f['path']}"
+
+        _emit({"event": "processing", "path": canonical, "index": processed + 1, "total": total})
+
+        try:
+            if not success or local_path is None or not local_path.exists():
+                _emit({"event": "error", "path": canonical, "message": "Download failed"})
+                continue
+
+            file_size = local_path.stat().st_size
+            print(f"[WebDAV Browse] processing: {f['name']} ({file_size} bytes)", file=sys.stderr, flush=True)
+
+            # Phase P: parse
+            meta = _parse_file(local_path)
+
+            # Thumbnail
+            thumb_path = _generate_thumb(local_path, source_id, f['path'])
+            if thumb_path:
+                meta['thumbnail_url'] = str(thumb_path)
+
+            # Content hash
+            meta['content_hash'] = _compute_content_hash(local_path)
+
+            # DB upsert
+            meta['file_path'] = canonical
+            meta['storage_root'] = f"webdav://{source_id}"
+            if db is not None:
+                try:
+                    db.upsert_metadata(canonical, meta)
+                except Exception as e:
+                    print(f"[WebDAV Browse] DB upsert error: {e}", file=sys.stderr, flush=True)
+
+            processed += 1
+            _emit({"event": "processed", "path": canonical, "name": f['name'],
+                   "thumb_path": str(thumb_path) if thumb_path else None})
+            print(f"[WebDAV Browse] done: {f['name']} ({processed}/{total})", file=sys.stderr, flush=True)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    _emit({"event": "done", "cached": len(cached), "processed": processed})
+    if db:
+        db.close()
+    dl_thread.join(timeout=5)
+    print(f"[WebDAV Browse] complete: {len(cached)} cached, {processed} processed", file=sys.stderr, flush=True)
+
+
 def cmd_list_dir(config: dict):
     """List files + folders in a specific directory (non-recursive)."""
     from backend.remote.webdav_client import WebDAVClient
@@ -182,6 +403,7 @@ def main():
     parser.add_argument('--folders', type=str, help='List subdirectories (JSON config with optional path)')
     parser.add_argument('--list-dir', type=str, help='List files + folders non-recursively (JSON config)')
     parser.add_argument('--thumbnail', type=str, help='Download remote file and generate thumbnail (JSON config)')
+    parser.add_argument('--browse', type=str, help='Browse folder: PROPFIND + DB check + download+parse uncached (JSON config)')
     args = parser.parse_args()
 
     try:
@@ -195,6 +417,8 @@ def main():
             cmd_list_dir(json.loads(args.list_dir))
         elif args.thumbnail:
             cmd_thumbnail(json.loads(args.thumbnail))
+        elif args.browse:
+            cmd_browse(json.loads(args.browse))
         else:
             parser.print_help()
             sys.exit(1)
