@@ -1121,11 +1121,18 @@ function App() {
     }
   }, [isAuthenticated, isAdmin]);
 
+  const doRetryFailed = async () => {
+    if (isElectron && window.electron?.queue?.retryFailed) {
+      return await window.electron.queue.retryFailed();
+    }
+    return await retryFailedJobs();
+  };
+
   const handleRetryFailed = async () => {
     setRetryLoading(true);
     setShowDbMenu(false);
     try {
-      const result = await retryFailedJobs();
+      const result = await doRetryFailed();
       const count = result.retried || 0;
       if (count > 0) {
         appendLog({
@@ -1344,7 +1351,7 @@ function App() {
                   onClick={async () => {
                     setRetryLoading(true);
                     try {
-                      const result = await retryFailedJobs();
+                      const result = await doRetryFailed();
                       const count = result.retried || 0;
                       appendLog({
                         message: count > 0
