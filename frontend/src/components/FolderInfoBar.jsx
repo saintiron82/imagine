@@ -28,7 +28,7 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSigna
     const [menuOpen, setMenuOpen] = useState(false);
 
     useEffect(() => {
-        if (!currentPath) { setStats(null); return; }
+        if (!currentPath || currentPath.startsWith('webdav://')) { setStats(null); return; }
         let cancelled = false;
 
         const load = async () => {

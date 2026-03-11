@@ -627,7 +627,11 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         missingThumbnails.current = new Set();
 
         Promise.all(
-            paths.map(p => window.electron?.fs?.listDir(p).catch(() => []))
+            paths.map(p =>
+                p.startsWith('webdav://')
+                    ? Promise.resolve([])  // WebDAV files are remote — view via Search after scanning
+                    : window.electron?.fs?.listDir(p).catch(() => [])
+            )
         )
             .then(results => {
                 const supportedFiles = results.flat().filter(i => !i.isDirectory && SUPPORTED_EXTS.includes(i.extension));
