@@ -2624,7 +2624,10 @@ async function startEmbeddedServer(port = 8000) {
         const msg = chunk.toString().trim();
         if (msg) {
             writeLog('INFO', '[Server:stdout]', msg);
-            throttledServerLog(msg, 'info');
+            // stdout: only forward important messages to UI
+            if (/\bERROR\b|\bCRITICAL\b|\bWARN/i.test(msg)) {
+                throttledServerLog(msg, 'error');
+            }
         }
     });
 
@@ -2633,8 +2636,19 @@ async function startEmbeddedServer(port = 8000) {
         if (msg) {
             // uvicorn logs to stderr by default
             const isError = /\bERROR\b|\bCRITICAL\b|Traceback|Exception:|FAIL/i.test(msg);
+            const isWarning = /\bWARN(?:ING)?\b/i.test(msg);
             writeLog(isError ? 'ERROR' : 'INFO', '[Server:stderr]', msg);
-            throttledServerLog(msg, isError ? 'error' : 'info');
+            if (isError) {
+                throttledServerLog(msg, 'error');
+            } else if (isWarning) {
+                throttledServerLog(msg, 'warning');
+            } else {
+                // Only forward important info messages (not routine request logs)
+                const isImportant = /starting up|shutting down|processing mode|worker|License|Parse-ahead|Embed-ahead|builtin|Pool|startup cleanup|mDNS|Firebase/i.test(msg);
+                if (isImportant) {
+                    throttledServerLog(msg, 'info');
+                }
+            }
         }
     });
 

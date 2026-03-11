@@ -259,10 +259,20 @@ function App() {
 
     if (window.electron) {
 
-      // Server log listener — forward server stderr to StatusBar logs
+      // Server log listener — only forward important messages to StatusBar
       if (window.electron.server) {
         window.electron.server.onLog((data) => {
-          appendLog({ message: data.message, type: data.type || 'info' });
+          const type = data.type || 'info';
+          // Always show errors/warnings
+          if (type === 'error' || type === 'warn' || type === 'warning') {
+            appendLog({ message: data.message, type });
+            return;
+          }
+          // For info messages, only show important ones (startup, mode changes, worker events)
+          const msg = data.message || '';
+          if (/Server starting|Server shutting|processing mode|worker.*offline|worker.*online|License:|Parse-ahead|Embed-ahead|builtin.worker|Heartbeat timeout|reclaimed/i.test(msg)) {
+            appendLog({ message: msg, type });
+          }
         });
       }
 
