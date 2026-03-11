@@ -1121,6 +1121,15 @@ function App() {
     }
   }, [isAuthenticated, isAdmin]);
 
+  // Transient toast notification
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+  const showToast = (message, type = 'info') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, type });
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  };
+
   const doRetryFailed = async () => {
     if (isElectron && window.electron?.queue?.retryFailed) {
       return await window.electron.queue.retryFailed();
@@ -1133,19 +1142,17 @@ function App() {
     setShowDbMenu(false);
     try {
       const result = await doRetryFailed();
-      const count = result.retried || 0;
+      const count = result?.retried || 0;
       if (count > 0) {
-        appendLog({
-          message: t('audit.retry_result', { count }),
-          type: 'warn',
-        });
+        showToast(t('audit.retry_result', { count }), 'warn');
+        appendLog({ message: t('audit.retry_result', { count }), type: 'warn' });
+        setQueueReloadSignal(prev => prev + 1);
       } else {
-        appendLog({
-          message: t('audit.retry_none'),
-          type: 'success',
-        });
+        showToast(t('audit.retry_none'), 'success');
+        appendLog({ message: t('audit.retry_none'), type: 'success' });
       }
     } catch (e) {
+      showToast(`Retry error: ${e.message}`, 'error');
       appendLog({ message: `Retry error: ${e.message}`, type: 'error' });
     } finally {
       setRetryLoading(false);
@@ -1348,23 +1355,7 @@ function App() {
             <div className="flex justify-end gap-2">
               {isAdmin && (
                 <button
-                  onClick={async () => {
-                    setRetryLoading(true);
-                    try {
-                      const result = await doRetryFailed();
-                      const count = result.retried || 0;
-                      appendLog({
-                        message: count > 0
-                          ? t('audit.retry_result', { count })
-                          : t('audit.retry_none'),
-                        type: count > 0 ? 'warn' : 'success',
-                      });
-                    } catch (e) {
-                      appendLog({ message: `Retry error: ${e.message}`, type: 'error' });
-                    } finally {
-                      setRetryLoading(false);
-                    }
-                  }}
+                  onClick={handleRetryFailed}
                   disabled={retryLoading}
                   className="flex items-center gap-1.5 px-4 py-2 text-sm bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-lg transition-colors"
                 >
@@ -1730,6 +1721,18 @@ function App() {
               />
             ) : null}
           </div>
+
+          {/* Toast Notification */}
+          {toast && (
+            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm font-medium animate-pulse transition-opacity ${
+              toast.type === 'error' ? 'bg-red-900/90 text-red-200 border border-red-700' :
+              toast.type === 'warn' ? 'bg-orange-900/90 text-orange-200 border border-orange-700' :
+              toast.type === 'success' ? 'bg-green-900/90 text-green-200 border border-green-700' :
+              'bg-gray-800/90 text-gray-200 border border-gray-600'
+            }`}>
+              {toast.message}
+            </div>
+          )}
 
           {/* Logs Overlay / Bottom Panel */}
           <StatusBar
