@@ -132,6 +132,18 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
 
         # Ensure virtual worker session exists
         _ensure_builtin_worker_session(db)
+
+        # Send stop command to all external online workers
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """UPDATE worker_sessions SET pending_command = 'stop'
+               WHERE status = 'online' AND worker_name != ?""",
+            (BUILTIN_WORKER_NAME,)
+        )
+        if cursor.rowcount > 0:
+            db.conn.commit()
+            logger.info(f"Sent stop to {cursor.rowcount} external worker(s): builtin_worker mode")
+
         return
 
     # Check for lightweight (embed_only) workers in auto mode
@@ -314,6 +326,15 @@ def worker_connect(
     db: SQLiteDB = Depends(get_db),
 ):
     """Register a new worker session."""
+    # Reject external workers when builtin_worker mode is active
+    global_mode = _get_global_processing_mode()
+    if global_mode == "builtin_worker":
+        logger.warning(f"Rejected worker connect from {req.worker_name}: builtin_worker mode active")
+        raise HTTPException(
+            status_code=409,
+            detail="Server is in built-in worker mode. External workers are not accepted."
+        )
+
     now = _utcnow_sql()
     cursor = db.conn.cursor()
 
@@ -464,10 +485,30 @@ def worker_heartbeat(
         _recalculate_server_pools(request.app, db)
 
     # Determine effective processing mode:
+    # - builtin_worker → stop external workers
     # - mc_only global → ALL workers get mc_only
     # - parse_only global → ALL workers get full (V+VV+MV)
     # - auto global → workers get their auto-detected mode (full/embed_only)
     global_mode = _get_global_processing_mode()
+
+    # In builtin_worker mode, tell external workers to stop
+    if global_mode == "builtin_worker":
+        # Check if this is an external worker (not the built-in one)
+        cursor.execute(
+            "SELECT worker_name FROM worker_sessions WHERE id = ?",
+            (req.session_id,)
+        )
+        name_row = cursor.fetchone()
+        if name_row and name_row[0] != BUILTIN_WORKER_NAME:
+            logger.info(f"Sending stop to external worker session {req.session_id}: builtin_worker mode active")
+            return {
+                "ok": True,
+                "command": "stop",
+                "pool_hint": 0,
+                "batch_hint": 0,
+                "processing_mode": "full",
+            }
+
     if global_mode == "mc_only":
         processing_mode = "mc_only"
     elif global_mode == "parse_only":

@@ -149,6 +149,21 @@ class JobQueueManager:
         # Determine effective processing mode for this specific worker.
         # Per-worker override (auto-detected or admin-set) > global config.
         processing_mode = self._get_processing_mode()
+
+        # In builtin_worker mode, only the built-in worker may claim jobs
+        if processing_mode == "builtin_worker" and worker_session_id is not None:
+            cursor.execute(
+                "SELECT worker_name FROM worker_sessions WHERE id = ?",
+                (worker_session_id,)
+            )
+            ws_row = cursor.fetchone()
+            if ws_row and ws_row[0] != "__builtin__":
+                logger.info(
+                    f"Claim denied for session {worker_session_id}: "
+                    f"builtin_worker mode active, external workers blocked"
+                )
+                return []
+
         if worker_session_id is not None:
             cursor.execute(
                 "SELECT resources_json, processing_mode_override FROM worker_sessions WHERE id = ?",
