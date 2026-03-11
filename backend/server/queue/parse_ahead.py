@@ -111,7 +111,7 @@ class ParseAheadPool(BaseAheadPool):
         cursor = self.db.conn.cursor()
         # Pick up ALL pending jobs — already-parsed ones will skip Phase P
         cursor.execute(
-            """SELECT id, file_id, file_path, parse_status, parsed_metadata
+            """SELECT id, file_id, file_path, parse_status, parsed_metadata, phase_completed
                FROM job_queue
                WHERE status = 'pending'
                ORDER BY priority DESC, created_at ASC
@@ -124,6 +124,17 @@ class ParseAheadPool(BaseAheadPool):
 
         logger.info(f"Auto processing: starting batch of {len(jobs)} files")
         self._update_builtin_session("parse", f"batch({len(jobs)})")
+
+        # Parse phase_completed for each job
+        job_phases = {}  # job_id → {"parse": bool, "vision": bool, "embed": bool}
+        for row in jobs:
+            job_id = row[0]
+            phase_str = row[5] if len(row) > 5 else None
+            try:
+                phases = json.loads(phase_str) if phase_str else {}
+            except (json.JSONDecodeError, TypeError):
+                phases = {}
+            job_phases[job_id] = phases
 
         # Mark jobs as processing
         now = _utcnow_sql()
@@ -140,7 +151,7 @@ class ParseAheadPool(BaseAheadPool):
         contexts = []  # [(job_id, file_id, file_path, thumb_path, mc_raw)]
 
         # ── Phase P: Parse (skip already-parsed jobs) ──
-        for job_id, file_id, file_path, parse_status, parsed_metadata in jobs:
+        for job_id, file_id, file_path, parse_status, parsed_metadata, _phase_json in jobs:
             if not self._running or self._processing_mode != "auto":
                 break
 
@@ -189,40 +200,52 @@ class ParseAheadPool(BaseAheadPool):
         if not contexts or not self._running or self._processing_mode != "auto":
             return len(contexts)
 
-        # ── Phase V: Vision/VLM (MC generation) ──
-        logger.info(f"Auto Phase V: processing {len(contexts)} files with VLM")
-        self._update_builtin_session("vision", f"batch({len(contexts)})")
-        self._auto_run_vision_batch(contexts)
-        self._auto_unload_vlm()
+        # ── Phase V: Vision/VLM (MC generation) — skip already-done ──
+        vision_needed = [c for c in contexts if not job_phases.get(c[0], {}).get("vision")]
+        if vision_needed:
+            logger.info(f"Auto Phase V: processing {len(vision_needed)}/{len(contexts)} files with VLM")
+            self._update_builtin_session("vision", f"batch({len(vision_needed)})")
+            self._auto_run_vision_batch(vision_needed)
+            self._auto_unload_vlm()
+        else:
+            logger.info(f"Auto Phase V: all {len(contexts)} files already have MC, skipping VLM")
 
         if not self._running or self._processing_mode != "auto":
             return len(contexts)
 
-        # ── Phase VV: SigLIP2 visual embedding ──
-        logger.info(f"Auto Phase VV: processing {len(contexts)} files with SigLIP2")
-        self._update_builtin_session("embed_vv", f"batch({len(contexts)})")
-        for ctx in contexts:
-            job_id, file_id, file_path, thumb_path, _ = ctx
-            if not self._running or self._processing_mode != "auto":
-                break
-            if thumb_path:
-                try:
-                    self._run_vv_embedding(
-                        file_id, Path(file_path),
-                        Path(thumb_path) if thumb_path else None,
-                    )
-                except Exception as e:
-                    logger.warning(f"Auto VV failed for job {job_id}: {e}")
+        # ── Phase VV: SigLIP2 visual embedding — skip already-done ──
+        vv_needed = [c for c in contexts if not job_phases.get(c[0], {}).get("embed")]
+        if vv_needed:
+            logger.info(f"Auto Phase VV: processing {len(vv_needed)}/{len(contexts)} files with SigLIP2")
+            self._update_builtin_session("embed_vv", f"batch({len(vv_needed)})")
+            for ctx in vv_needed:
+                job_id, file_id, file_path, thumb_path, _ = ctx
+                if not self._running or self._processing_mode != "auto":
+                    break
+                if thumb_path:
+                    try:
+                        self._run_vv_embedding(
+                            file_id, Path(file_path),
+                            Path(thumb_path) if thumb_path else None,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Auto VV failed for job {job_id}: {e}")
+        else:
+            logger.info(f"Auto Phase VV: all {len(contexts)} files already have VV, skipping")
         # VV encoder stays loaded (lightweight, reusable for next batch)
 
         if not self._running or self._processing_mode != "auto":
             return len(contexts)
 
-        # ── Phase MV: Qwen3-Embedding text embedding ──
-        logger.info(f"Auto Phase MV: processing {len(contexts)} files with text embedder")
-        self._update_builtin_session("embed_mv", f"batch({len(contexts)})")
-        self._auto_run_mv_batch(contexts)
-        self._auto_unload_mv()
+        # ── Phase MV: Qwen3-Embedding text embedding — skip already-done ──
+        mv_needed = [c for c in contexts if not job_phases.get(c[0], {}).get("embed")]
+        if mv_needed:
+            logger.info(f"Auto Phase MV: processing {len(mv_needed)}/{len(contexts)} files with text embedder")
+            self._update_builtin_session("embed_mv", f"batch({len(mv_needed)})")
+            self._auto_run_mv_batch(mv_needed)
+            self._auto_unload_mv()
+        else:
+            logger.info(f"Auto Phase MV: all {len(contexts)} files already have MV, skipping")
 
         # ── Mark completed with per-file integrity verification ──
         now = _utcnow_sql()
@@ -662,16 +685,38 @@ class ParseAheadPool(BaseAheadPool):
                         continue
 
                     # Non-auto modes (mc_only, parse_only, distribute): pre-parse pending jobs
+                    # Periodically check if workers are still online; if none, fall back to auto
                     if not hasattr(self, '_diag_counter'):
                         self._diag_counter = 0
                     self._diag_counter += 1
-                    if self._diag_counter % 15 == 1:  # Log every ~30s (15 * 2s poll)
+                    if self._diag_counter % 15 == 1:  # Every ~30s (15 * 2s poll)
                         target = self._calculate_buffer_target()
                         demand = self.has_recent_demand()
                         logger.info(
                             f"[PA-DIAG] mode={self._processing_mode} "
                             f"demand={demand} target={target}"
                         )
+                        # Auto-fallback: if distribute/auto but no workers online, switch to auto
+                        if self._processing_mode in ("distribute",):
+                            try:
+                                cursor = self.db.conn.cursor()
+                                cursor.execute(
+                                    "SELECT COUNT(*) FROM worker_sessions WHERE status = 'online' AND worker_name != '__builtin__'"
+                                )
+                                online_count = cursor.fetchone()[0]
+                                if online_count == 0:
+                                    from backend.utils.config import get_config
+                                    cfg = get_config()
+                                    auto_enabled = cfg.get("server.auto_processing.enabled", True)
+                                    if auto_enabled:
+                                        logger.info(
+                                            f"No workers online but mode={self._processing_mode}, "
+                                            f"falling back to auto mode"
+                                        )
+                                        self._processing_mode = "auto"
+                                        continue
+                            except Exception as e:
+                                logger.debug(f"Auto-fallback check error: {e}")
                     self._run_pre_parse_buffer()
 
                     # Distribute mode: gap-fill V(MC) for lightweight workers
