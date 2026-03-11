@@ -66,6 +66,7 @@
   "status.loading": "로딩 중...",
   "status.loading_thumbnails": "썸네일 로딩 중...",
   "status.downloading": "다운로드 중...",
+  "status.queued": "대기",
   "status.processing": "처리 중",
   "status.searching": "검색 중 (벡터 + 텍스트 + 필터)...",
   "status.loading_more": "추가 검색 중...",

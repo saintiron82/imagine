@@ -549,7 +549,7 @@ const MetadataModal = ({ metadata, onClose }) => {
 };
 
 // FileCard Component
-const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loading, onShowMeta, hasMetadata }) => {
+const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loading, queued, onShowMeta, hasMetadata }) => {
     const { t } = useLocale();
     const isRemote = file.isRemote || file.path?.startsWith('webdav://');
     const canPreviewNatively = !isRemote && IMAGE_PREVIEW_EXTS.includes(file.extension);
@@ -612,6 +612,11 @@ const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loa
                     <div className="flex flex-col items-center gap-2">
                         <Loader2 size={28} className="animate-spin text-blue-400" />
                         {isRemote && <span className="text-[10px] text-gray-500">{t('status.downloading')}</span>}
+                    </div>
+                ) : queued ? (
+                    <div className="flex flex-col items-center text-gray-600">
+                        <File size={48} />
+                        <span className="text-[10px] mt-1">{t('status.queued')}</span>
                     </div>
                 ) : (
                     <div className="flex flex-col items-center text-gray-500"><File size={48} /><span className="text-xs font-bold mt-1">{file.extension.replace('.', '').toUpperCase()}</span></div>
@@ -832,7 +837,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         psdFiles.forEach(f => {
             if (thumbnailPathCache.has(f.path)) cached[f.path] = thumbnailPathCache.get(f.path);
         });
-        setThumbnails(cached);
+        setThumbnails(prev => ({ ...prev, ...cached }));
 
         const unknownPaths = psdFiles.filter(f => !thumbnailPathCache.has(f.path)).map(f => f.path);
         if (unknownPaths.length === 0) {
@@ -1165,9 +1170,10 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                                                         thumbnail={thumbnails[file.path]}
                                                         loading={
                                                             (file.isRemote || file.path?.startsWith('webdav://'))
-                                                                ? !thumbnails[file.path]
+                                                                ? inFlightPaths.has(file.path)
                                                                 : loadingThumbnails && file.extension === '.psd' && !thumbnails[file.path]
                                                         }
+                                                        queued={(file.isRemote || file.path?.startsWith('webdav://')) && !thumbnails[file.path] && !inFlightPaths.has(file.path)}
                                                         onShowMeta={handleShowMeta}
                                                         hasMetadata={metadataStatus[file.path]}
                                                     />

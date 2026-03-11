@@ -66,6 +66,7 @@
   "status.loading": "Loading...",
   "status.loading_thumbnails": "Loading thumbnails...",
   "status.downloading": "Downloading...",
+  "status.queued": "Queued",
   "status.processing": "Processing",
   "status.searching": "Searching (Vector + Text + Filters)...",
   "status.loading_more": "Searching deeper...",
