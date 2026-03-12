@@ -885,6 +885,33 @@ class JobQueueManager:
             logger.info(f"Retried {count} failed jobs")
         return count
 
+    def force_retry_failed_jobs(self) -> int:
+        """Force retry ALL failed jobs from scratch, including non-retryable.
+
+        Unlike retry_failed_jobs(), this resets everything to initial state:
+        phase_completed, parse_status, parsed_metadata, error_code — all cleared.
+        The job will be re-processed from Phase P as if newly created.
+        Also resets stuck pending jobs with high retry_count (e.g. MV-missing loop).
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """UPDATE job_queue
+               SET status = 'pending', retry_count = 0, max_retries = 3,
+                   error_message = NULL, error_code = NULL,
+                   assigned_to = NULL, assigned_at = NULL,
+                   worker_session_id = NULL,
+                   phase_completed = NULL, parse_status = NULL,
+                   parsed_metadata = NULL, started_at = NULL,
+                   completed_at = NULL
+               WHERE status IN ('failed', 'cancelled')
+                  OR (status = 'pending' AND retry_count >= 3)"""
+        )
+        self.db.conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.info(f"Force-retried {count} jobs from scratch")
+        return count
+
     def audit_completed_jobs(self) -> Dict[str, Any]:
         """Full data integrity audit across ALL files in the database.
 

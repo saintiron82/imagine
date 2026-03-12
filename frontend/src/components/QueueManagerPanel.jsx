@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X, RotateCcw, Trash2, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
-import { listJobs, cancelJob, retryFailedJobs, clearCompletedJobs } from '../api/admin';
+import { listJobs, cancelJob, retryFailedJobs, forceRetryFailedJobs, clearCompletedJobs } from '../api/admin';
 
 const PAGE_SIZE = 20;
 
@@ -111,6 +111,14 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
     } catch { /* ignore */ }
   };
 
+  const handleForceRetryAll = async () => {
+    try {
+      await forceRetryFailedJobs();
+      fetchJobs();
+      onRefresh?.();
+    } catch { /* ignore */ }
+  };
+
   const handleClearCompleted = async () => {
     try {
       if (isElectron && window.electron?.queue?.clearCompleted) {
@@ -159,7 +167,7 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
         </div>
 
         <div className="flex items-center gap-1">
-          {(stats?.failed || 0) > 0 && (
+          {(stats?.failed || 0) > 0 && (<>
             <button
               onClick={handleRetryAll}
               className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-orange-900/40 text-orange-300 hover:bg-orange-800/50 transition-colors border border-orange-700/40"
@@ -167,7 +175,14 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
               <RotateCcw size={10} />
               {t('queue.action_retry_all')}
             </button>
-          )}
+            <button
+              onClick={handleForceRetryAll}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-red-900/40 text-red-300 hover:bg-red-800/50 transition-colors border border-red-700/40"
+            >
+              <RotateCcw size={10} />
+              {t('queue.action_force_retry')}
+            </button>
+          </>)}
           {(stats?.completed || 0) > 0 && (
             <button
               onClick={handleClearCompleted}

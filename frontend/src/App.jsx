@@ -23,7 +23,7 @@ import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
 import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
-import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs } from './api/admin';
+import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs, forceRetryFailedJobs } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
 import SubscriptionBanner from './components/SubscriptionBanner';
 
@@ -1215,6 +1215,28 @@ function App() {
     }
   };
 
+  const handleForceRetryFailed = async () => {
+    setRetryLoading(true);
+    setShowDbMenu(false);
+    try {
+      const result = await forceRetryFailedJobs();
+      const count = result?.retried || 0;
+      if (count > 0) {
+        showToast(t('audit.force_retry_result', { count }), 'warn');
+        appendLog({ message: t('audit.force_retry_result', { count }), type: 'warn' });
+        setQueueReloadSignal(prev => prev + 1);
+      } else {
+        showToast(t('audit.retry_none'), 'success');
+        appendLog({ message: t('audit.retry_none'), type: 'success' });
+      }
+    } catch (e) {
+      showToast(`Force retry error: ${e.message}`, 'error');
+      appendLog({ message: `Force retry error: ${e.message}`, type: 'error' });
+    } finally {
+      setRetryLoading(false);
+    }
+  };
+
   const handleImportProcessNew = (folderPath) => {
     handleProcessFolder(folderPath);
   };
@@ -1595,6 +1617,18 @@ function App() {
                           <RotateCcw size={14} />
                         )}
                         {t('action.retry_failed')}
+                      </button>
+                      <button
+                        onClick={handleForceRetryFailed}
+                        disabled={retryLoading}
+                        className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors disabled:opacity-50"
+                      >
+                        {retryLoading ? (
+                          <span className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <RotateCcw size={14} />
+                        )}
+                        {t('action.force_retry_failed')}
                       </button>
                       <button
                         onClick={handleAuditIntegrity}

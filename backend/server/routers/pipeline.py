@@ -582,6 +582,22 @@ def retry_failed_jobs(
     return {"success": True, "retried": count}
 
 
+@router.post("/api/v1/admin/jobs/force-retry-failed")
+def force_retry_failed_jobs(
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db),
+):
+    """Force retry ALL failed/stuck jobs from scratch (admin only).
+
+    Unlike retry-failed, this resets everything including non-retryable errors
+    (PARSE_FAILED, THUMB_MISSING) and stuck pending jobs with high retry_count.
+    All phase data is cleared — jobs will be re-processed from Phase P.
+    """
+    queue = _get_queue(db)
+    count = queue.force_retry_failed_jobs()
+    return {"success": True, "retried": count}
+
+
 @router.post("/api/v1/admin/jobs/audit-integrity")
 def audit_integrity(
     _admin: dict = Depends(require_admin),

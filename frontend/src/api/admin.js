@@ -54,6 +54,10 @@ export async function retryFailedJobs() {
   return apiClient.post('/api/v1/admin/jobs/retry-failed');
 }
 
+export async function forceRetryFailedJobs() {
+  return apiClient.post('/api/v1/admin/jobs/force-retry-failed');
+}
+
 export async function clearCompletedJobs() {
   return apiClient.delete('/api/v1/admin/jobs/clear-completed');
 }
