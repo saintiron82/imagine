@@ -18,11 +18,9 @@ from pathlib import Path
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
-import sqlite3 as _sqlite3
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 # Ensure project root is in path
@@ -58,18 +56,28 @@ app.add_middleware(
 )
 
 
-# ── Global exception handler: SQLite busy → 503 ─────────────
+# ── Middleware: auto-rollback uncommitted transactions ────────
+# Python sqlite3 default isolation_level="" opens implicit BEGIN on DML.
+# If an exception occurs between DML and commit(), the transaction stays
+# open, permanently holding a write lock on this thread's connection.
+# This middleware ensures every request ends with a clean connection state.
 
-@app.exception_handler(_sqlite3.OperationalError)
-async def sqlite_locked_handler(request: Request, exc: _sqlite3.OperationalError):
-    """Convert 'database is locked' to 503 instead of 500."""
-    if "locked" in str(exc):
-        logger.warning(f"DB busy on {request.url.path}: {exc}")
-        return JSONResponse(
-            status_code=503,
-            content={"detail": "Database temporarily busy, please retry"},
-        )
-    raise exc
+@app.middleware("http")
+async def auto_rollback_middleware(request: Request, call_next):
+    """Rollback any uncommitted transaction after each request."""
+    response = await call_next(request)
+
+    # Best-effort rollback — safe even if no transaction is open
+    try:
+        from backend.server.deps import _db_instance
+        if _db_instance is not None:
+            conn = getattr(_db_instance._local, 'conn', None)
+            if conn is not None:
+                conn.rollback()
+    except Exception:
+        pass
+
+    return response
 
 
 # ── Lifecycle ────────────────────────────────────────────────
