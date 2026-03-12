@@ -17,6 +17,35 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Max retries for DB-locked write operations (each wait = busy_timeout)
+_LOCKED_MAX_RETRIES = 3
+
+
+def _retry_on_locked(func):
+    """Decorator: retry a method up to _LOCKED_MAX_RETRIES on 'database is locked'."""
+    import functools
+    import time as _time
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        last_err = None
+        for attempt in range(_LOCKED_MAX_RETRIES):
+            try:
+                return func(*args, **kwargs)
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e):
+                    raise
+                last_err = e
+                if attempt < _LOCKED_MAX_RETRIES - 1:
+                    wait = 0.5 * (attempt + 1)
+                    logger.warning(
+                        f"{func.__name__}: DB locked, retry {attempt + 1}/{_LOCKED_MAX_RETRIES} "
+                        f"(wait {wait:.1f}s)"
+                    )
+                    _time.sleep(wait)
+        raise last_err
+    return wrapper
+
 
 class SQLiteDB:
     """SQLite database client with sqlite-vec support."""
@@ -1029,6 +1058,7 @@ class SQLiteDB:
         except Exception as e:
             logger.warning(f"⚠️ FTS refresh failed for file_id={file_id}: {e}")
 
+    @_retry_on_locked
     def upsert_metadata(self, file_path: str, metadata: Dict[str, Any], commit: bool = True) -> int:
         """
         Phase 1 storage: INSERT basic metadata, preserve existing AI fields on conflict.
@@ -1146,6 +1176,7 @@ class SQLiteDB:
             logger.error(f"❌ upsert_metadata failed for {file_path}: {e}")
             raise
 
+    @_retry_on_locked
     def update_vision_fields(self, file_path: str, fields: Dict[str, Any], commit: bool = True) -> bool:
         """
         Phase 2 storage: UPDATE only VLM-generated fields.
@@ -1209,6 +1240,7 @@ class SQLiteDB:
             logger.error(f"❌ update_vision_fields failed for {file_path}: {e}")
             raise
 
+    @_retry_on_locked
     def upsert_vectors(self, file_id: int, vv_vec=None, mv_vec=None, structure_vec=None, commit: bool = True) -> bool:
         """
         Phase 3 storage: INSERT/REPLACE VV, MV, and Structure vectors.

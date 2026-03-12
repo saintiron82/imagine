@@ -123,6 +123,20 @@ def complete_job(
     db: SQLiteDB = Depends(get_db),
 ):
     """Complete a job with analysis results (metadata + vectors)."""
+    import sqlite3 as _sqlite3
+    import time as _time
+    for _attempt in range(3):
+        try:
+            return _complete_job_inner(job_id, req, user, db)
+        except _sqlite3.OperationalError as e:
+            if "locked" not in str(e) or _attempt >= 2:
+                raise
+            logger.warning(f"complete_job {job_id}: DB locked, retry {_attempt + 1}/3")
+            _time.sleep(1.0 * (_attempt + 1))
+
+
+def _complete_job_inner(job_id, req, user, db):
+    """Internal complete_job implementation."""
     # Get job info (include parse_status to avoid duplicate upsert)
     cursor = db.conn.cursor()
     cursor.execute(
