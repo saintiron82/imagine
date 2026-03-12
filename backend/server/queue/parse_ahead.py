@@ -411,6 +411,10 @@ class ParseAheadPool(BaseAheadPool):
             self.db.conn.commit()
         except Exception as e:
             logger.debug(f"Builtin session update failed: {e}")
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
 
     def _auto_run_vision_batch(self, contexts: list):
         """Phase V: Generate MC (caption/tags) with VLM.
@@ -475,6 +479,10 @@ class ParseAheadPool(BaseAheadPool):
 
             except Exception as e:
                 logger.warning(f"Auto Vision failed for job {job_id}: {e}")
+                try:
+                    self.db.conn.rollback()
+                except Exception:
+                    pass
 
     def _auto_unload_vlm(self):
         """Unload VLM after Phase V to free GPU memory."""
@@ -780,6 +788,10 @@ class ParseAheadPool(BaseAheadPool):
                         f"ParseAheadPool iteration error: {e}\n"
                         f"{traceback.format_exc()}"
                     )
+                    try:
+                        self.db.conn.rollback()
+                    except Exception:
+                        pass
                     time.sleep(5)
 
         except Exception as e:

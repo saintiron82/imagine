@@ -320,6 +320,10 @@ def _cleanup_stale_jobs():
         db.conn.commit()
     except Exception as e:
         logger.warning(f"Startup job cleanup failed: {e}")
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
 
 
 def _start_heartbeat_watchdog():
@@ -381,6 +385,10 @@ def _start_heartbeat_watchdog():
 
             except Exception as e:
                 logger.error(f"Heartbeat watchdog error: {e}")
+                try:
+                    db.conn.rollback()
+                except Exception:
+                    pass
 
     t = threading.Thread(target=_check, daemon=True, name="heartbeat-watchdog")
     t.start()
