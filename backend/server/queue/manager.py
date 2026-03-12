@@ -961,6 +961,7 @@ class JobQueueManager:
         """
         cursor = self.db.conn.cursor()
         details = []
+        perm_failed_details = []
         repaired_files = 0
         skipped_non_retryable = 0
 
@@ -1051,13 +1052,21 @@ class JobQueueManager:
                             cursor.execute("DELETE FROM job_queue WHERE id = ?", (did,))
                         # Update kept job's error_code if missing
                         kept = next(j for j in all_jobs if j[0] == keep_id)
-                        if not kept[4]:
-                            inferred = _infer_error_code(kept[6] or "")
-                            if inferred:
+                        kept_ec = kept[4]
+                        if not kept_ec:
+                            kept_ec = _infer_error_code(kept[6] or "")
+                            if kept_ec:
                                 cursor.execute(
                                     "UPDATE job_queue SET error_code = ? WHERE id = ?",
-                                    (inferred, keep_id))
+                                    (kept_ec, keep_id))
                         skipped_non_retryable += 1
+                        perm_failed_details.append({
+                            "job_id": keep_id,
+                            "file_id": file_id,
+                            "file_path": file_path,
+                            "error_code": kept_ec or "RETRY_EXHAUSTED",
+                            "retry_count": kept[5] or 0,
+                        })
                         continue
                 else:
                     # No permanent failure — keep first active job, delete rest
@@ -1071,6 +1080,13 @@ class JobQueueManager:
             if not thumbnail_url:
                 if job_row is None:
                     skipped_non_retryable += 1
+                    perm_failed_details.append({
+                        "job_id": None,
+                        "file_id": file_id,
+                        "file_path": file_path,
+                        "error_code": "THUMB_MISSING",
+                        "retry_count": 0,
+                    })
                     continue
                 elif job_row[1] != 'failed':
                     cursor.execute(
@@ -1081,6 +1097,13 @@ class JobQueueManager:
                         (job_row[0],)
                     )
                 skipped_non_retryable += 1
+                perm_failed_details.append({
+                    "job_id": job_row[0],
+                    "file_id": file_id,
+                    "file_path": file_path,
+                    "error_code": "THUMB_MISSING",
+                    "retry_count": 0,
+                })
                 continue
 
             # Ensure this file has a pending job for re-processing
@@ -1138,6 +1161,13 @@ class JobQueueManager:
                 )
                 if is_permanent:
                     skipped_non_retryable += 1
+                    perm_failed_details.append({
+                        "job_id": job_row[0],
+                        "file_id": file_id,
+                        "file_path": file_path,
+                        "error_code": existing_error_code or "RETRY_EXHAUSTED",
+                        "retry_count": retry_count,
+                    })
                     continue
 
                 if not thumbnail_url or not os.path.exists(thumbnail_url):
@@ -1148,6 +1178,13 @@ class JobQueueManager:
                             (job_row[0],)
                         )
                     skipped_non_retryable += 1
+                    perm_failed_details.append({
+                        "job_id": job_row[0],
+                        "file_id": file_id,
+                        "file_path": file_path,
+                        "error_code": existing_error_code or "THUMB_MISSING",
+                        "retry_count": retry_count,
+                    })
                     continue
 
                 # Recoverable failure with thumbnail — give fresh chance
@@ -1223,6 +1260,7 @@ class JobQueueManager:
             "skipped_non_retryable": skipped_non_retryable,
             "failed_stuck_jobs": failed_stuck_count,
             "details": details,
+            "permanently_failed_details": perm_failed_details,
         }
 
     def clear_completed_jobs(self) -> int:
@@ -1234,6 +1272,76 @@ class JobQueueManager:
         if count > 0:
             logger.info(f"Cleared {count} completed jobs")
         return count
+
+    def dismiss_permanently_failed_jobs(self) -> Dict[str, Any]:
+        """Delete permanently failed jobs and their incomplete file records.
+
+        Targets jobs with NON_RETRYABLE_ERRORS or retry_count >= 3.
+        Also cleans up incomplete file data (files, vec_files, vec_text, files_fts)
+        so broken entries don't pollute search results.
+
+        Returns:
+            {"dismissed_jobs": int, "cleaned_files": int}
+        """
+        cursor = self.db.conn.cursor()
+
+        # Find permanently failed jobs with file_id
+        non_retryable_list = ",".join(f"'{c}'" for c in NON_RETRYABLE_ERRORS)
+        cursor.execute(
+            f"""SELECT id, file_id FROM job_queue
+               WHERE status = 'failed'
+                 AND (error_code IN ({non_retryable_list}) OR retry_count >= 3)"""
+        )
+        failed_jobs = cursor.fetchall()
+
+        if not failed_jobs:
+            self.db.conn.commit()
+            return {"dismissed_jobs": 0, "cleaned_files": 0}
+
+        job_ids = [j[0] for j in failed_jobs]
+        file_ids = list({j[1] for j in failed_jobs if j[1]})
+
+        # Delete the failed jobs
+        for jid in job_ids:
+            cursor.execute("DELETE FROM job_queue WHERE id = ?", (jid,))
+
+        # Clean up incomplete file records (only if file has no other active jobs)
+        cleaned_files = 0
+        for fid in file_ids:
+            cursor.execute(
+                "SELECT COUNT(*) FROM job_queue WHERE file_id = ?", (fid,)
+            )
+            remaining = cursor.fetchone()[0]
+            if remaining > 0:
+                continue  # Other jobs exist for this file — keep file record
+
+            # Check if file data is incomplete (missing mc/vv/mv)
+            cursor.execute("""
+                SELECT (mc_caption IS NOT NULL AND mc_caption != '') AS has_mc,
+                       EXISTS(SELECT 1 FROM vec_files WHERE file_id = ?) AS has_vv,
+                       EXISTS(SELECT 1 FROM vec_text WHERE file_id = ?) AS has_mv
+                FROM files WHERE id = ?
+            """, (fid, fid, fid))
+            row = cursor.fetchone()
+            if not row:
+                continue
+            has_mc, has_vv, has_mv = row
+            if has_mc and has_vv and has_mv:
+                continue  # File is actually complete — keep it
+
+            # Incomplete file with no jobs — clean up
+            cursor.execute("DELETE FROM vec_files WHERE file_id = ?", (fid,))
+            cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (fid,))
+            cursor.execute("DELETE FROM files_fts WHERE rowid = ?", (fid,))
+            cursor.execute("DELETE FROM files WHERE id = ?", (fid,))
+            cleaned_files += 1
+
+        self.db.conn.commit()
+        logger.info(
+            f"Dismissed {len(job_ids)} permanently failed jobs, "
+            f"cleaned {cleaned_files} incomplete file records"
+        )
+        return {"dismissed_jobs": len(job_ids), "cleaned_files": cleaned_files}
 
     def queue_backfill(self) -> Dict[str, int]:
         """Detect files with incomplete vector data and auto-create backfill jobs.

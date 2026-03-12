@@ -624,6 +624,17 @@ def clear_completed_jobs(
     return {"success": True, "deleted": count}
 
 
+@router.delete("/api/v1/admin/jobs/permanently-failed")
+def dismiss_permanently_failed(
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Delete permanently failed jobs and clean up incomplete file records."""
+    queue = _get_queue(db)
+    result = queue.dismiss_permanently_failed_jobs()
+    return {"success": True, **result}
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 def _decode_vector(encoded: Optional[str]) -> Optional[np.ndarray]:

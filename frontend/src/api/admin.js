@@ -66,6 +66,10 @@ export async function auditIntegrity() {
   return apiClient.post('/api/v1/admin/jobs/audit-integrity');
 }
 
+export async function dismissPermanentlyFailedJobs() {
+  return apiClient.delete('/api/v1/admin/jobs/permanently-failed');
+}
+
 // ── Discover (server filesystem) ────────────────────────
 
 export async function browseFolders(path = '/') {

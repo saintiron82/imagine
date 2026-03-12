@@ -23,7 +23,7 @@ import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
 import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
-import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs, forceRetryFailedJobs } from './api/admin';
+import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs, forceRetryFailedJobs, dismissPermanentlyFailedJobs } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
 import SubscriptionBanner from './components/SubscriptionBanner';
 
@@ -1432,6 +1432,48 @@ function App() {
                   >
                     <RotateCcw size={12} />
                     {t('audit.reset_stuck_jobs')}
+                  </button>
+                </div>
+              )}
+
+              {/* Permanently failed files */}
+              {isAdmin && auditResult.permanently_failed_details?.length > 0 && (
+                <div className="mt-2 p-3 bg-red-950/30 rounded-lg border border-red-800/40">
+                  <p className="text-xs text-red-300 font-medium mb-1">
+                    {t('audit.permanently_failed', { count: auditResult.permanently_failed_details.length })}
+                  </p>
+                  <div className="max-h-32 overflow-y-auto space-y-1 mb-2">
+                    {auditResult.permanently_failed_details.map((d, i) => (
+                      <div key={i} className="text-xs text-neutral-400 bg-neutral-800/60 px-2 py-1.5 rounded flex items-center gap-2">
+                        <span className="text-red-400 shrink-0 font-mono">
+                          [{d.error_code === 'RETRY_EXHAUSTED'
+                            ? t('audit.error_retry_exhausted')
+                            : d.error_code}]
+                        </span>
+                        <span className="truncate flex-1">{d.file_path?.split('/').pop()}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-neutral-500 mb-2">
+                    {t('audit.permanently_failed_desc')}
+                  </p>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const result = await dismissPermanentlyFailedJobs();
+                        const count = result?.dismissed_jobs || 0;
+                        showToast(t('audit.dismiss_result', { count }), 'success');
+                        appendLog({ message: t('audit.dismiss_result', { count }), type: 'success' });
+                        setAuditResult(null);
+                        setQueueReloadSignal(prev => prev + 1);
+                      } catch (e) {
+                        showToast(`Error: ${e.message}`, 'error');
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-900/40 hover:bg-red-800/50 text-red-300 rounded-md transition-colors border border-red-700/40"
+                  >
+                    <Trash2 size={12} />
+                    {t('audit.dismiss_failed')}
                   </button>
                 </div>
               )}
