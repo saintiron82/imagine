@@ -212,7 +212,8 @@ class ParseAheadPool(BaseAheadPool):
             else:
                 cursor.execute(
                     """UPDATE job_queue SET status = 'failed',
-                       parse_status = 'failed', error_message = 'Auto parse failed'
+                       parse_status = 'failed', error_message = 'Auto parse failed',
+                       error_code = 'PARSE_FAILED'
                        WHERE id = ?""",
                     (job_id,),
                 )

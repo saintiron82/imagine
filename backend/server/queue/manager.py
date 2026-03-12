@@ -21,6 +21,24 @@ NON_RETRYABLE_ERRORS = frozenset({
 })
 
 
+def _infer_error_code(error_message: str) -> str | None:
+    """Infer structured error_code from legacy free-text error_message.
+
+    Used by audit to backfill error_code on jobs that failed before
+    the error code system was introduced.
+    """
+    if not error_message:
+        return None
+    msg = error_message.lower()
+    if "file unavailable" in msg or "file not found" in msg or "cannot access" in msg:
+        return "FILE_NOT_FOUND"
+    if "no thumbnail" in msg or ("thumbnail" in msg and "requires" in msg):
+        return "THUMB_MISSING"
+    if "parse failed" in msg:
+        return "PARSE_FAILED"
+    return None
+
+
 def get_processing_mode() -> str:
     """Get effective processing mode from config.
 
@@ -822,19 +840,23 @@ class JobQueueManager:
     def retry_failed_jobs(self) -> int:
         """Retry all failed jobs by resetting them to pending.
 
+        Skips non-retryable errors (THUMB_MISSING, FILE_NOT_FOUND, PARSE_FAILED).
         Also resets parse_status='failed' back to NULL so ParseAhead
         can re-attempt pre-parsing (prevents permanent parse deadlock).
         """
         cursor = self.db.conn.cursor()
+        non_retryable_list = ",".join(f"'{c}'" for c in NON_RETRYABLE_ERRORS)
         cursor.execute(
-            """UPDATE job_queue
+            f"""UPDATE job_queue
                SET status = 'pending', retry_count = 0,
-                   error_message = NULL, assigned_to = NULL, assigned_at = NULL,
+                   error_message = NULL, error_code = NULL,
+                   assigned_to = NULL, assigned_at = NULL,
                    parse_status = CASE
                        WHEN parse_status = 'failed' THEN NULL
                        ELSE parse_status
                    END
-               WHERE status = 'failed'"""
+               WHERE status = 'failed'
+               AND (error_code IS NULL OR error_code NOT IN ({non_retryable_list}))"""
         )
         self.db.conn.commit()
         count = cursor.rowcount
@@ -860,6 +882,7 @@ class JobQueueManager:
         cursor = self.db.conn.cursor()
         details = []
         repaired_files = 0
+        skipped_non_retryable = 0
 
         # ── Pass 1: Scan ALL files for data completeness ──
         cursor.execute("""
@@ -905,7 +928,8 @@ class JobQueueManager:
 
             # Check what jobs exist for this file
             cursor.execute("""
-                SELECT id, status, phase_completed, parsed_metadata, error_code
+                SELECT id, status, phase_completed, parsed_metadata,
+                       error_code, retry_count, error_message
                 FROM job_queue WHERE file_id = ?
                 ORDER BY
                     CASE status
@@ -918,6 +942,24 @@ class JobQueueManager:
                 LIMIT 1
             """, (file_id,))
             job_row = cursor.fetchone()
+
+            # Skip files without thumbnails — can't process V/VV phases
+            if not thumbnail_url:
+                if job_row is None:
+                    # No job and no thumbnail — skip entirely
+                    skipped_non_retryable += 1
+                    continue
+                elif job_row[1] != 'failed':
+                    # Has job but no thumbnail — mark as THUMB_MISSING
+                    cursor.execute(
+                        """UPDATE job_queue SET status = 'failed',
+                           error_code = 'THUMB_MISSING',
+                           error_message = 'No thumbnail available for processing'
+                           WHERE id = ?""",
+                        (job_row[0],)
+                    )
+                skipped_non_retryable += 1
+                continue
 
             # Ensure this file has a pending job for re-processing
             if job_row is None:
@@ -947,14 +989,31 @@ class JobQueueManager:
                 )
 
             elif job_row[1] == 'failed':
-                # Check if this was a non-retryable error — don't resurrect it
-                existing_error_code = job_row[4] if len(job_row) > 4 else None
+                # job_row: (id, status, phase_completed, parsed_metadata,
+                #           error_code, retry_count, error_message)
+                existing_error_code = job_row[4]
+                retry_count = job_row[5] or 0
+                err_msg_text = job_row[6] or ""
+
+                # Backfill: infer error_code from legacy error_message
+                if not existing_error_code:
+                    existing_error_code = _infer_error_code(err_msg_text)
+                    if existing_error_code:
+                        cursor.execute(
+                            "UPDATE job_queue SET error_code = ? WHERE id = ?",
+                            (existing_error_code, job_row[0])
+                        )
+
                 if existing_error_code and existing_error_code in NON_RETRYABLE_ERRORS:
-                    # Non-retryable (THUMB_MISSING, FILE_NOT_FOUND, PARSE_FAILED)
-                    # — leave it failed, don't reset
-                    pass
+                    # Non-retryable — leave it failed, don't count as repaired
+                    skipped_non_retryable += 1
+                    continue
+                elif retry_count >= 3:
+                    # Exhausted retries — don't reset again
+                    skipped_non_retryable += 1
+                    continue
                 else:
-                    # Retryable failure — reset to pending for re-processing
+                    # Retryable failure with retries remaining — reset to pending
                     cursor.execute(
                         """UPDATE job_queue
                            SET status = 'pending', phase_completed = ?,
@@ -993,7 +1052,7 @@ class JobQueueManager:
         dangling_rows = cursor.fetchall()
         for job_id, file_id in dangling_rows:
             cursor.execute(
-                "UPDATE job_queue SET status = 'failed', error_message = 'file missing from DB' WHERE id = ?",
+                "UPDATE job_queue SET status = 'failed', error_message = 'file missing from DB', error_code = 'FILE_NOT_FOUND' WHERE id = ?",
                 (job_id,)
             )
 
@@ -1001,11 +1060,13 @@ class JobQueueManager:
 
         incomplete_files = total_files - complete_files
 
-        if repaired_files > 0:
-            logger.warning(
-                f"Audit: {total_files} files, {incomplete_files} incomplete, "
-                f"{repaired_files} repaired"
-            )
+        if repaired_files > 0 or skipped_non_retryable > 0:
+            parts = [f"Audit: {total_files} files, {incomplete_files} incomplete"]
+            if repaired_files > 0:
+                parts.append(f"{repaired_files} repaired")
+            if skipped_non_retryable > 0:
+                parts.append(f"{skipped_non_retryable} permanently failed (skipped)")
+            logger.warning(", ".join(parts))
         else:
             logger.info(f"Audit: {total_files} files scanned, all complete")
 
@@ -1014,6 +1075,7 @@ class JobQueueManager:
             "complete_files": complete_files,
             "incomplete_files": incomplete_files,
             "repaired_files": repaired_files,
+            "skipped_non_retryable": skipped_non_retryable,
             "details": details,
         }
 

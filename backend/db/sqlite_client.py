@@ -374,6 +374,39 @@ class SQLiteDB:
             self.conn.commit()
             logger.info("✅ error_code column added to job_queue")
 
+        # Backfill: infer error_code from legacy error_message for failed jobs
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM job_queue WHERE status='failed' AND error_code IS NULL AND error_message IS NOT NULL"
+        )
+        null_count = cursor.fetchone()[0]
+        if null_count > 0:
+            logger.info(f"Backfilling error_code for {null_count} legacy failed jobs...")
+            # FILE_NOT_FOUND pattern
+            self.conn.execute("""
+                UPDATE job_queue SET error_code = 'FILE_NOT_FOUND'
+                WHERE status = 'failed' AND error_code IS NULL
+                AND (LOWER(error_message) LIKE '%file unavailable%'
+                     OR LOWER(error_message) LIKE '%file not found%'
+                     OR LOWER(error_message) LIKE '%cannot access%')
+            """)
+            # THUMB_MISSING pattern
+            self.conn.execute("""
+                UPDATE job_queue SET error_code = 'THUMB_MISSING'
+                WHERE status = 'failed' AND error_code IS NULL
+                AND LOWER(error_message) LIKE '%thumbnail%requires%'
+            """)
+            # PARSE_FAILED pattern
+            self.conn.execute("""
+                UPDATE job_queue SET error_code = 'PARSE_FAILED'
+                WHERE status = 'failed' AND error_code IS NULL
+                AND LOWER(error_message) LIKE '%parse failed%'
+            """)
+            self.conn.commit()
+            filled = null_count - self.conn.execute(
+                "SELECT COUNT(*) FROM job_queue WHERE status='failed' AND error_code IS NULL AND error_message IS NOT NULL"
+            ).fetchone()[0]
+            logger.info(f"✅ Backfilled error_code for {filled}/{null_count} jobs")
+
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""
         try:
