@@ -781,8 +781,13 @@ class JobQueueManager:
         else:
             eta_seconds = None
 
+        # Total files in DB (for phase progress denominator)
+        cursor.execute("SELECT COUNT(*) FROM files")
+        total_files = cursor.fetchone()[0]
+
         return {
             "total": total,
+            "total_files": total_files,
             "pending": pending,
             "assigned": assigned,
             "processing": processing,

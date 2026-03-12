@@ -1200,7 +1200,7 @@ function QueuePanel() {
                 total: thumbStats.grand_total || 0,
               }] : []),
             ].map(({ key, label, color, textColor, done: overrideDone, total: overrideTotal }) => {
-              const itemTotal = overrideTotal ?? stats.total;
+              const itemTotal = overrideTotal ?? (stats.total_files || stats.total);
               const done = overrideDone ?? (stats[key] || 0);
               const pct = itemTotal > 0 ? (done / itemTotal) * 100 : 0;
               return (
