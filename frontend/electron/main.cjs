@@ -2624,6 +2624,7 @@ async function startEmbeddedServer(port = 8000) {
         const msg = chunk.toString().trim();
         if (msg) {
             writeLog('INFO', '[Server:stdout]', msg);
+            console.log('[Server]', msg);
             // stdout: only forward important messages to UI
             if (/\bERROR\b|\bCRITICAL\b|\bWARN/i.test(msg)) {
                 throttledServerLog(msg, 'error');
@@ -2638,6 +2639,11 @@ async function startEmbeddedServer(port = 8000) {
             const isError = /\bERROR\b|\bCRITICAL\b|Traceback|Exception:|FAIL/i.test(msg);
             const isWarning = /\bWARN(?:ING)?\b/i.test(msg);
             writeLog(isError ? 'ERROR' : 'INFO', '[Server:stderr]', msg);
+            if (isError) {
+                console.error('[Server:ERR]', msg);
+            } else {
+                console.log('[Server]', msg);
+            }
             if (isError) {
                 throttledServerLog(msg, 'error');
             } else if (isWarning) {
