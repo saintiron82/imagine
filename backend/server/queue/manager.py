@@ -890,10 +890,42 @@ class JobQueueManager:
 
         Unlike retry_failed_jobs(), this resets everything to initial state:
         phase_completed, parse_status, parsed_metadata, error_code — all cleared.
-        The job will be re-processed from Phase P as if newly created.
-        Also resets stuck pending jobs with high retry_count (e.g. MV-missing loop).
+        Also clears partial AI data (mc/vv/mv) from files/vec tables so that
+        all phases run fresh without skipping.
         """
         cursor = self.db.conn.cursor()
+
+        # 1. Collect file_ids of target jobs before resetting
+        cursor.execute(
+            """SELECT file_id FROM job_queue
+               WHERE status IN ('failed', 'cancelled')
+                  OR (status = 'pending' AND retry_count >= 3)"""
+        )
+        file_ids = [r[0] for r in cursor.fetchall() if r[0]]
+
+        # 2. Clear partial AI data from files table
+        if file_ids:
+            placeholders = ",".join("?" * len(file_ids))
+            cursor.execute(
+                f"""UPDATE files
+                    SET mc_caption = NULL, ai_tags = NULL,
+                        image_type = NULL, scene_type = NULL, art_style = NULL
+                    WHERE id IN ({placeholders})""",
+                file_ids,
+            )
+            # 3. Delete vector data (VV + MV)
+            cursor.execute(
+                f"DELETE FROM vec_files WHERE file_id IN ({placeholders})",
+                file_ids,
+            )
+            cursor.execute(
+                f"DELETE FROM vec_text WHERE file_id IN ({placeholders})",
+                file_ids,
+            )
+            logger.info(
+                f"Cleared AI data for {len(file_ids)} files (mc/vv/mv)")
+
+        # 4. Reset job_queue entries
         cursor.execute(
             """UPDATE job_queue
                SET status = 'pending', retry_count = 0, max_retries = 3,
@@ -1098,25 +1130,18 @@ class JobQueueManager:
                 # regardless of previous error (worker errors ≠ ParseAhead errors)
                 thumb_exists = thumbnail_url and os.path.exists(thumbnail_url)
 
-                if existing_error_code == "THUMB_MISSING" and not thumb_exists:
-                    # Truly unprocessable — no thumbnail on disk
+                # Permanently failed: non-retryable error or exhausted retries
+                retry_count = job_row[5] or 0
+                is_permanent = (
+                    (existing_error_code and existing_error_code in NON_RETRYABLE_ERRORS)
+                    or retry_count >= 3
+                )
+                if is_permanent:
                     skipped_non_retryable += 1
                     continue
-                elif thumb_exists:
-                    # Thumbnail available — give fresh chance via ParseAhead
-                    cursor.execute(
-                        """UPDATE job_queue
-                           SET status = 'pending', phase_completed = ?,
-                               parsed_metadata = COALESCE(parsed_metadata, ?),
-                               retry_count = 0, error_message = NULL,
-                               error_code = NULL,
-                               assigned_to = NULL, assigned_at = NULL,
-                               worker_session_id = NULL
-                           WHERE id = ?""",
-                        (actual_phases, parsed_metadata, job_row[0])
-                    )
-                else:
-                    # No thumbnail on disk — can't process
+
+                if not thumbnail_url or not os.path.exists(thumbnail_url):
+                    # No thumbnail on disk — mark as unprocessable
                     if not existing_error_code:
                         cursor.execute(
                             "UPDATE job_queue SET error_code = 'THUMB_MISSING' WHERE id = ?",
@@ -1124,6 +1149,19 @@ class JobQueueManager:
                         )
                     skipped_non_retryable += 1
                     continue
+
+                # Recoverable failure with thumbnail — give fresh chance
+                cursor.execute(
+                    """UPDATE job_queue
+                       SET status = 'pending', phase_completed = ?,
+                           parsed_metadata = COALESCE(parsed_metadata, ?),
+                           retry_count = 0, error_message = NULL,
+                           error_code = NULL,
+                           assigned_to = NULL, assigned_at = NULL,
+                           worker_session_id = NULL
+                       WHERE id = ?""",
+                    (actual_phases, parsed_metadata, job_row[0])
+                )
 
             elif job_row[1] in ('pending', 'assigned', 'processing'):
                 # Already in pipeline — fix phase_completed, fill parsed_metadata if missing
