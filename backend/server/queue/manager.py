@@ -1235,6 +1235,39 @@ class JobQueueManager:
                 (job_id,)
             )
 
+        # ── Pass 3: Residual pending/assigned jobs for already-complete files ──
+        # If a file has all data (mc+vv+mv) AND a completed job already exists,
+        # any extra pending/assigned jobs are duplicates — delete them.
+        complete_file_ids = set(
+            fid for fid, _, has_mc, has_vv, has_mv, _ in all_files
+            if has_mc and has_vv and has_mv
+        )
+        if complete_file_ids:
+            placeholders = ",".join("?" * len(complete_file_ids))
+            cursor.execute(f"""
+                SELECT jq.id, jq.file_id FROM job_queue jq
+                WHERE jq.file_id IN ({placeholders})
+                  AND jq.status IN ('pending', 'assigned')
+                  AND EXISTS(
+                      SELECT 1 FROM job_queue jq2
+                      WHERE jq2.file_id = jq.file_id
+                        AND jq2.status = 'completed'
+                        AND jq2.id != jq.id
+                  )
+            """, list(complete_file_ids))
+            residual_jobs = cursor.fetchall()
+            if residual_jobs:
+                residual_ids = [r[0] for r in residual_jobs]
+                del_placeholders = ",".join("?" * len(residual_ids))
+                cursor.execute(
+                    f"DELETE FROM job_queue WHERE id IN ({del_placeholders})",
+                    residual_ids,
+                )
+                logger.warning(
+                    f"Audit: removed {len(residual_ids)} residual pending jobs "
+                    f"for already-complete files"
+                )
+
         self.db.conn.commit()
 
         incomplete_files = total_files - complete_files
