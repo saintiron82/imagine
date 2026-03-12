@@ -52,11 +52,14 @@ def get_db_safe() -> Generator[SQLiteDB, None, None]:
     db = get_db()
     try:
         yield db
+    except Exception as exc:
+        logger.warning(f"[get_db_safe] Exception during request: {type(exc).__name__}: {exc}")
+        raise
     finally:
         try:
             db.conn.rollback()
-        except Exception:
-            pass
+        except Exception as rb_exc:
+            logger.error(f"[get_db_safe] Rollback failed: {rb_exc}")
 
 
 def close_db():

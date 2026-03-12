@@ -320,6 +320,7 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
 
     Auto-creates user on first connection.
     """
+    logger.info("[AUTH:connect] Starting Firebase connect...")
     cursor = db.conn.cursor()
 
     # 1. Verify server password
@@ -331,10 +332,16 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
         raise HTTPException(status_code=403, detail="Invalid server password")
 
     # 2. Verify Firebase ID token
+    logger.info("[AUTH:connect] Server password OK, verifying Firebase token...")
     from backend.server.firebase_auth import verify_firebase_token
 
-    decoded = verify_firebase_token(req.firebase_id_token)
+    try:
+        decoded = verify_firebase_token(req.firebase_id_token)
+    except Exception as e:
+        logger.error(f"[AUTH:connect] Firebase token verification crashed: {type(e).__name__}: {e}")
+        raise
     if decoded is None:
+        logger.warning("[AUTH:connect] Firebase token verification returned None")
         raise HTTPException(status_code=401, detail="Invalid Firebase token")
 
     firebase_uid = decoded['uid']

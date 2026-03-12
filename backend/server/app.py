@@ -18,9 +18,11 @@ from pathlib import Path
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
-from fastapi import FastAPI
+import traceback as _traceback
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # Ensure project root is in path
@@ -54,6 +56,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Global exception handler: log full traceback for 500s ────
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Log full traceback for any unhandled exception (500 errors)."""
+    tb = _traceback.format_exception(type(exc), exc, exc.__traceback__)
+    logger.error(
+        f"Unhandled exception on {request.method} {request.url.path}:\n"
+        f"{''.join(tb)}"
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}: {exc}"},
+    )
 
 
 # ── Lifecycle ────────────────────────────────────────────────
