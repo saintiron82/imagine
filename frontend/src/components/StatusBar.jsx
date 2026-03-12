@@ -362,9 +362,10 @@ const StatusBar = ({
                 {/* Server queue progress — visible when server is running with active jobs */}
                 {serverQueueStats && serverQueueStats.total > 0 && !isWorkerProcessing && !isProcessing && !isDiscovering && (() => {
                     const sq = serverQueueStats;
+                    const displayTotal = sq.total_files || sq.total;
                     const active = sq.pending + sq.assigned + sq.processing;
-                    const pct = sq.total > 0 ? Math.round((sq.completed / sq.total) * 100) : 0;
-                    const failPct = sq.total > 0 ? Math.round((sq.failed / sq.total) * 100) : 0;
+                    const pct = displayTotal > 0 ? Math.round((sq.completed / displayTotal) * 100) : 0;
+                    const failPct = displayTotal > 0 ? Math.round((sq.failed / displayTotal) * 100) : 0;
                     const allDone = active === 0 && sq.completed > 0;
                     const perMin = sq.throughput || 0;
 
@@ -377,7 +378,7 @@ const StatusBar = ({
                             )}
 
                             <span className="text-emerald-300 font-mono font-bold text-[11px]">
-                                {sq.completed}/{sq.total}
+                                {sq.completed}/{displayTotal}
                             </span>
                             {sq.failed > 0 && (
                                 <span className="text-red-400 font-mono font-bold text-[11px]">
