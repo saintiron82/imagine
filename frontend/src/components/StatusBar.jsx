@@ -363,10 +363,11 @@ const StatusBar = ({
                 {serverQueueStats && serverQueueStats.total > 0 && !isWorkerProcessing && !isProcessing && !isDiscovering && (() => {
                     const sq = serverQueueStats;
                     const displayTotal = sq.total_files || sq.total;
+                    const completeFiles = sq.complete_files ?? sq.completed;
                     const active = sq.pending + sq.assigned + sq.processing;
-                    const pct = displayTotal > 0 ? Math.round((sq.completed / displayTotal) * 100) : 0;
+                    const pct = displayTotal > 0 ? Math.round((completeFiles / displayTotal) * 100) : 0;
                     const failPct = displayTotal > 0 ? Math.round((sq.failed / displayTotal) * 100) : 0;
-                    const allDone = active === 0 && sq.completed > 0;
+                    const allDone = active === 0 && completeFiles > 0;
                     const perMin = sq.throughput || 0;
 
                     return (
@@ -378,7 +379,7 @@ const StatusBar = ({
                             )}
 
                             <span className="text-emerald-300 font-mono font-bold text-[11px]">
-                                {sq.completed}/{displayTotal}
+                                {completeFiles}/{displayTotal}
                             </span>
                             {sq.failed > 0 && (
                                 <span className="text-red-400 font-mono font-bold text-[11px]">

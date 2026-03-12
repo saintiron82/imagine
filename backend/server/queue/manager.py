@@ -799,10 +799,11 @@ class JobQueueManager:
         return {
             "total": total_files,
             "total_files": total_files,
+            "complete_files": complete_files,
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": complete_files,
+            "completed": status_counts.get("completed", 0),
             "failed": status_counts.get("failed", 0),
             "throughput": throughput,
             "recent_1min": recent_1min,

@@ -716,6 +716,7 @@ function App() {
           setServerQueueStats({
             total: data.total || 0,
             total_files: data.total_files || 0,
+            complete_files: data.complete_files ?? data.completed ?? 0,
             completed: data.completed || 0,
             failed: data.failed || 0,
             pending: data.pending || 0,
