@@ -125,7 +125,7 @@ class ParseAheadPool(BaseAheadPool):
                 f"Auto: reclaimed {cursor.rowcount} stuck processing jobs "
                 f"from builtin worker"
             )
-            self.db.conn.commit()
+        self.db.conn.commit()  # Always commit to release WAL write lock
 
         # Pick up pending jobs
         # - Local files: always eligible
@@ -582,11 +582,11 @@ class ParseAheadPool(BaseAheadPool):
                        WHERE status = 'pending' AND parse_status = 'failed'"""
                 )
                 if cursor.rowcount > 0:
-                    self.db.conn.commit()
                     logger.info(
                         f"ParseAhead: reset {cursor.rowcount} parse-failed "
                         f"jobs for retry"
                     )
+                self.db.conn.commit()  # Always commit to release WAL write lock
                 self._last_retry_reset = now
             self._process_backfill_batch()
             return False
@@ -788,11 +788,16 @@ class ParseAheadPool(BaseAheadPool):
                         f"ParseAheadPool iteration error: {e}\n"
                         f"{traceback.format_exc()}"
                     )
+                    time.sleep(5)
+                finally:
+                    # Safety: release any WAL write lock from uncommitted DML.
+                    # Without this, an UPDATE matching 0 rows still acquires
+                    # the write lock (via OP_Transaction p2=1) and blocks all
+                    # other writers until commit/rollback.
                     try:
                         self.db.conn.rollback()
                     except Exception:
                         pass
-                    time.sleep(5)
 
         except Exception as e:
             logger.critical(

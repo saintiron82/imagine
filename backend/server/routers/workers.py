@@ -146,8 +146,8 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
             (now, BUILTIN_WORKER_NAME)
         )
         if cursor.rowcount > 0:
-            db.conn.commit()
             logger.info(f"Forced {cursor.rowcount} external worker(s) offline: builtin_worker mode")
+        db.conn.commit()  # Always commit to release WAL write lock
 
         return
 
@@ -278,6 +278,8 @@ def _ensure_builtin_worker_session(db: "SQLiteDB") -> int:
         row = cursor.fetchone()
         logger.info(f"Builtin worker session reactivated (id={row[0]})")
         return row[0]
+    else:
+        db.conn.commit()  # Release WAL write lock from 0-row UPDATE
 
     # Create new session — find the first admin user_id dynamically
     batch_size = 5
@@ -317,8 +319,8 @@ def _deactivate_builtin_worker_session(db: "SQLiteDB"):
         (now, BUILTIN_WORKER_NAME),
     )
     if cursor.rowcount > 0:
-        db.conn.commit()
         logger.info("Builtin worker session deactivated")
+    db.conn.commit()  # Always commit to release WAL write lock
 
 
 # ── Worker → Server endpoints ────────────────────────────────
