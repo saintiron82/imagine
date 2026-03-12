@@ -18,10 +18,12 @@ from pathlib import Path
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
-from fastapi import FastAPI
+import sqlite3 as _sqlite3
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 # Ensure project root is in path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -54,6 +56,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Global exception handler: SQLite busy → 503 ─────────────
+
+@app.exception_handler(_sqlite3.OperationalError)
+async def sqlite_locked_handler(request: Request, exc: _sqlite3.OperationalError):
+    """Convert 'database is locked' to 503 instead of 500."""
+    if "locked" in str(exc):
+        logger.warning(f"DB busy on {request.url.path}: {exc}")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Database temporarily busy, please retry"},
+        )
+    raise exc
 
 
 # ── Lifecycle ────────────────────────────────────────────────
