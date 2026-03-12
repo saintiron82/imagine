@@ -12,6 +12,9 @@ from backend.db.sqlite_client import SQLiteDB
 
 logger = logging.getLogger(__name__)
 
+# Module-level state for CLAIM-DIAG deduplication
+_last_claim_diag: dict = {}
+
 # Structured error codes for job failure classification.
 # Non-retryable errors are permanent — retrying will never succeed.
 NON_RETRYABLE_ERRORS = frozenset({
@@ -313,8 +316,7 @@ class JobQueueManager:
                 pass
 
         if not rows:
-            # Diagnostic: log queue state when no jobs available for worker
-            # Only log once when transitioning to idle (avoid log spam)
+            # Diagnostic: log queue state once when transitioning to idle
             if worker_session_id is not None:
                 try:
                     diag = cursor.execute(
@@ -329,8 +331,8 @@ class JobQueueManager:
                             COUNT(*) FROM job_queue"""
                     ).fetchone()
                     diag_key = (worker_session_id, diag[0], diag[6], diag[7])
-                    if diag_key != getattr(self, '_last_claim_diag', None):
-                        self._last_claim_diag = diag_key
+                    if diag_key != _last_claim_diag.get("key"):
+                        _last_claim_diag["key"] = diag_key
                         logger.info(
                             f"[CLAIM-DIAG] session={worker_session_id} mode={processing_mode} | "
                             f"pending={diag[0]} (unparsed={diag[1]} parsing={diag[2]} "
