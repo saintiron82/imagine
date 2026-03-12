@@ -112,6 +112,7 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
   };
 
   const handleForceRetryAll = async () => {
+    if (!window.confirm(t('audit.force_retry_confirm'))) return;
     try {
       await forceRetryFailedJobs();
       fetchJobs();

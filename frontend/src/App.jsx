@@ -1216,8 +1216,9 @@ function App() {
   };
 
   const handleForceRetryFailed = async () => {
-    setRetryLoading(true);
     setShowDbMenu(false);
+    if (!window.confirm(t('audit.force_retry_confirm'))) return;
+    setRetryLoading(true);
     try {
       const result = await forceRetryFailedJobs();
       const count = result?.retried || 0;

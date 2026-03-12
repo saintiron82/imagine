@@ -502,6 +502,7 @@
   "audit.result_repaired": "Audit: {total} files, {incomplete} incomplete → repaired",
   "audit.result_ok": "Audit: {total} files, all complete",
   "audit.retry_result": "{count} failed jobs → queued for retry",
+  "audit.force_retry_confirm": "Reset stuck jobs and retry from the beginning?",
   "audit.force_retry_result": "{count} jobs → reset and queued from scratch",
   "audit.retry_none": "No failed jobs found",
   "audit.start_processing": "Start Processing",
