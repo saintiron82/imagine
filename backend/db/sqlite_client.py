@@ -98,6 +98,7 @@ class SQLiteDB:
                 self._migrate_backfill_parse_status()
                 self._migrate_users_email_nullable()
                 self._migrate_users_firebase_uid()
+                self._migrate_error_code()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -111,6 +112,7 @@ class SQLiteDB:
                 self._migrate_worker_resources_json()
                 self._migrate_mc_completed_at()
                 self._migrate_backfill_parse_status()
+                self._migrate_error_code()
 
             logger.info(f"✅ Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -359,6 +361,18 @@ class SQLiteDB:
             )
             self.conn.commit()
             logger.info("✅ mc_completed_at column + index added to job_queue")
+
+    def _migrate_error_code(self):
+        """Add error_code column to job_queue for structured error classification."""
+        if not self._table_exists('job_queue'):
+            return
+        try:
+            self.conn.execute("SELECT error_code FROM job_queue LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding error_code column to job_queue...")
+            self.conn.execute("ALTER TABLE job_queue ADD COLUMN error_code TEXT DEFAULT NULL")
+            self.conn.commit()
+            logger.info("✅ error_code column added to job_queue")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

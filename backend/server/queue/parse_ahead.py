@@ -247,6 +247,20 @@ class ParseAheadPool(BaseAheadPool):
                 except Exception:
                     pass
 
+            # No thumbnail available → mark as permanently failed (non-retryable)
+            if not thumb_path or not Path(thumb_path).exists():
+                logger.warning(
+                    f"ParseAhead job {job_id}: no thumbnail, marking THUMB_MISSING")
+                cursor.execute(
+                    """UPDATE job_queue SET status = 'failed',
+                       error_code = 'THUMB_MISSING',
+                       error_message = 'No thumbnail available for processing'
+                       WHERE id = ?""",
+                    (job_id,)
+                )
+                self.db.conn.commit()
+                continue
+
             phase_items.append(PhaseItem(
                 job_id=job_id,
                 file_id=file_id,

@@ -12,6 +12,14 @@ from backend.db.sqlite_client import SQLiteDB
 
 logger = logging.getLogger(__name__)
 
+# Structured error codes for job failure classification.
+# Non-retryable errors are permanent — retrying will never succeed.
+NON_RETRYABLE_ERRORS = frozenset({
+    "THUMB_MISSING",   # No thumbnail available (V/VV phases impossible)
+    "FILE_NOT_FOUND",  # Source file inaccessible (deleted, WebDAV 404)
+    "PARSE_FAILED",    # File parsing failed (corrupt file, unsupported format)
+})
+
 
 def get_processing_mode() -> str:
     """Get effective processing mode from config.
@@ -524,8 +532,14 @@ class JobQueueManager:
         self.db.conn.commit()
         return success
 
-    def fail_job(self, job_id: int, user_id: int, error_message: str) -> bool:
-        """Mark a job as failed. May be retried."""
+    def fail_job(self, job_id: int, user_id: int, error_message: str,
+                 error_code: str = None) -> bool:
+        """Mark a job as failed with optional structured error code.
+
+        Non-retryable error codes (THUMB_MISSING, FILE_NOT_FOUND, PARSE_FAILED)
+        skip retries and fail immediately. Retryable errors follow the existing
+        retry_count/max_retries logic.
+        """
         cursor = self.db.conn.cursor()
 
         # Check retry count
@@ -538,22 +552,28 @@ class JobQueueManager:
             return False
 
         retry_count, max_retries = row
-        new_status = "pending" if retry_count < max_retries else "failed"
+
+        # Non-retryable errors → immediate failure (no retry)
+        if error_code and error_code in NON_RETRYABLE_ERRORS:
+            new_status = "failed"
+        else:
+            new_status = "pending" if retry_count < max_retries else "failed"
 
         cursor.execute(
             """UPDATE job_queue
-               SET status = ?, error_message = ?,
+               SET status = ?, error_message = ?, error_code = ?,
                    retry_count = retry_count + 1,
                    assigned_to = NULL, assigned_at = NULL,
                    worker_session_id = NULL
                WHERE id = ?""",
-            (new_status, error_message, job_id)
+            (new_status, error_message, error_code, job_id)
         )
         self.db.conn.commit()
         if new_status == "pending":
             logger.info(f"Job {job_id} will be retried (attempt {retry_count + 1}/{max_retries})")
         else:
-            logger.warning(f"Job {job_id} permanently failed: {error_message}")
+            code_info = f" [{error_code}]" if error_code else ""
+            logger.warning(f"Job {job_id} permanently failed{code_info}: {error_message}")
         return True
 
     def reclaim_worker_jobs(self, worker_session_id: int) -> int:

@@ -79,12 +79,16 @@ class ResultUploader:
             logger.error(f"Job {job_id} complete request failed: {e}")
             return False
 
-    def fail_job(self, job_id: int, error_message: str) -> bool:
-        """Report job failure."""
+    def fail_job(self, job_id: int, error_message: str,
+                 error_code: str = None) -> bool:
+        """Report job failure with optional structured error code."""
         try:
+            payload = {"error_message": error_message}
+            if error_code:
+                payload["error_code"] = error_code
             resp = self.session.patch(
                 f"{self.base}/api/v1/jobs/{job_id}/fail",
-                json={"error_message": error_message},
+                json=payload,
             )
             return resp.status_code == 200
         except Exception as e:

@@ -89,6 +89,7 @@ class _JobContext:
     structure_vec: Any = None
     failed: bool = False
     error: str = ""
+    error_code: Optional[str] = None
 
 
 def _notify(callback, event_type: str, data: dict):
@@ -446,14 +447,16 @@ class WorkerDaemon:
         # Resolve file access
         local_path = self._resolve_file(job)
         if not local_path:
-            self.uploader.fail_job(job_id, f"Cannot access file: {file_path}")
+            self.uploader.fail_job(
+                job_id, f"Cannot access file: {file_path}", "FILE_NOT_FOUND")
             self._total_failed += 1
             self._clear_current()
             return False
 
         local_file = Path(local_path)
         if not local_file.exists():
-            self.uploader.fail_job(job_id, f"File not found: {local_path}")
+            self.uploader.fail_job(
+                job_id, f"File not found: {local_path}", "FILE_NOT_FOUND")
             self._total_failed += 1
             self._clear_current()
             return False
@@ -469,7 +472,8 @@ class WorkerDaemon:
             self.uploader.report_progress(job_id, "parse")
             parse_result = self._run_parse(local_file)
             if parse_result is None:
-                self.uploader.fail_job(job_id, f"Parse failed for {local_file.name}")
+                self.uploader.fail_job(
+                    job_id, f"Parse failed for {local_file.name}", "PARSE_FAILED")
                 self._total_failed += 1
                 return False
             _cb("parse_done")
@@ -964,11 +968,19 @@ class WorkerDaemon:
                 ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
-                    ctx.error = (
-                        f"File unavailable: {file_path} (file_id={job.get('file_id')})"
-                        + (" — remote file requires thumbnail on server" if is_remote else "")
-                    )
-                    logger.error(f"[RESOLVE] {ctx.error}")
+                    if is_remote:
+                        ctx.error_code = "THUMB_MISSING"
+                        ctx.error = (
+                            f"No thumbnail for remote file: {file_path} "
+                            f"(file_id={job.get('file_id')})"
+                        )
+                    else:
+                        ctx.error_code = "FILE_NOT_FOUND"
+                        ctx.error = (
+                            f"File unavailable: {file_path} "
+                            f"(file_id={job.get('file_id')})"
+                        )
+                    logger.error(f"[RESOLVE] [{ctx.error_code}] {ctx.error}")
                     _notify(progress_callback, "file_error", {
                         "file_name": Path(file_path).name,
                         "error": ctx.error,
@@ -1129,7 +1141,7 @@ class WorkerDaemon:
             file_id = ctx.job["file_id"]
 
             if ctx.failed:
-                self.uploader.fail_job(job_id, ctx.error)
+                self.uploader.fail_job(job_id, ctx.error, ctx.error_code)
                 self._total_failed += 1
                 results.append((job_id, False))
                 continue
@@ -1211,13 +1223,14 @@ class WorkerDaemon:
             if ctx.failed or (interrupted and not ctx.metadata):
                 # No useful work done — fail the job so it returns to queue
                 self.uploader.fail_job(
-                    job_id, ctx.error or "Interrupted by stop request"
-                )
+                    job_id, ctx.error or "Interrupted by stop request",
+                    ctx.error_code)
                 self._total_failed += 1
                 results.append((job_id, False))
             elif interrupted:
                 # Partial work done — fail to return to queue for re-processing
-                self.uploader.fail_job(job_id, "Interrupted by stop request")
+                self.uploader.fail_job(
+                    job_id, "Interrupted by stop request", "INTERRUPTED")
                 self._total_failed += 1
                 results.append((job_id, False))
             else:
@@ -1282,8 +1295,9 @@ class WorkerDaemon:
 
             if not ctx.thumb_path or not Path(ctx.thumb_path).exists():
                 ctx.failed = True
+                ctx.error_code = "THUMB_MISSING"
                 ctx.error = f"MC-only: thumbnail unavailable: {job['file_path']}"
-                logger.error(f"[RESOLVE] {ctx.error}")
+                logger.error(f"[RESOLVE] [THUMB_MISSING] {ctx.error}")
                 _notify(progress_callback, "file_error", {
                     "file_name": Path(job["file_path"]).name,
                     "error": ctx.error,
@@ -1304,7 +1318,7 @@ class WorkerDaemon:
             job_id = ctx.job["job_id"]
 
             if ctx.failed:
-                self.uploader.fail_job(job_id, ctx.error)
+                self.uploader.fail_job(job_id, ctx.error, ctx.error_code)
                 self._total_failed += 1
                 results.append((job_id, False))
                 continue
@@ -1539,7 +1553,7 @@ class WorkerDaemon:
             job_id = ctx.job["job_id"]
 
             if ctx.failed:
-                self.uploader.fail_job(job_id, ctx.error)
+                self.uploader.fail_job(job_id, ctx.error, ctx.error_code)
                 self._total_failed += 1
                 results.append((job_id, False))
                 continue

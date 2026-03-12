@@ -363,23 +363,28 @@ def cmd_browse(config: dict):
             if db is not None:
                 try:
                     fid = db.upsert_metadata(canonical, meta)
-                    # Create pre-parsed job with high priority (front of queue)
-                    parsed_md = json.dumps({
-                        "metadata": meta,
-                        "thumb_path": str(thumb_path) if thumb_path else None,
-                        "mc_raw": None,
-                    }, ensure_ascii=False, default=str)
-                    phase_completed = json.dumps({
-                        "parse": True, "vision": False, "embed": False,
-                    })
-                    db.conn.execute(
-                        """INSERT INTO job_queue
-                           (file_id, file_path, status, priority,
-                            parse_status, parsed_metadata, phase_completed)
-                           VALUES (?, ?, 'pending', 100, 'parsed', ?, ?)
-                           ON CONFLICT DO NOTHING""",
-                        (fid, canonical, parsed_md, phase_completed)
-                    )
+                    # Only create processing job if thumbnail exists
+                    # (V/VV/MV all require the thumbnail image)
+                    if thumb_path:
+                        parsed_md = json.dumps({
+                            "metadata": meta,
+                            "thumb_path": str(thumb_path),
+                            "mc_raw": None,
+                        }, ensure_ascii=False, default=str)
+                        phase_completed = json.dumps({
+                            "parse": True, "vision": False, "embed": False,
+                        })
+                        db.conn.execute(
+                            """INSERT INTO job_queue
+                               (file_id, file_path, status, priority,
+                                parse_status, parsed_metadata, phase_completed)
+                               VALUES (?, ?, 'pending', 100, 'parsed', ?, ?)
+                               ON CONFLICT DO NOTHING""",
+                            (fid, canonical, parsed_md, phase_completed)
+                        )
+                    else:
+                        print(f"[WebDAV Browse] skipping job for {f['name']}: no thumbnail",
+                              file=sys.stderr, flush=True)
                     db.conn.commit()
                 except Exception as e:
                     print(f"[WebDAV Browse] DB upsert/job error: {e}", file=sys.stderr, flush=True)

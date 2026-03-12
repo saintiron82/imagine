@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
 
     -- Error handling
     error_message TEXT,
+    error_code TEXT DEFAULT NULL,      -- structured error code (THUMB_MISSING, VLM_FAILED, etc.)
     retry_count INTEGER DEFAULT 0,
     max_retries INTEGER DEFAULT 3,
 

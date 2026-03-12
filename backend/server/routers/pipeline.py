@@ -43,6 +43,7 @@ class JobCompleteRequest(BaseModel):
 
 class FailReport(BaseModel):
     error_message: str
+    error_code: Optional[str] = None  # structured error code (THUMB_MISSING, VLM_FAILED, etc.)
 
 
 class MCCompleteRequest(BaseModel):
@@ -198,7 +199,7 @@ def fail_job(
 ):
     """Report job failure."""
     queue = _get_queue(db)
-    success = queue.fail_job(job_id, user["id"], req.error_message)
+    success = queue.fail_job(job_id, user["id"], req.error_message, req.error_code)
     if not success:
         raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
     return {"success": True}
