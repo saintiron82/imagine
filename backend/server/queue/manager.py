@@ -173,6 +173,17 @@ class JobQueueManager:
         Per-worker processing_mode_override takes precedence over global config.
         Resource-aware: throttle_level from worker session limits claim count.
         """
+        import sqlite3 as _sqlite3
+        try:
+            return self._claim_jobs_inner(user_id, count, worker_session_id)
+        except _sqlite3.OperationalError as e:
+            if "locked" in str(e):
+                logger.warning(f"claim_jobs: DB busy, returning empty (will retry next poll)")
+                return []
+            raise
+
+    def _claim_jobs_inner(self, user_id: int, count: int, worker_session_id: int = None) -> List[Dict[str, Any]]:
+        """Internal claim implementation."""
         cursor = self.db.conn.cursor()
         now = _utcnow_sql()
 
