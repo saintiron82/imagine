@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, get_current_user, require_admin
+from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
 from backend.server.queue.manager import JobQueueManager, _utcnow_sql
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class ScanFolderRequest(BaseModel):
 def claim_jobs(
     req: ClaimRequest,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Claim pending jobs for processing."""
     queue = _get_queue(db)
@@ -81,7 +81,7 @@ def claim_jobs(
 @router.get("/api/v1/jobs")
 def list_my_jobs(
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List jobs assigned to current user."""
     queue = _get_queue(db)
@@ -92,7 +92,7 @@ def list_my_jobs(
 @router.get("/api/v1/jobs/stats")
 def get_job_stats(
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Get job queue statistics."""
     queue = _get_queue(db)
@@ -105,7 +105,7 @@ def update_job_progress(
     job_id: int,
     req: ProgressUpdate,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Report phase completion for a job."""
     queue = _get_queue(db)
@@ -120,7 +120,7 @@ def complete_job(
     job_id: int,
     req: JobCompleteRequest,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Complete a job with analysis results (metadata + vectors)."""
     import sqlite3 as _sqlite3
@@ -209,7 +209,7 @@ def fail_job(
     job_id: int,
     req: FailReport,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Report job failure."""
     queue = _get_queue(db)
@@ -224,7 +224,7 @@ def complete_mc(
     job_id: int,
     req: MCCompleteRequest,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """MC-only worker: store vision fields, mark MC done (not fully complete).
 
@@ -307,7 +307,7 @@ def complete_embed(
     job_id: int,
     req: EmbedCompleteRequest,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Embed-only worker: store VV+MV vectors and mark job complete.
 
@@ -411,7 +411,7 @@ def browse_folders(
 def scan_folder(
     req: ScanFolderRequest,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """DFS scan a folder and create processing jobs for all supported files (admin only).
 
@@ -490,7 +490,7 @@ def scan_folder(
 def register_paths(
     req: RegisterPathsRequest,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Register file paths (shared filesystem mode) and create processing jobs."""
     cursor = db.conn.cursor()
@@ -533,7 +533,7 @@ def register_paths(
 @router.post("/api/v1/admin/jobs/cleanup")
 def cleanup_stale_jobs(
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Reassign stale jobs back to pending (admin only)."""
     from backend.server.config import get_queue_config
@@ -549,7 +549,7 @@ def list_all_jobs(
     limit: int = 20,
     offset: int = 0,
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List all jobs with optional status filter and pagination."""
     queue = _get_queue(db)
@@ -561,7 +561,7 @@ def list_all_jobs(
 def cancel_job(
     job_id: int,
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Cancel a pending/assigned/failed job."""
     queue = _get_queue(db)
@@ -574,7 +574,7 @@ def cancel_job(
 @router.post("/api/v1/admin/jobs/retry-failed")
 def retry_failed_jobs(
     _admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Retry all failed jobs by resetting them to pending (admin only)."""
     queue = _get_queue(db)
@@ -585,7 +585,7 @@ def retry_failed_jobs(
 @router.post("/api/v1/admin/jobs/force-retry-failed")
 def force_retry_failed_jobs(
     _admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Force retry ALL failed/stuck jobs from scratch (admin only).
 
@@ -601,7 +601,7 @@ def force_retry_failed_jobs(
 @router.post("/api/v1/admin/jobs/audit-integrity")
 def audit_integrity(
     _admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Scan completed jobs for data integrity issues and repair (admin only).
 
@@ -616,7 +616,7 @@ def audit_integrity(
 @router.delete("/api/v1/admin/jobs/clear-completed")
 def clear_completed_jobs(
     _admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Delete all completed jobs (admin only)."""
     queue = _get_queue(db)

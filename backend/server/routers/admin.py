@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, require_admin, get_current_user
+from backend.server.deps import get_db, get_db_safe, require_admin, get_current_user
 from backend.server.auth.schemas import (
     InviteCodeCreate, InviteCodeResponse,
     UserResponse, UserUpdateRequest,
@@ -31,7 +31,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 def create_invite_code(
     req: InviteCodeCreate,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Create a new invite code (admin only)."""
     code = secrets.token_urlsafe(16)[:16].upper()
@@ -60,7 +60,7 @@ def create_invite_code(
 @router.get("/invite-codes", response_model=List[InviteCodeResponse])
 def list_invite_codes(
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List all invite codes (admin only)."""
     cursor = db.conn.cursor()
@@ -82,7 +82,7 @@ def list_invite_codes(
 @router.get("/users", response_model=List[UserResponse])
 def list_users(
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List all users (admin only)."""
     cursor = db.conn.cursor()
@@ -106,7 +106,7 @@ def update_user(
     user_id: int,
     req: UserUpdateRequest,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Update a user (admin only)."""
     cursor = db.conn.cursor()
@@ -156,7 +156,7 @@ def update_user(
 def delete_user(
     user_id: int,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Delete a user (admin only). Cannot delete yourself."""
     if user_id == admin["id"]:
@@ -177,7 +177,7 @@ def delete_user(
 @router.get("/members", response_model=List[MemberResponse])
 def list_members(
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List all group members (admin only)."""
     cursor = db.conn.cursor()
@@ -202,7 +202,7 @@ def update_member_role(
     member_id: int,
     req: MemberRoleUpdate,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Change a member's role (admin only)."""
     if member_id == admin["id"]:
@@ -238,7 +238,7 @@ def update_member_role(
 def remove_member(
     member_id: int,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Remove a member from the group (admin only). Cannot remove yourself."""
     if member_id == admin["id"]:
@@ -262,7 +262,7 @@ def remove_member(
 def deactivate_member(
     member_id: int,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Deactivate a member (admin only). They can't login but data is preserved."""
     if member_id == admin["id"]:
@@ -288,7 +288,7 @@ def deactivate_member(
 def activate_member(
     member_id: int,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Re-activate a deactivated member (admin only)."""
     cursor = db.conn.cursor()
@@ -361,7 +361,7 @@ def get_embedded_worker_status(
 def create_worker_token(
     req: WorkerTokenCreate,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Create a worker token for external workers (admin only)."""
     import hashlib
@@ -394,7 +394,7 @@ def create_worker_token(
 @router.get("/worker-tokens", response_model=List[WorkerTokenResponse])
 def list_worker_tokens(
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List all worker tokens (admin only). Token secrets are NOT shown."""
     cursor = db.conn.cursor()
@@ -416,7 +416,7 @@ def list_worker_tokens(
 def revoke_worker_token(
     token_id: int,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Revoke a worker token (admin only)."""
     cursor = db.conn.cursor()

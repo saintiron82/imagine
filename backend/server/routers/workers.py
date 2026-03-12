@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, get_current_user, require_admin
+from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
 from backend.server.queue.manager import _utcnow_sql, JobQueueManager
 
 logger = logging.getLogger(__name__)
@@ -328,7 +328,7 @@ def worker_connect(
     req: ConnectRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Register a new worker session."""
     # Reject external workers when builtin_worker mode is active
@@ -416,7 +416,7 @@ def worker_heartbeat(
     req: HeartbeatRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Periodic heartbeat from worker. Returns pending commands."""
     now = _utcnow_sql()
@@ -547,7 +547,7 @@ def worker_disconnect(
     req: DisconnectRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Worker graceful disconnect. Reclaims assigned jobs back to pending."""
     # Reclaim jobs assigned to this worker (phase_completed preserved)
@@ -575,7 +575,7 @@ def worker_disconnect(
 @router.get("/workers/my")
 def list_my_workers(
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List current user's worker sessions."""
     cursor = db.conn.cursor()
@@ -605,7 +605,7 @@ def list_my_workers(
 def stop_my_worker(
     session_id: int,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Stop own worker (sets pending_command='stop')."""
     cursor = db.conn.cursor()
@@ -625,7 +625,7 @@ def stop_my_worker(
 @router.get("/admin/workers")
 def admin_list_workers(
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List all worker sessions (admin only), with per-worker throughput."""
     cursor = db.conn.cursor()
@@ -769,7 +769,7 @@ def admin_list_workers(
 def admin_stop_worker(
     session_id: int,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Send stop command to a worker (admin only)."""
     cursor = db.conn.cursor()
@@ -790,7 +790,7 @@ def admin_block_worker(
     session_id: int,
     request: Request,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Block a worker — it will be forced to disconnect (admin only).
 
@@ -825,7 +825,7 @@ def admin_update_worker_config(
     req: WorkerConfigUpdate,
     request: Request,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Update per-worker settings (batch_capacity only; processing mode is auto-detected).
 
@@ -851,7 +851,7 @@ def admin_update_global_config(
     req: GlobalModeUpdate,
     request: Request,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Change global processing mode (mc_only | parse_only | auto | builtin_worker).
 
@@ -938,7 +938,7 @@ def admin_update_auto_processing(
     req: AutoProcessingUpdate,
     request: Request,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Update server auto_processing settings and recalculate pools."""
     from backend.utils.config import get_config

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.search.sqlite_search import SqliteVectorSearch
-from backend.server.deps import get_db, get_current_user
+from backend.server.deps import get_db, get_db_safe, get_current_user
 from backend.api_search import format_result
 
 logger = logging.getLogger(__name__)

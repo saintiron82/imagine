@@ -3,7 +3,7 @@ FastAPI dependency injection — DB session, auth, etc.
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Generator, Optional, Dict, Any
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -33,11 +33,30 @@ _LOCALHOST_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
 
 
 def get_db() -> SQLiteDB:
-    """Get shared SQLiteDB instance (singleton)."""
+    """Get shared SQLiteDB instance (singleton, no lifecycle management)."""
     global _db_instance
     if _db_instance is None:
         _db_instance = SQLiteDB(get_db_path())
     return _db_instance
+
+
+def get_db_safe() -> Generator[SQLiteDB, None, None]:
+    """DB dependency with auto-rollback on request completion.
+
+    Generator dependency — FastAPI runs the finally block in the SAME
+    thread as the endpoint, so threading.local() conn is correct.
+
+    Normal flow: endpoint calls commit() → rollback is no-op.
+    Error flow: rollback clears uncommitted transaction → no lock leak.
+    """
+    db = get_db()
+    try:
+        yield db
+    finally:
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
 
 
 def close_db():
@@ -53,7 +72,7 @@ def close_db():
 def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ) -> Dict[str, Any]:
     """Extract and validate current user from JWT token.
 

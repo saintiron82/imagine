@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, get_current_user
+from backend.server.deps import get_db, get_db_safe, get_current_user
 from backend.server.rate_limit import (
     check_login_rate, check_register_rate,
     check_refresh_rate, check_worker_token_rate,
@@ -44,7 +44,7 @@ def _verify_password(password: str, hashed: str) -> bool:
 
 @router.post("/register", response_model=TokenResponse,
               dependencies=[Depends(check_register_rate)])
-def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
+def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Register a new user with server password verification."""
     cursor = db.conn.cursor()
 
@@ -100,7 +100,7 @@ def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse,
               dependencies=[Depends(check_login_rate)])
-def login(req: LoginRequest, db: SQLiteDB = Depends(get_db)):
+def login(req: LoginRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Login with server password + username/email + password."""
     import bcrypt
     cursor = db.conn.cursor()
@@ -161,7 +161,7 @@ def login(req: LoginRequest, db: SQLiteDB = Depends(get_db)):
 
 @router.post("/refresh", response_model=TokenResponse,
               dependencies=[Depends(check_refresh_rate)])
-def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db)):
+def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Refresh access token using a valid refresh token."""
     cursor = db.conn.cursor()
     token_hash = hash_refresh_token(req.refresh_token)
@@ -206,7 +206,7 @@ def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db)):
 
 @router.post("/worker-token", response_model=TokenResponse,
               dependencies=[Depends(check_worker_token_rate)])
-def exchange_worker_token(req: WorkerTokenExchange, db: SQLiteDB = Depends(get_db)):
+def exchange_worker_token(req: WorkerTokenExchange, db: SQLiteDB = Depends(get_db_safe)):
     """Exchange a worker token secret for JWT access/refresh tokens."""
     import hashlib
 
@@ -266,7 +266,7 @@ def exchange_worker_token(req: WorkerTokenExchange, db: SQLiteDB = Depends(get_d
 
 
 @router.get("/me", response_model=UserResponse)
-def get_me(current_user: dict = Depends(get_current_user), db: SQLiteDB = Depends(get_db)):
+def get_me(current_user: dict = Depends(get_current_user), db: SQLiteDB = Depends(get_db_safe)):
     """Get current user info."""
     cursor = db.conn.cursor()
 
@@ -311,7 +311,7 @@ def get_me(current_user: dict = Depends(get_current_user), db: SQLiteDB = Depend
 
 @router.post("/connect", response_model=TokenResponse,
               dependencies=[Depends(check_login_rate)])
-def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(get_db)):
+def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Connect to server using Firebase ID token + server password.
 
     2-layer auth:
@@ -413,7 +413,7 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
 
 @router.post("/firebase-login", response_model=TokenResponse,
               dependencies=[Depends(check_login_rate)])
-def firebase_login(req: FirebaseLoginRequest, db: SQLiteDB = Depends(get_db)):
+def firebase_login(req: FirebaseLoginRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Login to group server using Firebase ID Token.
 
     Flow:
@@ -479,7 +479,7 @@ def firebase_login(req: FirebaseLoginRequest, db: SQLiteDB = Depends(get_db)):
 
 @router.post("/join", response_model=TokenResponse,
               dependencies=[Depends(check_register_rate)])
-def join_group(req: JoinGroupRequest, db: SQLiteDB = Depends(get_db)):
+def join_group(req: JoinGroupRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Join a group using invite code + Firebase ID Token.
 
     Flow:

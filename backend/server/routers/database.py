@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.server.deps import require_admin, get_db
+from backend.server.deps import require_admin, get_db, get_db_safe
 
 router = APIRouter(prefix="/admin/database", tags=["database"])
 

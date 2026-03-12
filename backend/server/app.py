@@ -18,7 +18,7 @@ from pathlib import Path
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -54,30 +54,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# ── Middleware: auto-rollback uncommitted transactions ────────
-# Python sqlite3 default isolation_level="" opens implicit BEGIN on DML.
-# If an exception occurs between DML and commit(), the transaction stays
-# open, permanently holding a write lock on this thread's connection.
-# This middleware ensures every request ends with a clean connection state.
-
-@app.middleware("http")
-async def auto_rollback_middleware(request: Request, call_next):
-    """Rollback any uncommitted transaction after each request."""
-    response = await call_next(request)
-
-    # Best-effort rollback — safe even if no transaction is open
-    try:
-        from backend.server.deps import _db_instance
-        if _db_instance is not None:
-            conn = getattr(_db_instance._local, 'conn', None)
-            if conn is not None:
-                conn.rollback()
-    except Exception:
-        pass
-
-    return response
 
 
 # ── Lifecycle ────────────────────────────────────────────────

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import PlainTextResponse
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, get_current_user
+from backend.server.deps import get_db, get_db_safe, get_current_user
 from backend.server.auth.schemas import WorkerTokenResponse
 
 router = APIRouter(prefix="/worker", tags=["worker"])
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/worker", tags=["worker"])
 @router.post("/register", response_model=WorkerTokenResponse)
 def register_worker(
     current_user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Create a personal worker token (any authenticated user)."""
     token_secret = "WK_" + secrets.token_urlsafe(32)

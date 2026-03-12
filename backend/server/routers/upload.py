@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, get_current_user
+from backend.server.deps import get_db, get_db_safe, get_current_user
 from backend.server.config import get_storage_config
 from backend.server.queue.manager import JobQueueManager
 
@@ -47,7 +47,7 @@ async def upload_images(
     files: List[UploadFile] = File(...),
     priority: int = Form(0),
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Upload image files to server. Creates processing jobs automatically."""
     upload_dir = _get_upload_dir()
@@ -141,7 +141,7 @@ async def upload_images(
 def download_file(
     file_id: int,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Download original image for processing (worker must have an assigned job)."""
     cursor = db.conn.cursor()
@@ -198,7 +198,7 @@ def download_file(
 def download_thumbnail(
     file_id: int,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Download pre-generated thumbnail for a pre-parsed file.
 
@@ -243,7 +243,7 @@ async def upload_thumbnail(
     file_id: int,
     file: UploadFile = File(...),
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Upload thumbnail for a file (server-side storage).
 

@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, require_admin
+from backend.server.deps import get_db, get_db_safe, require_admin
 from backend.server.licensing.license_schemas import (
     LicenseInfoResponse, LicenseActivateRequest,
 )
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/license", tags=["license"])
 
 
 @router.get("/info", response_model=LicenseInfoResponse)
-def license_info(db: SQLiteDB = Depends(get_db)):
+def license_info(db: SQLiteDB = Depends(get_db_safe)):
     """Get current license status. No admin required — all users can see."""
     info = get_license_info()
 
@@ -35,7 +35,7 @@ def license_info(db: SQLiteDB = Depends(get_db)):
 def activate_license(
     req: LicenseActivateRequest,
     admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Activate an offline license key (admin only)."""
     from backend.server.licensing.license_keys import verify_offline_token

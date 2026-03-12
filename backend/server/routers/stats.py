@@ -6,7 +6,7 @@ Wraps existing SQLiteDB.get_stats() etc.
 from fastapi import APIRouter, Depends
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, get_current_user, require_admin
+from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 @router.get("/db")
 def get_db_stats(
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Get database statistics (total files, MC/VV/MV counts, format distribution)."""
     stats = db.get_stats()
@@ -24,7 +24,7 @@ def get_db_stats(
 @router.get("/incomplete")
 def get_incomplete_stats(
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Get incomplete file stats grouped by storage_root."""
     stats = db.get_incomplete_stats()
@@ -35,7 +35,7 @@ def get_incomplete_stats(
 def get_folder_phase_stats(
     root_path: str,
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Get per-folder phase completion stats under root_path prefix."""
     stats = db.get_folder_phase_stats(root_path)
@@ -45,7 +45,7 @@ def get_folder_phase_stats(
 @router.get("/thumbnails")
 def get_thumbnail_stats(
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Get thumbnail availability stats grouped by storage_root."""
     cursor = db.conn.cursor()

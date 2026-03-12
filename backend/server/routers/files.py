@@ -13,7 +13,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, get_current_user, require_admin
+from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
 from backend.server.auth.jwt import decode_access_token
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ _security = HTTPBearer(auto_error=False)
 def _get_user_or_query_token(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ) -> dict:
     """Auth via header OR ?token= query param (for img src tags)."""
     # 1) Try Authorization header
@@ -101,7 +101,7 @@ def list_files(
     storage_root: Optional[str] = None,
     include_incomplete: bool = Query(False, description="Include files still being processed"),
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """List files with pagination and optional filters."""
     cursor = db.conn.cursor()
@@ -149,7 +149,7 @@ def list_files(
 def get_file(
     file_id: int,
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Get file details by ID."""
     cursor = db.conn.cursor()
@@ -177,7 +177,7 @@ def update_user_meta(
     file_id: int,
     req: UserMetaUpdate,
     _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Update user metadata for a file."""
     cursor = db.conn.cursor()
@@ -204,7 +204,7 @@ def update_user_meta(
 def delete_file(
     file_id: int,
     user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Delete a file (admin or uploader only)."""
     cursor = db.conn.cursor()
@@ -229,7 +229,7 @@ def get_thumbnail(
     file_id: int,
     token: Optional[str] = Query(None, description="JWT token for img tag auth"),
     _user: dict = Depends(_get_user_or_query_token),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Serve thumbnail image for a file.
 
@@ -284,7 +284,7 @@ def download_original(
     file_id: int,
     token: Optional[str] = Query(None, description="JWT token for download auth"),
     _user: dict = Depends(_get_user_or_query_token),
-    db: SQLiteDB = Depends(get_db),
+    db: SQLiteDB = Depends(get_db_safe),
 ):
     """Download original image file.
 

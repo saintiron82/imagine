@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db
+from backend.server.deps import get_db, get_db_safe
 from backend.server.auth.schemas import (
     ServerInitRequest, ResetGroupRequest, TokenResponse,
     FirebaseServerInitRequest,
@@ -32,7 +32,7 @@ def _hash_password(password: str) -> str:
 
 
 @router.post("/init", response_model=TokenResponse)
-def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
+def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Initialize server with group name, server password, and admin account.
     Can only be called once (before any admin exists)."""
     try:
@@ -123,7 +123,7 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db)):
 
 
 @router.post("/firebase-init", response_model=TokenResponse)
-def firebase_init_server(req: FirebaseServerInitRequest, db: SQLiteDB = Depends(get_db)):
+def firebase_init_server(req: FirebaseServerInitRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Initialize server with Firebase Auth (no server password needed).
 
     The first user (from Firebase ID Token) becomes the admin.
@@ -222,7 +222,7 @@ def firebase_init_server(req: FirebaseServerInitRequest, db: SQLiteDB = Depends(
 
 
 @router.post("/reset-group")
-def reset_group(req: ResetGroupRequest, db: SQLiteDB = Depends(get_db)):
+def reset_group(req: ResetGroupRequest, db: SQLiteDB = Depends(get_db_safe)):
     """Reset group and auth data. File data is preserved.
     Requires server password to prevent unauthorized resets."""
     try:
@@ -268,7 +268,7 @@ def reset_group(req: ResetGroupRequest, db: SQLiteDB = Depends(get_db)):
 
 
 @router.get("/info")
-def server_info(db: SQLiteDB = Depends(get_db)):
+def server_info(db: SQLiteDB = Depends(get_db_safe)):
     """Public server info — no authentication required."""
     cursor = db.conn.cursor()
 
