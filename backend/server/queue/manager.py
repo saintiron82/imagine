@@ -211,10 +211,13 @@ class JobQueueManager:
                         resources = json.loads(session_row[0])
                         throttle = resources.get("throttle_level", "normal")
                         if throttle == "critical":
-                            logger.info(
-                                f"Claim denied for session {worker_session_id}: "
-                                f"throttle_level=critical (mode={processing_mode})"
-                            )
+                            throttle_key = ("throttle", worker_session_id)
+                            if throttle_key != _last_claim_diag.get("throttle_key"):
+                                _last_claim_diag["throttle_key"] = throttle_key
+                                logger.info(
+                                    f"Claim denied for session {worker_session_id}: "
+                                    f"throttle_level=critical (mode={processing_mode})"
+                                )
                             return []
                         elif throttle == "danger":
                             count = min(count, 1)
