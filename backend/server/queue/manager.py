@@ -781,17 +781,28 @@ class JobQueueManager:
         else:
             eta_seconds = None
 
-        # Total files in DB (for phase progress denominator)
+        # ── File-centric counts ──
+        # total = all files in DB
+        # completed = files with mc + vv + mv all present
+        # incomplete = files missing any data (still need work)
+        cursor.execute("""
+            SELECT COUNT(*) FROM files f
+            WHERE (f.mc_caption IS NOT NULL AND f.mc_caption != '')
+              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+              AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
+        """)
+        complete_files = cursor.fetchone()[0]
+
         cursor.execute("SELECT COUNT(*) FROM files")
         total_files = cursor.fetchone()[0]
 
         return {
-            "total": total,
+            "total": total_files,
             "total_files": total_files,
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": status_counts.get("completed", 0),
+            "completed": complete_files,
             "failed": status_counts.get("failed", 0),
             "throughput": throughput,
             "recent_1min": recent_1min,
