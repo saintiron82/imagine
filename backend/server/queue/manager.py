@@ -1169,12 +1169,21 @@ class JobQueueManager:
         else:
             logger.info(f"Audit: {total_files} files scanned, all complete")
 
+        # Count failed/stuck jobs for UI display
+        cursor.execute(
+            """SELECT COUNT(*) FROM job_queue
+               WHERE status IN ('failed', 'cancelled')
+                  OR (status = 'pending' AND retry_count >= 3)"""
+        )
+        failed_stuck_count = cursor.fetchone()[0]
+
         return {
             "total_files": total_files,
             "complete_files": complete_files,
             "incomplete_files": incomplete_files,
             "repaired_files": repaired_files,
             "skipped_non_retryable": skipped_non_retryable,
+            "failed_stuck_jobs": failed_stuck_count,
             "details": details,
         }
 

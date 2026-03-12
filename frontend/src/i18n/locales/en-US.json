@@ -504,6 +504,8 @@
   "audit.retry_result": "{count} failed jobs → queued for retry",
   "audit.force_retry_confirm": "Reset stuck jobs and retry from the beginning?",
   "audit.force_retry_result": "{count} jobs → reset and queued from scratch",
+  "audit.stuck_jobs_desc": "{count} jobs were interrupted and couldn't finish.",
+  "audit.reset_stuck_jobs": "Reset and retry",
   "audit.retry_none": "No failed jobs found",
   "audit.start_processing": "Start Processing",
   "audit.worker_started": "Worker started — processing queued files",

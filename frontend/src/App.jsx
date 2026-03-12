@@ -1143,7 +1143,7 @@ function App() {
     setShowDbMenu(false);
     try {
       const result = await auditIntegrity();
-      const hasIssues = result.incomplete_files > 0;
+      const hasIssues = result.incomplete_files > 0 || (result.failed_stuck_jobs || 0) > 0;
       if (hasIssues) {
         setAuditResult(result);
         appendLog({
@@ -1405,6 +1405,35 @@ function App() {
                 </>
               ) : (
                 <p className="text-green-400 font-medium">{t('audit.all_ok')}</p>
+              )}
+
+              {/* Stuck/failed jobs reset option */}
+              {isAdmin && (auditResult.failed_stuck_jobs || 0) > 0 && (
+                <div className="mt-2 p-3 bg-neutral-800/80 rounded-lg border border-neutral-700/50">
+                  <p className="text-xs text-neutral-400 mb-2">
+                    {t('audit.stuck_jobs_desc', { count: auditResult.failed_stuck_jobs })}
+                  </p>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const result = await forceRetryFailedJobs();
+                        const count = result?.retried || 0;
+                        if (count > 0) {
+                          showToast(t('audit.retry_result', { count }), 'warn');
+                          setQueueReloadSignal(prev => prev + 1);
+                        }
+                        setAuditResult(null);
+                      } catch (e) {
+                        showToast(`Error: ${e.message}`, 'error');
+                      }
+                    }}
+                    disabled={retryLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-orange-900/40 hover:bg-orange-800/50 text-orange-300 rounded-md transition-colors border border-orange-700/40"
+                  >
+                    <RotateCcw size={12} />
+                    {t('audit.reset_stuck_jobs')}
+                  </button>
+                </div>
               )}
             </div>
             <div className="flex justify-end gap-2">

@@ -504,6 +504,8 @@
   "audit.retry_result": "실패 {count}개 작업 → 재처리 대기로 전환",
   "audit.force_retry_confirm": "처리가 중단된 작업을 초기화하고 다시 시작할까요?",
   "audit.force_retry_result": "{count}개 작업 → 초기화 후 처음부터 재처리",
+  "audit.stuck_jobs_desc": "처리가 중단된 작업이 {count}개 있습니다.",
+  "audit.reset_stuck_jobs": "초기화하고 다시 처리",
   "audit.retry_none": "실패 작업 없음",
   "audit.start_processing": "처리 시작",
   "audit.worker_started": "워커 시작됨 — 대기 중인 파일을 처리합니다",
