@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.server.deps import require_admin, get_db, get_db_safe
+from backend.db.sqlite_client import SQLiteDB
+from backend.server.deps import require_admin, get_db_safe
 
 router = APIRouter(prefix="/admin/database", tags=["database"])
 
@@ -13,11 +14,13 @@ class ResetRequest(BaseModel):
 
 
 @router.post("/reset")
-def reset_database(req: ResetRequest, admin: dict = Depends(require_admin)):
+def reset_database(
+    req: ResetRequest,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
     """Reset all file data. Requires admin password re-verification."""
     from backend.server.auth.router import _verify_password
-
-    db = get_db()
     cursor = db.conn.cursor()
     cursor.execute("SELECT password_hash FROM users WHERE id = ?", (admin["id"],))
     row = cursor.fetchone()
