@@ -155,6 +155,15 @@ async function request(method, path, { body, params, raw } = {}) {
     }
   }
 
+  // Auto-retry on 503 (DB temporarily busy)
+  if (resp.status === 503) {
+    for (let i = 0; i < 2; i++) {
+      await new Promise(r => setTimeout(r, 500 * (i + 1)));
+      resp = await fetch(url, fetchOpts);
+      if (resp.status !== 503) break;
+    }
+  }
+
   if (raw) return resp;
 
   if (!resp.ok) {
