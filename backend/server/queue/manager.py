@@ -362,7 +362,7 @@ class JobQueueManager:
                         pm = json.loads(parsed_metadata)
                         job_data["pre_parsed"] = True
                         job_data["metadata"] = pm.get("metadata", {})
-                        job_data["mc_raw"] = pm.get("mc_raw", {})
+                        job_data["mc_raw"] = pm.get("mc_raw") or None
                         job_data["thumb_path"] = pm.get("thumb_path")
                     except (json.JSONDecodeError, TypeError):
                         job_data["pre_parsed"] = False

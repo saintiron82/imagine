@@ -72,7 +72,7 @@ class PhaseRunner:
         Results are saved incrementally via StorageBackend.
         VLM is unloaded after completion.
         """
-        needed = [it for it in items if not it.skip_vision and it.mc_raw is None]
+        needed = [it for it in items if not it.skip_vision and not it.mc_raw]
         if not needed:
             logger.info("[PHASE:vision] all items skipped")
             return items

@@ -232,6 +232,21 @@ class ParseAheadPool(BaseAheadPool):
         for ctx in contexts:
             job_id, file_id, file_path, thumb_path, mc_raw = ctx
             phases_done = job_phases.get(job_id, {})
+
+            # Fallback: if thumb_path missing, look up files.thumbnail_url
+            # (covers WebDAV files where browse generated thumb but
+            #  parsed_metadata.thumb_path wasn't set)
+            if not thumb_path or not Path(thumb_path).exists():
+                try:
+                    row = cursor.execute(
+                        "SELECT thumbnail_url FROM files WHERE id = ?",
+                        (file_id,)
+                    ).fetchone()
+                    if row and row[0] and Path(row[0]).exists():
+                        thumb_path = row[0]
+                except Exception:
+                    pass
+
             phase_items.append(PhaseItem(
                 job_id=job_id,
                 file_id=file_id,
