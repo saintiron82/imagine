@@ -314,6 +314,7 @@ class JobQueueManager:
 
         if not rows:
             # Diagnostic: log queue state when no jobs available for worker
+            # Only log once when transitioning to idle (avoid log spam)
             if worker_session_id is not None:
                 try:
                     diag = cursor.execute(
@@ -327,12 +328,15 @@ class JobQueueManager:
                             COUNT(*) FILTER (WHERE status = 'completed') as completed,
                             COUNT(*) FROM job_queue"""
                     ).fetchone()
-                    logger.info(
-                        f"[CLAIM-DIAG] session={worker_session_id} mode={processing_mode} | "
-                        f"pending={diag[0]} (unparsed={diag[1]} parsing={diag[2]} "
-                        f"parsed={diag[3]} failed={diag[4]}) assigned={diag[5]} "
-                        f"completed={diag[6]} total={diag[7]}"
-                    )
+                    diag_key = (worker_session_id, diag[0], diag[6], diag[7])
+                    if diag_key != getattr(self, '_last_claim_diag', None):
+                        self._last_claim_diag = diag_key
+                        logger.info(
+                            f"[CLAIM-DIAG] session={worker_session_id} mode={processing_mode} | "
+                            f"pending={diag[0]} (unparsed={diag[1]} parsing={diag[2]} "
+                            f"parsed={diag[3]} failed={diag[4]}) assigned={diag[5]} "
+                            f"completed={diag[6]} total={diag[7]}"
+                        )
                 except Exception:
                     pass
             return []
@@ -926,7 +930,7 @@ class JobQueueManager:
                 "mc_raw": None,
             }, ensure_ascii=False)
 
-            # Check what jobs exist for this file
+            # Check ALL jobs for this file (detect duplicates)
             cursor.execute("""
                 SELECT id, status, phase_completed, parsed_metadata,
                        error_code, retry_count, error_message
@@ -939,18 +943,60 @@ class JobQueueManager:
                         WHEN 'completed' THEN 4
                         WHEN 'failed' THEN 5
                     END
-                LIMIT 1
             """, (file_id,))
-            job_row = cursor.fetchone()
+            all_jobs = cursor.fetchall()
+
+            # Deduplicate: keep the most relevant job, delete extras
+            if len(all_jobs) > 1:
+                # Check if any job has non-retryable error or exhausted retries
+                has_permanent_failure = False
+                for j in all_jobs:
+                    j_error_code = j[4]
+                    j_retry_count = j[5] or 0
+                    j_err_msg = j[6] or ""
+                    if not j_error_code:
+                        j_error_code = _infer_error_code(j_err_msg)
+                    if (j_error_code and j_error_code in NON_RETRYABLE_ERRORS) \
+                       or j_retry_count >= 3:
+                        has_permanent_failure = True
+                        break
+
+                if has_permanent_failure:
+                    # Keep the failed job, delete the rest
+                    keep_id = None
+                    for j in all_jobs:
+                        j_ec = j[4] or _infer_error_code(j[6] or "")
+                        if (j_ec and j_ec in NON_RETRYABLE_ERRORS) or (j[5] or 0) >= 3:
+                            keep_id = j[0]
+                            break
+                    if keep_id:
+                        delete_ids = [j[0] for j in all_jobs if j[0] != keep_id]
+                        for did in delete_ids:
+                            cursor.execute("DELETE FROM job_queue WHERE id = ?", (did,))
+                        # Update kept job's error_code if missing
+                        kept = next(j for j in all_jobs if j[0] == keep_id)
+                        if not kept[4]:
+                            inferred = _infer_error_code(kept[6] or "")
+                            if inferred:
+                                cursor.execute(
+                                    "UPDATE job_queue SET error_code = ? WHERE id = ?",
+                                    (inferred, keep_id))
+                        skipped_non_retryable += 1
+                        continue
+                else:
+                    # No permanent failure — keep first active job, delete rest
+                    keep_id = all_jobs[0][0]
+                    for j in all_jobs[1:]:
+                        cursor.execute("DELETE FROM job_queue WHERE id = ?", (j[0],))
+
+            job_row = all_jobs[0] if all_jobs else None
 
             # Skip files without thumbnails — can't process V/VV phases
             if not thumbnail_url:
                 if job_row is None:
-                    # No job and no thumbnail — skip entirely
                     skipped_non_retryable += 1
                     continue
                 elif job_row[1] != 'failed':
-                    # Has job but no thumbnail — mark as THUMB_MISSING
                     cursor.execute(
                         """UPDATE job_queue SET status = 'failed',
                            error_code = 'THUMB_MISSING',
