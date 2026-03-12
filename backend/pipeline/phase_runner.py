@@ -440,11 +440,16 @@ class PhaseRunner:
                 tags = ", ".join(str(t) for t in tags)
             return f"{caption} {tags}".strip() or None
 
-    def _get_active_domain(self) -> Optional[str]:
-        """Get the active classification domain from config."""
+    def _get_active_domain(self):
+        """Get the active classification domain as a DomainProfile object."""
         try:
             from backend.utils.config import get_config
             cfg = get_config()
-            return cfg.get("classification.active_domain")
-        except Exception:
+            domain_id = cfg.get("classification.active_domain")
+            if not domain_id:
+                return None
+            from backend.vision.domain_loader import load_domain
+            return load_domain(domain_id)
+        except Exception as e:
+            logger.warning(f"Failed to load active domain: {e}")
             return None

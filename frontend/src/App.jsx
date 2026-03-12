@@ -261,6 +261,7 @@ function App() {
 
       // Server log listener — only forward important messages to StatusBar
       if (window.electron.server) {
+        window.electron.server.offLog();  // prevent duplicate listeners on re-mount
         window.electron.server.onLog((data) => {
           const type = data.type || 'info';
           // Always show errors/warnings
@@ -278,6 +279,7 @@ function App() {
 
       if (window.electron.pipeline) {
         // Stable log listener - feeds StatusBar (never removed mid-session)
+        window.electron.pipeline.offLog?.();  // prevent duplicate listeners on re-mount
         window.electron.pipeline.onLog((data) => {
           appendLog(data);
         });
