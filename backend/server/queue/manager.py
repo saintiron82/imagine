@@ -464,20 +464,47 @@ class JobQueueManager:
                 (now, json.dumps(phases), job_id, user_id)
             )
         else:
-            # Partial completion → release back to pending for re-claim
+            # Partial completion → check retry count before releasing
             missing = [k for k, v in phases.items() if not v]
-            logger.warning(
-                f"Job {job_id} partially complete (missing: {missing}). "
-                f"Releasing to pending for re-processing."
-            )
             cursor.execute(
-                """UPDATE job_queue
-                   SET status = 'pending', phase_completed = ?,
-                       assigned_to = NULL, assigned_at = NULL,
-                       worker_session_id = NULL
-                   WHERE id = ? AND assigned_to = ?""",
-                (json.dumps(phases), job_id, user_id)
+                "SELECT retry_count, max_retries FROM job_queue WHERE id = ?",
+                (job_id,)
             )
+            retry_row = cursor.fetchone()
+            retry_count = retry_row[0] if retry_row else 0
+            max_retries = retry_row[1] if retry_row else 3
+
+            if retry_count >= max_retries:
+                # Too many retries — mark as permanently failed
+                logger.warning(
+                    f"Job {job_id} permanently failed after {retry_count} retries "
+                    f"(missing: {missing})."
+                )
+                cursor.execute(
+                    """UPDATE job_queue
+                       SET status = 'failed', phase_completed = ?,
+                           error_message = ?,
+                           assigned_to = NULL, assigned_at = NULL,
+                           worker_session_id = NULL
+                       WHERE id = ? AND assigned_to = ?""",
+                    (json.dumps(phases),
+                     f"Partial after {retry_count} retries, missing: {missing}",
+                     job_id, user_id)
+                )
+            else:
+                logger.warning(
+                    f"Job {job_id} partially complete (missing: {missing}). "
+                    f"Retry {retry_count + 1}/{max_retries}."
+                )
+                cursor.execute(
+                    """UPDATE job_queue
+                       SET status = 'pending', phase_completed = ?,
+                           retry_count = retry_count + 1,
+                           assigned_to = NULL, assigned_at = NULL,
+                           worker_session_id = NULL
+                       WHERE id = ? AND assigned_to = ?""",
+                    (json.dumps(phases), job_id, user_id)
+                )
 
         success = cursor.rowcount > 0
         self.db.conn.commit()

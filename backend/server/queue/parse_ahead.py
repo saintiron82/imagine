@@ -109,11 +109,32 @@ class ParseAheadPool(BaseAheadPool):
         batch_size = self._get_config_value("server.auto_processing.batch_size", 5)
 
         cursor = self.db.conn.cursor()
-        # Pick up ALL pending jobs — already-parsed ones will skip Phase P
+
+        # Reclaim stuck processing jobs from builtin worker (crash/mode-switch recovery)
+        cursor.execute(
+            """UPDATE job_queue SET status = 'pending',
+               assigned_to = NULL, assigned_at = NULL, worker_session_id = NULL
+               WHERE status = 'processing'
+                 AND worker_session_id = (
+                     SELECT id FROM worker_sessions
+                     WHERE worker_name = '__builtin__' LIMIT 1
+                 )"""
+        )
+        if cursor.rowcount > 0:
+            logger.info(
+                f"Auto: reclaimed {cursor.rowcount} stuck processing jobs "
+                f"from builtin worker"
+            )
+            self.db.conn.commit()
+
+        # Pick up pending jobs
+        # - Local files: always eligible
+        # - WebDAV files: only if already parsed (thumbnail exists for V/VV/MV)
         cursor.execute(
             """SELECT id, file_id, file_path, parse_status, parsed_metadata, phase_completed
                FROM job_queue
                WHERE status = 'pending'
+                 AND (file_path NOT LIKE 'webdav://%' OR parse_status = 'parsed')
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (batch_size,),
@@ -251,6 +272,7 @@ class ParseAheadPool(BaseAheadPool):
         now = _utcnow_sql()
         completed_count = 0
         partial_count = 0
+        failed_count = 0
         for ctx in contexts:
             job_id, file_id = ctx[0], ctx[1]
             verify = self.db.verify_data_integrity(
@@ -265,25 +287,51 @@ class ParseAheadPool(BaseAheadPool):
                 )
                 completed_count += 1
             else:
-                # Partial: set actual phases, release to pending for re-processing
+                # Partial: check retry_count before releasing
                 phase_json = json.dumps(verify["actual_phases"])
-                cursor.execute(
-                    """UPDATE job_queue SET status = 'pending', phase_completed = ?,
-                       assigned_to = NULL, assigned_at = NULL, worker_session_id = NULL
-                       WHERE id = ? AND status = 'processing'""",
-                    (phase_json, job_id),
-                )
-                partial_count += 1
-                logger.warning(
-                    f"Auto job {job_id} (file_id={file_id}) integrity mismatch: "
-                    f"missing={verify['missing']}. Released to pending."
-                )
+                retry_row = cursor.execute(
+                    "SELECT retry_count, max_retries FROM job_queue WHERE id = ?",
+                    (job_id,)
+                ).fetchone()
+                retry_count = retry_row[0] if retry_row else 0
+                max_retries = retry_row[1] if retry_row else 3
+
+                if retry_count >= max_retries:
+                    cursor.execute(
+                        """UPDATE job_queue SET status = 'failed', phase_completed = ?,
+                           error_message = ?
+                           WHERE id = ? AND status = 'processing'""",
+                        (phase_json,
+                         f"Auto: partial after {retry_count} retries, "
+                         f"missing={verify['missing']}",
+                         job_id),
+                    )
+                    failed_count += 1
+                    logger.warning(
+                        f"Auto job {job_id} permanently failed after "
+                        f"{retry_count} retries (missing={verify['missing']})"
+                    )
+                else:
+                    cursor.execute(
+                        """UPDATE job_queue SET status = 'pending', phase_completed = ?,
+                           retry_count = retry_count + 1,
+                           assigned_to = NULL, assigned_at = NULL,
+                           worker_session_id = NULL
+                           WHERE id = ? AND status = 'processing'""",
+                        (phase_json, job_id),
+                    )
+                    partial_count += 1
+                    logger.warning(
+                        f"Auto job {job_id} integrity mismatch "
+                        f"(missing={verify['missing']}). "
+                        f"Retry {retry_count + 1}/{max_retries}."
+                    )
         self.db.conn.commit()
 
-        if partial_count > 0:
+        if partial_count > 0 or failed_count > 0:
             logger.warning(
                 f"Auto processing: {completed_count} completed, "
-                f"{partial_count} partial (released to pending)"
+                f"{partial_count} partial, {failed_count} failed"
             )
         else:
             logger.info(f"Auto processing: {completed_count} files completed (P→V→VV→MV)")
@@ -465,11 +513,12 @@ class ParseAheadPool(BaseAheadPool):
             self._process_backfill_batch()
             return False
 
-        # Select jobs to pre-parse
+        # Select jobs to pre-parse (exclude remote files server can't access)
         cursor.execute(
             """SELECT id, file_id, file_path FROM job_queue
                WHERE status = 'pending'
                  AND (parse_status IS NULL OR parse_status = 'pending')
+                 AND file_path NOT LIKE 'webdav://%'
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (deficit,),
