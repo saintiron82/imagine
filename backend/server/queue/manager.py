@@ -367,6 +367,20 @@ class JobQueueManager:
                     except (json.JSONDecodeError, TypeError):
                         job_data["pre_parsed"] = False
 
+                # Fallback: look up files.thumbnail_url when
+                # parsed_metadata doesn't have thumb_path
+                # (e.g. old WebDAV files browsed before job creation fix)
+                if not job_data.get("thumb_path"):
+                    try:
+                        thumb_row = cursor.execute(
+                            "SELECT thumbnail_url FROM files WHERE id = ?",
+                            (file_id,)
+                        ).fetchone()
+                        if thumb_row and thumb_row[0]:
+                            job_data["thumb_path"] = thumb_row[0]
+                    except Exception:
+                        pass
+
                 # Attach vision data for workers that need MC from server.
                 # embed_only: always (VV+MV only, all jobs have vision done).
                 # full: only for jobs where phase_completed.vision = 1
