@@ -304,6 +304,15 @@ class ParseAheadPool(BaseAheadPool):
         failed_count = 0
         for ctx in contexts:
             job_id, file_id = ctx[0], ctx[1]
+
+            # Skip jobs already marked as failed (e.g. THUMB_MISSING)
+            status_row = cursor.execute(
+                "SELECT status FROM job_queue WHERE id = ?", (job_id,)
+            ).fetchone()
+            if status_row and status_row[0] == 'failed':
+                failed_count += 1
+                continue
+
             verify = self.db.verify_data_integrity(
                 file_id, expect_mc=True, expect_vv=True, expect_mv=True
             )

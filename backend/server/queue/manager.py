@@ -900,12 +900,12 @@ class JobQueueManager:
             parsed_metadata = json.dumps({
                 "metadata": {},
                 "thumb_path": thumbnail_url,
-                "mc_raw": {},
+                "mc_raw": None,
             }, ensure_ascii=False)
 
             # Check what jobs exist for this file
             cursor.execute("""
-                SELECT id, status, phase_completed, parsed_metadata
+                SELECT id, status, phase_completed, parsed_metadata, error_code
                 FROM job_queue WHERE file_id = ?
                 ORDER BY
                     CASE status
@@ -947,17 +947,25 @@ class JobQueueManager:
                 )
 
             elif job_row[1] == 'failed':
-                # Stuck in failed — reset to pending, fill parsed_metadata if missing
-                cursor.execute(
-                    """UPDATE job_queue
-                       SET status = 'pending', phase_completed = ?,
-                           parsed_metadata = COALESCE(parsed_metadata, ?),
-                           retry_count = 0, error_message = NULL,
-                           assigned_to = NULL, assigned_at = NULL,
-                           worker_session_id = NULL
-                       WHERE id = ?""",
-                    (actual_phases, parsed_metadata, job_row[0])
-                )
+                # Check if this was a non-retryable error — don't resurrect it
+                existing_error_code = job_row[4] if len(job_row) > 4 else None
+                if existing_error_code and existing_error_code in NON_RETRYABLE_ERRORS:
+                    # Non-retryable (THUMB_MISSING, FILE_NOT_FOUND, PARSE_FAILED)
+                    # — leave it failed, don't reset
+                    pass
+                else:
+                    # Retryable failure — reset to pending for re-processing
+                    cursor.execute(
+                        """UPDATE job_queue
+                           SET status = 'pending', phase_completed = ?,
+                               parsed_metadata = COALESCE(parsed_metadata, ?),
+                               retry_count = 0, error_message = NULL,
+                               error_code = NULL,
+                               assigned_to = NULL, assigned_at = NULL,
+                               worker_session_id = NULL
+                           WHERE id = ?""",
+                        (actual_phases, parsed_metadata, job_row[0])
+                    )
 
             elif job_row[1] in ('pending', 'assigned', 'processing'):
                 # Already in pipeline — fix phase_completed, fill parsed_metadata if missing
