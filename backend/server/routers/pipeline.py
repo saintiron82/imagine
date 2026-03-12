@@ -635,6 +635,17 @@ def dismiss_permanently_failed(
     return {"success": True, **result}
 
 
+@router.post("/api/v1/admin/jobs/cleanup")
+def cleanup_queue(
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Comprehensive job queue cleanup — remove completed, duplicate, and dangling jobs."""
+    queue = _get_queue(db)
+    result = queue.cleanup_queue()
+    return {"success": True, **result}
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 def _decode_vector(encoded: Optional[str]) -> Optional[np.ndarray]:

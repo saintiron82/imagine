@@ -237,6 +237,8 @@
   "admin.queue_total": "전체",
   "admin.cleanup_stale": "만료 작업 정리",
   "admin.cleanup_result": "{count}개 작업 재할당됨",
+  "admin.queue_cleanup": "큐 정리",
+  "admin.queue_cleanup_result": "완료된 작업 {count}개 정리됨",
   "admin.queue_throughput": "처리 속도",
   "admin.queue_files_per_min": "파일/분",
   "admin.queue_eta": "예상 잔여",

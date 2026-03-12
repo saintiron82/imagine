@@ -237,6 +237,8 @@
   "admin.queue_total": "Total",
   "admin.cleanup_stale": "Cleanup Stale Jobs",
   "admin.cleanup_result": "{count} jobs reassigned",
+  "admin.queue_cleanup": "Cleanup Queue",
+  "admin.queue_cleanup_result": "{count} resolved jobs removed",
   "admin.queue_throughput": "Throughput",
   "admin.queue_files_per_min": "files/min",
   "admin.queue_eta": "ETA",

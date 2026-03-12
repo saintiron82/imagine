@@ -1246,39 +1246,6 @@ class JobQueueManager:
                 (job_id,)
             )
 
-        # ── Pass 3: Residual pending/assigned jobs for already-complete files ──
-        # If a file has all data (mc+vv+mv) AND a completed job already exists,
-        # any extra pending/assigned jobs are duplicates — delete them.
-        complete_file_ids = set(
-            fid for fid, _, has_mc, has_vv, has_mv, _ in all_files
-            if has_mc and has_vv and has_mv
-        )
-        if complete_file_ids:
-            placeholders = ",".join("?" * len(complete_file_ids))
-            cursor.execute(f"""
-                SELECT jq.id, jq.file_id FROM job_queue jq
-                WHERE jq.file_id IN ({placeholders})
-                  AND jq.status IN ('pending', 'assigned')
-                  AND EXISTS(
-                      SELECT 1 FROM job_queue jq2
-                      WHERE jq2.file_id = jq.file_id
-                        AND jq2.status = 'completed'
-                        AND jq2.id != jq.id
-                  )
-            """, list(complete_file_ids))
-            residual_jobs = cursor.fetchall()
-            if residual_jobs:
-                residual_ids = [r[0] for r in residual_jobs]
-                del_placeholders = ",".join("?" * len(residual_ids))
-                cursor.execute(
-                    f"DELETE FROM job_queue WHERE id IN ({del_placeholders})",
-                    residual_ids,
-                )
-                logger.warning(
-                    f"Audit: removed {len(residual_ids)} residual pending jobs "
-                    f"for already-complete files"
-                )
-
         self.db.conn.commit()
 
         incomplete_files = total_files - complete_files
@@ -1292,6 +1259,9 @@ class JobQueueManager:
             logger.warning(", ".join(parts))
         else:
             logger.info(f"Audit: {total_files} files scanned, all complete")
+
+        # ── Auto-cleanup: remove resolved jobs from queue ──
+        cleanup_result = self.cleanup_queue()
 
         # Count failed/stuck jobs for UI display
         cursor.execute(
@@ -1321,6 +1291,91 @@ class JobQueueManager:
         if count > 0:
             logger.info(f"Cleared {count} completed jobs")
         return count
+
+    def cleanup_queue(self) -> Dict[str, int]:
+        """Comprehensive job queue cleanup.
+
+        Removes:
+        1. Completed jobs where file data is fully present (mc+vv+mv)
+        2. Duplicate pending/assigned jobs (same file_id already has completed job)
+        3. Jobs referencing non-existent files (file_id not in files table)
+
+        Returns counts of each type removed.
+        """
+        cursor = self.db.conn.cursor()
+        removed_completed = 0
+        removed_duplicates = 0
+        removed_dangling = 0
+
+        # 1. Completed jobs for fully-processed files
+        cursor.execute("""
+            SELECT jq.id FROM job_queue jq
+            WHERE jq.status = 'completed'
+              AND EXISTS(
+                  SELECT 1 FROM files f
+                  WHERE f.id = jq.file_id
+                    AND f.mc_caption IS NOT NULL AND f.mc_caption != ''
+              )
+              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = jq.file_id)
+              AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = jq.file_id)
+        """)
+        ids = [r[0] for r in cursor.fetchall()]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            cursor.execute(
+                f"DELETE FROM job_queue WHERE id IN ({placeholders})", ids
+            )
+            removed_completed = len(ids)
+
+        # 2. Duplicate pending/assigned jobs (completed job already exists for same file)
+        cursor.execute("""
+            SELECT jq.id FROM job_queue jq
+            WHERE jq.status IN ('pending', 'assigned')
+              AND EXISTS(
+                  SELECT 1 FROM job_queue jq2
+                  WHERE jq2.file_id = jq.file_id
+                    AND jq2.status = 'completed'
+                    AND jq2.id != jq.id
+              )
+        """)
+        ids = [r[0] for r in cursor.fetchall()]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            cursor.execute(
+                f"DELETE FROM job_queue WHERE id IN ({placeholders})", ids
+            )
+            removed_duplicates = len(ids)
+
+        # 3. Jobs referencing non-existent files
+        cursor.execute("""
+            SELECT jq.id FROM job_queue jq
+            WHERE jq.file_id IS NOT NULL
+              AND NOT EXISTS(SELECT 1 FROM files WHERE id = jq.file_id)
+        """)
+        ids = [r[0] for r in cursor.fetchall()]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            cursor.execute(
+                f"DELETE FROM job_queue WHERE id IN ({placeholders})", ids
+            )
+            removed_dangling = len(ids)
+
+        self.db.conn.commit()
+
+        total = removed_completed + removed_duplicates + removed_dangling
+        if total > 0:
+            logger.info(
+                f"Queue cleanup: {removed_completed} completed, "
+                f"{removed_duplicates} duplicates, "
+                f"{removed_dangling} dangling — {total} total removed"
+            )
+
+        return {
+            "removed_completed": removed_completed,
+            "removed_duplicates": removed_duplicates,
+            "removed_dangling": removed_dangling,
+            "total_removed": total,
+        }
 
     def dismiss_permanently_failed_jobs(self) -> Dict[str, Any]:
         """Delete permanently failed jobs and their incomplete file records.

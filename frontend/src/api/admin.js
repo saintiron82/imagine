@@ -70,6 +70,10 @@ export async function dismissPermanentlyFailedJobs() {
   return apiClient.delete('/api/v1/admin/jobs/permanently-failed');
 }
 
+export async function cleanupQueue() {
+  return apiClient.post('/api/v1/admin/jobs/cleanup');
+}
+
 // ── Discover (server filesystem) ────────────────────────
 
 export async function browseFolders(path = '/') {

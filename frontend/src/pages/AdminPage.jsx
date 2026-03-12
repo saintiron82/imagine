@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocale } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  cleanupStaleJobs, getJobStats,
+  cleanupStaleJobs, cleanupQueue, getJobStats,
   browseFolders, scanFolder,
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
   updateWorkerConfig, updateGlobalProcessingMode,
@@ -1096,6 +1096,17 @@ function QueuePanel() {
     }
   };
 
+  const handleQueueCleanup = async () => {
+    try {
+      const data = await cleanupQueue();
+      setCleanupMsg(t('admin.queue_cleanup_result', { count: data.total_removed || 0 }));
+      load();
+      setTimeout(() => setCleanupMsg(''), 5000);
+    } catch (e) {
+      console.error('Queue cleanup failed:', e);
+    }
+  };
+
   if (loading) return <div className="text-gray-400 text-sm">{t('status.loading')}</div>;
 
   const bufferReady = (stats?.parse_ahead_parsed || 0);
@@ -1118,6 +1129,13 @@ function QueuePanel() {
         <h2 className="text-lg font-semibold">{t('admin.queue_title')}</h2>
         <div className="flex items-center gap-2">
           {cleanupMsg && <span className="text-xs text-green-400">{cleanupMsg}</span>}
+          <button
+            onClick={handleQueueCleanup}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300"
+          >
+            <Trash2 size={12} />
+            {t('admin.queue_cleanup')}
+          </button>
           <button
             onClick={handleCleanup}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300"
