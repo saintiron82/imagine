@@ -9,6 +9,7 @@ import logging
 import sqlite3
 import json
 import re
+import threading
 import unicodedata
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -28,7 +29,10 @@ class SQLiteDB:
 
     def __init__(self, db_path: Optional[str] = None):
         """
-        Initialize SQLite connection.
+        Initialize SQLite connection with thread-local connection pool.
+
+        Each thread gets its own sqlite3.Connection via threading.local().
+        Migrations run once on a dedicated setup connection.
 
         Args:
             db_path: Path to SQLite database file.
@@ -38,44 +42,49 @@ class SQLiteDB:
             db_path = str(Path(__file__).parent.parent.parent / "imageparser.db")
 
         self.db_path = db_path
-        self.conn = None
+        self._local = threading.local()
         self._vec_extension_loaded = False
-        self._connect()
+        self._setup_conn = None
+        self._connect_setup()
 
-    def _connect(self):
-        """Establish database connection."""
+    def _load_vec_extension(self, conn: sqlite3.Connection):
+        """Load sqlite-vec extension into a connection."""
         try:
-            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self.conn.row_factory = sqlite3.Row  # Enable dict-like access
-
-            # Enable sqlite-vec extension
+            conn.enable_load_extension(True)
+            conn.load_extension("vec0")
+            conn.enable_load_extension(False)
+            self._vec_extension_loaded = True
+        except:
             try:
-                self.conn.enable_load_extension(True)
-                self.conn.load_extension("vec0")  # Try loading directly first
-                self.conn.enable_load_extension(False)
+                import sqlite_vec
+                conn.enable_load_extension(True)
+                sqlite_vec.load(conn)
+                conn.enable_load_extension(False)
                 self._vec_extension_loaded = True
-                logger.info("✅ sqlite-vec loaded via load_extension")
-            except:
-                # Fallback: try sqlite_vec Python package
-                try:
-                    import sqlite_vec
-                    self.conn.enable_load_extension(True)
-                    sqlite_vec.load(self.conn)
-                    self.conn.enable_load_extension(False)
-                    self._vec_extension_loaded = True
-                    logger.info("✅ sqlite-vec loaded via Python package")
-                except Exception as e:
-                    self._vec_extension_loaded = False
-                    logger.warning(f"⚠️ sqlite-vec not loaded: {e}")
-                    logger.warning("Vector search will not work. Install: pip install sqlite-vec")
+            except Exception as e:
+                self._vec_extension_loaded = False
+                logger.warning(f"sqlite-vec not loaded: {e}")
 
-            # Enable foreign keys
-            self.conn.execute("PRAGMA foreign_keys = ON")
+    def _create_connection(self) -> sqlite3.Connection:
+        """Create a new SQLite connection with standard settings."""
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -64000")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        self._load_vec_extension(conn)
+        return conn
 
-            # Performance optimizations
-            self.conn.execute("PRAGMA journal_mode = WAL")  # Write-Ahead Logging
-            self.conn.execute("PRAGMA synchronous = NORMAL")  # Faster writes
-            self.conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+    def _connect_setup(self):
+        """Create setup connection and run migrations (once at init)."""
+        try:
+            self._setup_conn = self._create_connection()
+            # Store setup conn in thread-local so migrations use it via self.conn
+            self._local.conn = self._setup_conn
+            if self._vec_extension_loaded:
+                logger.info("sqlite-vec loaded")
 
             # Auto-migrate existing DB on connect (only if files table exists)
             if self._table_exists('files'):
@@ -114,10 +123,19 @@ class SQLiteDB:
                 self._migrate_backfill_parse_status()
                 self._migrate_error_code()
 
-            logger.info(f"✅ Connected to SQLite database: {self.db_path}")
+            logger.info(f"Connected to SQLite database: {self.db_path}")
         except Exception as e:
-            logger.error(f"❌ Failed to connect to SQLite: {e}")
+            logger.error(f"Failed to connect to SQLite: {e}")
             raise
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """Return current thread's connection (create if needed)."""
+        c = getattr(self._local, 'conn', None)
+        if c is None:
+            c = self._create_connection()
+            self._local.conn = c
+        return c
 
     def _get_default_embedding_model(self) -> str:
         """Get the VV model name from active tier config."""
@@ -2295,11 +2313,24 @@ class SQLiteDB:
                 logger.warning(f"WAL checkpoint failed: {e}")
 
     def close(self):
-        """Close database connection."""
-        if self.conn:
-            self.checkpoint()
-            self.conn.close()
-            logger.info("SQLite connection closed")
+        """Close database connections."""
+        # Close current thread's connection
+        c = getattr(self._local, 'conn', None)
+        if c is not None:
+            try:
+                c.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except Exception:
+                pass
+            c.close()
+            self._local.conn = None
+        # Close setup connection (if different)
+        if self._setup_conn is not None and self._setup_conn is not c:
+            try:
+                self._setup_conn.close()
+            except Exception:
+                pass
+            self._setup_conn = None
+        logger.info("SQLite connection closed")
 
     def __enter__(self):
         """Context manager entry."""

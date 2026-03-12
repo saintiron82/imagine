@@ -105,27 +105,13 @@ def get_current_user(
         )
 
     # Verify user still exists and is active
-    # Retry on SQLite thread contention (ParseAhead may hold the connection)
-    import time
-    row = None
-    for _attempt in range(3):
-        try:
-            cursor = db.conn.cursor()
-            cursor.execute(
-                "SELECT id, username, email, role, is_active FROM users WHERE id = ?",
-                (user_id,)
-            )
-            row = cursor.fetchone()
-            break
-        except Exception as e:
-            if _attempt < 2:
-                time.sleep(0.05)
-            else:
-                logger.warning(f"get_current_user DB error after retries: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Database temporarily busy, please retry",
-                )
+    # Thread-local connections: no contention, no retry needed
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT id, username, email, role, is_active FROM users WHERE id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
