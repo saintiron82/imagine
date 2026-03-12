@@ -488,7 +488,7 @@
   "reset_db.success": "DB 초기화 완료. 파일 {files}개, 벡터 {vectors}개, 작업 {jobs}개 삭제됨.",
   "reset_db.error": "초기화 실패: {error}",
   "action.retry_failed": "실패 작업 재시도",
-  "action.force_retry_failed": "강제 재시도 (처음부터)",
+  "action.retry_reset_stuck": "복구 어려운 작업도 초기화하고 다시 처리",
   "action.audit_integrity": "정합성 검사",
   "action.close": "닫기",
   "action.quit": "종료",

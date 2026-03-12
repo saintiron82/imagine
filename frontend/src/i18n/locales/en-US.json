@@ -488,7 +488,7 @@
   "reset_db.success": "Database reset complete. {files} files, {vectors} vectors, {jobs} jobs cleared.",
   "reset_db.error": "Reset failed: {error}",
   "action.retry_failed": "Retry Failed Jobs",
-  "action.force_retry_failed": "Force Retry All (from scratch)",
+  "action.retry_reset_stuck": "Reset stuck jobs and retry from scratch",
   "action.audit_integrity": "Audit Integrity",
   "action.close": "Close",
   "action.quit": "Quit",

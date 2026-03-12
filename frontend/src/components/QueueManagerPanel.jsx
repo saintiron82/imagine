@@ -99,22 +99,17 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
     } catch { /* ignore */ }
   };
 
+  const [resetStuck, setResetStuck] = useState(false);
+
   const handleRetryAll = async () => {
     try {
-      if (isElectron && window.electron?.queue?.retryFailed) {
+      if (resetStuck) {
+        await forceRetryFailedJobs();
+      } else if (isElectron && window.electron?.queue?.retryFailed) {
         await window.electron.queue.retryFailed();
       } else {
         await retryFailedJobs();
       }
-      fetchJobs();
-      onRefresh?.();
-    } catch { /* ignore */ }
-  };
-
-  const handleForceRetryAll = async () => {
-    if (!window.confirm(t('audit.force_retry_confirm'))) return;
-    try {
-      await forceRetryFailedJobs();
       fetchJobs();
       onRefresh?.();
     } catch { /* ignore */ }
@@ -176,13 +171,15 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
               <RotateCcw size={10} />
               {t('queue.action_retry_all')}
             </button>
-            <button
-              onClick={handleForceRetryAll}
-              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-red-900/40 text-red-300 hover:bg-red-800/50 transition-colors border border-red-700/40"
-            >
-              <RotateCcw size={10} />
-              {t('queue.action_force_retry')}
-            </button>
+            <label className="flex items-center gap-1 text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 select-none">
+              <input
+                type="checkbox"
+                checked={resetStuck}
+                onChange={(e) => setResetStuck(e.target.checked)}
+                className="w-2.5 h-2.5 rounded border-gray-600 bg-gray-800 text-orange-500 focus:ring-0 focus:ring-offset-0"
+              />
+              {t('action.retry_reset_stuck')}
+            </label>
           </>)}
           {(stats?.completed || 0) > 0 && (
             <button
