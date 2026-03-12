@@ -270,12 +270,6 @@ def _cleanup_stale_jobs():
         from backend.server.queue.manager import JobQueueManager
         db = get_db()
         queue = JobQueueManager(db)
-        cfg = get_server_config()
-        timeout = cfg.get("queue", {}).get("assignment_timeout_minutes", 30)
-        count = queue.reassign_stale_jobs(timeout)
-        if count > 0:
-            logger.info(f"Startup cleanup: reset {count} stale jobs to pending")
-
         # Mark all online worker sessions as offline (stale from previous run)
         cursor = db.conn.cursor()
         cursor.execute(
@@ -284,6 +278,18 @@ def _cleanup_stale_jobs():
         )
         if cursor.rowcount > 0:
             logger.info(f"Startup cleanup: marked {cursor.rowcount} stale worker sessions offline")
+
+        # Reclaim ALL assigned/processing jobs — server restart means
+        # no worker is actively processing, so all in-flight jobs are invalid
+        cursor.execute(
+            """UPDATE job_queue
+               SET status = 'pending',
+                   assigned_to = NULL, assigned_at = NULL,
+                   worker_session_id = NULL
+               WHERE status IN ('assigned', 'processing')"""
+        )
+        if cursor.rowcount > 0:
+            logger.info(f"Startup cleanup: reclaimed {cursor.rowcount} in-flight jobs to pending")
 
         # Reset stuck 'parsing' parse-ahead jobs from previous server run
         try:
