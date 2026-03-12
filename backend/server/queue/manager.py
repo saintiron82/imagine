@@ -4,6 +4,7 @@ Job queue manager — work distribution for distributed processing.
 
 import json
 import logging
+import os
 import unicodedata
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
@@ -1040,7 +1041,6 @@ class JobQueueManager:
                 # job_row: (id, status, phase_completed, parsed_metadata,
                 #           error_code, retry_count, error_message)
                 existing_error_code = job_row[4]
-                retry_count = job_row[5] or 0
                 err_msg_text = job_row[6] or ""
 
                 # Backfill: infer error_code from legacy error_message
@@ -1052,16 +1052,17 @@ class JobQueueManager:
                             (existing_error_code, job_row[0])
                         )
 
-                if existing_error_code and existing_error_code in NON_RETRYABLE_ERRORS:
-                    # Non-retryable — leave it failed, don't count as repaired
+                # Decision: can this file be reprocessed?
+                # If thumbnail exists on disk, ParseAhead can handle it
+                # regardless of previous error (worker errors ≠ ParseAhead errors)
+                thumb_exists = thumbnail_url and os.path.exists(thumbnail_url)
+
+                if existing_error_code == "THUMB_MISSING" and not thumb_exists:
+                    # Truly unprocessable — no thumbnail on disk
                     skipped_non_retryable += 1
                     continue
-                elif retry_count >= 3:
-                    # Exhausted retries — don't reset again
-                    skipped_non_retryable += 1
-                    continue
-                else:
-                    # Retryable failure with retries remaining — reset to pending
+                elif thumb_exists:
+                    # Thumbnail available — give fresh chance via ParseAhead
                     cursor.execute(
                         """UPDATE job_queue
                            SET status = 'pending', phase_completed = ?,
@@ -1073,6 +1074,15 @@ class JobQueueManager:
                            WHERE id = ?""",
                         (actual_phases, parsed_metadata, job_row[0])
                     )
+                else:
+                    # No thumbnail on disk — can't process
+                    if not existing_error_code:
+                        cursor.execute(
+                            "UPDATE job_queue SET error_code = 'THUMB_MISSING' WHERE id = ?",
+                            (job_row[0],)
+                        )
+                    skipped_non_retryable += 1
+                    continue
 
             elif job_row[1] in ('pending', 'assigned', 'processing'):
                 # Already in pipeline — fix phase_completed, fill parsed_metadata if missing
