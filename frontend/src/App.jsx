@@ -1451,7 +1451,9 @@ function App() {
                           showToast(t('audit.retry_result', { count }), 'warn');
                           setQueueReloadSignal(prev => prev + 1);
                         }
-                        setAuditResult(null);
+                        // Re-audit to refresh modal instead of closing
+                        const fresh = await auditIntegrity();
+                        setAuditResult(fresh);
                       } catch (e) {
                         showToast(`Error: ${e.message}`, 'error');
                       }
@@ -1495,8 +1497,10 @@ function App() {
                         const count = result?.dismissed_jobs || 0;
                         showToast(t('audit.dismiss_result', { count }), 'success');
                         appendLog({ message: t('audit.dismiss_result', { count }), type: 'success' });
-                        setAuditResult(null);
                         setQueueReloadSignal(prev => prev + 1);
+                        // Re-audit to refresh modal instead of closing
+                        const fresh = await auditIntegrity();
+                        setAuditResult(fresh);
                       } catch (e) {
                         showToast(`Error: ${e.message}`, 'error');
                       }
