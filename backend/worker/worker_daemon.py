@@ -1019,11 +1019,18 @@ class WorkerDaemon:
                 ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
-                    ctx.error_code = "FILE_NOT_FOUND"
-                    ctx.error = (
-                        f"File unavailable: {file_path} "
-                        f"(file_id={job.get('file_id')})"
-                    )
+                    if is_remote:
+                        ctx.error_code = "THUMB_MISSING"
+                        ctx.error = (
+                            f"No thumbnail for remote file: {file_path} "
+                            f"(file_id={job.get('file_id')})"
+                        )
+                    else:
+                        ctx.error_code = "FILE_NOT_FOUND"
+                        ctx.error = (
+                            f"File unavailable: {file_path} "
+                            f"(file_id={job.get('file_id')})"
+                        )
                     logger.error(f"[RESOLVE] [{ctx.error_code}] {ctx.error}")
                     _notify(progress_callback, "file_error", {
                         "file_name": Path(file_path).name,
