@@ -1398,8 +1398,26 @@ function App() {
                   </p>
                   {auditResult.details?.length > 0 && (
                     <div className="max-h-48 overflow-y-auto mt-2 space-y-1">
-                      {auditResult.details.map((d, i) => (
+                      {auditResult.details.map((d, i) => {
+                        const statusStyle = {
+                          no_job: 'text-neutral-500 bg-neutral-700/50',
+                          processed: 'text-orange-400 bg-orange-900/30',
+                          in_pipeline: 'text-blue-400 bg-blue-900/30',
+                          failed: 'text-yellow-400 bg-yellow-900/30',
+                        }[d.status] || 'text-neutral-500 bg-neutral-700/50';
+                        const statusLabel = {
+                          no_job: t('audit.status_no_job'),
+                          processed: t('audit.status_processed'),
+                          in_pipeline: t('audit.status_in_pipeline'),
+                          failed: t('audit.status_failed'),
+                        }[d.status] || '';
+                        return (
                         <div key={i} className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1.5 rounded flex items-center gap-2">
+                          {statusLabel && (
+                            <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${statusStyle}`}>
+                              {statusLabel}
+                            </span>
+                          )}
                           <span className="text-red-400 shrink-0">[{d.missing.map(m => ({
                             mc: t('audit.missing_mc'),
                             vv: t('audit.missing_vv'),
@@ -1407,7 +1425,8 @@ function App() {
                           })[m] || m).join(', ')}]</span>
                           <span className="truncate flex-1">{d.file_path?.split('/').pop()}</span>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </>

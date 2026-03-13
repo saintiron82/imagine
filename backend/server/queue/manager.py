@@ -1253,11 +1253,22 @@ class JobQueueManager:
                     (actual_phases, parsed_metadata, job_row[0])
                 )
 
+            # Determine processing status for UI distinction
+            if job_row is None:
+                proc_status = "no_job"        # Never processed
+            elif job_row[1] == 'completed':
+                proc_status = "processed"     # Was completed but data missing
+            elif job_row[1] == 'failed':
+                proc_status = "failed"        # Failed, now reset
+            else:
+                proc_status = "in_pipeline"   # Already pending/assigned/processing
+
             repaired_files += 1
             details.append({
                 "file_id": file_id,
                 "file_path": file_path,
                 "missing": missing,
+                "status": proc_status,
             })
 
         # ── Pass 2: Completed jobs referencing deleted files ──
