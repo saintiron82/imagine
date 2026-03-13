@@ -252,12 +252,36 @@ class ParseAheadPool(BaseAheadPool):
                     f"ParseAhead job {job_id}: no thumbnail yet, skipping (will be processed in Phase P)")
                 continue
 
+            # For resume: if vision is done but embed isn't, mc_raw needs
+            # the VLM results (mc_caption, ai_tags) from DB for MV encoding.
+            effective_mc_raw = mc_raw if phases_done.get("vision") else None
+            if effective_mc_raw and phases_done.get("vision") and not phases_done.get("embed"):
+                try:
+                    db_row = cursor.execute(
+                        "SELECT mc_caption, ai_tags, image_type, scene_type, art_style "
+                        "FROM files WHERE id = ?",
+                        (file_id,),
+                    ).fetchone()
+                    if db_row:
+                        if db_row[0]:
+                            effective_mc_raw["mc_caption"] = db_row[0]
+                        if db_row[1]:
+                            effective_mc_raw["ai_tags"] = db_row[1]
+                        if db_row[2]:
+                            effective_mc_raw["image_type"] = db_row[2]
+                        if db_row[3]:
+                            effective_mc_raw["scene_type"] = db_row[3]
+                        if db_row[4]:
+                            effective_mc_raw["art_style"] = db_row[4]
+                except Exception as e:
+                    logger.debug(f"Auto: failed to enrich mc_raw for file {file_id}: {e}")
+
             phase_items.append(PhaseItem(
                 job_id=job_id,
                 file_id=file_id,
                 file_path=file_path,
                 thumb_path=thumb_path,
-                mc_raw=mc_raw if phases_done.get("vision") else None,
+                mc_raw=effective_mc_raw,
                 skip_vision=bool(phases_done.get("vision")),
                 skip_vv=bool(phases_done.get("embed")),
                 skip_mv=bool(phases_done.get("embed")),
