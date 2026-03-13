@@ -357,6 +357,19 @@ class ParseAheadPool(BaseAheadPool):
                     )
         self.db.conn.commit()
 
+        # Release download buffer slots for completed/failed WebDAV jobs
+        dl_pool = getattr(self, '_download_pool', None)
+        if dl_pool:
+            for ctx in contexts:
+                job_id, file_id = ctx[0], ctx[1]
+                status_row = cursor.execute(
+                    "SELECT status, file_path FROM job_queue WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+                if status_row and status_row[1] and status_row[1].startswith("webdav://"):
+                    if status_row[0] in ('completed', 'failed'):
+                        dl_pool.release_slot(file_id)
+
         if partial_count > 0 or failed_count > 0:
             logger.warning(
                 f"Auto processing: {completed_count} completed, "
