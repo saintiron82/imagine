@@ -305,7 +305,7 @@ class DownloadAheadPool(BaseAheadPool):
                         pass
                 pm["temp_local_path"] = str(local_path)
                 cursor.execute(
-                    "UPDATE job_queue SET parsed_metadata = ?, file_ready = 1 WHERE id = ?",
+                    "UPDATE job_queue SET parsed_metadata = ?, file_ready = 1, priority = priority + 10 WHERE id = ?",
                     (json.dumps(pm, ensure_ascii=False, default=str), job_id),
                 )
                 self.db.conn.commit()

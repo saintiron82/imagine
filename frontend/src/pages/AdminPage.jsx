@@ -1111,6 +1111,9 @@ function QueuePanel() {
 
   const bufferReady = (stats?.parse_ahead_parsed || 0);
   const statItems = [
+    ...(stats?.download_waiting > 0
+      ? [{ key: 'download_waiting', label: t('admin.queue_download_waiting'), color: 'bg-cyan-600' }]
+      : []),
     { key: 'pending', label: t('admin.queue_pending'), color: 'bg-yellow-500' },
     ...(bufferReady > 0 ? [{ key: 'parse_ahead_parsed', label: t('admin.queue_buffer'), color: 'bg-teal-500' }] : []),
     { key: 'assigned', label: t('admin.queue_assigned'), color: 'bg-blue-500' },
@@ -1120,7 +1123,9 @@ function QueuePanel() {
   ];
 
   const throughput = stats?.throughput ?? 0;
-  const remaining = (stats?.pending ?? 0) + (stats?.assigned ?? 0) + (stats?.processing ?? 0);
+  // Exclude download_waiting from remaining (can't be processed until downloaded)
+  const remaining = (stats?.pending ?? 0) - (stats?.download_waiting ?? 0)
+                  + (stats?.assigned ?? 0) + (stats?.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
 
   return (
@@ -1234,6 +1239,25 @@ function QueuePanel() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Download Buffer (WebDAV) */}
+      {stats?.download_buffer && stats.download_waiting > 0 && (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
+          <div className="text-xs text-gray-400 mb-2 font-medium">{t('admin.queue_download_buffer')}</div>
+          <div className="flex items-center gap-4 text-xs">
+            <span className="text-cyan-400">
+              {t('admin.queue_download_in_flight')}: <span className="font-mono">{stats.download_buffer.in_flight}</span>
+            </span>
+            <span className="text-teal-400">
+              {t('admin.queue_download_buffered')}: <span className="font-mono">{stats.download_buffer.active_files}</span>
+              /{stats.download_buffer.max_files}
+            </span>
+            <span className="text-gray-500">
+              {t('admin.queue_download_remaining')}: <span className="font-mono">{stats.download_waiting}</span>
+            </span>
           </div>
         </div>
       )}

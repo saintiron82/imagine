@@ -823,11 +823,34 @@ class JobQueueManager:
         except Exception:
             pass
 
+        # file_ready stats (2-stage pipeline: download waiting vs processing ready)
+        file_ready_stats = {}
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE file_ready = 0 AND status = 'pending'),
+                    COUNT(*) FILTER (WHERE file_ready = 1 AND status = 'pending')
+                FROM job_queue
+            """)
+            fr_row = cursor.fetchone()
+            file_ready_stats = {
+                "download_waiting": fr_row[0] or 0,
+                "ready_pending": fr_row[1] or 0,
+            }
+        except Exception:
+            pass
+
+        # Download buffer stats (from DownloadAheadPool if available)
+        dl_pool = _get_download_pool()
+        download_buffer = dl_pool.get_stats() if dl_pool else None
+
         # ETA: estimated seconds to complete remaining jobs
         pending = status_counts.get("pending", 0)
         assigned = status_counts.get("assigned", 0)
         processing = status_counts.get("processing", 0)
-        remaining = pending + assigned + processing
+        # Exclude download_waiting from remaining (can't be processed yet)
+        download_waiting = file_ready_stats.get("download_waiting", 0)
+        remaining = pending - download_waiting + assigned + processing
         if throughput > 0 and remaining > 0:
             eta_seconds = round((remaining / throughput) * 60)
         else:
@@ -893,6 +916,8 @@ class JobQueueManager:
             "eta_seconds": eta_seconds,
             **phase_stats,
             **parse_ahead_stats,
+            **file_ready_stats,
+            "download_buffer": download_buffer,
         }
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
