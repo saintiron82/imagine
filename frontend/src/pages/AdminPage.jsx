@@ -1200,26 +1200,20 @@ function QueuePanel() {
         </div>
       </div>
 
-      {/* Phase Progress */}
-      {stats && stats.total > 0 && (stats.phase_parse_done > 0 || stats.phase_vision_done > 0 || stats.phase_embed_done > 0) && (
+      {/* Phase Progress — incomplete files only */}
+      {stats && (stats.phase_total || 0) > 0 && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-          <div className="text-xs text-gray-400 mb-3 font-medium">{t('admin.queue_phase_progress')}</div>
+          <div className="text-xs text-gray-400 mb-3 font-medium">
+            {t('admin.queue_phase_progress')}
+            <span className="ml-2 text-gray-500">({stats.phase_total} {t('admin.queue_phase_remaining')})</span>
+          </div>
           <div className="space-y-2">
             {[
-              { key: 'phase_parse_done', label: t('admin.queue_phase_parse'), color: 'bg-green-500', textColor: 'text-green-400' },
               { key: 'phase_vision_done', label: t('admin.queue_phase_vision'), color: 'bg-purple-500', textColor: 'text-purple-400' },
               { key: 'phase_embed_done', label: t('admin.queue_phase_embed'), color: 'bg-blue-500', textColor: 'text-blue-400' },
-              ...(thumbStats ? [{
-                key: '_thumb',
-                label: t('admin.queue_phase_thumb'),
-                color: 'bg-orange-500',
-                textColor: 'text-orange-400',
-                done: thumbStats.grand_has_thumb || 0,
-                total: thumbStats.grand_total || 0,
-              }] : []),
-            ].map(({ key, label, color, textColor, done: overrideDone, total: overrideTotal }) => {
-              const itemTotal = overrideTotal ?? (stats.total_files || stats.total);
-              const done = overrideDone ?? (stats[key] || 0);
+            ].map(({ key, label, color, textColor }) => {
+              const itemTotal = stats.phase_total;
+              const done = stats[key] || 0;
               const pct = itemTotal > 0 ? (done / itemTotal) * 100 : 0;
               return (
                 <div key={key} className="flex items-center gap-3">

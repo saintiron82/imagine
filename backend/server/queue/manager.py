@@ -765,32 +765,46 @@ class JobQueueManager:
             eta_seconds = None
 
         # ── File-centric counts ──
-        # total = all files in DB
-        # completed = files with mc + vv + mv all present
-        # Phase progress = actual data presence per phase
+        cursor.execute("SELECT COUNT(*) FROM files")
+        total_files = cursor.fetchone()[0]
+
         cursor.execute("""
-            SELECT
-                COUNT(*),
-                SUM(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != ''
-                          AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
-                          AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
-                    THEN 1 ELSE 0 END),
-                SUM(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != ''
-                    THEN 1 ELSE 0 END),
-                SUM(CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
-                    THEN 1 ELSE 0 END),
-                SUM(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
-                    THEN 1 ELSE 0 END)
-            FROM files f
+            SELECT COUNT(*) FROM files f
+            WHERE (f.mc_caption IS NOT NULL AND f.mc_caption != '')
+              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+              AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
         """)
-        fc_row = cursor.fetchone()
-        total_files = fc_row[0] or 0
-        complete_files = fc_row[1] or 0
-        mc_done = fc_row[2] or 0
-        vv_done = fc_row[3] or 0
-        mv_done = fc_row[4] or 0
+        complete_files = cursor.fetchone()[0]
+
+        # Phase progress: only incomplete files (exclude fully done files)
+        # Shows remaining work, not total inventory
+        incomplete = total_files - complete_files
+        if incomplete > 0:
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != ''
+                        THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                        THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
+                        THEN 1 ELSE 0 END)
+                FROM files f
+                WHERE NOT (
+                    (f.mc_caption IS NOT NULL AND f.mc_caption != '')
+                    AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                    AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
+                )
+            """)
+            inc_row = cursor.fetchone()
+            mc_done = inc_row[0] or 0
+            vv_done = inc_row[1] or 0
+            mv_done = inc_row[2] or 0
+        else:
+            mc_done = vv_done = mv_done = 0
+
         phase_stats = {
-            "phase_parse_done": total_files,  # all registered files are parsed
+            "phase_total": incomplete,  # denominator: incomplete files only
+            "phase_parse_done": incomplete,  # all DB files are parsed
             "phase_vision_done": mc_done,
             "phase_embed_done": min(vv_done, mv_done),
         }

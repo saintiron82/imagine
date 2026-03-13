@@ -545,6 +545,7 @@
   "admin.worker_throttle_danger": "Throttle: Danger",
   "admin.worker_throttle_critical": "Throttle: Critical",
   "admin.queue_phase_progress": "Phase Progress",
+  "admin.queue_phase_remaining": "remaining",
   "admin.queue_phase_parse": "Parse",
   "admin.queue_phase_vision": "Vision (MC)",
   "admin.queue_phase_embed": "Embed (VV+MV)",
