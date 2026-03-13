@@ -17,7 +17,7 @@ import { getServerHistory, addServerToHistory } from '../utils/serverHistory';
 import {
   LogIn, UserPlus, Eye, EyeOff, Loader2, ArrowLeft,
   Zap, Star, Rocket, Languages, AlertCircle, Server,
-  LogOut, Key, Mail, Shield,
+  LogOut, Key, Mail, Shield, X,
 } from 'lucide-react';
 
 const TIERS = [
@@ -89,7 +89,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   const {
     firebaseUser, isFirebaseAuthenticated,
     connectToServer, fullLogout,
-    error: authError,
+    error: authError, clearError: clearAuthError,
   } = useAuth();
   const { t, locale, setLocale, availableLocales } = useLocale();
 
@@ -128,7 +128,15 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
 
   // --- Status ---
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState([]);
+  const _errIdRef = useRef(0);
+  const setError = useCallback((msg) => {
+    if (!msg) { setErrors([]); return; }
+    setErrors(prev => [...prev, { id: ++_errIdRef.current, msg }]);
+  }, []);
+  const dismissError = useCallback((id) => {
+    setErrors(prev => prev.filter(e => e.id !== id));
+  }, []);
 
   const port = serverPort || 8000;
   const serverPwRef = useRef(null);
@@ -375,7 +383,10 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     setPassword('');
   }, [fullLogout]);
 
-  const displayError = error || authError;
+  const displayErrors = [...errors];
+  if (authError && !errors.some(e => e.msg === authError)) {
+    displayErrors.push({ id: 'auth', msg: authError });
+  }
   const togglePassword = () => setShowPassword(!showPassword);
   const pwProps = { showPassword, onTogglePassword: togglePassword };
 
@@ -713,11 +724,22 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
             {stage === 'server_init' && t('login2.create_new_server')}
           </h2>
 
-          {/* Error display */}
-          {displayError && (
-            <div className="mb-4 p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2">
-              <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
-              <p className="text-xs text-red-300">{displayError}</p>
+          {/* Error display — each error can be dismissed independently */}
+          {displayErrors.length > 0 && (
+            <div className="mb-4 space-y-2">
+              {displayErrors.map(e => (
+                <div key={e.id} className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2">
+                  <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
+                  <p className="text-xs text-red-300 flex-1">{e.msg}</p>
+                  <button
+                    type="button"
+                    onClick={() => e.id === 'auth' ? clearAuthError() : dismissError(e.id)}
+                    className="text-red-400/60 hover:text-red-300 shrink-0"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
 

@@ -236,6 +236,7 @@ export function AuthProvider({ children }) {
     checkServerHealth,
     configureAuth,
     getServerInfo,
+    clearError: () => setError(''),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
