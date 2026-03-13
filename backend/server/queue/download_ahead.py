@@ -95,6 +95,8 @@ class DownloadAheadPool(BaseAheadPool):
         buf_cfg = get_temp_buffer_config()
         self._max_files = buf_cfg["max_files"]
         self._download_workers = buf_cfg["download_workers"]
+        # Track warned source IDs to avoid log spam
+        self._warned_sources: set = set()
 
         # Bounded buffer semaphore — limits files on disk
         self._buffer_sem = threading.Semaphore(self._max_files)
@@ -121,11 +123,65 @@ class DownloadAheadPool(BaseAheadPool):
             f"DownloadAheadPool: temp_dir={self._temp_dir}, "
             f"max_files={self._max_files}, workers={self._download_workers}"
         )
+        # Reset file_ready for incomplete WebDAV jobs whose temp files
+        # no longer exist (e.g. server restart cleared temp dir)
+        self._reset_stale_file_ready()
+
         self._executor = ThreadPoolExecutor(
             max_workers=self._download_workers,
             thread_name_prefix="dl-ahead",
         )
         super().start()
+
+    def _reset_stale_file_ready(self):
+        """Reset file_ready=1 → 0 for WebDAV jobs where temp file is gone.
+
+        On server restart, the temp directory changes, so previously
+        downloaded files are no longer accessible. These jobs must be
+        re-downloaded.
+        """
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """SELECT id, parsed_metadata FROM job_queue
+                   WHERE file_path LIKE 'webdav://%'
+                     AND file_ready = 1
+                     AND status IN ('pending', 'assigned')"""
+            )
+            rows = cursor.fetchall()
+            reset_ids = []
+            for job_id, pm_str in rows:
+                needs_reset = True
+                if pm_str:
+                    try:
+                        pm = json.loads(pm_str)
+                        tlp = pm.get("temp_local_path")
+                        if tlp and Path(tlp).exists():
+                            needs_reset = False  # temp file still exists
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                if needs_reset:
+                    reset_ids.append(job_id)
+
+            if reset_ids:
+                placeholders = ",".join("?" * len(reset_ids))
+                cursor.execute(
+                    f"UPDATE job_queue SET file_ready = 0 WHERE id IN ({placeholders})",
+                    reset_ids,
+                )
+                self.db.conn.commit()
+                logger.info(
+                    f"DownloadAhead: reset file_ready for {len(reset_ids)} "
+                    f"stale WebDAV jobs (temp files missing)"
+                )
+            else:
+                self.db.conn.commit()
+        except Exception as e:
+            logger.warning(f"DownloadAhead: failed to reset stale file_ready: {e}")
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
 
     def stop(self):
         """Stop downloads and clean up temp directory."""
@@ -185,12 +241,13 @@ class DownloadAheadPool(BaseAheadPool):
         """
         cursor = self.db.conn.cursor()
 
-        # Find WebDAV jobs needing download (pending or assigned, no temp file yet)
+        # Find WebDAV jobs needing download (file_ready=0 means not yet downloaded)
         cursor.execute(
             """SELECT jq.id, jq.file_id, jq.file_path, jq.parsed_metadata
                FROM job_queue jq
                WHERE jq.status IN ('pending', 'assigned')
                  AND jq.file_path LIKE 'webdav://%'
+                 AND jq.file_ready = 0
                ORDER BY jq.priority DESC, jq.created_at ASC
                LIMIT ?""",
             (self._max_files,),
@@ -236,10 +293,12 @@ class DownloadAheadPool(BaseAheadPool):
 
             source_config = get_webdav_source(source_id)
             if not source_config:
-                logger.warning(
-                    f"DownloadAhead: no config for source '{source_id}', "
-                    f"skipping job {job_id}"
-                )
+                if source_id not in self._warned_sources:
+                    self._warned_sources.add(source_id)
+                    logger.warning(
+                        f"DownloadAhead: no config for source '{source_id}' "
+                        f"— register via API or IMAGINE_WEBDAV_SOURCES env"
+                    )
                 self._buffer_sem.release()
                 continue
 
