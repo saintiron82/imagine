@@ -264,13 +264,15 @@ function App() {
         window.electron.server.offLog();  // prevent duplicate listeners on re-mount
         window.electron.server.onLog((data) => {
           const type = data.type || 'info';
+          const msg = data.message || '';
+          // Classify network/infra errors separately from job errors
+          const isNetworkError = /license.*fetch|Firebase.*failed|HTTP Error|connection refused|network|timeout.*fetch/i.test(msg);
           // Always show errors/warnings
           if (type === 'error' || type === 'warn' || type === 'warning') {
-            appendLog({ message: data.message, type });
+            appendLog({ message: msg, type, category: isNetworkError ? 'network' : 'job' });
             return;
           }
           // For info messages, only show important ones (startup, mode changes, worker events)
-          const msg = data.message || '';
           if (/Server starting|Server shutting|processing mode|worker.*offline|worker.*online|License:|Parse-ahead|Embed-ahead|builtin.worker|Heartbeat timeout|reclaimed/i.test(msg)) {
             appendLog({ message: msg, type });
           }
