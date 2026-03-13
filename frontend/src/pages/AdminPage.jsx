@@ -1211,8 +1211,8 @@ function QueuePanel() {
         const complete = stats.complete_files || 0;
         const dlWaiting = stats.download_waiting || 0;
         const dlDone = total - dlWaiting;
-        // All files in DB have been parsed (they get into files table via parse)
-        const parseDone = total;
+        // parseDone = files actually parsed (exclude download-waiting)
+        const parseDone = (stats.phase_parse_done || 0) + complete;
         const mcDone = (stats.phase_vision_done || 0) + complete;
         const embedDone = (stats.phase_embed_done || 0) + complete;
 

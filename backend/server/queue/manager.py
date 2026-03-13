@@ -896,7 +896,7 @@ class JobQueueManager:
 
         phase_stats = {
             "phase_total": incomplete,  # denominator: incomplete files only
-            "phase_parse_done": incomplete,  # all DB files are parsed
+            "phase_parse_done": max(0, incomplete - download_waiting),  # exclude files awaiting download
             "phase_vision_done": mc_done,
             "phase_embed_done": min(vv_done, mv_done),
         }
