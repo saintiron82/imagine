@@ -127,16 +127,12 @@ class ParseAheadPool(BaseAheadPool):
             )
         self.db.conn.commit()  # Always commit to release WAL write lock
 
-        # Pick up pending jobs
-        # - Local files: always eligible
-        # - WebDAV files: eligible if already parsed OR temp file downloaded
+        # Pick up pending jobs that are file-ready (local or downloaded)
+        # file_ready gate: only process files that are locally available
         cursor.execute(
             """SELECT id, file_id, file_path, parse_status, parsed_metadata, phase_completed
                FROM job_queue
-               WHERE status = 'pending'
-                 AND (file_path NOT LIKE 'webdav://%'
-                      OR parse_status = 'parsed'
-                      OR parsed_metadata LIKE '%temp_local_path%')
+               WHERE status = 'pending' AND file_ready = 1
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (batch_size,),

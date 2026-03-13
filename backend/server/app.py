@@ -142,7 +142,7 @@ async def startup():
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Failed to parse IMAGINE_WEBDAV_SOURCES: {e}")
     except Exception as e:
-        logger.warning(f"Download-ahead pool failed to start: {e}")
+        logger.error(f"Download-ahead pool failed to start: {e}", exc_info=True)
 
     # Embed-ahead pool: mc_only mode — server-side Phase MV after workers upload MC
     try:

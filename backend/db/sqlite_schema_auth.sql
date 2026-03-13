@@ -123,6 +123,11 @@ CREATE TABLE IF NOT EXISTS job_queue (
     -- Per-worker tracking (for multi-worker throughput)
     worker_session_id INTEGER REFERENCES worker_sessions(id) ON DELETE SET NULL,
 
+    -- File readiness gate (2-stage pipeline: preparation → processing)
+    -- 1 = file is locally available for processing (default for local files)
+    -- 0 = file needs preparation (e.g., WebDAV download pending)
+    file_ready INTEGER NOT NULL DEFAULT 1,
+
     -- Parse-ahead (server-side pre-parsing for worker optimization)
     parse_status TEXT DEFAULT NULL
         CHECK (parse_status IN (NULL, 'pending', 'parsing', 'parsed', 'failed', 'backfill')),
@@ -150,6 +155,8 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_assigned ON job_queue(assigned_to, stat
 CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_worker_sessions_user ON worker_sessions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_job_queue_file_ready
+    ON job_queue(file_ready, status, priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
     ON job_queue(parse_status, priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed

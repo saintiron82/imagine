@@ -160,12 +160,15 @@ class JobQueueManager:
                 "embed": has_vv and has_mv,
             })
 
+            # WebDAV files need download before processing (file_ready=0)
+            file_ready = 0 if fpath.startswith("webdav://") else 1
+
             try:
                 cursor.execute(
-                    """INSERT INTO job_queue (file_id, file_path, status, priority, phase_completed)
-                       VALUES (?, ?, 'pending', ?, ?)
+                    """INSERT INTO job_queue (file_id, file_path, status, priority, phase_completed, file_ready)
+                       VALUES (?, ?, 'pending', ?, ?, ?)
                        ON CONFLICT DO NOTHING""",
-                    (fid, fpath, priority, phase_completed)
+                    (fid, fpath, priority, phase_completed, file_ready)
                 )
                 if cursor.rowcount > 0:
                     created += 1
@@ -255,7 +258,7 @@ class JobQueueManager:
             cursor.execute(
                 """SELECT id, file_id, file_path, priority, parsed_metadata
                    FROM job_queue
-                   WHERE status = 'pending'
+                   WHERE status = 'pending' AND file_ready = 1
                      AND parse_status = 'parsed'
                      AND json_extract(phase_completed, '$.vision') = 1
                      AND (json_extract(phase_completed, '$.embed') IS NULL
@@ -272,7 +275,8 @@ class JobQueueManager:
             cursor.execute(
                 """SELECT id, file_id, file_path, priority, parsed_metadata
                    FROM job_queue
-                   WHERE status = 'pending' AND parse_status = 'parsed'
+                   WHERE status = 'pending' AND file_ready = 1
+                     AND parse_status = 'parsed'
                    ORDER BY priority DESC, created_at ASC
                    LIMIT ?""",
                 (count,)
@@ -287,7 +291,8 @@ class JobQueueManager:
             cursor.execute(
                 """SELECT id, file_id, file_path, priority, parsed_metadata
                    FROM job_queue
-                   WHERE status = 'pending' AND parse_status = 'parsed'
+                   WHERE status = 'pending' AND file_ready = 1
+                     AND parse_status = 'parsed'
                      AND json_extract(phase_completed, '$.vision') = 1
                      AND (json_extract(phase_completed, '$.embed') IS NULL
                           OR json_extract(phase_completed, '$.embed') = 0)
@@ -307,7 +312,8 @@ class JobQueueManager:
                     cursor.execute(
                         f"""SELECT id, file_id, file_path, priority, parsed_metadata
                             FROM job_queue
-                            WHERE status = 'pending' AND parse_status = 'parsed'
+                            WHERE status = 'pending' AND file_ready = 1
+                              AND parse_status = 'parsed'
                               AND (json_extract(phase_completed, '$.vision') IS NULL
                                    OR json_extract(phase_completed, '$.vision') = 0)
                               AND id NOT IN ({placeholders})
@@ -319,7 +325,8 @@ class JobQueueManager:
                     cursor.execute(
                         """SELECT id, file_id, file_path, priority, parsed_metadata
                            FROM job_queue
-                           WHERE status = 'pending' AND parse_status = 'parsed'
+                           WHERE status = 'pending' AND file_ready = 1
+                             AND parse_status = 'parsed'
                              AND (json_extract(phase_completed, '$.vision') IS NULL
                                   OR json_extract(phase_completed, '$.vision') = 0)
                            ORDER BY priority DESC, created_at ASC
@@ -355,16 +362,18 @@ class JobQueueManager:
                             COUNT(*) FILTER (WHERE status = 'pending' AND parse_status = 'failed') as parse_failed,
                             COUNT(*) FILTER (WHERE status = 'assigned') as assigned,
                             COUNT(*) FILTER (WHERE status = 'completed') as completed,
-                            COUNT(*) FROM job_queue"""
+                            COUNT(*) FROM job_queue,
+                            COUNT(*) FILTER (WHERE status = 'pending' AND file_ready = 0) as not_ready"""
                     ).fetchone()
                     diag_key = (worker_session_id, diag[0], diag[6], diag[7])
                     if diag_key != _last_claim_diag.get("key"):
                         _last_claim_diag["key"] = diag_key
+                        not_ready = diag[8] if len(diag) > 8 else 0
                         logger.info(
                             f"[CLAIM-DIAG] session={worker_session_id} mode={processing_mode} | "
                             f"pending={diag[0]} (unparsed={diag[1]} parsing={diag[2]} "
-                            f"parsed={diag[3]} failed={diag[4]}) assigned={diag[5]} "
-                            f"completed={diag[6]} total={diag[7]}"
+                            f"parsed={diag[3]} failed={diag[4]} not_ready={not_ready}) "
+                            f"assigned={diag[5]} completed={diag[6]} total={diag[7]}"
                         )
                 except Exception:
                     pass
@@ -1167,15 +1176,19 @@ class JobQueueManager:
             job_row = all_jobs[0] if all_jobs else None
 
             # Ensure this file has a pending job for re-processing
+            # WebDAV files need download before processing
+            is_webdav = file_path.startswith("webdav://") if file_path else False
+            audit_file_ready = 0 if is_webdav else 1
+
             if job_row is None:
                 # No job at all — create one with parsed_metadata
                 try:
                     cursor.execute(
                         """INSERT INTO job_queue
                            (file_id, file_path, status, priority,
-                            phase_completed, parse_status, parsed_metadata)
-                           VALUES (?, ?, 'pending', 0, ?, 'parsed', ?)""",
-                        (file_id, file_path, actual_phases, parsed_metadata)
+                            phase_completed, parse_status, parsed_metadata, file_ready)
+                           VALUES (?, ?, 'pending', 0, ?, 'parsed', ?, ?)""",
+                        (file_id, file_path, actual_phases, parsed_metadata, audit_file_ready)
                     )
                 except Exception as e:
                     logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
@@ -1254,7 +1267,9 @@ class JobQueueManager:
                 )
 
             # Determine processing status for UI distinction
-            if job_row is None:
+            if is_webdav and audit_file_ready == 0:
+                proc_status = "download_waiting"  # WebDAV file awaiting download
+            elif job_row is None:
                 proc_status = "no_job"        # Never processed
             elif job_row[1] == 'completed':
                 proc_status = "processed"     # Was completed but data missing

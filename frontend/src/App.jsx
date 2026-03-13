@@ -1404,12 +1404,14 @@ function App() {
                           processed: 'text-orange-400 bg-orange-900/30',
                           in_pipeline: 'text-blue-400 bg-blue-900/30',
                           failed: 'text-yellow-400 bg-yellow-900/30',
+                          download_waiting: 'text-cyan-400 bg-cyan-900/30',
                         }[d.status] || 'text-neutral-500 bg-neutral-700/50';
                         const statusLabel = {
                           no_job: t('audit.status_no_job'),
                           processed: t('audit.status_processed'),
                           in_pipeline: t('audit.status_in_pipeline'),
                           failed: t('audit.status_failed'),
+                          download_waiting: t('audit.status_download_waiting'),
                         }[d.status] || '';
                         return (
                         <div key={i} className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1.5 rounded flex items-center gap-2">

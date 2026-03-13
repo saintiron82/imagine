@@ -137,6 +137,7 @@ class SQLiteDB:
                 self._migrate_users_email_nullable()
                 self._migrate_users_firebase_uid()
                 self._migrate_error_code()
+                self._migrate_file_ready()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -151,6 +152,7 @@ class SQLiteDB:
                 self._migrate_mc_completed_at()
                 self._migrate_backfill_parse_status()
                 self._migrate_error_code()
+                self._migrate_file_ready()
 
             logger.info(f"Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -453,6 +455,50 @@ class SQLiteDB:
                 "SELECT COUNT(*) FROM job_queue WHERE status='failed' AND error_code IS NULL AND error_message IS NOT NULL"
             ).fetchone()[0]
             logger.info(f"✅ Backfilled error_code for {filled}/{null_count} jobs")
+
+    def _migrate_file_ready(self):
+        """Add file_ready column to job_queue (2-stage pipeline gate).
+
+        file_ready=1: file is locally available for processing (default)
+        file_ready=0: file needs preparation (WebDAV download pending)
+
+        Also resets existing WebDAV failed jobs to pending + file_ready=0
+        so DownloadAheadPool can pick them up fresh.
+        """
+        if not self._table_exists('job_queue'):
+            return
+        try:
+            self.conn.execute("SELECT file_ready FROM job_queue LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding file_ready column to job_queue...")
+            self.conn.execute(
+                "ALTER TABLE job_queue ADD COLUMN file_ready INTEGER NOT NULL DEFAULT 1"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_queue_file_ready "
+                "ON job_queue(file_ready, status, priority DESC, created_at ASC)"
+            )
+            # Backfill: mark existing WebDAV jobs as not ready
+            cursor = self.conn.execute(
+                """UPDATE job_queue SET file_ready = 0
+                   WHERE file_path LIKE 'webdav://%'
+                     AND status != 'completed'"""
+            )
+            webdav_count = cursor.rowcount
+            # Reset permanently failed WebDAV jobs to pending
+            cursor2 = self.conn.execute(
+                """UPDATE job_queue SET status = 'pending', retry_count = 0,
+                       error_message = NULL, error_code = NULL
+                   WHERE file_path LIKE 'webdav://%'
+                     AND status = 'failed'"""
+            )
+            reset_count = cursor2.rowcount
+            self.conn.commit()
+            logger.info(
+                f"✅ file_ready column added to job_queue "
+                f"(webdav={webdav_count} marked not-ready, "
+                f"{reset_count} failed jobs reset to pending)"
+            )
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

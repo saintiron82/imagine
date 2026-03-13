@@ -530,6 +530,7 @@
   "audit.status_processed": "Processed (empty)",
   "audit.status_in_pipeline": "In queue",
   "audit.status_failed": "Retrying",
+  "audit.status_download_waiting": "Downloading",
   "admin.worker_global_mode": "Global Processing Mode",
   "admin.worker_global_mode_desc": "MC Only: Server handles all except MC. Parse Only: Server parses only, workers handle rest. Auto: Auto-distribute.",
   "admin.worker_mode": "Capability",
