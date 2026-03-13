@@ -420,11 +420,20 @@ function spawnSearchDaemon() {
                     searchDaemon.stdin.write(JSON.stringify({ cmd: 'warmup' }) + '\n');
                     continue;
                 }
-                // Warmup complete — flush queued requests
+                // Warmup complete — flush queued requests + auto-fix metadata
                 if (parsed.status === 'ready') {
                     console.log(`[SearchDaemon] Models loaded (${parsed.warmup_ms}ms)`);
+                    // Auto-fix missing relative_path on startup
+                    searchDaemon.stdin.write(JSON.stringify({ cmd: 'fix_relative_paths' }) + '\n');
                     for (const req of pendingRequests) {
                         searchDaemon.stdin.write(JSON.stringify(req.data) + '\n');
+                    }
+                    continue;
+                }
+                // Auto-fix response (not a user request, just log it)
+                if (parsed.fixed !== undefined && parsed.success) {
+                    if (parsed.fixed > 0) {
+                        console.log(`[SearchDaemon] Auto-fixed ${parsed.fixed} files with missing relative_path`);
                     }
                     continue;
                 }

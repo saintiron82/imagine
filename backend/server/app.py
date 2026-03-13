@@ -91,6 +91,7 @@ async def startup():
     # DB will be lazily initialized on first request via get_db()
     _create_default_admin()
     _cleanup_stale_jobs()
+    _fix_missing_metadata()
 
     # Parse-ahead pool: pre-parse pending jobs in background (server-side Phase P)
     # In mc_only mode, ParseAhead also handles Phase VV (SigLIP2)
@@ -326,6 +327,18 @@ def _cleanup_stale_jobs():
             db.conn.rollback()
         except Exception:
             pass
+
+
+def _fix_missing_metadata():
+    """Auto-fill missing relative_path on startup — no reprocessing needed."""
+    try:
+        from backend.server.deps import get_db
+        db = get_db()
+        fixed = db.fix_missing_relative_paths()
+        if fixed > 0:
+            logger.info(f"Startup auto-fix: filled relative_path for {fixed} files")
+    except Exception as e:
+        logger.warning(f"Startup metadata fix failed: {e}")
 
 
 def _start_heartbeat_watchdog():
