@@ -559,20 +559,26 @@ class WorkerDaemon:
             logger.warning(f"Shared FS file not found: {file_path}")
             return None
 
-        # 2) Remote URIs (webdav://) — always try thumbnail first.
-        #    WebDAV browse pre-generates thumbnails on the server disk,
-        #    so the thumbnail endpoint should work even when the original
-        #    file is inaccessible (lives only on NAS).
-        if is_remote_uri or job.get("pre_parsed"):
+        # 2) Remote URIs (webdav://) — try DownloadAheadPool temp file first,
+        #    then fall back to thumbnail.
+        if is_remote_uri:
+            temp = self._resolve_download_ahead(job)
+            if temp:
+                return temp
+            # Fallback to thumbnail (low-res but usable for Vision)
             thumb = self._resolve_thumbnail(job)
             if thumb:
                 return thumb
-            if is_remote_uri:
-                logger.error(
-                    f"[RESOLVE] Cannot resolve remote URI — thumbnail unavailable, "
-                    f"original file on NAS not accessible: {file_path}"
-                )
-                return None
+            logger.error(
+                f"[RESOLVE] Cannot resolve remote URI — no temp file or thumbnail: "
+                f"{file_path}"
+            )
+            return None
+
+        if job.get("pre_parsed"):
+            thumb = self._resolve_thumbnail(job)
+            if thumb:
+                return thumb
             logger.warning(f"Pre-parsed thumbnail download failed for file_id={file_id}, falling back to full download")
 
         # 3) server_upload mode — full original download
@@ -583,6 +589,51 @@ class WorkerDaemon:
         else:
             logger.error(f"[DOWNLOAD] FAILED for file_id={file_id} ({file_path})")
         return result
+
+    def _resolve_download_ahead(self, job: dict) -> Optional[str]:
+        """Look up temp file from DownloadAheadPool (IPC/server co-located mode).
+
+        When the builtin worker runs inside the server process, it can
+        access the DownloadAheadPool's temp files directly.
+        Also checks parsed_metadata in job_queue DB for temp_local_path.
+        """
+        file_id = job.get("file_id")
+        job_id = job.get("job_id")
+
+        # 1) Try DownloadAheadPool's in-memory registry
+        try:
+            from backend.server.queue.manager import _get_download_pool
+            pool = _get_download_pool()
+            if pool:
+                temp = pool.get_temp_path(file_id)
+                if temp and Path(temp).exists():
+                    logger.info(f"[RESOLVE] Using download-ahead temp: {Path(temp).name}")
+                    return temp
+        except ImportError:
+            pass
+
+        # 2) Fallback: check parsed_metadata in job_queue DB directly
+        #    (works when co-located with server, same SQLite DB)
+        try:
+            from backend.server.deps import get_db
+            db = get_db()
+            cursor = db.conn.cursor()
+            cursor.execute(
+                "SELECT parsed_metadata FROM job_queue WHERE id = ?",
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                import json as _json
+                pm = _json.loads(row[0])
+                temp = pm.get("temp_local_path")
+                if temp and Path(temp).exists():
+                    logger.info(f"[RESOLVE] Using temp from DB metadata: {Path(temp).name}")
+                    return temp
+        except Exception as e:
+            logger.debug(f"_resolve_download_ahead DB check failed: {e}")
+
+        return None
 
     def _resolve_thumbnail(self, job: dict) -> Optional[str]:
         """Download only the thumbnail for a pre-parsed job (~200KB instead of ~500MB)."""
@@ -955,7 +1006,7 @@ class WorkerDaemon:
                     "error": ctx.error,
                 })
             else:
-                # Pre-parsed by server, or remote URI (thumbnail already prefetched)
+                # Pre-parsed by server, or remote URI
                 ctx.local_path = self._get_downloaded(job)
                 ctx.metadata = dict(job.get("metadata", {}))
                 # Use server-generated thumbnail if available (shared_fs mode
@@ -968,18 +1019,11 @@ class WorkerDaemon:
                 ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
                 if not ctx.local_path or not Path(ctx.local_path).exists():
                     ctx.failed = True
-                    if is_remote:
-                        ctx.error_code = "THUMB_MISSING"
-                        ctx.error = (
-                            f"No thumbnail for remote file: {file_path} "
-                            f"(file_id={job.get('file_id')})"
-                        )
-                    else:
-                        ctx.error_code = "FILE_NOT_FOUND"
-                        ctx.error = (
-                            f"File unavailable: {file_path} "
-                            f"(file_id={job.get('file_id')})"
-                        )
+                    ctx.error_code = "FILE_NOT_FOUND"
+                    ctx.error = (
+                        f"File unavailable: {file_path} "
+                        f"(file_id={job.get('file_id')})"
+                    )
                     logger.error(f"[RESOLVE] [{ctx.error_code}] {ctx.error}")
                     _notify(progress_callback, "file_error", {
                         "file_name": Path(file_path).name,

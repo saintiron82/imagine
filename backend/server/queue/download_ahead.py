@@ -185,11 +185,11 @@ class DownloadAheadPool(BaseAheadPool):
         """
         cursor = self.db.conn.cursor()
 
-        # Find WebDAV jobs that are pending and don't have a temp_local_path yet
+        # Find WebDAV jobs needing download (pending or assigned, no temp file yet)
         cursor.execute(
             """SELECT jq.id, jq.file_id, jq.file_path, jq.parsed_metadata
                FROM job_queue jq
-               WHERE jq.status = 'pending'
+               WHERE jq.status IN ('pending', 'assigned')
                  AND jq.file_path LIKE 'webdav://%'
                ORDER BY jq.priority DESC, jq.created_at ASC
                LIMIT ?""",
