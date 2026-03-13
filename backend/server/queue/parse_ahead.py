@@ -129,12 +129,14 @@ class ParseAheadPool(BaseAheadPool):
 
         # Pick up pending jobs
         # - Local files: always eligible
-        # - WebDAV files: only if already parsed (thumbnail exists for V/VV/MV)
+        # - WebDAV files: eligible if already parsed OR temp file downloaded
         cursor.execute(
             """SELECT id, file_id, file_path, parse_status, parsed_metadata, phase_completed
                FROM job_queue
                WHERE status = 'pending'
-                 AND (file_path NOT LIKE 'webdav://%' OR parse_status = 'parsed')
+                 AND (file_path NOT LIKE 'webdav://%'
+                      OR parse_status = 'parsed'
+                      OR parsed_metadata LIKE '%temp_local_path%')
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (batch_size,),
@@ -552,12 +554,13 @@ class ParseAheadPool(BaseAheadPool):
             self._process_backfill_batch()
             return False
 
-        # Select jobs to pre-parse (exclude remote files server can't access)
+        # Select jobs to pre-parse (include WebDAV files with temp downloads)
         cursor.execute(
             """SELECT id, file_id, file_path FROM job_queue
                WHERE status = 'pending'
                  AND (parse_status IS NULL OR parse_status = 'pending')
-                 AND file_path NOT LIKE 'webdav://%'
+                 AND (file_path NOT LIKE 'webdav://%'
+                      OR parsed_metadata LIKE '%temp_local_path%')
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (deficit,),
@@ -799,6 +802,60 @@ class ParseAheadPool(BaseAheadPool):
 
         logger.info("ParseAheadPool loop exited")
 
+    def _get_temp_file(self, job_id: int, file_path: str) -> Optional[Path]:
+        """Look up a temp local copy of a WebDAV file from DownloadAheadPool.
+
+        Checks both the in-memory registry and parsed_metadata in job_queue.
+        Returns Path if found, None otherwise.
+        """
+        try:
+            from backend.server.queue.download_ahead import DownloadAheadPool
+            # Try DownloadAheadPool's active files registry
+            pool = getattr(self, '_download_pool', None)
+            if pool:
+                # Get file_id from job
+                cursor = self.db.conn.cursor()
+                cursor.execute(
+                    "SELECT file_id, parsed_metadata FROM job_queue WHERE id = ?",
+                    (job_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    file_id = row[0]
+                    temp_path = pool.get_temp_path(file_id)
+                    if temp_path and Path(temp_path).exists():
+                        return Path(temp_path)
+                    # Also check parsed_metadata
+                    if row[1]:
+                        try:
+                            import json
+                            pm = json.loads(row[1])
+                            tlp = pm.get("temp_local_path")
+                            if tlp and Path(tlp).exists():
+                                return Path(tlp)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+            else:
+                # No pool reference — check parsed_metadata directly
+                cursor = self.db.conn.cursor()
+                cursor.execute(
+                    "SELECT parsed_metadata FROM job_queue WHERE id = ?",
+                    (job_id,),
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    try:
+                        import json
+                        pm = json.loads(row[0])
+                        tlp = pm.get("temp_local_path")
+                        if tlp and Path(tlp).exists():
+                            return Path(tlp)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        except Exception as e:
+            logger.debug(f"_get_temp_file failed for job {job_id}: {e}")
+        return None
+
     def _parse_single_job(self, job_id: int, file_id: int, file_path: str) -> bool:
         """Execute Phase P for a single job.
 
@@ -823,8 +880,19 @@ class ParseAheadPool(BaseAheadPool):
 
         file_p = Path(file_path)
         if not file_p.exists():
-            logger.warning(f"ParseAhead: file not found: {file_path}")
-            return False
+            # WebDAV files: check if DownloadAhead has a temp copy
+            if file_path.startswith("webdav://"):
+                temp_path = self._get_temp_file(job_id, file_path)
+                if temp_path:
+                    file_p = temp_path
+                else:
+                    logger.debug(
+                        f"ParseAhead: WebDAV file not yet downloaded: {file_path}"
+                    )
+                    return False
+            else:
+                logger.warning(f"ParseAhead: file not found: {file_path}")
+                return False
 
         # 1. Parse
         parser = ParserFactory.get_parser(file_p)
@@ -872,9 +940,10 @@ class ParseAheadPool(BaseAheadPool):
 
         # 6. Upsert metadata to files table
         meta_dict = meta_to_dict(meta)
-        # Normalize to NFC — macOS Path may preserve NFD from filesystem,
-        # but files table must store NFC for consistent lookups.
-        nfc_path = unicodedata.normalize('NFC', str(file_p))
+        # Use canonical path for DB storage (webdav:// for remote files)
+        # file_p may be a temp local copy, but DB stores the original path
+        canonical = file_path if file_path.startswith("webdav://") else str(file_p)
+        nfc_path = unicodedata.normalize('NFC', canonical)
         meta_dict["file_path"] = nfc_path
 
         try:

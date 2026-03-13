@@ -2593,11 +2593,34 @@ async function startEmbeddedServer(port = 8000) {
 
     console.log(`[Server] Starting FastAPI on port ${port}...`);
 
+    // Serialize WebDAV source configs for DownloadAheadPool registration
+    let webdavSourcesJson = '';
+    try {
+        const uc = readYamlFile(userSettingsPath);
+        const sources = (uc.webdav_sources || []).map(s => ({
+            id: s.id, url: s.url, username: s.username,
+            password: _decryptWebdavPassword(s),
+            remote_path: s.remote_path || '/',
+            verify_ssl: s.verify_ssl !== false,
+        }));
+        if (sources.length > 0) {
+            webdavSourcesJson = JSON.stringify(sources);
+        }
+    } catch (e) {
+        console.warn('[Server] Failed to serialize WebDAV sources:', e.message);
+    }
+
+    const serverEnv = {
+        ...process.env,
+        IMAGINE_USER_SETTINGS_PATH: userSettingsPath,
+        ...(webdavSourcesJson ? { IMAGINE_WEBDAV_SOURCES: webdavSourcesJson } : {}),
+    };
+
     const cliPath = getBackendCliPath();
     if (cliPath) {
         serverProc = spawn(cliPath, ['server', '--port', String(port), '--host', '0.0.0.0'], {
             cwd: projectRoot,
-            env: { ...process.env, IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
+            env: serverEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
         });
     } else {
@@ -2607,7 +2630,7 @@ async function startEmbeddedServer(port = 8000) {
             '--host', '0.0.0.0', '--port', String(port),
         ], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
+            env: { ...serverEnv, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
             stdio: ['pipe', 'pipe', 'pipe'],
         });
     }

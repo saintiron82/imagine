@@ -16,6 +16,21 @@ logger = logging.getLogger(__name__)
 # Module-level state for CLAIM-DIAG deduplication
 _last_claim_diag: dict = {}
 
+# Module-level reference to DownloadAheadPool (set by app.py on startup).
+_download_pool_ref = None
+
+
+def set_download_pool(pool):
+    """Register the DownloadAheadPool instance for temp file cleanup."""
+    global _download_pool_ref
+    _download_pool_ref = pool
+
+
+def _get_download_pool():
+    """Get the registered DownloadAheadPool, if any."""
+    return _download_pool_ref
+
+
 # Structured error codes for job failure classification.
 # Non-retryable errors are permanent — retrying will never succeed.
 NON_RETRYABLE_ERRORS = frozenset({
@@ -492,7 +507,53 @@ class JobQueueManager:
         )
         success = cursor.rowcount > 0
         self.db.conn.commit()
+        if success:
+            self._cleanup_temp_file(job_id)
         return success
+
+    def _cleanup_temp_file(self, job_id: int):
+        """Delete temp file for a WebDAV job and release buffer slot.
+
+        Called after job completion to free disk space in the bounded
+        download-ahead buffer.
+        """
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "SELECT file_id, file_path, parsed_metadata FROM job_queue WHERE id = ?",
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return
+            file_id, file_path, pm_str = row
+
+            if not file_path or not file_path.startswith("webdav://"):
+                return
+
+            # Release slot via the module-level download pool reference
+            pool = _get_download_pool()
+            if pool:
+                pool.release_slot(file_id)
+                return
+
+            # Fallback: clean up temp file directly from parsed_metadata
+            if pm_str:
+                from pathlib import Path
+                try:
+                    pm = json.loads(pm_str)
+                    temp_path = pm.get("temp_local_path")
+                    if temp_path:
+                        p = Path(temp_path)
+                        if p.exists():
+                            p.unlink()
+                            logger.debug(
+                                f"Cleaned up temp file for job {job_id}: {p.name}"
+                            )
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        except Exception as e:
+            logger.warning(f"_cleanup_temp_file error for job {job_id}: {e}")
 
     def complete_job_with_phases(self, job_id: int, user_id: int, phases: dict) -> bool:
         """Complete a job with explicit phase status based on actual data.
@@ -566,6 +627,8 @@ class JobQueueManager:
 
         success = cursor.rowcount > 0
         self.db.conn.commit()
+        if success and all_done:
+            self._cleanup_temp_file(job_id)
         return success
 
     def fail_job(self, job_id: int, user_id: int, error_message: str,

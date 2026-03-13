@@ -428,3 +428,42 @@ def revoke_worker_token(
     db.conn.commit()
     logger.info(f"Admin {admin['username']} revoked worker token {token_id}")
     return {"success": True}
+
+
+# ── WebDAV Source Registration ──────────────────────────────
+
+class WebDAVSourceConfig(BaseModel):
+    id: str
+    url: str
+    username: str
+    password: str
+    remote_path: str = "/"
+    verify_ssl: bool = True
+
+
+@router.post("/webdav-sources")
+async def register_webdav_source(
+    config: WebDAVSourceConfig,
+    admin=Depends(require_admin),
+):
+    """Register a WebDAV source config for download-ahead access.
+
+    Called by Electron when a WebDAV source is added or on server startup,
+    so DownloadAheadPool can download files from this source.
+    """
+    from backend.server.queue.download_ahead import register_webdav_source
+    register_webdav_source(config.dict())
+    logger.info(f"WebDAV source registered via API: {config.id}")
+    return {"success": True, "source_id": config.id}
+
+
+@router.delete("/webdav-sources/{source_id}")
+async def unregister_webdav_source(
+    source_id: str,
+    admin=Depends(require_admin),
+):
+    """Remove a WebDAV source config."""
+    from backend.server.queue.download_ahead import unregister_webdav_source
+    unregister_webdav_source(source_id)
+    logger.info(f"WebDAV source unregistered via API: {source_id}")
+    return {"success": True}

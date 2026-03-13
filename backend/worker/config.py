@@ -80,6 +80,21 @@ def get_rest_after_batch_s() -> int:
     return cfg.get("rest_after_batch_s", 0)
 
 
+def get_temp_buffer_config() -> dict:
+    """Get temp buffer settings for WebDAV file downloads.
+
+    Returns:
+        max_files: Max files to keep in temp folder (bounded buffer).
+        download_workers: Number of parallel download threads.
+    """
+    cfg = get_worker_config()
+    buf = cfg.get("temp_buffer", {})
+    return {
+        "max_files": buf.get("max_files", 10),
+        "download_workers": buf.get("download_workers", 3),
+    }
+
+
 def get_storage_mode() -> str:
     """Get storage mode: 'server_upload' or 'shared_fs'.
 

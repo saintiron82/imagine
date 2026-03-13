@@ -111,6 +111,39 @@ async def startup():
     except Exception as e:
         logger.warning(f"Parse-ahead pool failed to start: {e}")
 
+    # Download-ahead pool: pre-download WebDAV files to temp folder for Phase P
+    try:
+        if pa_enabled:
+            from backend.server.queue.download_ahead import (
+                DownloadAheadPool, register_webdav_source,
+            )
+            from backend.server.deps import get_db
+            db = get_db()
+            app.state.download_ahead = DownloadAheadPool(db)
+            app.state.download_ahead.start()
+            logger.info("Download-ahead pool started")
+            # Wire references for ParseAhead ↔ DownloadAhead communication
+            if hasattr(app.state, 'parse_ahead') and app.state.parse_ahead:
+                app.state.parse_ahead._download_pool = app.state.download_ahead
+            # Wire reference for JobQueueManager cleanup
+            from backend.server.queue.manager import set_download_pool
+            set_download_pool(app.state.download_ahead)
+            # Pre-register WebDAV sources from environment (Electron startup)
+            webdav_env = os.environ.get("IMAGINE_WEBDAV_SOURCES")
+            if webdav_env:
+                import json as _json
+                try:
+                    sources = _json.loads(webdav_env)
+                    for src in sources:
+                        register_webdav_source(src)
+                    logger.info(
+                        f"Registered {len(sources)} WebDAV source(s) from environment"
+                    )
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to parse IMAGINE_WEBDAV_SOURCES: {e}")
+    except Exception as e:
+        logger.warning(f"Download-ahead pool failed to start: {e}")
+
     # Embed-ahead pool: mc_only mode — server-side Phase MV after workers upload MC
     try:
         from backend.server.queue.manager import get_processing_mode
@@ -211,6 +244,9 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Imagine Server shutting down...")
+    if hasattr(app.state, "download_ahead") and app.state.download_ahead:
+        app.state.download_ahead.stop()
+        logger.info("Download-ahead pool stopped")
     if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
         app.state.parse_ahead.stop()
         logger.info("Parse-ahead pool stopped")
