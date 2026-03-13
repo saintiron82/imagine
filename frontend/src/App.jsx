@@ -1400,7 +1400,11 @@ function App() {
                     <div className="max-h-48 overflow-y-auto mt-2 space-y-1">
                       {auditResult.details.map((d, i) => (
                         <div key={i} className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1.5 rounded flex items-center gap-2">
-                          <span className="text-red-400 shrink-0">[{d.missing.join(', ')}]</span>
+                          <span className="text-red-400 shrink-0">[{d.missing.map(m => ({
+                            mc: t('audit.missing_mc'),
+                            vv: t('audit.missing_vv'),
+                            mv: t('audit.missing_mv'),
+                          })[m] || m).join(', ')}]</span>
                           <span className="truncate flex-1">{d.file_path?.split('/').pop()}</span>
                         </div>
                       ))}
@@ -1449,10 +1453,12 @@ function App() {
                   <div className="max-h-32 overflow-y-auto space-y-1 mb-2">
                     {auditResult.permanently_failed_details.map((d, i) => (
                       <div key={i} className="text-xs text-neutral-400 bg-neutral-800/60 px-2 py-1.5 rounded flex items-center gap-2">
-                        <span className="text-red-400 shrink-0 font-mono">
-                          [{d.error_code === 'RETRY_EXHAUSTED'
-                            ? t('audit.error_retry_exhausted')
-                            : d.error_code}]
+                        <span className="text-red-400 shrink-0">
+                          [{({
+                            'RETRY_EXHAUSTED': t('audit.error_retry_exhausted'),
+                            'THUMB_MISSING': t('audit.error_thumb_missing'),
+                            'PARSE_FAILED': t('audit.error_parse_failed'),
+                          })[d.error_code] || d.error_code}]
                         </span>
                         <span className="truncate flex-1">{d.file_path?.split('/').pop()}</span>
                       </div>
