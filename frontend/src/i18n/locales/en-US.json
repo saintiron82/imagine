@@ -27,6 +27,7 @@
   "action.scan_all": "Scan All",
   "action.process_folder": "Process All (incl. subfolders)",
   "action.process_folder_noskip": "Reprocess All (No Skip)",
+  "action.fix_metadata": "Auto-fix",
   "action.install_all": "Install All Dependencies (Auto-Detect)",
   "action.reinstall_verify": "Re-install / Verify AI Model",
   "label.folders": "Folders",

@@ -686,6 +686,17 @@ ipcMain.handle('check-phase-status', async (_, filePaths) => {
     }
 });
 
+// IPC Handler: Fix missing relative_path via search daemon DB
+ipcMain.handle('fix-relative-paths', async () => {
+    try {
+        const result = await sendSearchRequest({ cmd: 'fix_relative_paths' });
+        return result || { success: false };
+    } catch (e) {
+        console.error('[fix-relative-paths] error:', e.message);
+        return { success: false, error: e.message };
+    }
+});
+
 // IPC Handler: Generate Thumbnail (single file)
 ipcMain.handle('generate-thumbnail', async (_, filePath) => {
     return new Promise((resolve) => {

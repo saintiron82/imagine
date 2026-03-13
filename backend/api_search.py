@@ -251,6 +251,11 @@ def _handle_request(data: dict) -> dict:
         status = searcher.db.get_files_phase_status(file_paths[:500])
         return {"success": True, "status": status}
 
+    if cmd == "fix_relative_paths":
+        searcher = _get_searcher()
+        fixed = searcher.db.fix_missing_relative_paths()
+        return {"success": True, "fixed": fixed}
+
     # Normal search request
     return search(
         query=data.get("query", ""),

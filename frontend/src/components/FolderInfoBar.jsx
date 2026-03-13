@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Play, MoreHorizontal, RotateCcw } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Play, MoreHorizontal, RotateCcw, Wrench } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 /** Mini progress bar */
@@ -26,6 +26,35 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSigna
     const { t } = useLocale();
     const [stats, setStats] = useState(null);
     const [menuOpen, setMenuOpen] = useState(false);
+    const [fixing, setFixing] = useState(false);
+
+    const handleFixRelativePaths = useCallback(async () => {
+        setFixing(true);
+        try {
+            const result = await window.electron?.pipeline?.fixRelativePaths?.();
+            if (result?.fixed > 0) {
+                // Reload stats after fix
+                const r = await window.electron?.pipeline?.getFolderPhaseStats(currentPath);
+                if (r?.success && r.folders?.length > 0) {
+                    const totals = r.folders.reduce((acc, f) => ({
+                        total: acc.total + f.total,
+                        mc: acc.mc + f.mc,
+                        vv: acc.vv + f.vv,
+                        mv: acc.mv + f.mv,
+                        missing_relative_path_count: acc.missing_relative_path_count + (f.missing_relative_path_count || 0),
+                        missing_structure_count: acc.missing_structure_count + (f.missing_structure_count || 0),
+                        rebuild_needed: acc.rebuild_needed || !!f.rebuild_needed,
+                        fts_version_mismatch: acc.fts_version_mismatch || !!f.fts_version_mismatch,
+                    }), { total: 0, mc: 0, vv: 0, mv: 0, missing_relative_path_count: 0, missing_structure_count: 0, rebuild_needed: false, fts_version_mismatch: false });
+                    setStats(totals);
+                }
+            }
+        } catch (e) {
+            console.error('Fix relative paths failed:', e);
+        } finally {
+            setFixing(false);
+        }
+    }, [currentPath]);
 
     useEffect(() => {
         if (!currentPath || currentPath.startsWith('webdav://')) { setStats(null); return; }
@@ -83,26 +112,39 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSigna
                         <PhaseBar label="VV" count={stats.vv} total={stats.total} color="bg-purple-400" />
                         <PhaseBar label="MV" count={stats.mv} total={stats.total} color="bg-green-400" />
                         {stats.rebuild_needed && (
-                            <span
-                                className="text-[10px] font-bold text-red-300 bg-red-900/40 border border-red-700 rounded px-2 py-0.5"
-                                title={[
-                                    stats.missing_relative_path_count > 0 && t('status.rebuild_reason.missing_relative_path', { count: stats.missing_relative_path_count }),
-                                    stats.missing_structure_count > 0 && t('status.rebuild_reason.missing_structure_vector', { count: stats.missing_structure_count }),
-                                    stats.fts_version_mismatch && t('status.rebuild_reason.fts_outdated'),
-                                ].filter(Boolean).join('\n')}
-                            >
-                                {t('status.rebuild_needed_badge')}
-                                {stats.missing_relative_path_count > 0 && (
-                                    <span className="ml-1 font-normal opacity-80">
-                                        — {t('status.rebuild_reason.missing_relative_path', { count: stats.missing_relative_path_count })}
-                                    </span>
+                            <div className="flex items-center gap-1">
+                                <span
+                                    className="text-[10px] font-bold text-red-300 bg-red-900/40 border border-red-700 rounded px-2 py-0.5"
+                                    title={[
+                                        stats.missing_relative_path_count > 0 && t('status.rebuild_reason.missing_relative_path', { count: stats.missing_relative_path_count }),
+                                        stats.missing_structure_count > 0 && t('status.rebuild_reason.missing_structure_vector', { count: stats.missing_structure_count }),
+                                        stats.fts_version_mismatch && t('status.rebuild_reason.fts_outdated'),
+                                    ].filter(Boolean).join('\n')}
+                                >
+                                    {t('status.rebuild_needed_badge')}
+                                    {stats.missing_relative_path_count > 0 && (
+                                        <span className="ml-1 font-normal opacity-80">
+                                            — {t('status.rebuild_reason.missing_relative_path', { count: stats.missing_relative_path_count })}
+                                        </span>
+                                    )}
+                                    {stats.fts_version_mismatch && !stats.missing_relative_path_count && (
+                                        <span className="ml-1 font-normal opacity-80">
+                                            — {t('status.rebuild_reason.fts_outdated')}
+                                        </span>
+                                    )}
+                                </span>
+                                {stats.missing_relative_path_count > 0 && window.electron?.pipeline?.fixRelativePaths && (
+                                    <button
+                                        onClick={handleFixRelativePaths}
+                                        disabled={fixing}
+                                        className="text-[10px] font-bold text-amber-300 bg-amber-900/40 border border-amber-700 rounded px-2 py-0.5 hover:bg-amber-800/60 transition-colors pointer-events-auto"
+                                        title={t('action.fix_metadata')}
+                                    >
+                                        <Wrench size={10} className={`inline mr-0.5 ${fixing ? 'animate-spin' : ''}`} />
+                                        {t('action.fix_metadata')}
+                                    </button>
                                 )}
-                                {stats.fts_version_mismatch && !stats.missing_relative_path_count && (
-                                    <span className="ml-1 font-normal opacity-80">
-                                        — {t('status.rebuild_reason.fts_outdated')}
-                                    </span>
-                                )}
-                            </span>
+                            </div>
                         )}
                     </div>
                 ) : (

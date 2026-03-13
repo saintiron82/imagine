@@ -27,6 +27,7 @@
   "action.scan_all": "전체 스캔",
   "action.process_folder": "전체 처리 (하위 폴더 포함)",
   "action.process_folder_noskip": "전체 재처리 (스킵 없음)",
+  "action.fix_metadata": "자동 보정",
   "action.install_all": "모든 종속성 설치 (자동 감지)",
   "action.reinstall_verify": "재설치 / AI 모델 검증",
   "label.folders": "폴더",

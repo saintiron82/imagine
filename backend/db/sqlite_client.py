@@ -1975,6 +1975,57 @@ class SQLiteDB:
             "reasons": reasons,
         }
 
+    def fix_missing_relative_paths(self) -> int:
+        """Auto-fill missing relative_path from file_path and storage_root.
+
+        For files where relative_path is NULL/empty but storage_root exists,
+        compute relative_path = file_path - storage_root prefix.
+        For files where storage_root is also empty, derive from file_path directory.
+
+        Returns: number of rows fixed.
+        """
+        cursor = self.conn.cursor()
+        rows = cursor.execute("""
+            SELECT id, file_path, file_name, storage_root
+            FROM files
+            WHERE relative_path IS NULL OR TRIM(relative_path) = ''
+        """).fetchall()
+
+        if not rows:
+            return 0
+
+        fixed = 0
+        for row in rows:
+            file_id, file_path, file_name, storage_root = row
+            if not file_path:
+                continue
+
+            # Compute relative_path
+            if storage_root and file_path.startswith(storage_root):
+                rel = file_path[len(storage_root):].lstrip("/\\")
+            else:
+                # Derive: use directory part of file_path as relative
+                import posixpath
+                parts = file_path.replace("\\", "/").rsplit("/", 1)
+                rel = file_name or (parts[1] if len(parts) > 1 else file_path)
+
+            # Also fix storage_root if missing
+            if not storage_root and file_path:
+                dir_part = file_path.replace("\\", "/").rsplit("/", 1)
+                storage_root = dir_part[0] if len(dir_part) > 1 else ""
+
+            cursor.execute("""
+                UPDATE files SET relative_path = ?, storage_root = COALESCE(NULLIF(TRIM(storage_root), ''), ?)
+                WHERE id = ?
+            """, (rel, storage_root, file_id))
+            fixed += 1
+
+        if fixed > 0:
+            self.conn.commit()
+            logger.info(f"Fixed {fixed} files with missing relative_path")
+
+        return fixed
+
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics."""
         cursor = self.conn.cursor()

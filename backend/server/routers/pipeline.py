@@ -664,6 +664,18 @@ def get_files_phase_status(
     return {"success": True, "status": status}
 
 
+# ── Data Repair ──────────────────────────────────────────────
+
+@router.post("/api/v1/admin/fix-relative-paths")
+def fix_relative_paths(
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Auto-fill missing relative_path from file_path (admin only)."""
+    fixed = db.fix_missing_relative_paths()
+    return {"success": True, "fixed": fixed}
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 def _decode_vector(encoded: Optional[str]) -> Optional[np.ndarray]:
