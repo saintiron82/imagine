@@ -488,10 +488,10 @@ const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loa
     const { t } = useLocale();
     const isRemote = file.isRemote || file.path?.startsWith('webdav://');
     const canPreviewNatively = !isRemote && IMAGE_PREVIEW_EXTS.includes(file.extension);
-    // Phase status: { mc: bool, vv: bool, mv: bool } or null
+    // Phase status: { mc: bool, vv: bool, mv: bool } or null (not loaded yet)
     const ps = phaseStatus || null;
     const allDone = ps && ps.mc && ps.vv && ps.mv;
-    const noneDone = !ps || (!ps.mc && !ps.vv && !ps.mv);
+    const noneDone = ps && !ps.mc && !ps.vv && !ps.mv;  // only when loaded and all false
 
     const toFileUrl = (p) => {
         const normalized = p.replace(/\\/g, '/');
@@ -520,11 +520,9 @@ const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loa
             onMouseDown={onMouseDown}
             onContextMenu={handleContextMenu}
         >
-            {/* Phase Status Indicator (MC/VV/MV) */}
+            {/* Phase Status Indicator (MC/VV/MV) — only shown after status loaded */}
             <div className="absolute top-2 left-2 z-10 pointer-events-none">
-                {noneDone ? (
-                    <div className="w-3 h-3 rounded-full bg-red-500 shadow-sm border border-black/20" title={t('status.not_processed')}></div>
-                ) : !allDone && ps ? (
+                {ps && !allDone && (
                     <div className="flex gap-0.5">
                         {[
                             { key: 'mc', done: ps.mc },
@@ -541,7 +539,7 @@ const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loa
                             </span>
                         ))}
                     </div>
-                ) : null}
+                )}
             </div>
 
             {/* Selection checkbox */}
