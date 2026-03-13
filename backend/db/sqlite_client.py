@@ -2155,6 +2155,69 @@ class SQLiteDB:
 
         return results
 
+    def get_files_phase_status(self, file_paths: List[str]) -> Dict[str, Dict[str, bool]]:
+        """Return per-file MC/VV/MV presence status.
+
+        Args:
+            file_paths: List of absolute file paths to check.
+
+        Returns:
+            { file_path: { "mc": bool, "vv": bool, "mv": bool } }
+        """
+        if not file_paths:
+            return {}
+
+        cursor = self.conn.cursor()
+        result: Dict[str, Dict[str, bool]] = {}
+
+        # Process in batches of 100 to avoid SQLite variable limit
+        batch_size = 100
+        use_vec = True
+
+        for i in range(0, len(file_paths), batch_size):
+            batch = file_paths[i:i + batch_size]
+            placeholders = ",".join("?" * len(batch))
+
+            if use_vec:
+                try:
+                    rows = cursor.execute(f"""
+                        SELECT
+                            f.file_path,
+                            CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 ELSE 0 END as has_mc,
+                            CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) THEN 1 ELSE 0 END as has_vv,
+                            CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 ELSE 0 END as has_mv
+                        FROM files f
+                        WHERE f.file_path IN ({placeholders})
+                    """, batch).fetchall()
+                except Exception:
+                    use_vec = False
+
+            if not use_vec:
+                # Fallback without vec tables
+                rows = cursor.execute(f"""
+                    SELECT
+                        f.file_path,
+                        CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 ELSE 0 END as has_mc,
+                        0 as has_vv,
+                        0 as has_mv
+                    FROM files f
+                    WHERE f.file_path IN ({placeholders})
+                """, batch).fetchall()
+
+            for row in rows:
+                result[row[0]] = {
+                    "mc": bool(row[1]),
+                    "vv": bool(row[2]),
+                    "mv": bool(row[3]),
+                }
+
+        # Files not found in DB → all False
+        for fp in file_paths:
+            if fp not in result:
+                result[fp] = {"mc": False, "vv": False, "mv": False}
+
+        return result
+
     def update_user_metadata(
         self,
         file_path: str,

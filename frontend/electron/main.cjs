@@ -675,6 +675,17 @@ ipcMain.handle('check-metadata-exists', async (_, filePaths) => {
     return results;
 });
 
+// IPC Handler: Check per-file phase status (MC/VV/MV) via search daemon DB
+ipcMain.handle('check-phase-status', async (_, filePaths) => {
+    try {
+        const result = await sendSearchRequest({ cmd: 'phase_status', file_paths: filePaths });
+        return result?.status || {};
+    } catch (e) {
+        console.error('[check-phase-status] error:', e.message);
+        return {};
+    }
+});
+
 // IPC Handler: Generate Thumbnail (single file)
 ipcMain.handle('generate-thumbnail', async (_, filePath) => {
     return new Promise((resolve) => {

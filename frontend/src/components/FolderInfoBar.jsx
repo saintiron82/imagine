@@ -83,8 +83,25 @@ const FolderInfoBar = ({ currentPath, onProcessFolder, isProcessing, reloadSigna
                         <PhaseBar label="VV" count={stats.vv} total={stats.total} color="bg-purple-400" />
                         <PhaseBar label="MV" count={stats.mv} total={stats.total} color="bg-green-400" />
                         {stats.rebuild_needed && (
-                            <span className="text-[10px] font-bold text-red-300 bg-red-900/40 border border-red-700 rounded px-2 py-0.5">
+                            <span
+                                className="text-[10px] font-bold text-red-300 bg-red-900/40 border border-red-700 rounded px-2 py-0.5"
+                                title={[
+                                    stats.missing_relative_path_count > 0 && t('status.rebuild_reason.missing_relative_path', { count: stats.missing_relative_path_count }),
+                                    stats.missing_structure_count > 0 && t('status.rebuild_reason.missing_structure_vector', { count: stats.missing_structure_count }),
+                                    stats.fts_version_mismatch && t('status.rebuild_reason.fts_outdated'),
+                                ].filter(Boolean).join('\n')}
+                            >
                                 {t('status.rebuild_needed_badge')}
+                                {stats.missing_relative_path_count > 0 && (
+                                    <span className="ml-1 font-normal opacity-80">
+                                        — {t('status.rebuild_reason.missing_relative_path', { count: stats.missing_relative_path_count })}
+                                    </span>
+                                )}
+                                {stats.fts_version_mismatch && !stats.missing_relative_path_count && (
+                                    <span className="ml-1 font-normal opacity-80">
+                                        — {t('status.rebuild_reason.fts_outdated')}
+                                    </span>
+                                )}
                             </span>
                         )}
                     </div>

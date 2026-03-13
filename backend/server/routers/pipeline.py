@@ -64,6 +64,10 @@ class ScanFolderRequest(BaseModel):
     priority: int = 0
 
 
+class PhaseStatusRequest(BaseModel):
+    file_paths: List[str]
+
+
 # ── Job Queue Endpoints ──────────────────────────────────────
 
 @router.post("/api/v1/jobs/claim")
@@ -644,6 +648,20 @@ def cleanup_queue(
     queue = _get_queue(db)
     result = queue.cleanup_queue()
     return {"success": True, **result}
+
+
+# ── File Phase Status ────────────────────────────────────────
+
+@router.post("/api/v1/files/phase-status")
+def get_files_phase_status(
+    req: PhaseStatusRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Return per-file MC/VV/MV presence status."""
+    paths = req.file_paths[:500]  # limit
+    status = db.get_files_phase_status(paths)
+    return {"success": True, "status": status}
 
 
 # ── Helpers ──────────────────────────────────────────────────

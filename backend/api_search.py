@@ -243,6 +243,14 @@ def _handle_request(data: dict) -> dict:
     if cmd == "quit":
         return {"status": "bye"}
 
+    if cmd == "phase_status":
+        file_paths = data.get("file_paths", [])
+        if not file_paths:
+            return {"success": True, "status": {}}
+        searcher = _get_searcher()
+        status = searcher.db.get_files_phase_status(file_paths[:500])
+        return {"success": True, "status": status}
+
     # Normal search request
     return search(
         query=data.get("query", ""),

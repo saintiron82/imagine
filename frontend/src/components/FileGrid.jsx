@@ -484,10 +484,14 @@ const MetadataModal = ({ metadata, onClose }) => {
 };
 
 // FileCard Component
-const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loading, queued, onShowMeta, hasMetadata }) => {
+const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loading, queued, onShowMeta, hasMetadata, phaseStatus }) => {
     const { t } = useLocale();
     const isRemote = file.isRemote || file.path?.startsWith('webdav://');
     const canPreviewNatively = !isRemote && IMAGE_PREVIEW_EXTS.includes(file.extension);
+    // Phase status: { mc: bool, vv: bool, mv: bool } or null
+    const ps = phaseStatus || null;
+    const allDone = ps && ps.mc && ps.vv && ps.mv;
+    const noneDone = !ps || (!ps.mc && !ps.vv && !ps.mv);
 
     const toFileUrl = (p) => {
         const normalized = p.replace(/\\/g, '/');
@@ -516,11 +520,28 @@ const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loa
             onMouseDown={onMouseDown}
             onContextMenu={handleContextMenu}
         >
-            {/* Metadata Status Indicator */}
+            {/* Phase Status Indicator (MC/VV/MV) */}
             <div className="absolute top-2 left-2 z-10 pointer-events-none">
-                {!hasMetadata && (
+                {noneDone ? (
                     <div className="w-3 h-3 rounded-full bg-red-500 shadow-sm border border-black/20" title={t('status.not_processed')}></div>
-                )}
+                ) : !allDone && ps ? (
+                    <div className="flex gap-0.5">
+                        {[
+                            { key: 'mc', done: ps.mc },
+                            { key: 'vv', done: ps.vv },
+                            { key: 'mv', done: ps.mv },
+                        ].map(({ key, done }) => (
+                            <span
+                                key={key}
+                                className={`text-[8px] font-bold px-0.5 rounded ${
+                                    done ? 'bg-green-700/90 text-green-200' : 'bg-red-900/80 text-red-300'
+                                }`}
+                            >
+                                {key.toUpperCase()}
+                            </span>
+                        ))}
+                    </div>
+                ) : null}
             </div>
 
             {/* Selection checkbox */}
@@ -528,8 +549,8 @@ const FileCard = ({ file, isSelected, onMouseDown, onContextMenu, thumbnail, loa
                 <CheckCircle className={isSelected ? "text-blue-500 fill-current" : "text-gray-400"} size={20} />
             </div>
 
-            {/* META button (only if metadata exists) */}
-            {hasMetadata && (
+            {/* META button (show if any phase data exists) */}
+            {(hasMetadata || (ps && (ps.mc || ps.vv || ps.mv))) && (
                 <button
                     className="absolute bottom-2 right-2 z-20 opacity-0 group-hover:opacity-100 bg-gray-900/90 hover:bg-blue-600 text-[10px] text-white px-2 py-1 rounded transition-all shadow-lg font-bold"
                     onClick={handleMetaClick}
@@ -665,11 +686,24 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
             .then(results => {
                 const supportedFiles = results.flat().filter(i => !i.isDirectory && SUPPORTED_EXTS.includes(i.extension));
                 setFiles(supportedFiles);
-                if (window.electron?.pipeline?.checkMetadataExists) {
-                    const localFiles = supportedFiles.filter(f => !f.isRemote && !f.path?.startsWith('webdav://'));
-                    if (localFiles.length > 0) {
-                        window.electron.pipeline.checkMetadataExists(localFiles.map(f => f.path))
+                // Load per-file phase status (MC/VV/MV)
+                const localFiles = supportedFiles.filter(f => !f.isRemote && !f.path?.startsWith('webdav://'));
+                if (localFiles.length > 0) {
+                    const paths = localFiles.map(f => f.path);
+                    if (window.electron?.pipeline?.checkPhaseStatus) {
+                        window.electron.pipeline.checkPhaseStatus(paths)
                             .then(setMetadataStatus)
+                            .catch(console.error);
+                    } else if (window.electron?.pipeline?.checkMetadataExists) {
+                        // Fallback for older Electron builds
+                        window.electron.pipeline.checkMetadataExists(paths)
+                            .then(r => {
+                                const mapped = {};
+                                for (const [k, v] of Object.entries(r)) {
+                                    mapped[k] = v ? { mc: true, vv: true, mv: true } : { mc: false, vv: false, mv: false };
+                                }
+                                setMetadataStatus(mapped);
+                            })
                             .catch(console.error);
                     }
                 }
@@ -691,24 +725,28 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         return () => { webdavProgressListeners.delete(onProgress); };
     }, []);
 
-    // Viewport-based metadata polling
+    // Viewport-based phase status polling
     useEffect(() => {
         if (files.length === 0) return;
         const interval = setInterval(() => {
-            if (!window.electron?.pipeline?.checkMetadataExists) return;
             const { start, end } = getVisibleRange();
             const visiblePaths = files.slice(start, end)
                 .filter(f => !f.isRemote && !f.path?.startsWith('webdav://'))
                 .map(f => f.path);
             if (visiblePaths.length === 0) return;
-            window.electron.pipeline.checkMetadataExists(visiblePaths)
-                .then(status => {
-                    setMetadataStatus(prev => {
-                        const isDifferent = Object.keys(status).some(k => status[k] !== prev[k]);
-                        return isDifferent ? { ...prev, ...status } : prev;
-                    });
-                })
-                .catch(console.error);
+
+            if (window.electron?.pipeline?.checkPhaseStatus) {
+                window.electron.pipeline.checkPhaseStatus(visiblePaths)
+                    .then(status => {
+                        setMetadataStatus(prev => {
+                            const isDifferent = Object.keys(status).some(k =>
+                                JSON.stringify(status[k]) !== JSON.stringify(prev[k])
+                            );
+                            return isDifferent ? { ...prev, ...status } : prev;
+                        });
+                    })
+                    .catch(console.error);
+            }
         }, 3000);
         return () => clearInterval(interval);
     }, [files, getVisibleRange]);
@@ -1135,7 +1173,12 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                                                         }
                                                         queued={(file.isRemote || file.path?.startsWith('webdav://')) && !thumbnails[file.path] && !inFlightPaths.has(file.path)}
                                                         onShowMeta={handleShowMeta}
-                                                        hasMetadata={metadataStatus[file.path]}
+                                                        hasMetadata={
+                                                            typeof metadataStatus[file.path] === 'object'
+                                                                ? !!(metadataStatus[file.path]?.mc || metadataStatus[file.path]?.vv || metadataStatus[file.path]?.mv)
+                                                                : !!metadataStatus[file.path]
+                                                        }
+                                                        phaseStatus={typeof metadataStatus[file.path] === 'object' ? metadataStatus[file.path] : null}
                                                     />
                                                 </div>
                                             );
