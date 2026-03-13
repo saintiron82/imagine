@@ -1205,82 +1205,70 @@ function QueuePanel() {
         </div>
       </div>
 
-      {/* Phase Progress — incomplete files only */}
-      {stats && (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-          <div className="text-xs text-gray-400 mb-3 font-medium">
-            {t('admin.queue_phase_progress')}
-            <span className="ml-2 text-gray-500">
-              {(stats.phase_total || 0) > 0
-                ? `(${stats.phase_total} ${t('admin.queue_phase_remaining')})`
-                : `(${t('admin.queue_phase_all_done')})`}
-            </span>
-          </div>
-          <div className="space-y-2">
-            {[
-              { key: 'phase_vision_done', label: t('admin.queue_phase_vision'), color: 'bg-purple-500', textColor: 'text-purple-400' },
-              { key: 'phase_embed_done', label: t('admin.queue_phase_embed'), color: 'bg-blue-500', textColor: 'text-blue-400' },
-            ].map(({ key, label, color, textColor }) => {
-              const itemTotal = stats.phase_total;
-              const done = stats[key] || 0;
-              const pct = itemTotal > 0 ? (done / itemTotal) * 100 : 0;
-              return (
-                <div key={key} className="flex items-center gap-3">
-                  <span className={`text-xs w-24 flex-shrink-0 ${textColor}`}>{label}</span>
-                  <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${color}`}
-                      style={{ width: `${Math.min(pct, 100)}%` }}
-                    />
-                  </div>
-                  <span className="text-xs text-gray-400 font-mono w-24 text-right flex-shrink-0">
-                    {done}/{itemTotal}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Pipeline Progress — cumulative stage bars */}
+      {stats && stats.total_files > 0 && (() => {
+        const total = stats.total_files;
+        const complete = stats.complete_files || 0;
+        const dlWaiting = stats.download_waiting || 0;
+        const dlDone = total - dlWaiting;
+        // All files in DB have been parsed (they get into files table via parse)
+        const parseDone = total;
+        const mcDone = (stats.phase_vision_done || 0) + complete;
+        const embedDone = (stats.phase_embed_done || 0) + complete;
 
-      {/* Download Buffer (WebDAV) */}
-      {stats?.download_buffer && stats.download_waiting > 0 && (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-          <div className="text-xs text-gray-400 mb-2 font-medium">{t('admin.queue_download_buffer')}</div>
-          <div className="flex items-center gap-4 text-xs">
-            <span className="text-cyan-400">
-              {t('admin.queue_download_in_flight')}: <span className="font-mono">{stats.download_buffer.in_flight}</span>
-            </span>
-            <span className="text-teal-400">
-              {t('admin.queue_download_buffered')}: <span className="font-mono">{stats.download_buffer.active_files}</span>
-              /{stats.download_buffer.max_files}
-            </span>
-            <span className="text-gray-500">
-              {t('admin.queue_download_remaining')}: <span className="font-mono">{stats.download_waiting}</span>
-            </span>
-          </div>
-        </div>
-      )}
+        // Build stage list — only show download bar when WebDAV files exist
+        const stages = [
+          ...(dlWaiting > 0 ? [{
+            label: t('admin.queue_stage_download'),
+            done: dlDone, total, color: 'bg-cyan-500', textColor: 'text-cyan-400',
+            detail: stats.download_buffer
+              ? `${t('admin.queue_download_in_flight')}: ${stats.download_buffer.in_flight} | ${t('admin.queue_download_buffered')}: ${stats.download_buffer.active_files}/${stats.download_buffer.max_files}`
+              : null,
+          }] : []),
+          { label: t('admin.queue_stage_parse'), done: parseDone, total, color: 'bg-teal-500', textColor: 'text-teal-400',
+            detail: (stats.parse_ahead_parsing || 0) > 0 ? `${t('admin.queue_parse_ahead_parsing')}: ${stats.parse_ahead_parsing}` : null },
+          { label: t('admin.queue_stage_mc'), done: mcDone, total, color: 'bg-purple-500', textColor: 'text-purple-400' },
+          { label: t('admin.queue_stage_embed'), done: embedDone, total, color: 'bg-blue-500', textColor: 'text-blue-400' },
+          { label: t('admin.queue_stage_complete'), done: complete, total, color: 'bg-green-500', textColor: 'text-green-400' },
+        ];
 
-      {/* Server Pools (ParseAhead) */}
-      {stats && (stats.parse_ahead_parsed > 0 || stats.parse_ahead_parsing > 0 || stats.parse_ahead_failed > 0) && (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-          <div className="text-xs text-gray-400 mb-2 font-medium">{t('admin.queue_parse_ahead')}</div>
-          <div className="flex items-center gap-4 text-xs">
-            <span className="text-green-400">
-              {t('admin.queue_parse_ahead_parsed')}: <span className="font-mono">{stats.parse_ahead_parsed || 0}</span>
-            </span>
-            <span className="text-cyan-400">
-              {t('admin.queue_parse_ahead_parsing')}: <span className="font-mono">{stats.parse_ahead_parsing || 0}</span>
-            </span>
-            {(stats.parse_ahead_failed || 0) > 0 && (
-              <span className="text-red-400">
-                {t('admin.queue_parse_ahead_failed')}: <span className="font-mono">{stats.parse_ahead_failed}</span>
+        return (
+          <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
+            <div className="text-xs text-gray-400 mb-3 font-medium">
+              {t('admin.queue_pipeline_progress')}
+              <span className="ml-2 text-gray-500">
+                {complete < total
+                  ? `(${total - complete} ${t('admin.queue_phase_remaining')})`
+                  : `(${t('admin.queue_phase_all_done')})`}
               </span>
-            )}
+            </div>
+            <div className="space-y-2">
+              {stages.map(({ label, done, total: stageTotal, color, textColor, detail }) => {
+                const pct = stageTotal > 0 ? (done / stageTotal) * 100 : 0;
+                return (
+                  <div key={label}>
+                    <div className="flex items-center gap-3">
+                      <span className={`text-xs w-20 flex-shrink-0 ${textColor}`}>{label}</span>
+                      <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${color}`}
+                          style={{ width: `${Math.min(pct, 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-gray-400 font-mono w-24 text-right flex-shrink-0">
+                        {done}/{stageTotal}
+                      </span>
+                    </div>
+                    {detail && (
+                      <div className="ml-[calc(5rem+0.75rem)] text-[10px] text-gray-500 mt-0.5">{detail}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Progress bar */}
       {stats && stats.total > 0 && (
