@@ -19,7 +19,6 @@ _last_claim_diag: dict = {}
 # Structured error codes for job failure classification.
 # Non-retryable errors are permanent — retrying will never succeed.
 NON_RETRYABLE_ERRORS = frozenset({
-    "THUMB_MISSING",   # No thumbnail available (V/VV phases impossible)
     "FILE_NOT_FOUND",  # Source file inaccessible (deleted, WebDAV 404)
     "PARSE_FAILED",    # File parsing failed (corrupt file, unsupported format)
 })
@@ -36,8 +35,6 @@ def _infer_error_code(error_message: str) -> str | None:
     msg = error_message.lower()
     if "file unavailable" in msg or "file not found" in msg or "cannot access" in msg:
         return "FILE_NOT_FOUND"
-    if "no thumbnail" in msg or ("thumbnail" in msg and "requires" in msg):
-        return "THUMB_MISSING"
     if "parse failed" in msg:
         return "PARSE_FAILED"
     return None
@@ -575,7 +572,7 @@ class JobQueueManager:
                  error_code: str = None) -> bool:
         """Mark a job as failed with optional structured error code.
 
-        Non-retryable error codes (THUMB_MISSING, FILE_NOT_FOUND, PARSE_FAILED)
+        Non-retryable error codes (FILE_NOT_FOUND, PARSE_FAILED)
         skip retries and fail immediately. Retryable errors follow the existing
         retry_count/max_retries logic.
         """
@@ -891,7 +888,7 @@ class JobQueueManager:
     def retry_failed_jobs(self) -> int:
         """Retry all failed jobs by resetting them to pending.
 
-        Skips non-retryable errors (THUMB_MISSING, FILE_NOT_FOUND, PARSE_FAILED).
+        Skips non-retryable errors (FILE_NOT_FOUND, PARSE_FAILED).
         Also resets parse_status='failed' back to NULL so ParseAhead
         can re-attempt pre-parsing (prevents permanent parse deadlock).
         """
@@ -1106,36 +1103,6 @@ class JobQueueManager:
 
             job_row = all_jobs[0] if all_jobs else None
 
-            # Skip files without thumbnails — can't process V/VV phases
-            if not thumbnail_url:
-                if job_row is None:
-                    skipped_non_retryable += 1
-                    perm_failed_details.append({
-                        "job_id": None,
-                        "file_id": file_id,
-                        "file_path": file_path,
-                        "error_code": "THUMB_MISSING",
-                        "retry_count": 0,
-                    })
-                    continue
-                elif job_row[1] != 'failed':
-                    cursor.execute(
-                        """UPDATE job_queue SET status = 'failed',
-                           error_code = 'THUMB_MISSING',
-                           error_message = 'No thumbnail available for processing'
-                           WHERE id = ?""",
-                        (job_row[0],)
-                    )
-                skipped_non_retryable += 1
-                perm_failed_details.append({
-                    "job_id": job_row[0],
-                    "file_id": file_id,
-                    "file_path": file_path,
-                    "error_code": "THUMB_MISSING",
-                    "retry_count": 0,
-                })
-                continue
-
             # Ensure this file has a pending job for re-processing
             if job_row is None:
                 # No job at all — create one with parsed_metadata
@@ -1200,24 +1167,7 @@ class JobQueueManager:
                     })
                     continue
 
-                if not thumbnail_url or not os.path.exists(thumbnail_url):
-                    # No thumbnail on disk — mark as unprocessable
-                    if not existing_error_code:
-                        cursor.execute(
-                            "UPDATE job_queue SET error_code = 'THUMB_MISSING' WHERE id = ?",
-                            (job_row[0],)
-                        )
-                    skipped_non_retryable += 1
-                    perm_failed_details.append({
-                        "job_id": job_row[0],
-                        "file_id": file_id,
-                        "file_path": file_path,
-                        "error_code": existing_error_code or "THUMB_MISSING",
-                        "retry_count": retry_count,
-                    })
-                    continue
-
-                # Recoverable failure with thumbnail — give fresh chance
+                # Recoverable failure — give fresh chance (thumbnail will be generated in Phase P)
                 cursor.execute(
                     """UPDATE job_queue
                        SET status = 'pending', phase_completed = ?,

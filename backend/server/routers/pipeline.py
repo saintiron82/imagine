@@ -594,7 +594,7 @@ def force_retry_failed_jobs(
     """Force retry ALL failed/stuck jobs from scratch (admin only).
 
     Unlike retry-failed, this resets everything including non-retryable errors
-    (PARSE_FAILED, THUMB_MISSING) and stuck pending jobs with high retry_count.
+    (FILE_NOT_FOUND, PARSE_FAILED) and stuck pending jobs with high retry_count.
     All phase data is cleared — jobs will be re-processed from Phase P.
     """
     queue = _get_queue(db)
