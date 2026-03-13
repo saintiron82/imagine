@@ -1201,11 +1201,15 @@ function QueuePanel() {
       </div>
 
       {/* Phase Progress — incomplete files only */}
-      {stats && (stats.phase_total || 0) > 0 && (
+      {stats && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
           <div className="text-xs text-gray-400 mb-3 font-medium">
             {t('admin.queue_phase_progress')}
-            <span className="ml-2 text-gray-500">({stats.phase_total} {t('admin.queue_phase_remaining')})</span>
+            <span className="ml-2 text-gray-500">
+              {(stats.phase_total || 0) > 0
+                ? `(${stats.phase_total} ${t('admin.queue_phase_remaining')})`
+                : `(${t('admin.queue_phase_all_done')})`}
+            </span>
           </div>
           <div className="space-y-2">
             {[
