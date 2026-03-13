@@ -96,15 +96,13 @@ const StatusBar = ({
         }
     }, [logs, isOpen]);
 
-    // Count errors by category (memoized to avoid re-scanning on every render)
-    const { jobErrors, networkErrors } = useMemo(() => {
-        let job = 0, net = 0;
+    // Count only job-related errors (network/infra warnings are hidden from users)
+    const errorCount = useMemo(() => {
+        let count = 0;
         for (const l of logs) {
-            if (l.type !== 'error') continue;
-            if (l.category === 'network') net++;
-            else job++;
+            if (l.type === 'error' && l.category !== 'network') count++;
         }
-        return { jobErrors: job, networkErrors: net };
+        return count;
     }, [logs]);
     const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
 
@@ -130,11 +128,8 @@ const StatusBar = ({
                 <div className="flex items-center space-x-2 min-w-0 flex-1">
                     <Terminal size={14} className="flex-shrink-0" />
                     <span className="font-bold flex-shrink-0">{t('label.output')}</span>
-                    {jobErrors > 0 && (
-                        <span className="bg-red-500 text-white px-1 rounded flex-shrink-0">{t('status.errors', { count: jobErrors })}</span>
-                    )}
-                    {networkErrors > 0 && (
-                        <span className="bg-yellow-600 text-white px-1 rounded flex-shrink-0 text-[10px]">NET {networkErrors}</span>
+                    {errorCount > 0 && (
+                        <span className="bg-red-500 text-white px-1 rounded flex-shrink-0">{t('status.errors', { count: errorCount })}</span>
                     )}
                     {!isOpen && latestLog && !isProcessing && (
                         <span className="text-gray-300 truncate max-w-lg border-l border-blue-700 pl-2">
