@@ -734,25 +734,8 @@ class JobQueueManager:
         else:
             throughput = 0.0
 
-        # Phase-level progress counts
+        # Phase-level progress counts — deferred to file-centric block below
         phase_stats = {}
-        try:
-            cursor.execute("""
-                SELECT
-                    SUM(CASE WHEN json_extract(phase_completed, '$.parse') = 1 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN json_extract(phase_completed, '$.vision') = 1 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN json_extract(phase_completed, '$.embed') = 1 THEN 1 ELSE 0 END)
-                FROM job_queue
-                WHERE status IN ('pending', 'assigned', 'processing', 'completed')
-            """)
-            phase_row = cursor.fetchone()
-            phase_stats = {
-                "phase_parse_done": phase_row[0] or 0,
-                "phase_vision_done": phase_row[1] or 0,
-                "phase_embed_done": phase_row[2] or 0,
-            }
-        except Exception:
-            pass
 
         # Parse-ahead stats
         parse_ahead_stats = {}
@@ -784,17 +767,33 @@ class JobQueueManager:
         # ── File-centric counts ──
         # total = all files in DB
         # completed = files with mc + vv + mv all present
-        # incomplete = files missing any data (still need work)
+        # Phase progress = actual data presence per phase
         cursor.execute("""
-            SELECT COUNT(*) FROM files f
-            WHERE (f.mc_caption IS NOT NULL AND f.mc_caption != '')
-              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
-              AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
+            SELECT
+                COUNT(*),
+                SUM(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != ''
+                          AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                          AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
+                    THEN 1 ELSE 0 END),
+                SUM(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != ''
+                    THEN 1 ELSE 0 END),
+                SUM(CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                    THEN 1 ELSE 0 END),
+                SUM(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
+                    THEN 1 ELSE 0 END)
+            FROM files f
         """)
-        complete_files = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(*) FROM files")
-        total_files = cursor.fetchone()[0]
+        fc_row = cursor.fetchone()
+        total_files = fc_row[0] or 0
+        complete_files = fc_row[1] or 0
+        mc_done = fc_row[2] or 0
+        vv_done = fc_row[3] or 0
+        mv_done = fc_row[4] or 0
+        phase_stats = {
+            "phase_parse_done": total_files,  # all registered files are parsed
+            "phase_vision_done": mc_done,
+            "phase_embed_done": min(vv_done, mv_done),
+        }
 
         return {
             "total": total_files,
