@@ -68,11 +68,13 @@ class PhaseRunner:
         """
         Run VLM to generate MC (caption + tags + classification).
 
-        Items with skip_vision=True or existing mc_raw are skipped.
+        Items with skip_vision=True or existing VLM results are skipped.
+        mc_raw may contain parse-context metadata (file_name, layers) without
+        VLM results — only skip when actual MC (caption/tags) is present.
         Results are saved incrementally via StorageBackend.
         VLM is unloaded after completion.
         """
-        needed = [it for it in items if not it.skip_vision and not it.mc_raw]
+        needed = [it for it in items if not it.skip_vision and not self._has_vlm_result(it)]
         if not needed:
             logger.info("[PHASE:vision] all items skipped")
             return items
@@ -393,6 +395,22 @@ class PhaseRunner:
         except Exception as e:
             logger.warning(f"Thumbnail load failed {path}: {e}")
             return None
+
+    @staticmethod
+    def _has_vlm_result(item: PhaseItem) -> bool:
+        """Check if item already has actual VLM results (not just parse context).
+
+        mc_raw from ParseAhead contains only parse-context metadata
+        (file_name, layers, folder_path etc.) — NOT VLM results.
+        Real VLM output always includes 'mc_caption'/'caption' or 'ai_tags'/'tags'.
+        """
+        if not item.mc_raw or not isinstance(item.mc_raw, dict):
+            return False
+        mc = item.mc_raw
+        return bool(
+            mc.get("mc_caption") or mc.get("caption")
+            or mc.get("ai_tags") or mc.get("tags")
+        )
 
     def _build_vision_context(self, item: PhaseItem) -> Optional[dict]:
         """Build context dict for VLM from PhaseItem metadata."""
