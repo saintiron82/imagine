@@ -91,7 +91,7 @@ async def startup():
     # DB will be lazily initialized on first request via get_db()
     _create_default_admin()
     _cleanup_stale_jobs()
-    _fix_missing_metadata()
+    _startup_integrity_check()
 
     # Parse-ahead pool: pre-parse pending jobs in background (server-side Phase P)
     # In mc_only mode, ParseAhead also handles Phase VV (SigLIP2)
@@ -329,16 +329,29 @@ def _cleanup_stale_jobs():
             pass
 
 
-def _fix_missing_metadata():
-    """Auto-fill missing relative_path on startup — no reprocessing needed."""
+def _startup_integrity_check():
+    """Run full integrity check on startup: fix metadata, audit files, cleanup queue."""
     try:
         from backend.server.deps import get_db
+        from backend.server.queue.manager import JobQueueManager
         db = get_db()
+
+        # 1. Auto-fix: relative_path etc. metadata correction (no reprocessing)
         fixed = db.fix_missing_relative_paths()
         if fixed > 0:
             logger.info(f"Startup auto-fix: filled relative_path for {fixed} files")
+
+        # 2. Audit: re-queue incomplete files + cleanup residual jobs
+        queue = JobQueueManager(db)
+        result = queue.audit_completed_jobs()
+        logger.info(
+            f"Startup audit: {result['total_files']} files, "
+            f"{result['complete_files']} complete, "
+            f"{result['incomplete_files']} incomplete, "
+            f"{result['repaired_files']} re-queued"
+        )
     except Exception as e:
-        logger.warning(f"Startup metadata fix failed: {e}")
+        logger.warning(f"Startup integrity check failed: {e}")
 
 
 def _start_heartbeat_watchdog():
