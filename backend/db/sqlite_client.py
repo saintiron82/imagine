@@ -138,6 +138,8 @@ class SQLiteDB:
                 self._migrate_users_firebase_uid()
                 self._migrate_error_code()
                 self._migrate_file_ready()
+                self._migrate_job_completions()
+                self._migrate_files_processing_status()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -153,6 +155,8 @@ class SQLiteDB:
                 self._migrate_backfill_parse_status()
                 self._migrate_error_code()
                 self._migrate_file_ready()
+                self._migrate_job_completions()
+                self._migrate_files_processing_status()
 
             logger.info(f"Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -498,6 +502,62 @@ class SQLiteDB:
                 f"✅ file_ready column added to job_queue "
                 f"(webdav={webdav_count} marked not-ready, "
                 f"{reset_count} failed jobs reset to pending)"
+            )
+
+    def _migrate_job_completions(self):
+        """Create job_completions table for throughput tracking."""
+        if self._table_exists('job_completions'):
+            return
+        try:
+            logger.info("Migrating: creating job_completions table...")
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS job_completions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER,
+                    completed_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    worker_session_id INTEGER
+                )
+            """)
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_completions_at "
+                "ON job_completions(completed_at)"
+            )
+            self.conn.commit()
+            logger.info("✅ job_completions table created")
+        except Exception as e:
+            logger.warning(f"job_completions migration failed (non-fatal): {e}")
+
+    def _migrate_files_processing_status(self):
+        """Add processing_status and processing_error columns to files table."""
+        if not self._table_exists('files'):
+            return
+        try:
+            self.conn.execute("SELECT processing_status FROM files LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding processing_status columns to files...")
+            self.conn.execute(
+                "ALTER TABLE files ADD COLUMN processing_status TEXT DEFAULT NULL"
+            )
+            self.conn.execute(
+                "ALTER TABLE files ADD COLUMN processing_error TEXT DEFAULT NULL"
+            )
+            # Backfill: mark files associated with permanently failed jobs
+            cursor = self.conn.execute("""
+                UPDATE files SET processing_status = 'failed',
+                    processing_error = jq.error_message
+                FROM (
+                    SELECT file_id, error_message FROM job_queue
+                    WHERE status = 'failed'
+                      AND (error_code IN ('FILE_NOT_FOUND', 'PARSE_FAILED')
+                           OR retry_count >= 3)
+                ) AS jq
+                WHERE files.id = jq.file_id
+            """)
+            backfilled = cursor.rowcount
+            self.conn.commit()
+            logger.info(
+                f"✅ processing_status columns added to files "
+                f"({backfilled} permanently failed files backfilled)"
             )
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
@@ -1590,6 +1650,8 @@ class SQLiteDB:
             cursor.execute("DELETE FROM files")
             if self._table_exists('job_queue'):
                 cursor.execute("DELETE FROM job_queue")
+            if self._table_exists('job_completions'):
+                cursor.execute("DELETE FROM job_completions")
 
             # Reset system meta
             self._set_system_meta(self._META_KEY_DATA_BUILD_LEVEL, "0", commit=False)

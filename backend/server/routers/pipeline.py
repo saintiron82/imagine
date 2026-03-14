@@ -444,8 +444,9 @@ def scan_folder(
         fpath_str = unicodedata.normalize('NFC', str(file_path))
 
         # Check if job already exists for this file (avoid duplicates)
+        # In TODO-only queue, all existing jobs are active (pending/assigned/processing)
         cursor.execute(
-            "SELECT id FROM job_queue WHERE file_path = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
+            "SELECT id FROM job_queue WHERE file_path = ?",
             (fpath_str,)
         )
         if cursor.fetchone():

@@ -504,21 +504,53 @@ class JobQueueManager:
         return True
 
     def complete_job(self, job_id: int, user_id: int) -> bool:
-        """Mark a job as completed."""
+        """Complete a job: cleanup temp files, log completion, DELETE from queue."""
         cursor = self.db.conn.cursor()
-        now = _utcnow_sql()
+
+        # Verify ownership and get file_id before deletion
         cursor.execute(
-            """UPDATE job_queue
-               SET status = 'completed', completed_at = ?,
-                   phase_completed = '{"parse":true,"vision":true,"embed":true}'
-               WHERE id = ? AND assigned_to = ?""",
-            (now, job_id, user_id)
+            "SELECT file_id FROM job_queue WHERE id = ? AND assigned_to = ?",
+            (job_id, user_id)
         )
-        success = cursor.rowcount > 0
+        row = cursor.fetchone()
+        if not row:
+            self.db.conn.rollback()
+            return False
+
+        file_id = row[0]
+
+        # Cleanup temp files BEFORE deleting the job row
+        self._cleanup_temp_file(job_id)
+
+        # Clear any processing_status on the file (successful completion)
+        cursor.execute(
+            "UPDATE files SET processing_status = NULL, processing_error = NULL WHERE id = ?",
+            (file_id,)
+        )
+
+        # Log completion for throughput tracking
+        cursor.execute(
+            "INSERT INTO job_completions (file_id, worker_session_id) VALUES (?, ?)",
+            (file_id, self._get_worker_session_id(cursor, user_id))
+        )
+
+        # DELETE the completed job
+        cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
         self.db.conn.commit()
-        if success:
-            self._cleanup_temp_file(job_id)
-        return success
+        return True
+
+    def _get_worker_session_id(self, cursor, user_id: int) -> Optional[int]:
+        """Get current active worker session ID for a user."""
+        try:
+            cursor.execute(
+                "SELECT id FROM worker_sessions WHERE user_id = ? AND status = 'online' "
+                "ORDER BY last_heartbeat DESC LIMIT 1",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
 
     def _cleanup_temp_file(self, job_id: int):
         """Delete temp file for a WebDAV job and release buffer slot.
@@ -567,8 +599,8 @@ class JobQueueManager:
     def complete_job_with_phases(self, job_id: int, user_id: int, phases: dict) -> bool:
         """Complete a job with explicit phase status based on actual data.
 
-        If all phases are done → status='completed'.
-        If some phases are missing → status='pending' (re-claimable for retry).
+        If all phases are done → DELETE from queue + log completion.
+        If some phases are missing → retry or permanently fail.
 
         Args:
             job_id: Job ID
@@ -579,46 +611,43 @@ class JobQueueManager:
             True if updated successfully.
         """
         cursor = self.db.conn.cursor()
-        now = _utcnow_sql()
 
         all_done = all(phases.values())
         if all_done:
-            # Fully complete
-            cursor.execute(
-                """UPDATE job_queue
-                   SET status = 'completed', completed_at = ?,
-                       phase_completed = ?
-                   WHERE id = ? AND assigned_to = ?""",
-                (now, json.dumps(phases), job_id, user_id)
-            )
+            # Fully complete — delegate to complete_job (DELETE + log)
+            return self.complete_job(job_id, user_id)
         else:
             # Partial completion → check retry count before releasing
             missing = [k for k, v in phases.items() if not v]
             cursor.execute(
-                "SELECT retry_count, max_retries FROM job_queue WHERE id = ?",
-                (job_id,)
+                "SELECT file_id, retry_count, max_retries FROM job_queue WHERE id = ? AND assigned_to = ?",
+                (job_id, user_id)
             )
             retry_row = cursor.fetchone()
-            retry_count = retry_row[0] if retry_row else 0
-            max_retries = retry_row[1] if retry_row else 3
+            if not retry_row:
+                self.db.conn.rollback()
+                return False
+
+            file_id = retry_row[0]
+            retry_count = retry_row[1] or 0
+            max_retries = retry_row[2] or 3
 
             if retry_count >= max_retries:
-                # Too many retries — mark as permanently failed
+                # Too many retries — permanently fail
+                error_msg = f"Partial after {retry_count} retries, missing: {missing}"
                 logger.warning(
                     f"Job {job_id} permanently failed after {retry_count} retries "
                     f"(missing: {missing})."
                 )
+                # Cleanup temp file before deletion
+                self._cleanup_temp_file(job_id)
+                # Mark file as failed
                 cursor.execute(
-                    """UPDATE job_queue
-                       SET status = 'failed', phase_completed = ?,
-                           error_message = ?,
-                           assigned_to = NULL, assigned_at = NULL,
-                           worker_session_id = NULL
-                       WHERE id = ? AND assigned_to = ?""",
-                    (json.dumps(phases),
-                     f"Partial after {retry_count} retries, missing: {missing}",
-                     job_id, user_id)
+                    "UPDATE files SET processing_status = 'failed', processing_error = ? WHERE id = ?",
+                    (error_msg, file_id)
                 )
+                # DELETE the job
+                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
             else:
                 logger.warning(
                     f"Job {job_id} partially complete (missing: {missing}). "
@@ -636,52 +665,64 @@ class JobQueueManager:
 
         success = cursor.rowcount > 0
         self.db.conn.commit()
-        if success and all_done:
-            self._cleanup_temp_file(job_id)
         return success
 
     def fail_job(self, job_id: int, user_id: int, error_message: str,
                  error_code: str = None) -> bool:
-        """Mark a job as failed with optional structured error code.
+        """Handle a job failure with optional structured error code.
 
         Non-retryable error codes (FILE_NOT_FOUND, PARSE_FAILED)
-        skip retries and fail immediately. Retryable errors follow the existing
-        retry_count/max_retries logic.
+        skip retries and permanently fail immediately.
+        Retryable errors follow retry_count/max_retries logic.
+
+        Permanent failure: DELETE from job_queue + mark files.processing_status='failed'.
+        Retryable failure: reset to pending with incremented retry_count.
         """
         cursor = self.db.conn.cursor()
 
-        # Check retry count
         cursor.execute(
-            "SELECT retry_count, max_retries FROM job_queue WHERE id = ? AND assigned_to = ?",
+            "SELECT file_id, retry_count, max_retries FROM job_queue WHERE id = ? AND assigned_to = ?",
             (job_id, user_id)
         )
         row = cursor.fetchone()
         if row is None:
+            self.db.conn.rollback()
             return False
 
-        retry_count, max_retries = row
+        file_id, retry_count, max_retries = row
 
-        # Non-retryable errors → immediate failure (no retry)
-        if error_code and error_code in NON_RETRYABLE_ERRORS:
-            new_status = "failed"
-        else:
-            new_status = "pending" if retry_count < max_retries else "failed"
+        # Non-retryable errors → immediate permanent failure
+        non_retryable = error_code and error_code in NON_RETRYABLE_ERRORS
+        permanent_fail = non_retryable or retry_count >= max_retries
 
-        cursor.execute(
-            """UPDATE job_queue
-               SET status = ?, error_message = ?, error_code = ?,
-                   retry_count = retry_count + 1,
-                   assigned_to = NULL, assigned_at = NULL,
-                   worker_session_id = NULL
-               WHERE id = ?""",
-            (new_status, error_message, error_code, job_id)
-        )
-        self.db.conn.commit()
-        if new_status == "pending":
-            logger.info(f"Job {job_id} will be retried (attempt {retry_count + 1}/{max_retries})")
-        else:
+        if permanent_fail:
             code_info = f" [{error_code}]" if error_code else ""
             logger.warning(f"Job {job_id} permanently failed{code_info}: {error_message}")
+
+            # Cleanup temp file before deletion
+            self._cleanup_temp_file(job_id)
+
+            # Mark file as failed
+            cursor.execute(
+                "UPDATE files SET processing_status = 'failed', processing_error = ? WHERE id = ?",
+                (error_message, file_id)
+            )
+
+            # DELETE the job from queue
+            cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
+        else:
+            cursor.execute(
+                """UPDATE job_queue
+                   SET status = 'pending', error_message = ?, error_code = ?,
+                       retry_count = retry_count + 1,
+                       assigned_to = NULL, assigned_at = NULL,
+                       worker_session_id = NULL
+                   WHERE id = ?""",
+                (error_message, error_code, job_id)
+            )
+            logger.info(f"Job {job_id} will be retried (attempt {retry_count + 1}/{max_retries})")
+
+        self.db.conn.commit()
         return True
 
     def reclaim_worker_jobs(self, worker_session_id: int) -> int:
@@ -755,23 +796,22 @@ class JobQueueManager:
         """)
         status_counts = dict(cursor.fetchall())
 
-        cursor.execute("SELECT COUNT(*) FROM job_queue")
-        total = cursor.fetchone()[0]
+        # Prune old completion records (> 1 hour) for housekeeping
+        cursor.execute(
+            "DELETE FROM job_completions WHERE datetime(completed_at) < datetime('now', '-1 hour')"
+        )
 
-        # Determine processing mode for throughput calculation
+        # Throughput from job_completions table (sliding windows)
         processing_mode = get_processing_mode()
 
-        # Throughput: sliding windows
-        # mc_only: use mc_completed_at (worker MC speed, not EmbedAhead MV speed)
-        # full:    use completed_at (full pipeline completion)
         if processing_mode == "mc_only":
+            # mc_only mode: use mc_completed_at from job_queue (pending MC jobs)
             cursor.execute("""
                 SELECT COUNT(*) FROM job_queue
                 WHERE mc_completed_at IS NOT NULL
                   AND datetime(mc_completed_at) > datetime('now', '-5 minutes')
             """)
             recent_5min = cursor.fetchone()[0]
-
             cursor.execute("""
                 SELECT COUNT(*) FROM job_queue
                 WHERE mc_completed_at IS NOT NULL
@@ -779,19 +819,15 @@ class JobQueueManager:
             """)
             recent_1min = cursor.fetchone()[0]
         else:
+            # full mode: use job_completions table
             cursor.execute("""
-                SELECT COUNT(*) FROM job_queue
-                WHERE status = 'completed'
-                  AND completed_at IS NOT NULL
-                  AND datetime(completed_at) > datetime('now', '-5 minutes')
+                SELECT COUNT(*) FROM job_completions
+                WHERE datetime(completed_at) > datetime('now', '-5 minutes')
             """)
             recent_5min = cursor.fetchone()[0]
-
             cursor.execute("""
-                SELECT COUNT(*) FROM job_queue
-                WHERE status = 'completed'
-                  AND completed_at IS NOT NULL
-                  AND datetime(completed_at) > datetime('now', '-1 minute')
+                SELECT COUNT(*) FROM job_completions
+                WHERE datetime(completed_at) > datetime('now', '-1 minute')
             """)
             recent_1min = cursor.fetchone()[0]
 
@@ -901,6 +937,14 @@ class JobQueueManager:
             "phase_embed_done": min(vv_done, mv_done),
         }
 
+        # Failed files count (from files table, not job_queue)
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE processing_status = 'failed'"
+        )
+        failed_files = cursor.fetchone()[0]
+
+        self.db.conn.commit()  # commit the pruning DELETE above
+
         return {
             "total": total_files,
             "total_files": total_files,
@@ -908,8 +952,8 @@ class JobQueueManager:
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": status_counts.get("completed", 0),
-            "failed": status_counts.get("failed", 0),
+            "completed": complete_files,  # files-based: fully processed
+            "failed": failed_files,       # files-based: permanently failed
             "throughput": throughput,
             "recent_1min": recent_1min,
             "recent_5min": recent_5min,
@@ -983,105 +1027,145 @@ class JobQueueManager:
         return success
 
     def retry_failed_jobs(self) -> int:
-        """Retry all failed jobs by resetting them to pending.
+        """Retry retryable failed files by creating new pending jobs.
 
         Skips non-retryable errors (FILE_NOT_FOUND, PARSE_FAILED).
-        Also resets parse_status='failed' back to NULL so ParseAhead
-        can re-attempt pre-parsing (prevents permanent parse deadlock).
+        Resets processing_status and creates fresh pending jobs.
         """
         cursor = self.db.conn.cursor()
-        non_retryable_list = ",".join(f"'{c}'" for c in NON_RETRYABLE_ERRORS)
-        cursor.execute(
-            f"""UPDATE job_queue
-               SET status = 'pending', retry_count = 0,
-                   error_message = NULL, error_code = NULL,
-                   assigned_to = NULL, assigned_at = NULL,
-                   parse_status = CASE
-                       WHEN parse_status = 'failed' THEN NULL
-                       ELSE parse_status
-                   END
-               WHERE status = 'failed'
-               AND (error_code IS NULL OR error_code NOT IN ({non_retryable_list}))"""
-        )
+
+        # Find retryable failed files (exclude FILE_NOT_FOUND and PARSE_FAILED)
+        non_retryable_patterns = [f"%{code}%" for code in NON_RETRYABLE_ERRORS]
+        cursor.execute("""
+            SELECT id, file_path, processing_error FROM files
+            WHERE processing_status = 'failed'
+        """)
+        failed_files = cursor.fetchall()
+
+        count = 0
+        for file_id, file_path, error in failed_files:
+            # Skip non-retryable errors
+            if error:
+                skip = False
+                for code in NON_RETRYABLE_ERRORS:
+                    if code.lower() in error.lower():
+                        skip = True
+                        break
+                if skip:
+                    continue
+
+            # Reset processing status
+            cursor.execute(
+                "UPDATE files SET processing_status = NULL, processing_error = NULL WHERE id = ?",
+                (file_id,)
+            )
+            # Create new pending job (if not already in queue)
+            cursor.execute(
+                "SELECT COUNT(*) FROM job_queue WHERE file_id = ?", (file_id,)
+            )
+            if cursor.fetchone()[0] == 0:
+                cursor.execute(
+                    """INSERT INTO job_queue (file_id, file_path, status, priority, max_retries)
+                       VALUES (?, ?, 'pending', 0, 3)""",
+                    (file_id, file_path)
+                )
+                count += 1
+
         self.db.conn.commit()
-        count = cursor.rowcount
         if count > 0:
-            logger.info(f"Retried {count} failed jobs")
+            logger.info(f"Retried {count} failed files")
         return count
 
     def force_retry_failed_jobs(self) -> int:
-        """Force retry ALL failed jobs from scratch, including non-retryable.
+        """Force retry ALL permanently failed files from scratch.
 
-        Unlike retry_failed_jobs(), this resets everything to initial state:
-        phase_completed, parse_status, parsed_metadata, error_code — all cleared.
-        Also clears partial AI data (mc/vv/mv) from files/vec tables so that
-        all phases run fresh without skipping.
+        Finds files with processing_status='failed', clears their AI data,
+        resets processing_status, and creates new pending jobs.
+        Also handles any remaining failed/cancelled jobs in queue (legacy).
         """
         cursor = self.db.conn.cursor()
 
-        # 1. Collect file_ids of target jobs before resetting
+        # 1. Find files marked as permanently failed
         cursor.execute(
-            """SELECT file_id FROM job_queue
-               WHERE status IN ('failed', 'cancelled')
-                  OR (status = 'pending' AND retry_count >= 3)"""
+            "SELECT id, file_path FROM files WHERE processing_status = 'failed'"
         )
-        file_ids = [r[0] for r in cursor.fetchall() if r[0]]
+        failed_files = cursor.fetchall()
+        file_ids = [r[0] for r in failed_files]
+
+        if not file_ids:
+            # Also check legacy failed/cancelled jobs still in queue
+            cursor.execute(
+                "SELECT file_id FROM job_queue WHERE status IN ('failed', 'cancelled')"
+            )
+            legacy_ids = [r[0] for r in cursor.fetchall() if r[0]]
+            if legacy_ids:
+                # Clean up legacy: delete those jobs
+                cursor.execute(
+                    f"DELETE FROM job_queue WHERE status IN ('failed', 'cancelled')"
+                )
+                self.db.conn.commit()
+                logger.info(f"Cleaned up {cursor.rowcount} legacy failed/cancelled jobs")
+            return 0
+
+        placeholders = ",".join("?" * len(file_ids))
 
         # 2. Clear partial AI data from files table
-        if file_ids:
-            placeholders = ",".join("?" * len(file_ids))
-            cursor.execute(
-                f"""UPDATE files
-                    SET mc_caption = NULL, ai_tags = NULL,
-                        image_type = NULL, scene_type = NULL, art_style = NULL
-                    WHERE id IN ({placeholders})""",
-                file_ids,
-            )
-            # 3. Delete vector data (VV + MV)
-            cursor.execute(
-                f"DELETE FROM vec_files WHERE file_id IN ({placeholders})",
-                file_ids,
-            )
-            cursor.execute(
-                f"DELETE FROM vec_text WHERE file_id IN ({placeholders})",
-                file_ids,
-            )
-            logger.info(
-                f"Cleared AI data for {len(file_ids)} files (mc/vv/mv)")
-
-        # 4. Reset job_queue entries
         cursor.execute(
-            """UPDATE job_queue
-               SET status = 'pending', retry_count = 0, max_retries = 3,
-                   error_message = NULL, error_code = NULL,
-                   assigned_to = NULL, assigned_at = NULL,
-                   worker_session_id = NULL,
-                   phase_completed = NULL, parse_status = NULL,
-                   parsed_metadata = NULL, started_at = NULL,
-                   completed_at = NULL
-               WHERE status IN ('failed', 'cancelled')
-                  OR (status = 'pending' AND retry_count >= 3)"""
+            f"""UPDATE files
+                SET mc_caption = NULL, ai_tags = NULL,
+                    image_type = NULL, scene_type = NULL, art_style = NULL,
+                    processing_status = NULL, processing_error = NULL
+                WHERE id IN ({placeholders})""",
+            file_ids,
         )
+
+        # 3. Delete vector data (VV + MV)
+        cursor.execute(
+            f"DELETE FROM vec_files WHERE file_id IN ({placeholders})",
+            file_ids,
+        )
+        cursor.execute(
+            f"DELETE FROM vec_text WHERE file_id IN ({placeholders})",
+            file_ids,
+        )
+        logger.info(f"Cleared AI data for {len(file_ids)} files (mc/vv/mv)")
+
+        # 4. Delete any existing jobs for these files (cleanup)
+        cursor.execute(
+            f"DELETE FROM job_queue WHERE file_id IN ({placeholders})",
+            file_ids,
+        )
+
+        # 5. Create new pending jobs
+        count = 0
+        for file_id, file_path in failed_files:
+            cursor.execute(
+                """INSERT INTO job_queue (file_id, file_path, status, priority, max_retries)
+                   VALUES (?, ?, 'pending', 0, 3)""",
+                (file_id, file_path)
+            )
+            count += 1
+
         self.db.conn.commit()
-        count = cursor.rowcount
         if count > 0:
-            logger.info(f"Force-retried {count} jobs from scratch")
+            logger.info(f"Force-retried {count} permanently failed files from scratch")
         return count
 
     def audit_completed_jobs(self) -> Dict[str, Any]:
         """Full data integrity audit across ALL files in the database.
 
-        File-centric: each file is either complete (mc+vv+mv) or not.
-        For incomplete files, ensures a pending job exists for re-processing.
+        2-pass design (simplified for TODO-only queue):
 
-        Returns file-centric results:
-            {
-                "total_files": int,
-                "complete_files": int,
-                "incomplete_files": int,
-                "repaired_files": int,   # files that were fixed
-                "details": [{"file_id", "file_path", "missing"}]
-            }
+        Pass 1: File-centric scan
+          - Complete (mc+vv+mv) → OK, delete any residual jobs
+          - Permanently failed (processing_status='failed') → SKIP (count only)
+          - Incomplete + no pending job → CREATE pending job
+          - Incomplete + pending job exists → OK (already queued)
+
+        Pass 2: Unmatched job cleanup
+          - Jobs with file_id not in files → DELETE
+
+        Returns file-centric results.
         """
         cursor = self.db.conn.cursor()
         details = []
@@ -1095,21 +1179,46 @@ class JobQueueManager:
                    (f.mc_caption IS NOT NULL AND f.mc_caption != '') AS has_mc,
                    EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) AS has_vv,
                    EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) AS has_mv,
-                   f.thumbnail_url
+                   f.thumbnail_url,
+                   f.processing_status, f.processing_error
             FROM files f
         """)
         all_files = cursor.fetchall()
         total_files = len(all_files)
         complete_files = 0
-        incomplete_file_ids = set()
 
-        for file_id, file_path, has_mc, has_vv, has_mv, thumbnail_url in all_files:
+        for (file_id, file_path, has_mc, has_vv, has_mv,
+             thumbnail_url, proc_status_col, proc_error) in all_files:
+
             if has_mc and has_vv and has_mv:
                 complete_files += 1
+                # Delete any residual jobs for this file
+                cursor.execute(
+                    "DELETE FROM job_queue WHERE file_id = ?", (file_id,)
+                )
+                # Clear processing_status if somehow set on a complete file
+                if proc_status_col:
+                    cursor.execute(
+                        "UPDATE files SET processing_status = NULL, processing_error = NULL WHERE id = ?",
+                        (file_id,)
+                    )
                 continue
 
-            # This file is incomplete
-            incomplete_file_ids.add(file_id)
+            # Check if permanently failed
+            if proc_status_col == 'failed':
+                skipped_non_retryable += 1
+                perm_failed_details.append({
+                    "file_id": file_id,
+                    "file_path": file_path,
+                    "error": proc_error or "unknown",
+                })
+                # Ensure no jobs exist for permanently failed files
+                cursor.execute(
+                    "DELETE FROM job_queue WHERE file_id = ?", (file_id,)
+                )
+                continue
+
+            # Incomplete file — ensure a pending job exists
             missing = []
             if not has_mc:
                 missing.append("mc")
@@ -1118,95 +1227,48 @@ class JobQueueManager:
             if not has_mv:
                 missing.append("mv")
 
-            actual_phases = json.dumps({
-                "parse": True,
-                "vision": bool(has_mc),
-                "embed": bool(has_vv and has_mv),
-            })
+            # Check if a pending/assigned/processing job already exists
+            cursor.execute(
+                """SELECT id FROM job_queue
+                   WHERE file_id = ? AND status IN ('pending', 'assigned', 'processing')
+                   LIMIT 1""",
+                (file_id,)
+            )
+            existing_job = cursor.fetchone()
 
-            # Build parsed_metadata so workers recognize this as pre-parsed
-            parsed_metadata = json.dumps({
-                "metadata": {},
-                "thumb_path": thumbnail_url,
-                "mc_raw": None,
-            }, ensure_ascii=False)
-
-            # Check ALL jobs for this file (detect duplicates)
-            cursor.execute("""
-                SELECT id, status, phase_completed, parsed_metadata,
-                       error_code, retry_count, error_message
-                FROM job_queue WHERE file_id = ?
-                ORDER BY
-                    CASE status
-                        WHEN 'processing' THEN 1
-                        WHEN 'pending' THEN 2
-                        WHEN 'assigned' THEN 3
-                        WHEN 'completed' THEN 4
-                        WHEN 'failed' THEN 5
-                    END
-            """, (file_id,))
-            all_jobs = cursor.fetchall()
-
-            # Deduplicate: keep the most relevant job, delete extras
-            if len(all_jobs) > 1:
-                # Check if any job has non-retryable error or exhausted retries
-                has_permanent_failure = False
-                for j in all_jobs:
-                    j_error_code = j[4]
-                    j_retry_count = j[5] or 0
-                    j_err_msg = j[6] or ""
-                    if not j_error_code:
-                        j_error_code = _infer_error_code(j_err_msg)
-                    if (j_error_code and j_error_code in NON_RETRYABLE_ERRORS) \
-                       or j_retry_count >= 3:
-                        has_permanent_failure = True
-                        break
-
-                if has_permanent_failure:
-                    # Keep the failed job, delete the rest
-                    keep_id = None
-                    for j in all_jobs:
-                        j_ec = j[4] or _infer_error_code(j[6] or "")
-                        if (j_ec and j_ec in NON_RETRYABLE_ERRORS) or (j[5] or 0) >= 3:
-                            keep_id = j[0]
-                            break
-                    if keep_id:
-                        delete_ids = [j[0] for j in all_jobs if j[0] != keep_id]
-                        for did in delete_ids:
-                            cursor.execute("DELETE FROM job_queue WHERE id = ?", (did,))
-                        # Update kept job's error_code if missing
-                        kept = next(j for j in all_jobs if j[0] == keep_id)
-                        kept_ec = kept[4]
-                        if not kept_ec:
-                            kept_ec = _infer_error_code(kept[6] or "")
-                            if kept_ec:
-                                cursor.execute(
-                                    "UPDATE job_queue SET error_code = ? WHERE id = ?",
-                                    (kept_ec, keep_id))
-                        skipped_non_retryable += 1
-                        perm_failed_details.append({
-                            "job_id": keep_id,
-                            "file_id": file_id,
-                            "file_path": file_path,
-                            "error_code": kept_ec or "RETRY_EXHAUSTED",
-                            "retry_count": kept[5] or 0,
-                        })
-                        continue
-                else:
-                    # No permanent failure — keep first active job, delete rest
-                    keep_id = all_jobs[0][0]
-                    for j in all_jobs[1:]:
-                        cursor.execute("DELETE FROM job_queue WHERE id = ?", (j[0],))
-
-            job_row = all_jobs[0] if all_jobs else None
-
-            # Ensure this file has a pending job for re-processing
-            # WebDAV files need download before processing
-            is_webdav = file_path.startswith("webdav://") if file_path else False
-            audit_file_ready = 0 if is_webdav else 1
-
-            if job_row is None:
-                # No job at all — create one with parsed_metadata
+            if existing_job:
+                # Already in pipeline — update phase_completed to reflect actual state
+                actual_phases = json.dumps({
+                    "parse": True,
+                    "vision": bool(has_mc),
+                    "embed": bool(has_vv and has_mv),
+                })
+                parsed_metadata = json.dumps({
+                    "metadata": {},
+                    "thumb_path": thumbnail_url,
+                    "mc_raw": None,
+                }, ensure_ascii=False)
+                cursor.execute(
+                    """UPDATE job_queue
+                       SET phase_completed = ?,
+                           parsed_metadata = COALESCE(parsed_metadata, ?)
+                       WHERE id = ?""",
+                    (actual_phases, parsed_metadata, existing_job[0])
+                )
+            else:
+                # No job — create one
+                actual_phases = json.dumps({
+                    "parse": True,
+                    "vision": bool(has_mc),
+                    "embed": bool(has_vv and has_mv),
+                })
+                parsed_metadata = json.dumps({
+                    "metadata": {},
+                    "thumb_path": thumbnail_url,
+                    "mc_raw": None,
+                }, ensure_ascii=False)
+                is_webdav = file_path.startswith("webdav://") if file_path else False
+                audit_file_ready = 0 if is_webdav else 1
                 try:
                     cursor.execute(
                         """INSERT INTO job_queue
@@ -1215,113 +1277,47 @@ class JobQueueManager:
                            VALUES (?, ?, 'pending', 0, ?, 'parsed', ?, ?)""",
                         (file_id, file_path, actual_phases, parsed_metadata, audit_file_ready)
                     )
+                    repaired_files += 1
+                    details.append({
+                        "file_id": file_id,
+                        "file_path": file_path,
+                        "missing": missing,
+                        "status": "download_waiting" if is_webdav else "no_job",
+                    })
                 except Exception as e:
                     logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
 
-            elif job_row[1] == 'completed':
-                # False-completed — reset to pending, fill parsed_metadata if missing
-                pm_update = parsed_metadata if not job_row[3] else job_row[3]
-                cursor.execute(
-                    """UPDATE job_queue
-                       SET status = 'pending', phase_completed = ?,
-                           parsed_metadata = COALESCE(parsed_metadata, ?),
-                           assigned_to = NULL, assigned_at = NULL,
-                           worker_session_id = NULL
-                       WHERE id = ?""",
-                    (actual_phases, pm_update, job_row[0])
-                )
-
-            elif job_row[1] == 'failed':
-                # job_row: (id, status, phase_completed, parsed_metadata,
-                #           error_code, retry_count, error_message)
-                existing_error_code = job_row[4]
-                err_msg_text = job_row[6] or ""
-
-                # Backfill: infer error_code from legacy error_message
-                if not existing_error_code:
-                    existing_error_code = _infer_error_code(err_msg_text)
-                    if existing_error_code:
-                        cursor.execute(
-                            "UPDATE job_queue SET error_code = ? WHERE id = ?",
-                            (existing_error_code, job_row[0])
-                        )
-
-                # Decision: can this file be reprocessed?
-                # If thumbnail exists on disk, ParseAhead can handle it
-                # regardless of previous error (worker errors ≠ ParseAhead errors)
-                thumb_exists = thumbnail_url and os.path.exists(thumbnail_url)
-
-                # Permanently failed: non-retryable error or exhausted retries
-                retry_count = job_row[5] or 0
-                is_permanent = (
-                    (existing_error_code and existing_error_code in NON_RETRYABLE_ERRORS)
-                    or retry_count >= 3
-                )
-                if is_permanent:
-                    skipped_non_retryable += 1
-                    perm_failed_details.append({
-                        "job_id": job_row[0],
-                        "file_id": file_id,
-                        "file_path": file_path,
-                        "error_code": existing_error_code or "RETRY_EXHAUSTED",
-                        "retry_count": retry_count,
-                    })
-                    continue
-
-                # Recoverable failure — give fresh chance (thumbnail will be generated in Phase P)
-                cursor.execute(
-                    """UPDATE job_queue
-                       SET status = 'pending', phase_completed = ?,
-                           parsed_metadata = COALESCE(parsed_metadata, ?),
-                           retry_count = 0, error_message = NULL,
-                           error_code = NULL,
-                           assigned_to = NULL, assigned_at = NULL,
-                           worker_session_id = NULL
-                       WHERE id = ?""",
-                    (actual_phases, parsed_metadata, job_row[0])
-                )
-
-            elif job_row[1] in ('pending', 'assigned', 'processing'):
-                # Already in pipeline — fix phase_completed, fill parsed_metadata if missing
-                cursor.execute(
-                    """UPDATE job_queue
-                       SET phase_completed = ?,
-                           parsed_metadata = COALESCE(parsed_metadata, ?)
-                       WHERE id = ?""",
-                    (actual_phases, parsed_metadata, job_row[0])
-                )
-
-            # Determine processing status for UI distinction
-            if is_webdav and audit_file_ready == 0:
-                proc_status = "download_waiting"  # WebDAV file awaiting download
-            elif job_row is None:
-                proc_status = "no_job"        # Never processed
-            elif job_row[1] == 'completed':
-                proc_status = "processed"     # Was completed but data missing
-            elif job_row[1] == 'failed':
-                proc_status = "failed"        # Failed, now reset
-            else:
-                proc_status = "in_pipeline"   # Already pending/assigned/processing
-
-            repaired_files += 1
-            details.append({
-                "file_id": file_id,
-                "file_path": file_path,
-                "missing": missing,
-                "status": proc_status,
-            })
-
-        # ── Pass 2: Completed jobs referencing deleted files ──
+        # ── Pass 2: Unmatched job cleanup ──
+        # Delete jobs whose file_id no longer exists in files table
         cursor.execute("""
-            SELECT jq.id, jq.file_id FROM job_queue jq
-            WHERE jq.status = 'completed'
-            AND NOT EXISTS(SELECT 1 FROM files WHERE id = jq.file_id)
+            DELETE FROM job_queue
+            WHERE file_id IS NOT NULL
+              AND NOT EXISTS(SELECT 1 FROM files WHERE id = job_queue.file_id)
         """)
-        dangling_rows = cursor.fetchall()
-        for job_id, file_id in dangling_rows:
+        dangling_removed = cursor.rowcount
+
+        # Also clean up any legacy completed/failed jobs still in queue
+        cursor.execute(
+            "DELETE FROM job_queue WHERE status IN ('completed', 'failed', 'cancelled')"
+        )
+        legacy_removed = cursor.rowcount
+
+        # Deduplicate: if multiple pending jobs exist for same file, keep only latest
+        cursor.execute("""
+            SELECT jq.id FROM job_queue jq
+            WHERE jq.status = 'pending'
+              AND EXISTS(
+                  SELECT 1 FROM job_queue jq2
+                  WHERE jq2.file_id = jq.file_id
+                    AND jq2.id > jq.id
+                    AND jq2.status = 'pending'
+              )
+        """)
+        dup_ids = [r[0] for r in cursor.fetchall()]
+        if dup_ids:
+            placeholders = ",".join("?" * len(dup_ids))
             cursor.execute(
-                "UPDATE job_queue SET status = 'failed', error_message = 'file missing from DB', error_code = 'FILE_NOT_FOUND' WHERE id = ?",
-                (job_id,)
+                f"DELETE FROM job_queue WHERE id IN ({placeholders})", dup_ids
             )
 
         self.db.conn.commit()
@@ -1334,7 +1330,8 @@ class JobQueueManager:
                 parts.append(f"{repaired_files} repaired")
             if skipped_non_retryable > 0:
                 parts.append(f"{skipped_non_retryable} permanently failed (skipped)")
-            # Only warn when there are actionable repairs; permanently-failed-only is informational
+            if dangling_removed > 0:
+                parts.append(f"{dangling_removed} unmatched jobs removed")
             if repaired_files > 0:
                 logger.warning(", ".join(parts))
             else:
@@ -1342,83 +1339,64 @@ class JobQueueManager:
         else:
             logger.info(f"Audit: {total_files} files scanned, all complete")
 
-        # ── Auto-cleanup: remove resolved jobs from queue ──
-        cleanup_result = self.cleanup_queue()
-
-        # Count failed/stuck jobs for UI display
-        cursor.execute(
-            """SELECT COUNT(*) FROM job_queue
-               WHERE status IN ('failed', 'cancelled')
-                  OR (status = 'pending' AND retry_count >= 3)"""
-        )
-        failed_stuck_count = cursor.fetchone()[0]
-
         return {
             "total_files": total_files,
             "complete_files": complete_files,
             "incomplete_files": incomplete_files,
             "repaired_files": repaired_files,
             "skipped_non_retryable": skipped_non_retryable,
-            "failed_stuck_jobs": failed_stuck_count,
+            "failed_stuck_jobs": skipped_non_retryable,  # files-based
             "details": details,
             "permanently_failed_details": perm_failed_details,
         }
 
     def clear_completed_jobs(self) -> int:
-        """Delete all completed jobs."""
+        """Delete any remaining completed jobs (legacy cleanup).
+
+        In the new design, completed jobs are deleted immediately.
+        This method handles any legacy completed jobs still in queue.
+        """
         cursor = self.db.conn.cursor()
         cursor.execute("DELETE FROM job_queue WHERE status = 'completed'")
         self.db.conn.commit()
         count = cursor.rowcount
         if count > 0:
-            logger.info(f"Cleared {count} completed jobs")
+            logger.info(f"Cleared {count} legacy completed jobs")
         return count
 
     def cleanup_queue(self) -> Dict[str, int]:
         """Comprehensive job queue cleanup.
 
         Removes:
-        1. Completed jobs where file data is fully present (mc+vv+mv)
-        2. Duplicate pending/assigned jobs (same file_id already has completed job)
+        1. Legacy completed/failed jobs (should not exist in new design)
+        2. Duplicate pending jobs (same file_id, keep only latest)
         3. Jobs referencing non-existent files (file_id not in files table)
+        4. Jobs for already-complete files (mc+vv+mv all present)
 
         Returns counts of each type removed.
         """
         cursor = self.db.conn.cursor()
-        removed_completed = 0
+        removed_legacy = 0
         removed_duplicates = 0
         removed_dangling = 0
+        removed_complete = 0
 
-        # 1. Completed jobs for fully-processed files
+        # 1. Legacy completed/failed jobs (should not exist anymore)
+        cursor.execute(
+            "DELETE FROM job_queue WHERE status IN ('completed', 'failed', 'cancelled')"
+        )
+        removed_legacy = cursor.rowcount
+
+        # 2. Duplicate pending jobs (keep only latest per file_id)
         cursor.execute("""
             SELECT jq.id FROM job_queue jq
-            WHERE jq.status = 'completed'
-              AND EXISTS(
-                  SELECT 1 FROM files f
-                  WHERE f.id = jq.file_id
-                    AND f.mc_caption IS NOT NULL AND f.mc_caption != ''
-              )
-              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = jq.file_id)
-              AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = jq.file_id)
-        """)
-        ids = [r[0] for r in cursor.fetchall()]
-        if ids:
-            placeholders = ",".join("?" * len(ids))
-            cursor.execute(
-                f"DELETE FROM job_queue WHERE id IN ({placeholders})", ids
+            WHERE EXISTS(
+                SELECT 1 FROM job_queue jq2
+                WHERE jq2.file_id = jq.file_id
+                  AND jq2.id > jq.id
+                  AND jq2.status = 'pending'
             )
-            removed_completed = len(ids)
-
-        # 2. Duplicate pending/assigned jobs (completed job already exists for same file)
-        cursor.execute("""
-            SELECT jq.id FROM job_queue jq
-            WHERE jq.status IN ('pending', 'assigned')
-              AND EXISTS(
-                  SELECT 1 FROM job_queue jq2
-                  WHERE jq2.file_id = jq.file_id
-                    AND jq2.status = 'completed'
-                    AND jq2.id != jq.id
-              )
+            AND jq.status = 'pending'
         """)
         ids = [r[0] for r in cursor.fetchall()]
         if ids:
@@ -1442,65 +1420,76 @@ class JobQueueManager:
             )
             removed_dangling = len(ids)
 
+        # 4. Jobs for already-complete files (mc+vv+mv present)
+        cursor.execute("""
+            SELECT jq.id FROM job_queue jq
+            WHERE jq.file_id IS NOT NULL
+              AND jq.status = 'pending'
+              AND EXISTS(
+                  SELECT 1 FROM files f
+                  WHERE f.id = jq.file_id
+                    AND f.mc_caption IS NOT NULL AND f.mc_caption != ''
+              )
+              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = jq.file_id)
+              AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = jq.file_id)
+        """)
+        ids = [r[0] for r in cursor.fetchall()]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            cursor.execute(
+                f"DELETE FROM job_queue WHERE id IN ({placeholders})", ids
+            )
+            removed_complete = len(ids)
+
         self.db.conn.commit()
 
-        total = removed_completed + removed_duplicates + removed_dangling
+        total = removed_legacy + removed_duplicates + removed_dangling + removed_complete
         if total > 0:
             logger.info(
-                f"Queue cleanup: {removed_completed} completed, "
+                f"Queue cleanup: {removed_legacy} legacy, "
                 f"{removed_duplicates} duplicates, "
-                f"{removed_dangling} dangling — {total} total removed"
+                f"{removed_dangling} unmatched, "
+                f"{removed_complete} already-complete — {total} total removed"
             )
 
         return {
-            "removed_completed": removed_completed,
+            "removed_completed": removed_legacy + removed_complete,
             "removed_duplicates": removed_duplicates,
             "removed_dangling": removed_dangling,
             "total_removed": total,
         }
 
     def dismiss_permanently_failed_jobs(self) -> Dict[str, Any]:
-        """Delete permanently failed jobs and their incomplete file records.
+        """Delete permanently failed files and their incomplete data.
 
-        Targets jobs with NON_RETRYABLE_ERRORS or retry_count >= 3.
-        Also cleans up incomplete file data (files, vec_files, vec_text, files_fts)
-        so broken entries don't pollute search results.
+        Finds files with processing_status='failed', removes their incomplete
+        data (mc, vv, mv, fts), and deletes the file records.
 
         Returns:
-            {"dismissed_jobs": int, "cleaned_files": int}
+            {"dismissed_jobs": 0, "cleaned_files": int}
         """
         cursor = self.db.conn.cursor()
 
-        # Find permanently failed jobs with file_id
-        non_retryable_list = ",".join(f"'{c}'" for c in NON_RETRYABLE_ERRORS)
+        # Find files marked as permanently failed
         cursor.execute(
-            f"""SELECT id, file_id FROM job_queue
-               WHERE status = 'failed'
-                 AND (error_code IN ({non_retryable_list}) OR retry_count >= 3)"""
+            "SELECT id FROM files WHERE processing_status = 'failed'"
         )
-        failed_jobs = cursor.fetchall()
+        file_ids = [r[0] for r in cursor.fetchall()]
 
-        if not failed_jobs:
+        if not file_ids:
+            # Also cleanup any legacy failed jobs still in queue
+            cursor.execute(
+                "DELETE FROM job_queue WHERE status IN ('failed', 'cancelled')"
+            )
+            legacy_cleaned = cursor.rowcount
             self.db.conn.commit()
-            return {"dismissed_jobs": 0, "cleaned_files": 0}
+            if legacy_cleaned > 0:
+                logger.info(f"Cleaned {legacy_cleaned} legacy failed/cancelled jobs from queue")
+            return {"dismissed_jobs": legacy_cleaned, "cleaned_files": 0}
 
-        job_ids = [j[0] for j in failed_jobs]
-        file_ids = list({j[1] for j in failed_jobs if j[1]})
-
-        # Delete the failed jobs
-        for jid in job_ids:
-            cursor.execute("DELETE FROM job_queue WHERE id = ?", (jid,))
-
-        # Clean up incomplete file records (only if file has no other active jobs)
+        # Clean up file records and their data
         cleaned_files = 0
         for fid in file_ids:
-            cursor.execute(
-                "SELECT COUNT(*) FROM job_queue WHERE file_id = ?", (fid,)
-            )
-            remaining = cursor.fetchone()[0]
-            if remaining > 0:
-                continue  # Other jobs exist for this file — keep file record
-
             # Check if file data is incomplete (missing mc/vv/mv)
             cursor.execute("""
                 SELECT (mc_caption IS NOT NULL AND mc_caption != '') AS has_mc,
@@ -1513,21 +1502,24 @@ class JobQueueManager:
                 continue
             has_mc, has_vv, has_mv = row
             if has_mc and has_vv and has_mv:
-                continue  # File is actually complete — keep it
+                # File is actually complete — just clear the failed status
+                cursor.execute(
+                    "UPDATE files SET processing_status = NULL, processing_error = NULL WHERE id = ?",
+                    (fid,)
+                )
+                continue
 
-            # Incomplete file with no jobs — clean up
+            # Incomplete file — clean up everything
             cursor.execute("DELETE FROM vec_files WHERE file_id = ?", (fid,))
             cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (fid,))
             cursor.execute("DELETE FROM files_fts WHERE rowid = ?", (fid,))
+            cursor.execute("DELETE FROM job_queue WHERE file_id = ?", (fid,))
             cursor.execute("DELETE FROM files WHERE id = ?", (fid,))
             cleaned_files += 1
 
         self.db.conn.commit()
-        logger.info(
-            f"Dismissed {len(job_ids)} permanently failed jobs, "
-            f"cleaned {cleaned_files} incomplete file records"
-        )
-        return {"dismissed_jobs": len(job_ids), "cleaned_files": cleaned_files}
+        logger.info(f"Dismissed {cleaned_files} permanently failed file records")
+        return {"dismissed_jobs": 0, "cleaned_files": cleaned_files}
 
     def queue_backfill(self) -> Dict[str, int]:
         """Detect files with incomplete vector data and auto-create backfill jobs.

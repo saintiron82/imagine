@@ -208,11 +208,13 @@ class ParseAheadPool(BaseAheadPool):
                     (_utcnow_sql(), job_id),
                 )
             else:
+                # Parse failed permanently — mark file and DELETE job
                 cursor.execute(
-                    """UPDATE job_queue SET status = 'failed',
-                       parse_status = 'failed', error_message = 'Auto parse failed',
-                       error_code = 'PARSE_FAILED'
-                       WHERE id = ?""",
+                    "UPDATE files SET processing_status = 'failed', processing_error = 'Auto parse failed' WHERE id = ?",
+                    (file_id,),
+                )
+                cursor.execute(
+                    "DELETE FROM job_queue WHERE id = ?",
                     (job_id,),
                 )
         self.db.conn.commit()
@@ -351,11 +353,19 @@ class ParseAheadPool(BaseAheadPool):
                 file_id, expect_mc=True, expect_vv=True, expect_mv=True
             )
             if verify["valid"]:
+                # Complete — log completion and DELETE job
                 cursor.execute(
-                    """UPDATE job_queue SET status = 'completed', completed_at = ?,
-                       phase_completed = '{"parse":true,"vision":true,"embed":true}'
-                       WHERE id = ? AND status = 'processing'""",
-                    (now, job_id),
+                    "INSERT INTO job_completions (file_id) VALUES (?)",
+                    (file_id,),
+                )
+                cursor.execute(
+                    "DELETE FROM job_queue WHERE id = ?",
+                    (job_id,),
+                )
+                # Clear any processing_status
+                cursor.execute(
+                    "UPDATE files SET processing_status = NULL, processing_error = NULL WHERE id = ?",
+                    (file_id,),
                 )
                 completed_count += 1
             else:
@@ -369,14 +379,18 @@ class ParseAheadPool(BaseAheadPool):
                 max_retries = retry_row[1] if retry_row else 3
 
                 if retry_count >= max_retries:
+                    # Permanently failed — mark file and DELETE job
+                    error_msg = (
+                        f"Auto: partial after {retry_count} retries, "
+                        f"missing={verify['missing']}"
+                    )
                     cursor.execute(
-                        """UPDATE job_queue SET status = 'failed', phase_completed = ?,
-                           error_message = ?
-                           WHERE id = ? AND status = 'processing'""",
-                        (phase_json,
-                         f"Auto: partial after {retry_count} retries, "
-                         f"missing={verify['missing']}",
-                         job_id),
+                        "UPDATE files SET processing_status = 'failed', processing_error = ? WHERE id = ?",
+                        (error_msg, file_id),
+                    )
+                    cursor.execute(
+                        "DELETE FROM job_queue WHERE id = ?",
+                        (job_id,),
                     )
                     failed_count += 1
                     logger.warning(
@@ -1157,9 +1171,10 @@ class ParseAheadPool(BaseAheadPool):
             if img_source is None:
                 logger.warning(f"Backfill: no image for job {job_id} (file_id={file_id}), marking failed")
                 cursor.execute(
-                    "UPDATE job_queue SET status = 'failed', completed_at = ? WHERE id = ?",
-                    (now, job_id),
+                    "UPDATE files SET processing_status = 'failed', processing_error = 'No image for backfill' WHERE id = ?",
+                    (file_id,),
                 )
+                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
                 self.db.conn.commit()
                 continue
 
@@ -1170,19 +1185,20 @@ class ParseAheadPool(BaseAheadPool):
                 finally:
                     img.close()
                 self.db.upsert_vectors(file_id, structure_vec=structure_vec)
+                # Complete — log and DELETE
                 cursor.execute(
-                    """UPDATE job_queue SET status = 'completed', completed_at = ?,
-                       phase_completed = '{"parse":true,"vision":true,"embed":true}'
-                       WHERE id = ?""",
-                    (now, job_id),
+                    "INSERT INTO job_completions (file_id) VALUES (?)",
+                    (file_id,),
                 )
+                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
                 processed += 1
             except Exception as e:
                 logger.warning(f"Backfill: DINOv2 failed for job {job_id}: {e}")
                 cursor.execute(
-                    "UPDATE job_queue SET status = 'failed', completed_at = ?, error_message = ? WHERE id = ?",
-                    (now, str(e), job_id),
+                    "UPDATE files SET processing_status = 'failed', processing_error = ? WHERE id = ?",
+                    (str(e), file_id),
                 )
+                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
             self.db.conn.commit()
 
         if processed > 0:

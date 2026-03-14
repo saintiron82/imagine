@@ -81,7 +81,13 @@ CREATE TABLE IF NOT EXISTS files (
     content_hash TEXT,                               -- SHA256(file_size + first_8KB + last_8KB)
 
     -- Ownership (server mode)
-    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+
+    -- Processing status tracking (job queue redesign)
+    -- NULL: normal (unprocessed or successfully completed)
+    -- 'failed': permanently failed (non-retryable or max retries exceeded)
+    processing_status TEXT DEFAULT NULL,
+    processing_error TEXT DEFAULT NULL
 );
 
 -- Layers table: Layer-level metadata (optional)
@@ -195,3 +201,16 @@ END;
 CREATE TRIGGER IF NOT EXISTS vec_structure_cascade_delete AFTER DELETE ON files BEGIN
     DELETE FROM vec_structure WHERE file_id = old.id;
 END;
+
+-- Lightweight completion log for throughput calculation.
+-- Completed jobs are immediately deleted from job_queue;
+-- this table preserves just enough data to compute files/min throughput.
+-- Records older than 1 hour are pruned during get_stats() calls.
+CREATE TABLE IF NOT EXISTS job_completions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER,
+    completed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    worker_session_id INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_completions_at ON job_completions(completed_at);
