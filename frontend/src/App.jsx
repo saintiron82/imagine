@@ -1931,6 +1931,7 @@ function App() {
                 reloadSignal={folderStatsVersion}
                 appMode={appMode}
                 queueReloadSignal={queueReloadSignal}
+                onShowToast={showToast}
               />
             ) : currentTab === 'factory' ? (
               <FactoryPage isAdmin={isAdmin} />
