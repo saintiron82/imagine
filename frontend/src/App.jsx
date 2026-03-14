@@ -10,13 +10,15 @@ import LoginPage from './pages/LoginPage';
 import LoginPageV2 from './pages/LoginPageV2';
 import AdminPage from './pages/AdminPage';
 import SettingsPage from './pages/SettingsPage';
+import ArchivingPage from './pages/ArchivingPage';
+import FactoryPage from './pages/FactoryPage';
 // SetupPage removed — LoginPage is now the first screen
 const USE_LOGIN_V2 = true; // Toggle to switch between login page versions
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
 import UpdateNotification from './components/UpdateNotification';
 import EolBanner from './components/EolBanner';
-import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2, ShieldCheck, RotateCcw } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2, ShieldCheck, RotateCcw, Factory } from 'lucide-react';
 import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
@@ -30,7 +32,7 @@ import SubscriptionBanner from './components/SubscriptionBanner';
 function App() {
   const { t, locale, setLocale, availableLocales } = useLocale();
   const { user, loading: authLoading, isAuthenticated, isAdmin, skipAuth, logout, login, configureAuth } = useAuth();
-  const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archive' | 'worker' | 'admin'
+  const [currentTab, setCurrentTab] = useState('search'); // 'search' | 'archiving' | 'factory' | 'admin' | 'settings'
   const [currentPath, setCurrentPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [logs, setLogs] = useState([]);
@@ -114,7 +116,7 @@ function App() {
   // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
   // Web mode: restrict tabs to search/download only
   useEffect(() => {
-    if (!isElectron && (currentTab === 'archive' || currentTab === 'admin')) {
+    if (!isElectron && (currentTab === 'archiving' || currentTab === 'admin')) {
       setCurrentTab('search');
     }
   }, [currentTab]);
@@ -1598,6 +1600,7 @@ function App() {
 
         {/* Right: Tab Buttons + Process (in archive mode) + Language */}
         <div className="flex items-center space-x-2" style={{ WebkitAppRegion: 'no-drag' }}>
+          {/* Search tab — all users */}
           <button
             onClick={() => setCurrentTab('search')}
             className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'search'
@@ -1608,22 +1611,37 @@ function App() {
             <Search size={16} />
             <span>{t('tab.search')}</span>
           </button>
-          {/* Archive/Worker tab — role-based: admin=archive, user=worker (Electron only) */}
-          {isElectron && (
+
+          {/* Archiving tab — Electron admin only */}
+          {isElectron && isAdmin && (
             <button
-              onClick={() => setCurrentTab('archive')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archive'
-                ? (isAdmin ? 'bg-gray-700 text-white' : 'bg-emerald-700 text-white')
+              onClick={() => setCurrentTab('archiving')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'archiving'
+                ? 'bg-gray-700 text-white'
                 : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
                 }`}
             >
-              {isAdmin ? <Archive size={16} /> : <Zap size={16} />}
-              <span>{isAdmin ? t('tab.archive_server') : t('tab.archive_worker')}</span>
+              <Archive size={16} />
+              <span>{t('tab.archiving')}</span>
             </button>
           )}
 
-          {/* Admin tab — admin role only, Electron only */}
-          {isElectron && isAdmin && (
+          {/* Factory tab — Electron or authenticated web users */}
+          {(isElectron || isAuthenticated) && (
+            <button
+              onClick={() => setCurrentTab('factory')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'factory'
+                ? 'bg-emerald-700 text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+            >
+              <Factory size={16} />
+              <span>{t('tab.factory')}</span>
+            </button>
+          )}
+
+          {/* Admin tab — admin role only */}
+          {isAdmin && (
             <button
               onClick={() => setCurrentTab('admin')}
               className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'admin'
@@ -1631,7 +1649,7 @@ function App() {
                 : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
                 }`}
             >
-              <Settings size={16} />
+              <ShieldCheck size={16} />
               <span>{t('tab.admin')}</span>
             </button>
           )}
@@ -1662,7 +1680,7 @@ function App() {
             <span>{t('tab.settings')}</span>
           </button>
 
-          {currentTab === 'archive' && isAdmin && (
+          {currentTab === 'archiving' && isAdmin && (
             <>
               <div className="w-px h-6 bg-gray-600 mx-1" />
               <div className="text-xs text-gray-500">
@@ -1858,8 +1876,8 @@ function App() {
       {!isElectron && <AppDownloadBanner onShowDownload={() => setShowDownloadPage(true)} />}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar - Folder Tree (admin only) */}
-        {currentTab === 'archive' && isAdmin && (
+        {/* Sidebar - Folder Tree (archiving tab, admin only) */}
+        {currentTab === 'archiving' && isAdmin && (
           <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
             <div className="p-4 border-b border-gray-700 flex items-center space-x-2">
               <FolderOpen className="text-blue-400" size={20} />
@@ -1901,16 +1919,8 @@ function App() {
                 onOpenSettings={() => setCurrentTab('settings')}
                 onNavigateToFolder={handleNavigateToFolder}
               />
-            ) : currentTab === 'archive' && !isAdmin ? (
-              <ClientWorkerView
-                appMode={appMode}
-                isWorkerRunning={isWorkerRunning}
-                workerProgress={workerProgress}
-                onWorkerStart={handleWorkerStart}
-                onWorkerStop={handleWorkerStop}
-              />
-            ) : currentTab === 'archive' && isAdmin ? (
-              <ServerArchiveView
+            ) : currentTab === 'archiving' && isAdmin ? (
+              <ArchivingPage
                 currentPath={currentPath}
                 selectedFiles={selectedFiles}
                 setSelectedFiles={setSelectedFiles}
@@ -1922,6 +1932,8 @@ function App() {
                 appMode={appMode}
                 queueReloadSignal={queueReloadSignal}
               />
+            ) : currentTab === 'factory' ? (
+              <FactoryPage isAdmin={isAdmin} />
             ) : null}
           </div>
 
