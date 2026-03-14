@@ -144,22 +144,9 @@ async def startup():
     except Exception as e:
         logger.error(f"Download-ahead pool failed to start: {e}", exc_info=True)
 
-    # Embed-ahead pool: mc_only mode — server-side Phase MV after workers upload MC
-    try:
-        from backend.server.queue.manager import get_processing_mode
-        processing_mode = get_processing_mode()
-        logger.info(f"Processing mode: {processing_mode}")
-        if processing_mode == "mc_only":
-            from backend.server.queue.embed_ahead import EmbedAheadPool
-            from backend.server.deps import get_db
-            db = get_db()
-            app.state.embed_ahead = EmbedAheadPool(db)
-            app.state.embed_ahead.start()
-            logger.info("Embed-ahead pool started (mc_only mode)")
-        else:
-            logger.info("Embed-ahead pool skipped (processing_mode='full')")
-    except Exception as e:
-        logger.warning(f"Embed-ahead pool failed to start: {e}")
+    # EmbedAheadPool removed — tollgate architecture: server does Phase P only,
+    # workers (embedded or external) handle V→VV→MV.
+    logger.info("Processing mode: parse_only (tollgate architecture)")
 
     # Determine initial processing mode (auto if no workers online + auto_processing enabled)
     try:
@@ -250,9 +237,7 @@ async def shutdown():
     if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
         app.state.parse_ahead.stop()
         logger.info("Parse-ahead pool stopped")
-    if hasattr(app.state, "embed_ahead") and app.state.embed_ahead:
-        app.state.embed_ahead.stop()
-        logger.info("Embed-ahead pool stopped")
+    # EmbedAheadPool removed (tollgate architecture)
     if hasattr(app.state, "heartbeat_watchdog") and app.state.heartbeat_watchdog:
         if hasattr(app.state.heartbeat_watchdog, "_stop_event"):
             app.state.heartbeat_watchdog._stop_event.set()

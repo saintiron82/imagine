@@ -90,154 +90,49 @@ def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
 
 
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
-    """온라인 워커 + admin 모드(mc_only/parse_only/auto)에 따라 서버 사이드 풀 자동 설정.
+    """Tollgate architecture: server always parse_only, workers do V→VV→MV.
 
-    - 워커 없음 + parse_only → 서버 P만, 워커 대기 (auto 폴백 없음)
-    - 워커 없음 + auto/mc_only → auto 모드 (서버가 P→V→VV→MV 전부)
-    - mc_only 모드 → ParseAhead(P+VV) + EmbedAhead(MV), 워커는 V(MC)만
-    - parse_only 모드 → ParseAhead(P only, zero GPU), 워커는 V+VV+MV (full)
-    - auto 모드 → ParseAhead(P + gap-fill V), 워커는 능력별 V/VV/MV 분산
+    ParseAheadPool is fixed to parse_only mode (Phase P only, zero GPU).
+    EmbedAheadPool is no longer used (removed).
+    Workers (embedded or external) handle all AI processing.
     """
     if not app:
         return
 
-    cursor = db.conn.cursor()
-    cursor.execute(
-        "SELECT processing_mode_override FROM worker_sessions WHERE status = 'online' AND worker_name != ?",
-        (BUILTIN_WORKER_NAME,),
-    )
-    rows = cursor.fetchall()
-    has_workers = len(rows) > 0
-
-    global_mode = _get_global_processing_mode()  # "mc_only" | "parse_only" | "auto" | "builtin_worker"
-
-    # ── builtin_worker: server always processes full pipeline ──
-    if global_mode == "builtin_worker":
-        if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
-            old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
-            app.state.parse_ahead._processing_mode = "auto"
-            if old_mode != "auto":
-                logger.info("Builtin worker mode: ParseAheadPool set to auto (full pipeline)")
-
-        # Stop EmbedAheadPool if running (not needed — ParseAhead does P→V→VV→MV)
-        if (hasattr(app.state, "embed_ahead") and app.state.embed_ahead
-                and getattr(app.state.embed_ahead, "_thread", None)
-                and app.state.embed_ahead._thread.is_alive()):
-            try:
-                app.state.embed_ahead.stop()
-                app.state.embed_ahead = None
-                logger.info("EmbedAheadPool stopped (builtin_worker mode)")
-            except Exception as e:
-                logger.warning(f"Failed to stop EmbedAheadPool: {e}")
-
-        # Ensure virtual worker session exists
-        _ensure_builtin_worker_session(db)
-
-        # Force all external workers offline immediately and send stop command
-        # (pending_command='stop' alone is not enough — if the worker process is
-        # already dead, the session stays 'online' until the heartbeat watchdog
-        # catches it, which can take up to 3 minutes.)
-        now = _utcnow_sql()
-        cursor = db.conn.cursor()
-        cursor.execute(
-            """UPDATE worker_sessions
-               SET status = 'offline', pending_command = 'stop', disconnected_at = ?
-               WHERE status = 'online' AND worker_name != ?""",
-            (now, BUILTIN_WORKER_NAME)
-        )
-        if cursor.rowcount > 0:
-            logger.info(f"Forced {cursor.rowcount} external worker(s) offline: builtin_worker mode")
-        db.conn.commit()  # Always commit to release WAL write lock
-
-        return
-
-    # Check for lightweight (embed_only) workers in auto mode
-    has_lightweight = any(
-        row[0] == "embed_only" for row in rows if row[0]
-    ) if has_workers else False
-
-    # ParseAheadPool 모드 업데이트
+    # ParseAheadPool: always parse_only
     if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
         old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
+        app.state.parse_ahead._processing_mode = "parse_only"
+        if old_mode != "parse_only":
+            app.state.parse_ahead._unload_models()
+            logger.info(f"ParseAheadPool mode set to parse_only (was {old_mode})")
 
-        if not has_workers:
-            if global_mode == "parse_only":
-                # parse_only: keep parsing, queue jobs, wait for workers
-                app.state.parse_ahead._processing_mode = "parse_only"
-                if old_mode != "parse_only":
-                    logger.info("No workers online, parse_only mode — server parsing only, waiting for workers")
-            else:
-                # auto/mc_only without workers
-                from backend.utils.config import get_config
-                cfg = get_config()
-                auto_enabled = cfg.get("server.auto_processing.enabled", True)
-                if auto_enabled:
-                    app.state.parse_ahead._processing_mode = "auto"
-                    if old_mode != "auto":
-                        logger.info("No workers online, auto-processing enabled")
-                    # Create builtin worker session so it appears in worker list
-                    _ensure_builtin_worker_session(db)
-                else:
-                    app.state.parse_ahead._processing_mode = "distribute"
-        elif global_mode == "mc_only":
-            # mc_only: Server P+VV, workers V(MC), EmbedAhead MV
-            app.state.parse_ahead._processing_mode = "mc_only"
-            if old_mode != "mc_only":
-                logger.info(f"Workers connected, switching to mc_only mode")
-        elif global_mode == "parse_only":
-            # parse_only: Server P only (zero GPU), workers do V+VV+MV
-            app.state.parse_ahead._processing_mode = "parse_only"
-            if old_mode != "parse_only":
-                # Unload any GPU models from previous mode (e.g., mc_only → parse_only switch)
-                app.state.parse_ahead._unload_models()
-                logger.info(f"Workers connected, switching to parse_only mode")
-        else:
-            # auto → distribute: Server P + gap-fill V, workers V/VV/MV
-            app.state.parse_ahead._processing_mode = "distribute"
-            app.state.parse_ahead._has_lightweight_workers = has_lightweight
-            if old_mode != "distribute":
-                logger.info(
-                    f"Workers connected, switching to distribute mode "
-                    f"(lightweight={has_lightweight})"
-                )
-
-        # Workers present → seed demand to prevent ParseAhead deadlock
-        if has_workers:
-            try:
-                from backend.server.queue.base_ahead_pool import BaseAheadPool
-                BaseAheadPool.record_claim(session_id=-1, count=10)
-            except Exception:
-                pass
-
-    # EmbedAheadPool 관리 — only needed for mc_only mode (not parse_only or auto/distribute)
-    needs_embed_ahead = has_workers and global_mode == "mc_only"
-    embed_ahead_running = (
-        hasattr(app.state, "embed_ahead")
-        and app.state.embed_ahead
-        and app.state.embed_ahead._thread
-        and app.state.embed_ahead._thread.is_alive()
+    # Seed demand so ParseAhead keeps parsing even without workers
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM worker_sessions WHERE status = 'online' AND worker_name != ?",
+        (BUILTIN_WORKER_NAME,),
     )
-
-    if needs_embed_ahead and not embed_ahead_running:
+    has_workers = cursor.fetchone()[0] > 0
+    if has_workers:
         try:
-            from backend.server.queue.embed_ahead import EmbedAheadPool
-            app.state.embed_ahead = EmbedAheadPool(db)
-            app.state.embed_ahead.start()
-            logger.info("EmbedAheadPool started (mc_only mode active)")
-        except Exception as e:
-            logger.warning(f"Failed to start EmbedAheadPool: {e}")
-    elif not needs_embed_ahead and embed_ahead_running:
+            from backend.server.queue.base_ahead_pool import BaseAheadPool
+            BaseAheadPool.record_claim(session_id=-1, count=10)
+        except Exception:
+            pass
+
+    # Stop EmbedAheadPool if still running (legacy cleanup)
+    if (hasattr(app.state, "embed_ahead") and app.state.embed_ahead
+            and getattr(app.state.embed_ahead, "_thread", None)
+            and app.state.embed_ahead._thread.is_alive()):
         try:
             app.state.embed_ahead.stop()
             app.state.embed_ahead = None
-            logger.info("EmbedAheadPool stopped (not mc_only mode)")
+            logger.info("EmbedAheadPool stopped (no longer used in tollgate architecture)")
         except Exception as e:
             logger.warning(f"Failed to stop EmbedAheadPool: {e}")
 
-    logger.debug(
-        f"Pool recalculated: workers={has_workers}, global_mode={global_mode}, "
-        f"lightweight={has_lightweight}, embed_ahead={needs_embed_ahead}"
-    )
+    logger.debug(f"Pool recalculated: parse_only, workers={has_workers}")
 
 
 # ── Builtin worker virtual session ──────────────────────────

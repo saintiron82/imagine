@@ -53,13 +53,11 @@ class ParseAheadPool(BaseAheadPool):
 
     def __init__(self, db):
         super().__init__(db)
-        from backend.server.queue.manager import get_processing_mode
-        self._processing_mode = get_processing_mode()
-        self._vv_encoder = None  # Lazy-loaded SigLIP2, stays resident in mc_only mode
-        self._structure_encoder = None  # Lazy-loaded DINOv2, stays resident in mc_only mode
-        self._has_lightweight_workers = False  # Set by _recalculate_server_pools()
+        self._processing_mode = "parse_only"  # Fixed: tollgate architecture
+        self._vv_encoder = None  # Legacy, kept for _unload_models() compatibility
+        self._structure_encoder = None  # Legacy, kept for _unload_models() compatibility
         self._last_retry_reset = 0.0  # Timestamp of last parse_status='failed' reset
-        logger.info(f"ParseAheadPool initialized (processing_mode={self._processing_mode})")
+        logger.info("ParseAheadPool initialized (parse_only mode — tollgate architecture)")
 
         # Auto-audit on startup: repair completed jobs with missing data
         self._startup_integrity_audit()
@@ -751,16 +749,12 @@ class ParseAheadPool(BaseAheadPool):
         return len(contexts)
 
     def _loop(self):
-        """Main loop: continuously pre-parse pending jobs to fill the buffer.
+        """Main loop: Phase P only (parse_only mode fixed).
 
-        Modes:
-        - auto: Server processes all phases (P→V→VV→MV) when no workers connected.
-        - mc_only: Pre-parse + VV embedding; workers handle V(MC) only.
-        - parse_only: Pre-parse only (zero GPU); workers handle V+VV+MV.
-        - distribute: Pre-parse + gap-fill V(MC) for lightweight workers;
-          full workers handle V+VV+MV, lightweight workers handle VV+MV.
+        Tollgate architecture: server pre-parses pending jobs (Phase P)
+        and workers handle AI processing (V→VV→MV).
         """
-        logger.info("ParseAheadPool loop started")
+        logger.info("ParseAheadPool loop started (parse_only mode)")
         poll_interval_s = self._get_config_value("server.parse_ahead.poll_interval_s", 2)
 
         # Auto-queue backfill jobs on startup
@@ -777,71 +771,19 @@ class ParseAheadPool(BaseAheadPool):
         try:
             while self._running:
                 try:
-                    # Auto mode: server processes all phases (P→V→VV→MV) when no workers
-                    if self._processing_mode == "auto":
-                        processed = self._process_auto_batch()
-                        if processed > 0:
-                            rest_s = self._get_config_value(
-                                "server.auto_processing.rest_after_batch_s", 30
-                            )
-                            logger.info(
-                                f"Auto batch done ({processed} files), resting {rest_s}s"
-                            )
-                            self._interruptible_sleep(rest_s)
-                        else:
-                            self._process_backfill_batch()
-                            time.sleep(poll_interval_s)
-                        continue
-
-                    # Non-auto modes (mc_only, parse_only, distribute): pre-parse pending jobs
-                    # Periodically check if workers are still online; if none, fall back to auto
+                    # Periodic diagnostics
                     if not hasattr(self, '_diag_counter'):
                         self._diag_counter = 0
                     self._diag_counter += 1
-                    if self._diag_counter % 15 == 1:  # Every ~30s (15 * 2s poll)
+                    if self._diag_counter % 15 == 1:  # Every ~30s
                         target = self._calculate_buffer_target()
                         demand = self.has_recent_demand()
                         logger.info(
-                            f"[PA-DIAG] mode={self._processing_mode} "
+                            f"[PA-DIAG] mode=parse_only "
                             f"demand={demand} target={target}"
                         )
-                        # Auto-fallback: if distribute/auto but no workers online, switch to auto
-                        if self._processing_mode in ("distribute",):
-                            try:
-                                cursor = self.db.conn.cursor()
-                                cursor.execute(
-                                    "SELECT COUNT(*) FROM worker_sessions WHERE status = 'online' AND worker_name != '__builtin__'"
-                                )
-                                online_count = cursor.fetchone()[0]
-                                if online_count == 0:
-                                    from backend.utils.config import get_config
-                                    cfg = get_config()
-                                    auto_enabled = cfg.get("server.auto_processing.enabled", True)
-                                    if auto_enabled:
-                                        logger.info(
-                                            f"No workers online but mode={self._processing_mode}, "
-                                            f"falling back to auto mode"
-                                        )
-                                        self._processing_mode = "auto"
-                                        continue
-                            except Exception as e:
-                                logger.debug(f"Auto-fallback check error: {e}")
+
                     self._run_pre_parse_buffer()
-
-                    # Distribute mode: gap-fill V(MC) for lightweight workers
-                    if (self._processing_mode == "distribute"
-                            and self._has_lightweight_workers):
-                        gap_filled = self._fill_vision_gaps()
-                        if gap_filled > 0:
-                            rest_s = self._get_config_value(
-                                "server.auto_processing.rest_after_batch_s", 30
-                            )
-                            logger.info(
-                                f"Gap-fill done ({gap_filled} files), resting {rest_s}s"
-                            )
-                            time.sleep(rest_s)
-                            continue
-
                     time.sleep(poll_interval_s)
 
                 except Exception as e:
@@ -852,9 +794,6 @@ class ParseAheadPool(BaseAheadPool):
                     time.sleep(5)
                 finally:
                     # Safety: release any WAL write lock from uncommitted DML.
-                    # Without this, an UPDATE matching 0 rows still acquires
-                    # the write lock (via OP_Transaction p2=1) and blocks all
-                    # other writers until commit/rollback.
                     try:
                         self.db.conn.rollback()
                     except Exception:
