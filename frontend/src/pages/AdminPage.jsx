@@ -30,15 +30,11 @@ import { listDomains, getDomainDetail, getActiveDomainConfig, setActiveDomain, s
 export default function AdminPage() {
   const { t } = useLocale();
   const { user: currentUser } = useAuth();
-  const [activeTab, setActiveTab] = useState('discover');
+  const [activeTab, setActiveTab] = useState('members');
 
   const tabs = [
-    { id: 'discover', label: t('admin.tab_discover'), icon: FolderSearch },
-    { id: 'queue', label: t('admin.tab_queue'), icon: Activity },
-    { id: 'dashboard', label: t('admin.tab_dashboard') || 'Dashboard', icon: Image },
-    { id: 'workers', label: t('admin.tab_workers'), icon: Server },
-    { id: 'classification', label: t('admin.tab_classification'), icon: Tag },
     { id: 'members', label: t('admin.tab_members'), icon: UserCheck },
+    { id: 'classification', label: t('admin.tab_classification'), icon: Tag },
   ];
 
   return (
@@ -63,12 +59,8 @@ export default function AdminPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === 'discover' && <DiscoverPanel />}
-        {activeTab === 'queue' && <QueuePanel />}
-        {activeTab === 'dashboard' && <DashboardPanel />}
-        {activeTab === 'workers' && <WorkersPanel />}
-        {activeTab === 'classification' && <ClassificationPanel />}
         {activeTab === 'members' && <MembersPanel currentUser={currentUser} />}
+        {activeTab === 'classification' && <ClassificationPanel />}
       </div>
     </div>
   );
