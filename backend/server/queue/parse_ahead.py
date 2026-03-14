@@ -228,6 +228,7 @@ class ParseAheadPool(BaseAheadPool):
 
         # Convert contexts to PhaseItems
         phase_items = []
+        skipped_jobs = set()  # Jobs skipped (e.g. no thumbnail) — exclude from integrity check
         for ctx in contexts:
             job_id, file_id, file_path, thumb_path, mc_raw = ctx
             phases_done = job_phases.get(job_id, {})
@@ -246,10 +247,19 @@ class ParseAheadPool(BaseAheadPool):
                 except Exception:
                     pass
 
-            # No thumbnail available — skip for now, will be generated in Phase P
+            # No thumbnail available — release back to pending so it can be
+            # retried later when thumbnail becomes available (e.g. after re-download).
             if not thumb_path or not Path(thumb_path).exists():
                 logger.info(
-                    f"ParseAhead job {job_id}: no thumbnail yet, skipping (will be processed in Phase P)")
+                    f"ParseAhead job {job_id}: no thumbnail, releasing to pending")
+                cursor.execute(
+                    """UPDATE job_queue SET status = 'pending',
+                       assigned_to = NULL, assigned_at = NULL,
+                       worker_session_id = NULL
+                       WHERE id = ?""",
+                    (job_id,),
+                )
+                skipped_jobs.add(job_id)
                 continue
 
             # For resume: if vision is done but embed isn't, mc_raw needs
@@ -287,6 +297,11 @@ class ParseAheadPool(BaseAheadPool):
                 skip_mv=bool(phases_done.get("embed")),
             ))
 
+        # Commit any skipped-job status changes before running PhaseRunner
+        if skipped_jobs:
+            self.db.conn.commit()
+            logger.info(f"Auto: {len(skipped_jobs)} jobs released to pending (no thumbnail)")
+
         # Create PhaseRunner with DirectSQL storage
         models = ModelManager()
         storage = DirectSQLStorage(self.db)
@@ -319,6 +334,10 @@ class ParseAheadPool(BaseAheadPool):
         failed_count = 0
         for ctx in contexts:
             job_id, file_id = ctx[0], ctx[1]
+
+            # Skip jobs that were released back to pending (no thumbnail etc.)
+            if job_id in skipped_jobs:
+                continue
 
             # Skip jobs already marked as failed (e.g. THUMB_MISSING)
             status_row = cursor.execute(
