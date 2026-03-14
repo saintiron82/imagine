@@ -8,7 +8,7 @@ import QueueManagerPanel from './QueueManagerPanel';
 import FolderInfoBar from './FolderInfoBar';
 import FileGrid from './FileGrid';
 
-function QueueStatusBar({ appMode, reloadSignal }) {
+export function QueueStatusBar({ appMode, reloadSignal }) {
   const { t } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const [showWorkers, setShowWorkers] = useState(false);

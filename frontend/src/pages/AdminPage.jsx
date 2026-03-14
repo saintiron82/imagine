@@ -203,7 +203,7 @@ function ResourceMetrics({ resources, t }) {
 
 // ── Workers Panel ────────────────────────────────────────
 
-function WorkersPanel() {
+export function WorkersPanel() {
   const { t } = useLocale();
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -744,7 +744,7 @@ function MembersPanel({ currentUser }) {
 
 // ── Discover Panel ──────────────────────────────────────
 
-function DiscoverPanel() {
+export function DiscoverPanel() {
   const { t } = useLocale();
   const [currentPath, setCurrentPath] = useState('/');
   const [pathInput, setPathInput] = useState('/');
@@ -943,7 +943,7 @@ function DiscoverPanel() {
 
 // ── Thumbnails Panel ────────────────────────────────────
 
-function DashboardPanel() {
+export function DashboardPanel() {
   const { t } = useLocale();
   const [thumbData, setThumbData] = useState(null);
   const [cacheData, setCacheData] = useState(null);
@@ -1116,7 +1116,7 @@ function DashboardPanel() {
 
 // ── Queue Panel ──────────────────────────────────────────
 
-function QueuePanel() {
+export function QueuePanel() {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
   const [thumbStats, setThumbStats] = useState(null);

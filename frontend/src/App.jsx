@@ -1934,7 +1934,14 @@ function App() {
                 onShowToast={showToast}
               />
             ) : currentTab === 'factory' ? (
-              <FactoryPage isAdmin={isAdmin} />
+              <FactoryPage
+                isAdmin={isAdmin}
+                appMode={appMode}
+                isWorkerRunning={isWorkerRunning}
+                workerProgress={workerProgress}
+                onWorkerStart={handleWorkerStart}
+                onWorkerStop={handleWorkerStop}
+              />
             ) : null}
           </div>
 
