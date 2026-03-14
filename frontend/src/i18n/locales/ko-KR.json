@@ -614,6 +614,8 @@
   "worker.auto_on": "ON",
   "worker.auto_off": "OFF",
   "worker.auto_desc": "워커 미접속 시 서버가 전체 파이프라인(P→V→VV→MV)을 자동 처리",
+  "worker.embedded_worker": "내장 워커",
+  "worker.embedded_desc": "서버 프로세스 내부에서 AI 처리(V→VV→MV) 실행",
   "worker.rest_title": "배치 후 대기 시간",
   "worker.rest_unit": "초",
   "worker.rest_desc": "서버 자동 처리 배치 완료 후 대기 시간",

@@ -148,6 +148,17 @@ async def startup():
     # workers (embedded or external) handle V→VV→MV.
     logger.info("Processing mode: parse_only (tollgate architecture)")
 
+    # Embedded worker auto-start (if enabled in config)
+    try:
+        from backend.utils.config import get_config
+        ew_cfg = get_config()
+        if ew_cfg.get("server.embedded_worker.enabled", False):
+            from backend.server.routers.workers import _start_embedded_worker
+            _start_embedded_worker(app)
+            logger.info("Embedded worker auto-started (config: enabled)")
+    except Exception as e:
+        logger.warning(f"Embedded worker auto-start failed: {e}")
+
     # Determine initial processing mode (auto if no workers online + auto_processing enabled)
     try:
         from backend.server.routers.workers import _recalculate_server_pools
@@ -237,7 +248,14 @@ async def shutdown():
     if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
         app.state.parse_ahead.stop()
         logger.info("Parse-ahead pool stopped")
-    # EmbedAheadPool removed (tollgate architecture)
+    # Embedded worker shutdown
+    try:
+        from backend.server.embedded_worker import get_status as _ew_status, stop_worker as _ew_stop
+        if _ew_status()["running"]:
+            _ew_stop()
+            logger.info("Embedded worker stopped")
+    except Exception as e:
+        logger.warning(f"Embedded worker shutdown failed: {e}")
     if hasattr(app.state, "heartbeat_watchdog") and app.state.heartbeat_watchdog:
         if hasattr(app.state.heartbeat_watchdog, "_stop_event"):
             app.state.heartbeat_watchdog._stop_event.set()

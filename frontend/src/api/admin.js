@@ -142,6 +142,16 @@ export async function updateAutoProcessing(config) {
   return apiClient.patch('/api/v1/admin/workers/auto-processing', config);
 }
 
+// ── Embedded Worker ─────────────────────────────────────
+
+export async function getEmbeddedWorker() {
+  return apiClient.get('/api/v1/admin/workers/embedded-worker');
+}
+
+export async function updateEmbeddedWorker(config) {
+  return apiClient.patch('/api/v1/admin/workers/embedded-worker', config);
+}
+
 // ── Worker Self-service ──────────────────────────────────
 
 export async function registerWorker() {

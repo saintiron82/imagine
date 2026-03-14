@@ -614,6 +614,8 @@
   "worker.auto_on": "ON",
   "worker.auto_off": "OFF",
   "worker.auto_desc": "Server processes all phases (P→V→VV→MV) when no workers are connected",
+  "worker.embedded_worker": "Embedded Worker",
+  "worker.embedded_desc": "Run AI processing (V→VV→MV) inside the server process",
   "worker.rest_title": "Rest Between Batches",
   "worker.rest_unit": "seconds",
   "worker.rest_desc": "Idle time after each server auto-processing batch",

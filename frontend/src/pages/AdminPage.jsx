@@ -11,6 +11,7 @@ import {
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
   updateWorkerConfig, updateGlobalProcessingMode,
   getAutoProcessing, updateAutoProcessing,
+  getEmbeddedWorker, updateEmbeddedWorker,
   listMembers, updateMemberRole, removeMember, deactivateMember, activateMember,
   getThumbnailStats,
   getWorkRequests, getWorkRequestDetail, pauseWorkRequest, resumeWorkRequest, cancelWorkRequest,
@@ -210,6 +211,8 @@ function WorkersPanel() {
   const [editingCapacity, setEditingCapacity] = useState(null); // { id, value }
   const [autoProcessing, setAutoProcessing] = useState(true);
   const [restAfterBatch, setRestAfterBatch] = useState(30);
+  const [embeddedEnabled, setEmbeddedEnabled] = useState(false);
+  const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
 
   const load = useCallback(async () => {
     try {
@@ -233,7 +236,15 @@ function WorkersPanel() {
       if (data.enabled != null) setAutoProcessing(data.enabled);
       if (data.rest_after_batch_s != null) setRestAfterBatch(data.rest_after_batch_s);
     }).catch(() => {});
-    const interval = setInterval(load, 5000);
+    // Load embedded worker status
+    const loadEmbedded = () => {
+      getEmbeddedWorker().then(data => {
+        if (data.enabled != null) setEmbeddedEnabled(data.enabled);
+        setEmbeddedStatus({ running: data.running, status: data.status, jobs_completed: data.jobs_completed || 0 });
+      }).catch(() => {});
+    };
+    loadEmbedded();
+    const interval = setInterval(() => { load(); loadEmbedded(); }, 5000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -444,6 +455,48 @@ function WorkersPanel() {
           </div>
         )}
       </div>}
+
+      {/* Embedded Worker toggle */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-gray-300">{t('worker.embedded_worker')}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{t('worker.embedded_desc')}</div>
+          </div>
+          <div className="flex items-center gap-3">
+            {embeddedEnabled && (
+              <span className={`text-xs px-2 py-0.5 rounded ${
+                embeddedStatus.running
+                  ? 'bg-green-900/50 text-green-400'
+                  : 'bg-yellow-900/50 text-yellow-400'
+              }`}>
+                {embeddedStatus.running ? t('worker.status_running') : embeddedStatus.status}
+                {embeddedStatus.jobs_completed > 0 && ` · ${embeddedStatus.jobs_completed} ${t('worker.jobs_completed')}`}
+              </span>
+            )}
+            <button
+              onClick={async () => {
+                const newVal = !embeddedEnabled;
+                setEmbeddedEnabled(newVal);
+                try {
+                  const res = await updateEmbeddedWorker({ enabled: newVal });
+                  setEmbeddedStatus({ running: res.running, status: res.status, jobs_completed: res.jobs_completed || 0 });
+                } catch (e) {
+                  console.error(e);
+                  setEmbeddedEnabled(!newVal);
+                }
+              }}
+              className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
+                embeddedEnabled
+                  ? 'bg-green-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {embeddedEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Aggregate stats */}
       {onlineCount > 0 && (

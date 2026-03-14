@@ -61,6 +61,10 @@ class AutoProcessingUpdate(BaseModel):
     batch_size: Optional[int] = None
 
 
+class EmbeddedWorkerUpdate(BaseModel):
+    enabled: Optional[bool] = None
+
+
 def _get_global_processing_mode() -> str:
     """Read global processing_mode from config (cached singleton).
 
@@ -856,3 +860,74 @@ def admin_update_auto_processing(
 
     logger.info(f"Admin updated auto_processing: enabled={req.enabled}, rest={req.rest_after_batch_s}s, batch={req.batch_size}")
     return {"ok": True}
+
+
+# ── Embedded Worker ──────────────────────────────────────────
+
+def _start_embedded_worker(app):
+    """Start the embedded worker with a self-issued JWT token."""
+    from backend.server.auth.jwt import create_access_token
+    from backend.server.embedded_worker import start_worker, get_status
+
+    if get_status()["running"]:
+        return
+
+    port = getattr(app.state, "port", 8000)
+    token = create_access_token(
+        user_id=0, username="__embedded_worker__", role="admin",
+        expires_minutes=60 * 24 * 365,  # 1 year — internal use only
+    )
+    result = start_worker(f"http://127.0.0.1:{port}", token)
+    if result.get("success"):
+        logger.info(f"Embedded worker started (port={port})")
+    else:
+        logger.warning(f"Embedded worker start failed: {result.get('error')}")
+
+
+def _stop_embedded_worker():
+    """Stop the embedded worker if running."""
+    from backend.server.embedded_worker import stop_worker, get_status
+
+    if get_status()["running"]:
+        result = stop_worker()
+        logger.info(f"Embedded worker stopped: {result}")
+
+
+@router.get("/admin/workers/embedded-worker")
+def admin_get_embedded_worker(
+    admin: dict = Depends(require_admin),
+):
+    """Get embedded worker status and config."""
+    from backend.server.embedded_worker import get_status
+    from backend.utils.config import get_config
+
+    cfg = get_config()
+    status = get_status()
+    return {
+        "enabled": cfg.get("server.embedded_worker.enabled", False),
+        **status,
+    }
+
+
+@router.patch("/admin/workers/embedded-worker")
+def admin_update_embedded_worker(
+    req: EmbeddedWorkerUpdate,
+    request: Request,
+    admin: dict = Depends(require_admin),
+):
+    """Enable or disable the embedded worker."""
+    from backend.server.embedded_worker import get_status
+    from backend.utils.config import get_config
+
+    cfg = get_config()
+
+    if req.enabled is not None:
+        cfg._set_dotted("server.embedded_worker.enabled", req.enabled)
+        if req.enabled:
+            _start_embedded_worker(request.app)
+        else:
+            _stop_embedded_worker()
+
+    status = get_status()
+    logger.info(f"Admin updated embedded_worker: enabled={req.enabled}, running={status['running']}")
+    return {"ok": True, **status}
