@@ -467,3 +467,28 @@ async def unregister_webdav_source(
     unregister_webdav_source(source_id)
     logger.info(f"WebDAV source unregistered via API: {source_id}")
     return {"success": True}
+
+
+@router.post("/recovery/scan")
+def run_recovery_scan(
+    db: SQLiteDB = Depends(get_db_safe),
+    admin=Depends(require_admin),
+):
+    """Run Recovery Factory scan — detect incomplete files and create Recovery WRs.
+
+    Scans all files in DB for missing data (MC/VV/MV/thumbnail),
+    groups them into Recovery Work Requests, and queues for processing.
+    """
+    from backend.server.queue.manager import JobQueueManager
+    mgr = JobQueueManager(db)
+    result = mgr.audit_completed_jobs()
+    return {
+        "success": True,
+        "total_files": result["total_files"],
+        "complete_files": result["complete_files"],
+        "incomplete_files": result["incomplete_files"],
+        "repaired_files": result["repaired_files"],
+        "recovery_wrs_created": result.get("recovery_wrs_created", 0),
+        "thumbnail_reset_count": result.get("thumbnail_reset_count", 0),
+        "skipped_non_retryable": result["skipped_non_retryable"],
+    }

@@ -208,3 +208,7 @@ export async function cancelWorkRequest(id) {
   return apiClient.post(`/api/v1/admin/work-requests/${id}/cancel`);
 }
 
+export async function runRecoveryScan() {
+  return apiClient.post('/api/v1/admin/recovery/scan');
+}
+

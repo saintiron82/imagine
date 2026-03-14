@@ -14,6 +14,7 @@ import {
   listMembers, updateMemberRole, removeMember, deactivateMember, activateMember,
   getThumbnailStats,
   getWorkRequests, getWorkRequestDetail, pauseWorkRequest, resumeWorkRequest, cancelWorkRequest,
+  runRecoveryScan,
 } from '../api/admin';
 import {
   Users, Key, Activity, FolderSearch, Server,
@@ -1115,6 +1116,23 @@ function QueuePanel() {
     }
   };
 
+  const handleRecoveryScan = async () => {
+    try {
+      setCleanupMsg('Scanning...');
+      const data = await runRecoveryScan();
+      const msg = data.repaired_files > 0
+        ? `Recovery: ${data.repaired_files} files → ${data.recovery_wrs_created || 0} WR(s)`
+        : 'Recovery: all files complete';
+      setCleanupMsg(msg);
+      load();
+      setTimeout(() => setCleanupMsg(''), 8000);
+    } catch (e) {
+      console.error('Recovery scan failed:', e);
+      setCleanupMsg('Recovery scan failed');
+      setTimeout(() => setCleanupMsg(''), 5000);
+    }
+  };
+
   if (loading) return <div className="text-gray-400 text-sm">{t('status.loading')}</div>;
 
   const bufferReady = (stats?.parse_ahead_parsed || 0);
@@ -1198,6 +1216,13 @@ function QueuePanel() {
         <div className="flex items-center gap-2">
           {cleanupMsg && <span className="text-xs text-green-400">{cleanupMsg}</span>}
           <button
+            onClick={handleRecoveryScan}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-700 hover:bg-amber-600 rounded text-xs text-gray-200"
+          >
+            <AlertTriangle size={12} />
+            Recovery Scan
+          </button>
+          <button
             onClick={handleQueueCleanup}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300"
           >
@@ -1257,8 +1282,13 @@ function QueuePanel() {
                       <span className="w-3.5 flex-shrink-0" />
                     )}
                     {/* Name */}
+                    {wr.name?.startsWith('[Recovery]') && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-amber-800 text-amber-200 flex-shrink-0">
+                        Recovery
+                      </span>
+                    )}
                     <span className={`text-sm flex-shrink-0 max-w-[180px] truncate ${isDone ? 'text-gray-500' : 'text-gray-200'}`}>
-                      {wr.name}
+                      {wr.name?.startsWith('[Recovery] ') ? wr.name.slice(11) : wr.name}
                     </span>
                     {/* Status badge */}
                     <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${wrStatusColor(wr.status)} bg-gray-800`}>

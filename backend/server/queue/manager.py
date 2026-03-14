@@ -1325,26 +1325,38 @@ class JobQueueManager:
         return count
 
     def audit_completed_jobs(self) -> Dict[str, Any]:
-        """Full data integrity audit across ALL files in the database.
+        """Full data integrity audit — Recovery Factory.
 
-        2-pass design (simplified for TODO-only queue):
+        2-pass design:
 
         Pass 1: File-centric scan
           - Complete (mc+vv+mv) → OK, delete any residual jobs
           - Permanently failed (processing_status='failed') → SKIP (count only)
-          - Incomplete + no pending job → CREATE pending job
-          - Incomplete + pending job exists → OK (already queued)
+          - Thumbnail file missing → reset thumbnail_url, mark for re-parse
+          - Incomplete + no pending job → collect for Recovery WR
+          - Incomplete + pending job exists → update phase_completed
 
         Pass 2: Unmatched job cleanup
           - Jobs with file_id not in files → DELETE
 
+        Recovery WR creation:
+          - Incomplete files without jobs are grouped by parent folder
+          - Each group becomes a Recovery WR with [Recovery] prefix
+
         Returns file-centric results.
         """
+        from pathlib import Path as _Path
+        from collections import defaultdict
+
         cursor = self.db.conn.cursor()
         details = []
         perm_failed_details = []
         repaired_files = 0
         skipped_non_retryable = 0
+        thumbnail_reset_count = 0
+
+        # Files needing new jobs, grouped by parent folder for Recovery WR
+        recovery_files = defaultdict(list)  # {folder_path: [(file_id, file_path, phases, metadata), ...]}
 
         # ── Pass 1: Scan ALL files for data completeness ──
         cursor.execute("""
@@ -1363,7 +1375,18 @@ class JobQueueManager:
         for (file_id, file_path, has_mc, has_vv, has_mv,
              thumbnail_url, proc_status_col, proc_error) in all_files:
 
-            if has_mc and has_vv and has_mv:
+            # Thumbnail file verification (D2)
+            if thumbnail_url and not _Path(thumbnail_url).exists():
+                cursor.execute(
+                    "UPDATE files SET thumbnail_url = NULL WHERE id = ?",
+                    (file_id,)
+                )
+                thumbnail_url = None
+                thumbnail_reset_count += 1
+                # Thumbnail lost → needs re-parse (Phase P)
+                # Will be picked up as incomplete below
+
+            if has_mc and has_vv and has_mv and thumbnail_url:
                 complete_files += 1
                 # Delete any residual jobs for this file
                 cursor.execute(
@@ -1391,7 +1414,7 @@ class JobQueueManager:
                 )
                 continue
 
-            # Incomplete file — ensure a pending job exists
+            # Incomplete file — check actual state
             missing = []
             if not has_mc:
                 missing.append("mc")
@@ -1399,6 +1422,22 @@ class JobQueueManager:
                 missing.append("vv")
             if not has_mv:
                 missing.append("mv")
+            if not thumbnail_url:
+                missing.append("thumbnail")
+
+            # Determine parse status based on thumbnail existence
+            has_thumbnail = bool(thumbnail_url)
+
+            actual_phases = json.dumps({
+                "parse": has_thumbnail,
+                "vision": bool(has_mc),
+                "embed": bool(has_vv and has_mv),
+            })
+            parsed_metadata = json.dumps({
+                "metadata": {},
+                "thumb_path": thumbnail_url,
+                "mc_raw": None,
+            }, ensure_ascii=False)
 
             # Check if a pending/assigned/processing job already exists
             cursor.execute(
@@ -1411,16 +1450,6 @@ class JobQueueManager:
 
             if existing_job:
                 # Already in pipeline — update phase_completed to reflect actual state
-                actual_phases = json.dumps({
-                    "parse": True,
-                    "vision": bool(has_mc),
-                    "embed": bool(has_vv and has_mv),
-                })
-                parsed_metadata = json.dumps({
-                    "metadata": {},
-                    "thumb_path": thumbnail_url,
-                    "mc_raw": None,
-                }, ensure_ascii=False)
                 cursor.execute(
                     """UPDATE job_queue
                        SET phase_completed = ?,
@@ -1429,39 +1458,103 @@ class JobQueueManager:
                     (actual_phases, parsed_metadata, existing_job[0])
                 )
             else:
-                # No job — create one
-                actual_phases = json.dumps({
-                    "parse": True,
-                    "vision": bool(has_mc),
-                    "embed": bool(has_vv and has_mv),
-                })
-                parsed_metadata = json.dumps({
-                    "metadata": {},
-                    "thumb_path": thumbnail_url,
-                    "mc_raw": None,
-                }, ensure_ascii=False)
-                is_webdav = file_path.startswith("webdav://") if file_path else False
-                audit_file_ready = 0 if is_webdav else 1
-                try:
+                # No job — collect for Recovery WR
+                folder_path = str(_Path(file_path).parent) if file_path else "unknown"
+                recovery_files[folder_path].append(
+                    (file_id, file_path, actual_phases, parsed_metadata, missing,
+                     has_thumbnail)
+                )
+
+        # ── Create Recovery WRs from collected files ──
+        recovery_wrs_created = 0
+        if recovery_files:
+            for folder_path, files in recovery_files.items():
+                folder_name = _Path(folder_path).name or "local"
+                file_groups = {folder_path: [(f[0], f[1]) for f in files]}
+
+                # Create Recovery WR
+                sort_order = self._next_sort_order(cursor)
+                total = len(files)
+                cursor.execute(
+                    """INSERT INTO work_requests (name, source_path, total_files, sort_order)
+                       VALUES (?, ?, ?, ?)""",
+                    (f"[Recovery] {folder_name}", folder_path, total, sort_order)
+                )
+                wr_id = cursor.lastrowid
+
+                # Create subtask
+                cursor.execute(
+                    """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
+                       VALUES (?, ?, ?, ?)""",
+                    (wr_id, folder_path, folder_name, total)
+                )
+                st_id = cursor.lastrowid
+
+                # Create jobs
+                for (file_id, file_path, actual_phases, parsed_metadata,
+                     missing, has_thumbnail) in files:
+                    is_webdav = file_path.startswith("webdav://") if file_path else False
+                    # If thumbnail missing, need re-parse → parse_status=NULL
+                    # If thumbnail exists, parse done → parse_status='parsed'
+                    parse_status = 'parsed' if has_thumbnail else None
+                    audit_file_ready = 0 if (is_webdav and not has_thumbnail) else 1
+
+                    try:
+                        cursor.execute(
+                            """INSERT INTO job_queue
+                               (file_id, file_path, status, priority,
+                                phase_completed, parse_status, parsed_metadata,
+                                file_ready, work_request_id, work_subtask_id)
+                               VALUES (?, ?, 'pending', 5, ?, ?, ?, ?, ?, ?)""",
+                            (file_id, file_path, actual_phases, parse_status,
+                             parsed_metadata, audit_file_ready, wr_id, st_id)
+                        )
+                        if cursor.rowcount > 0:
+                            repaired_files += 1
+                            details.append({
+                                "file_id": file_id,
+                                "file_path": file_path,
+                                "missing": missing,
+                                "status": "recovery_wr",
+                            })
+
+                            # Request re-download for WebDAV files needing re-parse
+                            if is_webdav and not has_thumbnail:
+                                try:
+                                    pool = _get_download_pool()
+                                    if pool:
+                                        pool.request_redownload(file_id, file_path)
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
+
+                # Adjust WR total if some jobs were skipped
+                actual_jobs = cursor.execute(
+                    "SELECT COUNT(*) FROM job_queue WHERE work_request_id = ?",
+                    (wr_id,)
+                ).fetchone()[0]
+                if actual_jobs != total:
                     cursor.execute(
-                        """INSERT INTO job_queue
-                           (file_id, file_path, status, priority,
-                            phase_completed, parse_status, parsed_metadata, file_ready)
-                           VALUES (?, ?, 'pending', 0, ?, 'parsed', ?, ?)""",
-                        (file_id, file_path, actual_phases, parsed_metadata, audit_file_ready)
+                        "UPDATE work_requests SET total_files = ? WHERE id = ?",
+                        (actual_jobs, wr_id)
                     )
-                    repaired_files += 1
-                    details.append({
-                        "file_id": file_id,
-                        "file_path": file_path,
-                        "missing": missing,
-                        "status": "download_waiting" if is_webdav else "no_job",
-                    })
-                except Exception as e:
-                    logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
+                    cursor.execute(
+                        "UPDATE work_subtasks SET total_files = ? WHERE id = ?",
+                        (actual_jobs, st_id)
+                    )
+
+                if actual_jobs > 0:
+                    recovery_wrs_created += 1
+                    logger.info(
+                        f"Recovery WR created: '{folder_name}' ({actual_jobs} files)"
+                    )
+                else:
+                    # No jobs created (all duplicates) — remove empty WR
+                    cursor.execute("DELETE FROM work_subtasks WHERE work_request_id = ?", (wr_id,))
+                    cursor.execute("DELETE FROM work_requests WHERE id = ?", (wr_id,))
 
         # ── Pass 2: Unmatched job cleanup ──
-        # Delete jobs whose file_id no longer exists in files table
         cursor.execute("""
             DELETE FROM job_queue
             WHERE file_id IS NOT NULL
@@ -1501,6 +1594,10 @@ class JobQueueManager:
             parts = [f"Audit: {total_files} files, {incomplete_files} incomplete"]
             if repaired_files > 0:
                 parts.append(f"{repaired_files} repaired")
+            if recovery_wrs_created > 0:
+                parts.append(f"{recovery_wrs_created} Recovery WR(s) created")
+            if thumbnail_reset_count > 0:
+                parts.append(f"{thumbnail_reset_count} thumbnails reset")
             if skipped_non_retryable > 0:
                 parts.append(f"{skipped_non_retryable} permanently failed (skipped)")
             if dangling_removed > 0:
@@ -1517,6 +1614,8 @@ class JobQueueManager:
             "complete_files": complete_files,
             "incomplete_files": incomplete_files,
             "repaired_files": repaired_files,
+            "recovery_wrs_created": recovery_wrs_created,
+            "thumbnail_reset_count": thumbnail_reset_count,
             "skipped_non_retryable": skipped_non_retryable,
             "failed_stuck_jobs": skipped_non_retryable,  # files-based
             "details": details,
