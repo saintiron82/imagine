@@ -160,6 +160,7 @@ class SQLiteDB:
                 self._migrate_job_completions()
                 self._migrate_files_processing_status()
                 self._migrate_work_requests()
+                self._migrate_members_table()
 
             logger.info(f"Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -654,6 +655,40 @@ class SQLiteDB:
                     logger.info("✅ started_at column added to work_requests")
                 except Exception as e:
                     logger.warning(f"work_requests started_at migration failed (non-fatal): {e}")
+
+    def _migrate_members_table(self):
+        """Create members table if missing (added for group/Firestore migration)."""
+        if self._table_exists('members'):
+            return
+        try:
+            logger.info("Migrating: creating members table...")
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS members (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    firebase_uid TEXT UNIQUE,
+                    email TEXT,
+                    display_name TEXT,
+                    role TEXT NOT NULL DEFAULT 'user'
+                        CHECK (role IN ('admin', 'user', 'viewer')),
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    joined_at TEXT DEFAULT (datetime('now')),
+                    last_seen_at TEXT,
+                    invited_by INTEGER REFERENCES members(id),
+                    quota_files_per_day INTEGER NOT NULL DEFAULT 100,
+                    quota_search_per_min INTEGER NOT NULL DEFAULT 30
+                )
+            """)
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_members_firebase_uid "
+                "ON members(firebase_uid)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_members_email ON members(email)"
+            )
+            self.conn.commit()
+            logger.info("✅ members table created")
+        except Exception as e:
+            logger.warning(f"members migration failed (non-fatal): {e}")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""
