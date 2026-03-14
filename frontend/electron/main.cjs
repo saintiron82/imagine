@@ -1272,6 +1272,45 @@ ipcMain.handle('get-folder-phase-stats', async (_, storageRoot) => {
     });
 });
 
+// ── Archive Browse IPC ──────────────────────────────────────
+
+function spawnArchiveCmd(cmd, data) {
+    return new Promise((resolve) => {
+        const args = data ? [cmd, JSON.stringify(data)] : [cmd];
+        const proc = spawnBackend('archive', args, {
+            env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath }
+        }, 'backend/api_archive.py');
+        let output = '';
+        let errOutput = '';
+        proc.stdout.on('data', (d) => output += d.toString());
+        proc.stderr.on('data', (d) => errOutput += d.toString());
+        proc.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(output.trim()));
+                } catch {
+                    resolve({ success: false, error: 'Failed to parse output' });
+                }
+            } else {
+                resolve({ success: false, error: errOutput || `Exit code ${code}` });
+            }
+        });
+        proc.on('error', (e) => resolve({ success: false, error: e.message }));
+    });
+}
+
+ipcMain.handle('archive-get-folders', async () => {
+    return spawnArchiveCmd('folders');
+});
+
+ipcMain.handle('archive-get-files', async (_, params) => {
+    return spawnArchiveCmd('files', params || {});
+});
+
+ipcMain.handle('archive-get-image-types', async () => {
+    return spawnArchiveCmd('image-types');
+});
+
 // IPC Handler: Environment Check
 ipcMain.handle('check-env', async () => {
     return new Promise((resolve) => {

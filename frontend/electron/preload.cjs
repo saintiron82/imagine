@@ -95,6 +95,11 @@ contextBridge.exposeInMainWorld('electron', {
         getIncompleteStats: () => ipcRenderer.invoke('get-incomplete-stats'),
         getFolderPhaseStats: (storageRoot) => ipcRenderer.invoke('get-folder-phase-stats', storageRoot),
 
+        // Archive Browse
+        getArchiveFolders: () => ipcRenderer.invoke('archive-get-folders'),
+        getArchiveFiles: (params) => ipcRenderer.invoke('archive-get-files', params),
+        getArchiveImageTypes: () => ipcRenderer.invoke('archive-get-image-types'),
+
         // Installer
         checkEnv: () => ipcRenderer.invoke('check-env'),
         installEnv: () => ipcRenderer.send('install-env'),

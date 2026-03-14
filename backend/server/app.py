@@ -285,6 +285,7 @@ from backend.server.routers.classification import router as classification_route
 from backend.server.routers.database import router as database_router
 from backend.server.routers.server_init import router as server_init_router
 from backend.server.routers.license import router as license_router
+from backend.server.routers.archive import router as archive_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -301,6 +302,7 @@ app.include_router(classification_router, prefix="/api/v1")
 app.include_router(database_router, prefix="/api/v1")
 app.include_router(server_init_router, prefix="/api/v1")
 app.include_router(license_router, prefix="/api/v1")
+app.include_router(archive_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

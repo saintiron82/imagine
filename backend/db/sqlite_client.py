@@ -2695,6 +2695,209 @@ class SQLiteDB:
             except Exception as e:
                 logger.warning(f"WAL checkpoint failed: {e}")
 
+    # ── Archive Browse ─────────────────────────────────────────
+
+    def get_archive_folders(self) -> List[Dict[str, Any]]:
+        """Get distinct folder_path values with file counts and phase stats.
+
+        Returns list of dicts: { folder_path, total, mc, vv, mv, image_types }
+        """
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    COALESCE(NULLIF(TRIM(f.folder_path), ''), '[root]') as fp,
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
+                    COUNT(CASE
+                        WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                        THEN 1
+                    END) as vv,
+                    COUNT(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 END) as mv
+                FROM files f
+                WHERE f.preview_only = 0 OR f.preview_only IS NULL
+                GROUP BY fp
+                ORDER BY fp
+            """)
+        except Exception:
+            # vec0 unavailable fallback
+            cursor.execute("""
+                SELECT
+                    COALESCE(NULLIF(TRIM(f.folder_path), ''), '[root]') as fp,
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 END) as mc,
+                    0 as vv,
+                    0 as mv
+                FROM files f
+                WHERE f.preview_only = 0 OR f.preview_only IS NULL
+                GROUP BY fp
+                ORDER BY fp
+            """)
+
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                "folder_path": row[0],
+                "total": row[1],
+                "mc": row[2],
+                "vv": row[3],
+                "mv": row[4],
+            })
+
+        # Get image_type distribution per folder
+        cursor.execute("""
+            SELECT
+                COALESCE(NULLIF(TRIM(folder_path), ''), '[root]') as fp,
+                image_type,
+                COUNT(*) as cnt
+            FROM files
+            WHERE (preview_only = 0 OR preview_only IS NULL)
+              AND image_type IS NOT NULL AND image_type != ''
+            GROUP BY fp, image_type
+        """)
+        type_map = {}
+        for row in cursor.fetchall():
+            fp = row[0]
+            if fp not in type_map:
+                type_map[fp] = {}
+            type_map[fp][row[1]] = row[2]
+
+        for r in results:
+            r["image_types"] = type_map.get(r["folder_path"], {})
+
+        return results
+
+    def get_archive_files(
+        self,
+        folder_path: Optional[str] = None,
+        image_type: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Get files for archive browsing with phase status.
+
+        Returns { total, files: [...] }
+        """
+        cursor = self.conn.cursor()
+
+        conditions = ["(f.preview_only = 0 OR f.preview_only IS NULL)"]
+        params: list = []
+
+        if folder_path and folder_path != '[all]':
+            if folder_path == '[root]':
+                conditions.append("(f.folder_path IS NULL OR TRIM(f.folder_path) = '')")
+            else:
+                conditions.append("f.folder_path = ?")
+                params.append(folder_path)
+
+        if image_type:
+            conditions.append("f.image_type = ?")
+            params.append(image_type)
+
+        where = f"WHERE {' AND '.join(conditions)}"
+
+        # Total count
+        cursor.execute(f"SELECT COUNT(*) FROM files f {where}", params)
+        total = cursor.fetchone()[0]
+
+        # Fetch files with phase status
+        use_vec = True
+        try:
+            cursor.execute(f"""
+                SELECT
+                    f.id, f.file_path, f.file_name, f.format,
+                    f.width, f.height, f.thumbnail_url,
+                    f.mc_caption, f.ai_tags, f.image_type, f.art_style,
+                    f.folder_path, f.storage_root,
+                    f.user_note, f.user_tags, f.user_rating,
+                    f.mode_tier, f.parsed_at,
+                    CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 ELSE 0 END as has_mc,
+                    CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id) THEN 1 ELSE 0 END as has_vv,
+                    CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id) THEN 1 ELSE 0 END as has_mv
+                FROM files f
+                {where}
+                ORDER BY f.file_name ASC
+                LIMIT ? OFFSET ?
+            """, params + [limit, offset])
+        except Exception:
+            use_vec = False
+            cursor.execute(f"""
+                SELECT
+                    f.id, f.file_path, f.file_name, f.format,
+                    f.width, f.height, f.thumbnail_url,
+                    f.mc_caption, f.ai_tags, f.image_type, f.art_style,
+                    f.folder_path, f.storage_root,
+                    f.user_note, f.user_tags, f.user_rating,
+                    f.mode_tier, f.parsed_at,
+                    CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != '' THEN 1 ELSE 0 END as has_mc,
+                    0 as has_vv,
+                    0 as has_mv
+                FROM files f
+                {where}
+                ORDER BY f.file_name ASC
+                LIMIT ? OFFSET ?
+            """, params + [limit, offset])
+
+        files = []
+        for row in cursor.fetchall():
+            ai_tags = row[8]
+            user_tags = row[14]
+            if isinstance(ai_tags, str):
+                try:
+                    ai_tags = json.loads(ai_tags)
+                except Exception:
+                    ai_tags = []
+            if isinstance(user_tags, str):
+                try:
+                    user_tags = json.loads(user_tags)
+                except Exception:
+                    user_tags = []
+
+            files.append({
+                "id": row[0],
+                "file_path": row[1],
+                "file_name": row[2],
+                "format": row[3],
+                "width": row[4],
+                "height": row[5],
+                "thumbnail_url": row[6],
+                "mc_caption": row[7],
+                "ai_tags": ai_tags,
+                "image_type": row[9],
+                "art_style": row[10],
+                "folder_path": row[11],
+                "storage_root": row[12],
+                "user_note": row[13],
+                "user_tags": user_tags,
+                "user_rating": row[15],
+                "mode_tier": row[16],
+                "parsed_at": row[17],
+                "phase": {
+                    "mc": bool(row[18]),
+                    "vv": bool(row[19]),
+                    "mv": bool(row[20]),
+                },
+            })
+
+        return {"total": total, "files": files}
+
+    def get_image_type_stats(self) -> List[Dict[str, Any]]:
+        """Get image_type distribution across all non-preview files.
+
+        Returns list of { image_type, count }.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT
+                COALESCE(image_type, 'unknown') as it,
+                COUNT(*) as cnt
+            FROM files
+            WHERE (preview_only = 0 OR preview_only IS NULL)
+            GROUP BY it
+            ORDER BY cnt DESC
+        """)
+        return [{"image_type": row[0], "count": row[1]} for row in cursor.fetchall()]
+
     def close(self):
         """Close database connections."""
         # Close current thread's connection
