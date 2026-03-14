@@ -9,7 +9,7 @@ import {
   cleanupStaleJobs, cleanupQueue, getJobStats,
   browseFolders, scanFolder,
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
-  updateWorkerConfig, updateGlobalProcessingMode,
+  updateWorkerConfig,
   getAutoProcessing, updateAutoProcessing,
   getEmbeddedWorker, updateEmbeddedWorker,
   listMembers, updateMemberRole, removeMember, deactivateMember, activateMember,
@@ -207,7 +207,6 @@ function WorkersPanel() {
   const { t } = useLocale();
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [globalMode, setGlobalMode] = useState('auto');
   const [editingCapacity, setEditingCapacity] = useState(null); // { id, value }
   const [autoProcessing, setAutoProcessing] = useState(true);
   const [restAfterBatch, setRestAfterBatch] = useState(30);
@@ -219,10 +218,6 @@ function WorkersPanel() {
       const data = await listWorkerSessions();
       const all = data.workers || [];
       setWorkers(all.filter(w => w.status === 'online'));
-      // Infer global mode from server response or first worker
-      if (data.global_processing_mode) {
-        setGlobalMode(data.global_processing_mode);
-      }
     } catch (e) {
       console.error('Failed to load workers:', e);
     }
@@ -265,16 +260,6 @@ function WorkersPanel() {
       load();
     } catch (e) {
       console.error('Failed to block worker:', e);
-    }
-  };
-
-  const handleGlobalMode = async (mode) => {
-    try {
-      await updateGlobalProcessingMode(mode);
-      setGlobalMode(mode);
-      load();
-    } catch (e) {
-      console.error('Failed to update global mode:', e);
     }
   };
 
@@ -353,72 +338,8 @@ function WorkersPanel() {
         </button>
       </div>
 
-      {/* Global Processing Mode */}
+      {/* Auto Processing */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium text-gray-300">{t('admin.worker_global_mode')}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{t('admin.worker_global_mode_desc')}</div>
-          </div>
-          <div className="flex rounded-lg overflow-hidden border border-gray-600">
-            <button
-              onClick={() => handleGlobalMode('mc_only')}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                globalMode === 'mc_only'
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {t('admin.worker_mode_mc_only')}
-            </button>
-            <button
-              onClick={() => handleGlobalMode('parse_only')}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                globalMode === 'parse_only'
-                  ? 'bg-teal-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {t('admin.worker_mode_parse_only')}
-            </button>
-            <button
-              onClick={() => handleGlobalMode('builtin_worker')}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                globalMode === 'builtin_worker'
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {t('admin.worker_mode_builtin')}
-            </button>
-            <button
-              onClick={() => handleGlobalMode('auto')}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                globalMode === 'auto'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {t('admin.worker_mode_auto')}
-            </button>
-          </div>
-        </div>
-        {globalMode === 'mc_only' && (
-          <div className="text-xs text-amber-400/70 mt-2">{t('admin.worker_mode_mc_only_desc')}</div>
-        )}
-        {globalMode === 'parse_only' && (
-          <div className="text-xs text-teal-400/70 mt-2">{t('admin.worker_mode_parse_only_desc')}</div>
-        )}
-        {globalMode === 'builtin_worker' && (
-          <div className="text-xs text-purple-400/70 mt-2">{t('admin.worker_mode_builtin_desc')}</div>
-        )}
-        {globalMode === 'auto' && (
-          <div className="text-xs text-blue-400/70 mt-2">{t('admin.worker_mode_auto_desc')}</div>
-        )}
-      </div>
-
-      {/* Auto Processing (server processes all phases when no workers) — hidden in builtin_worker mode */}
-      {globalMode !== 'builtin_worker' && <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-medium text-gray-300">{t('worker.auto_title')}</div>

@@ -51,10 +51,6 @@ class WorkerConfigUpdate(BaseModel):
     batch_capacity: Optional[int] = None     # 1~32 | null (=worker default)
 
 
-class GlobalModeUpdate(BaseModel):
-    processing_mode: str  # "mc_only" | "parse_only" | "auto" | "builtin_worker"
-
-
 class AutoProcessingUpdate(BaseModel):
     enabled: Optional[bool] = None
     rest_after_batch_s: Optional[int] = None
@@ -97,7 +93,6 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     """Tollgate architecture: server always parse_only, workers do V→VV→MV.
 
     ParseAheadPool is fixed to parse_only mode (Phase P only, zero GPU).
-    EmbedAheadPool is no longer used (removed).
     Workers (embedded or external) handle all AI processing.
     """
     if not app:
@@ -124,17 +119,6 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
             BaseAheadPool.record_claim(session_id=-1, count=10)
         except Exception:
             pass
-
-    # Stop EmbedAheadPool if still running (legacy cleanup)
-    if (hasattr(app.state, "embed_ahead") and app.state.embed_ahead
-            and getattr(app.state.embed_ahead, "_thread", None)
-            and app.state.embed_ahead._thread.is_alive()):
-        try:
-            app.state.embed_ahead.stop()
-            app.state.embed_ahead = None
-            logger.info("EmbedAheadPool stopped (no longer used in tollgate architecture)")
-        except Exception as e:
-            logger.warning(f"Failed to stop EmbedAheadPool: {e}")
 
     logger.debug(f"Pool recalculated: parse_only, workers={has_workers}")
 
@@ -745,79 +729,6 @@ def admin_update_worker_config(
     logger.info(f"Admin updated worker config: session={session_id}, batch={req.batch_capacity}")
 
     return {"ok": True}
-
-
-@router.patch("/admin/workers/global-config")
-def admin_update_global_config(
-    req: GlobalModeUpdate,
-    request: Request,
-    admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db_safe),
-):
-    """Change global processing mode (mc_only | parse_only | auto | builtin_worker).
-
-    - mc_only: all workers get mc_only override (V/MC only)
-    - parse_only: all workers get full override (V+VV+MV); server does P only (zero GPU)
-    - auto: workers keep their auto-detected roles (full/embed_only)
-    - builtin_worker: server processes full P→V→VV→MV always, regardless of workers
-
-    Also dynamically starts/stops EmbedAheadPool and updates
-    ParseAheadPool's processing_mode based on the new mode.
-    """
-    mode = req.processing_mode
-    if mode not in ("mc_only", "parse_only", "auto", "builtin_worker"):
-        raise HTTPException(status_code=400, detail="processing_mode must be 'mc_only', 'parse_only', 'auto', or 'builtin_worker'")
-
-    cursor = db.conn.cursor()
-
-    # Deactivate builtin worker session when switching away from builtin_worker
-    if mode != "builtin_worker":
-        _deactivate_builtin_worker_session(db)
-
-    if mode == "mc_only":
-        # mc_only: all workers do V(MC) only — override everyone to mc_only
-        cursor.execute(
-            """UPDATE worker_sessions
-               SET processing_mode_override = 'mc_only'
-               WHERE status = 'online' AND worker_name != ?""",
-            (BUILTIN_WORKER_NAME,),
-        )
-    elif mode == "parse_only":
-        # parse_only: all workers do full pipeline (V+VV+MV)
-        cursor.execute(
-            """UPDATE worker_sessions
-               SET processing_mode_override = 'full'
-               WHERE status = 'online' AND worker_name != ?""",
-            (BUILTIN_WORKER_NAME,),
-        )
-    elif mode == "auto":
-        # auto: let workers keep their auto-detected roles (full/embed_only).
-        # Do NOT clear processing_mode_override — it was set by connect based
-        # on GPU capability. _recalculate_server_pools() uses these values.
-        pass
-    elif mode == "builtin_worker":
-        # builtin_worker: server processes full pipeline. External workers unaffected.
-        _ensure_builtin_worker_session(db)
-
-    db.conn.commit()
-    affected = cursor.rowcount
-
-    # Persist to config so heartbeat reads the updated global mode
-    try:
-        from backend.utils.config import get_config
-        cfg = get_config()
-        cfg._set_dotted("server.processing_mode", mode)
-    except Exception as e:
-        logger.warning(f"Failed to persist global processing_mode: {e}")
-
-    # Recalculate server-side pools based on updated worker modes
-    try:
-        _recalculate_server_pools(request.app, db)
-    except Exception as e:
-        logger.warning(f"Pool recalculation on global mode switch failed: {e}")
-
-    logger.info(f"Admin set global processing mode: {mode} ({affected} workers)")
-    return {"ok": True, "affected": affected}
 
 
 @router.get("/admin/workers/auto-processing")

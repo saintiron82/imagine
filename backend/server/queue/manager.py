@@ -60,7 +60,7 @@ def get_processing_mode() -> str:
 
     Tollgate architecture: server always does Phase P only (parse_only).
     AI processing (V→VV→MV) is handled by workers (embedded or external).
-    Legacy modes (auto/mc_only/builtin_worker) are deprecated.
+    Mode is fixed to parse_only (tollgate architecture).
     """
     return "parse_only"
 
@@ -169,12 +169,9 @@ class JobQueueManager:
     def claim_jobs(self, user_id: int, count: int = 10, worker_session_id: int = None) -> List[Dict[str, Any]]:
         """Claim up to N pending jobs for a worker.
 
-        Job selection is routed based on the worker's effective processing_mode:
-        - "full":       Prefer pre-parsed jobs, fall back to unparsed. Worker does P→V→VV→MV.
-        - "mc_only":    Pre-parsed jobs only. Worker does Phase V (VLM/MC). Server runs ParseAhead+EmbedAhead.
-        - "embed_only": Vision-complete jobs only (vision=true, embed=false). Worker does Phase VV+MV.
+        Tollgate architecture: workers claim pre-parsed jobs (Phase P done by server).
+        Workers handle V→VV→MV (full mode).
 
-        Per-worker processing_mode_override takes precedence over global config.
         Resource-aware: throttle_level from worker session limits claim count.
         """
         import sqlite3 as _sqlite3
@@ -236,104 +233,66 @@ class JobQueueManager:
                        "OR wr.status NOT IN ('paused', 'cancelled'))")
         _WR_ORDER = "ORDER BY jq.priority DESC, jq.created_at ASC"
 
-        if processing_mode == "embed_only":
-            # embed_only (lightweight) workers: claim pre-parsed + vision-done jobs.
-            # Server gap-fills V(MC) for these jobs. Worker does VV+MV only.
-            cursor.execute(
-                f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-                   FROM job_queue jq
-                   LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
-                   WHERE jq.status = 'pending' AND jq.file_ready = 1
-                     AND jq.parse_status = 'parsed'
-                     AND json_extract(jq.phase_completed, '$.vision') = 1
-                     AND (json_extract(jq.phase_completed, '$.embed') IS NULL
-                          OR json_extract(jq.phase_completed, '$.embed') = 0)
-                     {_WR_FILTER}
-                   {_WR_ORDER}
-                   LIMIT ?""",
-                (count,)
-            )
-            rows = list(cursor.fetchall())
+        # Claim pre-parsed jobs (Phase P done by server).
+        # Priority: vision-done jobs first (VV+MV only), then regular (V+VV+MV).
+        # 1) Vision-done jobs (server gap-filled MC — just needs VV+MV)
+        cursor.execute(
+            f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+               FROM job_queue jq
+               LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
+               WHERE jq.status = 'pending' AND jq.file_ready = 1
+                 AND jq.parse_status = 'parsed'
+                 AND json_extract(jq.phase_completed, '$.vision') = 1
+                 AND (json_extract(jq.phase_completed, '$.embed') IS NULL
+                      OR json_extract(jq.phase_completed, '$.embed') = 0)
+                 {_WR_FILTER}
+               {_WR_ORDER}
+               LIMIT ?""",
+            (count,)
+        )
+        rows = list(cursor.fetchall())
+        vision_done_ids = {r[0] for r in rows}  # Track which jobs have vision done
 
-        elif processing_mode == "mc_only":
-            # mc_only workers: only claim pre-parsed jobs (Phase P done by ParseAhead).
-            # complete_mc() requires file metadata already upserted by ParseAhead.
-            cursor.execute(
-                f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-                   FROM job_queue jq
-                   LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
-                   WHERE jq.status = 'pending' AND jq.file_ready = 1
-                     AND jq.parse_status = 'parsed'
-                     {_WR_FILTER}
-                   {_WR_ORDER}
-                   LIMIT ?""",
-                (count,)
-            )
-            rows = list(cursor.fetchall())
-
-        else:
-            # full workers: only claim pre-parsed jobs.
-            # Server (ParseAheadPool) always handles Phase P — workers never parse.
-            # Priority: vision-done jobs first (VV+MV only), then regular (V+VV+MV).
-            # 1) Vision-done jobs (server gap-filled MC — just needs VV+MV)
-            cursor.execute(
-                f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-                   FROM job_queue jq
-                   LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
-                   WHERE jq.status = 'pending' AND jq.file_ready = 1
-                     AND jq.parse_status = 'parsed'
-                     AND json_extract(jq.phase_completed, '$.vision') = 1
-                     AND (json_extract(jq.phase_completed, '$.embed') IS NULL
-                          OR json_extract(jq.phase_completed, '$.embed') = 0)
-                     {_WR_FILTER}
-                   {_WR_ORDER}
-                   LIMIT ?""",
-                (count,)
-            )
-            rows = list(cursor.fetchall())
-            vision_done_ids = {r[0] for r in rows}  # Track which jobs have vision done
-
-            # 2) Regular pre-parsed jobs (needs V+VV+MV)
-            if len(rows) < count:
-                remainder = count - len(rows)
-                claimed_ids = [r[0] for r in rows]
-                if claimed_ids:
-                    placeholders = ",".join("?" * len(claimed_ids))
-                    cursor.execute(
-                        f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-                            FROM job_queue jq
-                            LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
-                            WHERE jq.status = 'pending' AND jq.file_ready = 1
-                              AND jq.parse_status = 'parsed'
-                              AND (json_extract(jq.phase_completed, '$.vision') IS NULL
-                                   OR json_extract(jq.phase_completed, '$.vision') = 0)
-                              AND jq.id NOT IN ({placeholders})
-                              {_WR_FILTER}
-                            {_WR_ORDER}
-                            LIMIT ?""",
-                        (*claimed_ids, remainder)
-                    )
-                else:
-                    cursor.execute(
-                        f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-                           FROM job_queue jq
-                           LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
-                           WHERE jq.status = 'pending' AND jq.file_ready = 1
-                             AND jq.parse_status = 'parsed'
-                             AND (json_extract(jq.phase_completed, '$.vision') IS NULL
-                                  OR json_extract(jq.phase_completed, '$.vision') = 0)
-                             {_WR_FILTER}
-                           {_WR_ORDER}
-                           LIMIT ?""",
-                        (remainder,)
-                    )
-                rows.extend(cursor.fetchall())
+        # 2) Regular pre-parsed jobs (needs V+VV+MV)
+        if len(rows) < count:
+            remainder = count - len(rows)
+            claimed_ids = [r[0] for r in rows]
+            if claimed_ids:
+                placeholders = ",".join("?" * len(claimed_ids))
+                cursor.execute(
+                    f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+                        FROM job_queue jq
+                        LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
+                        WHERE jq.status = 'pending' AND jq.file_ready = 1
+                          AND jq.parse_status = 'parsed'
+                          AND (json_extract(jq.phase_completed, '$.vision') IS NULL
+                               OR json_extract(jq.phase_completed, '$.vision') = 0)
+                          AND jq.id NOT IN ({placeholders})
+                          {_WR_FILTER}
+                        {_WR_ORDER}
+                        LIMIT ?""",
+                    (*claimed_ids, remainder)
+                )
+            else:
+                cursor.execute(
+                    f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+                       FROM job_queue jq
+                       LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
+                       WHERE jq.status = 'pending' AND jq.file_ready = 1
+                         AND jq.parse_status = 'parsed'
+                         AND (json_extract(jq.phase_completed, '$.vision') IS NULL
+                              OR json_extract(jq.phase_completed, '$.vision') = 0)
+                         {_WR_FILTER}
+                       {_WR_ORDER}
+                       LIMIT ?""",
+                    (remainder,)
+                )
+            rows.extend(cursor.fetchall())
 
         # Signal demand to ParseAheadPool BEFORE early return.
         # Uses requested count (not actual claimed count) — represents
         # "workers want N jobs" regardless of what's available.
-        # This prevents the chicken-and-egg deadlock in mc_only mode where
-        # 0 pre-parsed jobs → no record_claim → no demand → no pre-parsing.
+        # This ensures ParseAheadPool has demand signal for pre-parsing.
         if worker_session_id is not None:
             try:
                 from backend.server.queue.base_ahead_pool import BaseAheadPool
@@ -373,14 +332,12 @@ class JobQueueManager:
                     pass
             return []
 
-        # Pre-fetch vision fields from files table for workers that need them.
-        # embed_only workers always need vision_data (VV+MV only, MC from server).
-        # full workers need vision_data for vision-done jobs (server gap-filled MC).
-        # mc_caption, ai_tags etc. are stored in files by Phase V but NOT in
-        # parsed_metadata (which only contains Phase P output).
+        # Pre-fetch vision fields from files table for vision-done jobs.
+        # Workers need vision_data for jobs where server already did Phase V
+        # (vision-done jobs: just needs VV+MV).
         embed_vision_map = {}
-        if processing_mode in ("embed_only", "full"):
-            file_paths_nfc = [unicodedata.normalize('NFC', r[2]) for r in rows]
+        file_paths_nfc = [unicodedata.normalize('NFC', r[2]) for r in rows]
+        if file_paths_nfc:
             placeholders = ",".join("?" * len(file_paths_nfc))
             cursor.execute(
                 f"""SELECT file_path, mc_caption, ai_tags, image_type, scene_type, art_style
@@ -449,17 +406,8 @@ class JobQueueManager:
                     except Exception:
                         pass
 
-                # Attach vision data for workers that need MC from server.
-                # embed_only: always (VV+MV only, all jobs have vision done).
-                # full: only for jobs where phase_completed.vision = 1
-                #       (NOT based on files table — old mc_caption from previous
-                #        sessions should not suppress worker's own Vision phase).
-                if processing_mode == "embed_only":
-                    nfc_path = unicodedata.normalize('NFC', file_path)
-                    vision = embed_vision_map.get(nfc_path)
-                    if vision:
-                        job_data["vision_data"] = vision
-                elif processing_mode == "full" and job_id in vision_done_ids:
+                # Attach vision data for vision-done jobs (VV+MV only).
+                if job_id in vision_done_ids:
                     nfc_path = unicodedata.normalize('NFC', file_path)
                     vision = embed_vision_map.get(nfc_path)
                     if vision:
@@ -975,34 +923,16 @@ class JobQueueManager:
         )
 
         # Throughput from job_completions table (sliding windows)
-        processing_mode = get_processing_mode()
-
-        if processing_mode == "mc_only":
-            # mc_only mode: use mc_completed_at from job_queue (pending MC jobs)
-            cursor.execute("""
-                SELECT COUNT(*) FROM job_queue
-                WHERE mc_completed_at IS NOT NULL
-                  AND datetime(mc_completed_at) > datetime('now', '-5 minutes')
-            """)
-            recent_5min = cursor.fetchone()[0]
-            cursor.execute("""
-                SELECT COUNT(*) FROM job_queue
-                WHERE mc_completed_at IS NOT NULL
-                  AND datetime(mc_completed_at) > datetime('now', '-1 minute')
-            """)
-            recent_1min = cursor.fetchone()[0]
-        else:
-            # full mode: use job_completions table
-            cursor.execute("""
-                SELECT COUNT(*) FROM job_completions
-                WHERE datetime(completed_at) > datetime('now', '-5 minutes')
-            """)
-            recent_5min = cursor.fetchone()[0]
-            cursor.execute("""
-                SELECT COUNT(*) FROM job_completions
-                WHERE datetime(completed_at) > datetime('now', '-1 minute')
-            """)
-            recent_1min = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT COUNT(*) FROM job_completions
+            WHERE datetime(completed_at) > datetime('now', '-5 minutes')
+        """)
+        recent_5min = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT COUNT(*) FROM job_completions
+            WHERE datetime(completed_at) > datetime('now', '-1 minute')
+        """)
+        recent_1min = cursor.fetchone()[0]
 
         # Use 1-min window if active, otherwise 5-min average
         if recent_1min > 0:
