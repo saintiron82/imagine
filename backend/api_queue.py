@@ -55,9 +55,10 @@ def register_paths(file_paths, priority=0):
 
 
 def scan_folder(folder_path, priority=0):
-    """DFS scan folder and create processing jobs."""
+    """DFS scan folder and create Work Request with jobs."""
     try:
         from backend.pipeline.ingest_engine import discover_files
+        from collections import defaultdict
 
         folder = Path(folder_path).resolve()
         if not folder.exists() or not folder.is_dir():
@@ -71,8 +72,8 @@ def scan_folder(folder_path, priority=0):
         queue = JobQueueManager(db)
         cursor = db.conn.cursor()
 
-        file_ids = []
-        file_paths_list = []
+        # Group files by sub-folder for work_subtasks
+        file_groups = defaultdict(list)  # {folder_path: [(file_id, file_path), ...]}
         skipped = 0
 
         for file_path, folder_str, depth, folder_tags in discovered:
@@ -96,13 +97,23 @@ def scan_folder(folder_path, priority=0):
             }
             try:
                 fid = db.upsert_metadata(fpath_str, meta)
-                file_ids.append(fid)
-                file_paths_list.append(fpath_str)
+                file_groups[folder_str or str(folder)].append((fid, fpath_str))
             except Exception:
                 pass
 
         db.conn.commit()
-        jobs_created = queue.create_jobs(file_ids, file_paths_list, priority) if file_ids else 0
+
+        if file_groups:
+            result = queue.create_work_request(
+                name=folder.name,
+                source_path=str(folder),
+                file_groups=dict(file_groups),
+                priority=priority,
+            )
+            jobs_created = result.get("jobs_created", 0)
+        else:
+            jobs_created = 0
+
         db.close()
 
         return {

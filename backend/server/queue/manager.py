@@ -260,8 +260,7 @@ class JobQueueManager:
         # Common WHERE clause for work_request status filtering
         _WR_FILTER = ("AND (jq.work_request_id IS NULL "
                        "OR wr.status NOT IN ('paused', 'cancelled'))")
-        _WR_ORDER = ("ORDER BY COALESCE(wr.sort_order, 999999) ASC, "
-                      "jq.priority DESC, jq.created_at ASC")
+        _WR_ORDER = "ORDER BY jq.priority DESC, jq.created_at ASC"
 
         if processing_mode == "embed_only":
             # embed_only (lightweight) workers: claim pre-parsed + vision-done jobs.

@@ -1082,6 +1082,26 @@ function App() {
     setCurrentTab('archive');
     setCurrentPath(folderPaths[0]);
 
+    // Server mode Electron: scan folders → create WR + jobs via IPC (direct DB)
+    if (appMode === 'server' && isElectron && window.electron?.queue) {
+      let totalJobs = 0;
+      try {
+        for (const folder of folderPaths) {
+          const result = await window.electron.queue.scanFolder(folder);
+          totalJobs += result.jobs_created || 0;
+        }
+        appendLog({
+          message: t('archive.queue_registered', { jobs: totalJobs }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
     // Client mode with active worker: route all folders through server API
     if (appMode === 'client' && isWorkerRunning) {
       let totalJobs = 0;
