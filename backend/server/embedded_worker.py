@@ -57,46 +57,71 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
     def _run_loop():
         global _shutdown_flag, _status, _last_error, _jobs_completed
 
-        logger.info("Embedded worker started")
+        logger.info("Embedded worker starting...")
+
+        # Connect session — required for claim_jobs to work
+        if not _worker_daemon._connect_session():
+            _status = "error"
+            _last_error = "Failed to connect worker session"
+            logger.error("Embedded worker: session connect failed, aborting")
+            return
+
+        logger.info(f"Embedded worker session connected (id={_worker_daemon.session_id})")
         consecutive_empty = 0
+        last_heartbeat = time.time()
+        heartbeat_interval = 30
 
-        while not _shutdown_flag:
-            try:
-                jobs = _worker_daemon.claim_jobs()
+        try:
+            while not _shutdown_flag:
+                try:
+                    # Periodic heartbeat
+                    now = time.time()
+                    if now - last_heartbeat >= heartbeat_interval:
+                        _worker_daemon._heartbeat()
+                        last_heartbeat = now
 
-                if not jobs:
-                    consecutive_empty += 1
-                    wait = min(5 * consecutive_empty, 60)
-                    for _ in range(wait):
+                    jobs = _worker_daemon.claim_jobs()
+
+                    if not jobs:
+                        consecutive_empty += 1
+                        wait = min(5 * consecutive_empty, 60)
+                        for _ in range(wait):
+                            if _shutdown_flag:
+                                break
+                            time.sleep(1)
+                        continue
+
+                    consecutive_empty = 0
+
+                    for job in jobs:
                         if _shutdown_flag:
                             break
-                        time.sleep(1)
-                    continue
+                        success = _worker_daemon.process_job(job)
+                        if success:
+                            _jobs_completed += 1
 
-                consecutive_empty = 0
+                    # Cleanup GPU memory between batches
+                    gc.collect()
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                            torch.mps.empty_cache()
+                    except ImportError:
+                        pass
 
-                for job in jobs:
-                    if _shutdown_flag:
-                        break
-                    success = _worker_daemon.process_job(job)
-                    if success:
-                        _jobs_completed += 1
-
-                # Cleanup GPU memory between batches
-                gc.collect()
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                        torch.mps.empty_cache()
-                except ImportError:
-                    pass
-
+                except Exception as e:
+                    logger.error(f"Embedded worker loop error: {e}", exc_info=True)
+                    _last_error = str(e)
+                    time.sleep(5)
+        finally:
+            # Disconnect session on exit
+            try:
+                _worker_daemon._disconnect_session()
+                logger.info("Embedded worker session disconnected")
             except Exception as e:
-                logger.error(f"Embedded worker loop error: {e}", exc_info=True)
-                _last_error = str(e)
-                time.sleep(5)
+                logger.warning(f"Embedded worker disconnect failed: {e}")
 
         _status = "idle"
         logger.info(f"Embedded worker stopped (completed {_jobs_completed} jobs)")
