@@ -506,6 +506,8 @@
   "audit.failed_reset": "{count} jobs added to the retry queue.",
   "audit.all_ok": "All files are complete.",
   "audit.result_repaired": "Integrity check: {incomplete} of {total} incomplete → added to queue",
+  "audit.result_mixed": "Integrity check: {repaired} of {total} repaired, {failed} permanently failed",
+  "audit.result_failed_only": "Integrity check: {failed} of {total} permanently failed (nothing to repair)",
   "audit.result_ok": "Integrity check: all {total} files complete",
   "audit.retry_result": "{count} jobs added to the retry queue.",
   "audit.force_retry_confirm": "Reset interrupted jobs and retry?",

@@ -506,6 +506,8 @@
   "audit.failed_reset": "{count}개 작업을 재시도 대기열에 추가했습니다.",
   "audit.all_ok": "모든 파일이 완료되었습니다.",
   "audit.result_repaired": "정합성 검사: {total}개 중 {incomplete}개 미완료 → 대기열에 추가",
+  "audit.result_mixed": "정합성 검사: {total}개 중 {repaired}개 복구, {failed}개 실패",
+  "audit.result_failed_only": "정합성 검사: {total}개 중 {failed}개 영구 실패 (복구 대상 없음)",
   "audit.result_ok": "정합성 검사: {total}개 파일 모두 완료",
   "audit.retry_result": "{count}개 작업을 재시도 대기열에 추가했습니다.",
   "audit.force_retry_confirm": "중단된 작업을 초기화 후 재시도할까요?",

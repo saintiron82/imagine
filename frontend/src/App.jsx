@@ -1150,13 +1150,23 @@ function App() {
       const hasIssues = result.incomplete_files > 0 || (result.failed_stuck_jobs || 0) > 0;
       if (hasIssues) {
         setAuditResult(result);
-        appendLog({
-          message: t('audit.result_repaired', {
-            total: result.total_files,
-            incomplete: result.incomplete_files,
-          }),
-          type: 'warn',
-        });
+        const repaired = result.repaired_files || 0;
+        const permFailed = result.skipped_non_retryable || 0;
+        let auditMsg;
+        if (repaired > 0 && permFailed > 0) {
+          auditMsg = t('audit.result_mixed', {
+            total: result.total_files, repaired, failed: permFailed,
+          });
+        } else if (repaired > 0) {
+          auditMsg = t('audit.result_repaired', {
+            total: result.total_files, incomplete: repaired,
+          });
+        } else {
+          auditMsg = t('audit.result_failed_only', {
+            total: result.total_files, failed: permFailed,
+          });
+        }
+        appendLog({ message: auditMsg, type: 'warn' });
       } else if (!silent) {
         setAuditResult(result);
         appendLog({
