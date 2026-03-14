@@ -1154,6 +1154,22 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                     </button>
                 </div>
 
+                {/* Browse queue progress bar (shown only when active) */}
+                {browseQueueStats.pending > 0 && (
+                    <div className="flex items-center gap-2 px-2 py-1.5 bg-gray-800/50 border-b border-gray-700/50 shrink-0">
+                        <Loader2 size={14} className="animate-spin text-blue-400 shrink-0" />
+                        <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                                style={{ width: browseQueueStats.total > 0 ? `${(browseQueueStats.processed / browseQueueStats.total) * 100}%` : '0%' }}
+                            />
+                        </div>
+                        <span className="text-xs text-gray-400 whitespace-nowrap tabular-nums">
+                            {browseQueueStats.processed}/{browseQueueStats.total}
+                        </span>
+                    </div>
+                )}
+
                 {/* Scroll container with virtual rows */}
                 <div
                     ref={scrollRef}
