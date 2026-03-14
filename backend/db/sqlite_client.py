@@ -581,6 +581,7 @@ class SQLiteDB:
                         failed_count INTEGER NOT NULL DEFAULT 0,
                         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
                         created_at TEXT DEFAULT (datetime('now')),
+                        started_at TEXT,
                         completed_at TEXT
                     )
                 """)
@@ -637,6 +638,21 @@ class SQLiteDB:
                     logger.info("✅ work_request_id/work_subtask_id columns added to job_queue")
                 except Exception as e:
                     logger.warning(f"job_queue work_request columns migration failed (non-fatal): {e}")
+
+        # 4) work_requests.started_at column (added post-initial migration)
+        if self._table_exists('work_requests'):
+            try:
+                self.conn.execute("SELECT started_at FROM work_requests LIMIT 1")
+            except Exception:
+                try:
+                    logger.info("Migrating: adding started_at to work_requests...")
+                    self.conn.execute(
+                        "ALTER TABLE work_requests ADD COLUMN started_at TEXT"
+                    )
+                    self.conn.commit()
+                    logger.info("✅ started_at column added to work_requests")
+                except Exception as e:
+                    logger.warning(f"work_requests started_at migration failed (non-fatal): {e}")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""

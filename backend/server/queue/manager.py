@@ -226,6 +226,11 @@ class JobQueueManager:
                 (worker_session_id,)
             )
             session_row = cursor.fetchone()
+            if not session_row:
+                logger.warning(
+                    f"Claim rejected: worker_session_id={worker_session_id} not found in DB"
+                )
+                return []
             if session_row:
                 mode_override = session_row[1]
                 if mode_override:
@@ -425,13 +430,19 @@ class JobQueueManager:
         claimed = []
         for row in rows:
             job_id, file_id, file_path, priority, parsed_metadata = row
-            cursor.execute(
-                """UPDATE job_queue
-                   SET status = 'assigned', assigned_to = ?, assigned_at = ?,
-                       worker_session_id = ?
-                   WHERE id = ? AND status = 'pending'""",
-                (user_id, now, worker_session_id, job_id)
-            )
+            try:
+                cursor.execute(
+                    """UPDATE job_queue
+                       SET status = 'assigned', assigned_to = ?, assigned_at = ?,
+                           worker_session_id = ?
+                       WHERE id = ? AND status = 'pending'""",
+                    (user_id, now, worker_session_id, job_id)
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Skipping job {job_id}: UPDATE failed ({e})"
+                )
+                continue
             if cursor.rowcount > 0:
                 job_data = {
                     "job_id": job_id,
@@ -485,19 +496,16 @@ class JobQueueManager:
 
         # Mark work requests as 'processing' when jobs are first claimed
         if claimed:
-            wr_ids = set()
-            for r in rows:
-                # rows columns: id, file_id, file_path, priority, parsed_metadata
-                # We need work_request_id — fetch from claimed job ids
-                pass
-            # Batch update: set queued → processing for any WR that has assigned jobs
-            cursor.execute("""
-                UPDATE work_requests SET status = 'processing', started_at = ?
-                WHERE status = 'queued' AND id IN (
-                    SELECT DISTINCT work_request_id FROM job_queue
-                    WHERE work_request_id IS NOT NULL AND status = 'assigned'
-                )
-            """, (_utcnow_sql(),))
+            try:
+                cursor.execute("""
+                    UPDATE work_requests SET status = 'processing', started_at = ?
+                    WHERE status = 'queued' AND id IN (
+                        SELECT DISTINCT work_request_id FROM job_queue
+                        WHERE work_request_id IS NOT NULL AND status = 'assigned'
+                    )
+                """, (_utcnow_sql(),))
+            except Exception as e:
+                logger.warning(f"Failed to update work_request status: {e}")
 
         self.db.conn.commit()
         pre_parsed_count = sum(1 for j in claimed if j.get("pre_parsed"))

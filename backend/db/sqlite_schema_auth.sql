@@ -203,6 +203,7 @@ CREATE TABLE IF NOT EXISTS work_requests (
 
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TEXT DEFAULT (datetime('now')),
+    started_at TEXT,
     completed_at TEXT
 );
 
