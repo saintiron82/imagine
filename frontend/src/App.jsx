@@ -850,7 +850,7 @@ function App() {
 
   const handleNavigateToFolder = (folderPath) => {
     if (!folderPath) return;
-    setCurrentTab('archive');
+    setCurrentTab('archiving');
     setCurrentPath(folderPath);
     setExpandToPath(folderPath);
     setSelectedPaths(new Set());
@@ -962,7 +962,7 @@ function App() {
     if (isProcessing || isDiscovering) return;
     const noSkip = !!options.noSkip;
     setIsDiscovering(true);
-    setCurrentTab('archive');
+    setCurrentTab('archiving');
     setCurrentPath(folderPath);
     appendLog({
       message: noSkip
@@ -1040,7 +1040,7 @@ function App() {
     if (incompleteFolders.length === 0) return;
 
     setIsDiscovering(true);
-    setCurrentTab('archive');
+    setCurrentTab('archiving');
     setCurrentPath(incompleteFolders[0]);
 
     // Client mode with active worker: route all folders through server API
@@ -1081,7 +1081,7 @@ function App() {
   const handleScanFolders = async (folderPaths) => {
     if (isProcessing || isDiscovering || !folderPaths?.length) return;
     setIsDiscovering(true);
-    setCurrentTab('archive');
+    setCurrentTab('archiving');
     setCurrentPath(folderPaths[0]);
 
     // Server mode Electron: scan folders → create WR + jobs via IPC (direct DB)
@@ -1271,7 +1271,7 @@ function App() {
           window.electron?.pipeline?.openFolderDialog().then((folderPath) => {
             if (folderPath) {
               setCurrentPath(folderPath);
-              setCurrentTab('archive');
+              setCurrentTab('archiving');
             }
           });
           break;
