@@ -719,8 +719,8 @@ class JobQueueManager:
     def _cleanup_temp_file(self, job_id: int):
         """Delete temp file for a WebDAV job and release buffer slot.
 
-        Called after job completion to free disk space in the bounded
-        download-ahead buffer.
+        Idempotent: safe to call even if cache was already released
+        by ParseAheadPool after successful parsing (tollgate architecture).
         """
         try:
             cursor = self.db.conn.cursor()

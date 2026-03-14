@@ -220,6 +220,41 @@ class DownloadAheadPool(BaseAheadPool):
         with self._active_lock:
             return self._active_files.get(file_id)
 
+    def request_redownload(self, file_id: int, file_path: str):
+        """Request re-download of a WebDAV file (Recovery Factory support).
+
+        If the file is already cached locally, reuses it.
+        Otherwise, resets file_ready=0 so the download loop picks it up.
+        """
+        if not file_path or not file_path.startswith("webdav://"):
+            return
+
+        # Check if we already have a cached copy
+        with self._active_lock:
+            existing = self._active_files.get(file_id)
+            if existing and Path(existing).exists():
+                logger.debug(f"Re-download: cache hit for file_id={file_id}")
+                return
+
+        # Reset file_ready so the download loop picks it up
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """UPDATE job_queue SET file_ready = 0, parse_status = NULL
+                   WHERE file_id = ? AND file_path = ?
+                     AND status IN ('pending', 'failed')""",
+                (file_id, file_path)
+            )
+            self.db.conn.commit()
+            if cursor.rowcount > 0:
+                logger.info(f"Re-download queued: file_id={file_id}")
+        except Exception as e:
+            logger.warning(f"Re-download request failed for file_id={file_id}: {e}")
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+
     def _loop(self):
         """Main loop: find pending WebDAV jobs, download originals."""
         poll_interval = self._get_config_value(

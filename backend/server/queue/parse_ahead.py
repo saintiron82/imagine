@@ -688,7 +688,22 @@ class ParseAheadPool(BaseAheadPool):
                     (now, job_id),
                 )
                 parsed_count += 1
+
+                # Release DL cache immediately after successful parse (tollgate C1).
+                # Thumbnail is now generated — original file no longer needed.
+                if file_path and file_path.startswith("webdav://"):
+                    try:
+                        from backend.server.queue.manager import _get_download_pool
+                        pool = _get_download_pool()
+                        if pool:
+                            pool.release_slot(file_id)
+                            logger.debug(
+                                f"DL cache released after parse: file_id={file_id}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"DL cache release failed for file_id={file_id}: {e}")
             else:
+                # Parse failed — keep DL cache for retry (tollgate C2)
                 cursor.execute(
                     "UPDATE job_queue SET parse_status = 'failed' WHERE id = ?",
                     (job_id,),
