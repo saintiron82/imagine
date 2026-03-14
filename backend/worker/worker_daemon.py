@@ -530,10 +530,13 @@ class WorkerDaemon:
             return False
         finally:
             self._clear_current()
-            # Cleanup downloaded temp files
+            # Move downloaded temp files to cache (or delete)
             if self.storage_mode == "server_upload" and local_path != file_path:
                 try:
-                    Path(local_path).unlink(missing_ok=True)
+                    from backend.utils.download_cache import get_download_cache
+                    cache = get_download_cache()
+                    if not cache.put(file_path, local_path, move=True):
+                        Path(local_path).unlink(missing_ok=True)
                 except Exception:
                     pass
 
@@ -561,9 +564,16 @@ class WorkerDaemon:
             logger.warning(f"Shared FS file not found: {file_path}")
             return None
 
-        # 2) Remote URIs (webdav://) — try DownloadAheadPool temp file first,
+        # 2) Remote URIs (webdav://) — try cache, then DownloadAheadPool,
         #    then fall back to thumbnail.
         if is_remote_uri:
+            # Check download cache first
+            from backend.utils.download_cache import get_download_cache
+            cache = get_download_cache()
+            cached = cache.get(file_path)
+            if cached:
+                logger.info(f"[RESOLVE] Cache hit for {file_path[:80]}")
+                return str(cached)
             temp = self._resolve_download_ahead(job)
             if temp:
                 return temp
@@ -1222,10 +1232,13 @@ class WorkerDaemon:
                 "file_name": Path(ctx.job["file_path"]).name,
             })
 
-            # Cleanup downloaded temp files
+            # Move downloaded temp files to cache (or delete)
             if self.storage_mode == "server_upload" and ctx.local_path != ctx.job["file_path"]:
                 try:
-                    Path(ctx.local_path).unlink(missing_ok=True)
+                    from backend.utils.download_cache import get_download_cache
+                    cache = get_download_cache()
+                    if not cache.put(ctx.job["file_path"], ctx.local_path, move=True):
+                        Path(ctx.local_path).unlink(missing_ok=True)
                 except Exception:
                     pass
 
@@ -1388,10 +1401,13 @@ class WorkerDaemon:
                 "file_name": Path(ctx.job["file_path"]).name,
             })
 
-            # Cleanup downloaded temp files
+            # Move downloaded temp files to cache (or delete)
             if self.storage_mode == "server_upload" and ctx.local_path != ctx.job["file_path"]:
                 try:
-                    Path(ctx.local_path).unlink(missing_ok=True)
+                    from backend.utils.download_cache import get_download_cache
+                    cache = get_download_cache()
+                    if not cache.put(ctx.job["file_path"], ctx.local_path, move=True):
+                        Path(ctx.local_path).unlink(missing_ok=True)
                 except Exception:
                     pass
 

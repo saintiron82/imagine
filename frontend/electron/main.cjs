@@ -832,6 +832,54 @@ ipcMain.handle('thumb-queue-save', async (_, queue) => {
     }
 });
 
+// IPC Handler: Download cache stats & cleanup (Node-native for speed)
+const downloadCacheDir = isDev
+    ? path.join(projectRoot, 'output', 'download_cache')
+    : path.join(projectRoot, 'output', 'download_cache');
+
+ipcMain.handle('download-cache-stats', async () => {
+    try {
+        if (!fs.existsSync(downloadCacheDir)) return { total_mb: 0, file_count: 0, limit_gb: 50 };
+        const files = fs.readdirSync(downloadCacheDir);
+        let totalBytes = 0;
+        let count = 0;
+        for (const f of files) {
+            try {
+                const st = fs.statSync(path.join(downloadCacheDir, f));
+                if (st.isFile()) { totalBytes += st.size; count++; }
+            } catch {}
+        }
+        return { total_mb: Math.round(totalBytes / (1024 * 1024) * 10) / 10, file_count: count, limit_gb: 50 };
+    } catch (err) {
+        writeLog('WARN', 'download-cache-stats error:', err.message);
+        return { total_mb: 0, file_count: 0, limit_gb: 50 };
+    }
+});
+
+ipcMain.handle('download-cache-cleanup', async () => {
+    try {
+        if (!fs.existsSync(downloadCacheDir)) return { deleted: 0, freed_mb: 0 };
+        const files = fs.readdirSync(downloadCacheDir);
+        let deleted = 0;
+        let freedBytes = 0;
+        for (const f of files) {
+            const fp = path.join(downloadCacheDir, f);
+            try {
+                const st = fs.statSync(fp);
+                if (st.isFile()) {
+                    fs.unlinkSync(fp);
+                    freedBytes += st.size;
+                    deleted++;
+                }
+            } catch {}
+        }
+        return { deleted, freed_mb: Math.round(freedBytes / (1024 * 1024) * 10) / 10 };
+    } catch (err) {
+        writeLog('WARN', 'download-cache-cleanup error:', err.message);
+        return { deleted: 0, freed_mb: 0 };
+    }
+});
+
 // IPC Handler: Check if disk thumbnails exist (no Python needed)
 ipcMain.handle('check-thumbnails-exist', async (_, filePaths) => {
     const thumbDir = isDev

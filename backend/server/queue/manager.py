@@ -687,10 +687,10 @@ class JobQueueManager:
             # Release slot via the module-level download pool reference
             pool = _get_download_pool()
             if pool:
-                pool.release_slot(file_id)
+                pool.release_slot(file_id, file_path)
                 return
 
-            # Fallback: clean up temp file directly from parsed_metadata
+            # Fallback: move temp file to download cache (or delete)
             if pm_str:
                 from pathlib import Path
                 try:
@@ -699,9 +699,16 @@ class JobQueueManager:
                     if temp_path:
                         p = Path(temp_path)
                         if p.exists():
-                            p.unlink()
+                            cached = False
+                            if file_path:
+                                from backend.utils.download_cache import get_download_cache
+                                cache = get_download_cache()
+                                result = cache.put(file_path, p, move=True)
+                                cached = result is not None
+                            if not cached:
+                                p.unlink()
                             logger.debug(
-                                f"Cleaned up temp file for job {job_id}: {p.name}"
+                                f"{'Cached' if cached else 'Cleaned up'} temp file for job {job_id}: {p.name}"
                             )
                 except (json.JSONDecodeError, TypeError):
                     pass
