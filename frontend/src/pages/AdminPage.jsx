@@ -1067,6 +1067,7 @@ function QueuePanel() {
   const [workRequests, setWorkRequests] = useState([]);
   const [showCompleted, setShowCompleted] = useState(false);
   const [expandedWR, setExpandedWR] = useState(new Set());
+  const [wrDetails, setWrDetails] = useState({});
 
   const load = useCallback(async () => {
     try {
@@ -1134,8 +1135,6 @@ function QueuePanel() {
   const remaining = (stats?.pending ?? 0) - (stats?.download_waiting ?? 0)
                   + (stats?.assigned ?? 0) + (stats?.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
-
-  const [wrDetails, setWrDetails] = useState({});
 
   const toggleExpand = async (wrId) => {
     setExpandedWR(prev => {
