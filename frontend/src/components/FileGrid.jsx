@@ -13,11 +13,32 @@ const GAP = 16;
 // Global thumbnail path cache (stores disk paths, not base64 - memory efficient)
 const thumbnailPathCache = new Map();
 
-// --- Priority Queue System ---
+// --- Priority Queue System (with disk persistence) ---
 const thumbnailQueue = [];          // [filePath, filePath, ...]
 let isQueueRunning = false;
 const queueListeners = new Set();   // Set<() => void> - notify on chunk completion
 const inFlightPaths = new Set();    // Currently being processed by generateThumbnailsBatch
+
+// Queue stats for UI (broadcast to listeners)
+let queueStats = { total: 0, processed: 0, pending: 0 };
+const queueStatsListeners = new Set();
+
+function broadcastQueueStats() {
+    const pending = thumbnailQueue.length + inFlightPaths.size;
+    const processed = queueStats.total - pending;
+    queueStats = { total: queueStats.total, processed: Math.max(0, processed), pending };
+    queueStatsListeners.forEach(cb => cb({ ...queueStats }));
+}
+
+// Debounced persistence — saves queue + in-flight to disk
+let _saveTimer = null;
+function saveQueueToDisk() {
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(() => {
+        const all = [...inFlightPaths, ...thumbnailQueue];
+        window.electron?.pipeline?.thumbQueue?.save(all);
+    }, 300);
+}
 
 function prioritizeFolder(filePaths) {
     // Skip cached and in-flight (currently being processed)
@@ -32,6 +53,10 @@ function prioritizeFolder(filePaths) {
     thumbnailQueue.length = 0;
     thumbnailQueue.push(...needed, ...remaining);
 
+    // Track total for stats (only increase, don't reset mid-session)
+    queueStats.total = Math.max(queueStats.total, thumbnailQueue.length + inFlightPaths.size);
+    broadcastQueueStats();
+    saveQueueToDisk();
     runQueue();
 }
 
@@ -43,6 +68,7 @@ async function runQueue() {
     while (thumbnailQueue.length > 0) {
         const chunk = thumbnailQueue.splice(0, BATCH_SIZE);
         chunk.forEach(fp => inFlightPaths.add(fp));
+        broadcastQueueStats();
         try {
             const generateFn = window.electron?.pipeline?.generateThumbnailsAndParse
                 || window.electron?.pipeline?.generateThumbnailsBatch;
@@ -57,9 +83,15 @@ async function runQueue() {
             console.error('Thumbnail queue error:', err);
         } finally {
             chunk.forEach(fp => inFlightPaths.delete(fp));
+            broadcastQueueStats();
+            saveQueueToDisk();
         }
     }
     isQueueRunning = false;
+    // Reset stats when queue fully drained
+    queueStats = { total: 0, processed: 0, pending: 0 };
+    broadcastQueueStats();
+    saveQueueToDisk();
 }
 
 // --- WebDAV Browse Progress (single Python process per folder) ---
@@ -609,10 +641,44 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
     const [isDragging, setIsDragging] = useState(false);
     const [metadata, setMetadata] = useState(null);
     const [contextMenu, setContextMenu] = useState(null); // { x, y, file }
+    const [browseQueueStats, setBrowseQueueStats] = useState({ total: 0, processed: 0, pending: 0 });
     const scrollRef = useRef(null);
     const lastClickedIndex = useRef(null);
     const pendingClick = useRef(null);
     const missingThumbnails = useRef(new Set());
+
+    // Restore persisted queue on mount (survives crash/restart)
+    useEffect(() => {
+        let cancelled = false;
+        async function restoreQueue() {
+            const saved = await window.electron?.pipeline?.thumbQueue?.load();
+            if (cancelled || !saved?.length) return;
+            // Check which files still need thumbnails
+            const existResults = await window.electron?.pipeline?.checkThumbnailsExist(saved);
+            if (cancelled || !existResults) return;
+            const stillMissing = [];
+            for (const [fp, thumbPath] of Object.entries(existResults)) {
+                if (thumbPath) {
+                    thumbnailPathCache.set(fp, thumbPath);
+                } else {
+                    stillMissing.push(fp);
+                }
+            }
+            if (stillMissing.length > 0) {
+                console.log(`[Queue Restore] ${stillMissing.length} files need thumbnails (restored from previous session)`);
+                prioritizeFolder(stillMissing);
+            }
+        }
+        restoreQueue();
+        return () => { cancelled = true; };
+    }, []);
+
+    // Subscribe to queue stats updates
+    useEffect(() => {
+        const handler = (stats) => setBrowseQueueStats(stats);
+        queueStatsListeners.add(handler);
+        return () => queueStatsListeners.delete(handler);
+    }, []);
 
     // Responsive columns from container width
     const { columnCount, cardWidth, rowHeight } = useResponsiveColumns(scrollRef, {

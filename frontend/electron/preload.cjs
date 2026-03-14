@@ -77,6 +77,10 @@ contextBridge.exposeInMainWorld('electron', {
         generateThumbnailsBatch: (filePaths) => ipcRenderer.invoke('generate-thumbnails-batch', filePaths),
         generateThumbnailsAndParse: (filePaths) => ipcRenderer.invoke('generate-thumbnails-and-parse', filePaths),
         checkThumbnailsExist: (filePaths) => ipcRenderer.invoke('check-thumbnails-exist', filePaths),
+        thumbQueue: {
+            load: () => ipcRenderer.invoke('thumb-queue-load'),
+            save: (queue) => ipcRenderer.invoke('thumb-queue-save', queue),
+        },
         readMetadata: (filePath) => ipcRenderer.invoke('read-metadata', filePath),
         checkMetadataExists: (filePaths) => ipcRenderer.invoke('check-metadata-exists', filePaths),
         checkPhaseStatus: (filePaths) => ipcRenderer.invoke('check-phase-status', filePaths),

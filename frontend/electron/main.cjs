@@ -802,6 +802,36 @@ ipcMain.handle('generate-thumbnails-and-parse', async (_, filePaths) => {
     });
 });
 
+// IPC Handler: Persistent thumbnail queue (survives app crash/restart)
+const thumbQueuePath = path.join(app.getPath('userData'), 'thumb-queue.json');
+
+ipcMain.handle('thumb-queue-load', async () => {
+    try {
+        if (!fs.existsSync(thumbQueuePath)) return [];
+        const raw = fs.readFileSync(thumbQueuePath, 'utf8');
+        const data = JSON.parse(raw);
+        const queue = Array.isArray(data?.queue) ? data.queue : [];
+        // Filter out files that no longer exist on disk
+        return queue.filter(fp => {
+            try { return fs.existsSync(fp); } catch { return false; }
+        });
+    } catch (err) {
+        writeLog('WARN', 'Failed to load thumb queue:', err.message);
+        return [];
+    }
+});
+
+ipcMain.handle('thumb-queue-save', async (_, queue) => {
+    try {
+        const data = JSON.stringify({ queue: queue || [], updatedAt: Date.now() });
+        fs.writeFileSync(thumbQueuePath, data, 'utf8');
+        return { success: true };
+    } catch (err) {
+        writeLog('WARN', 'Failed to save thumb queue:', err.message);
+        return { success: false };
+    }
+});
+
 // IPC Handler: Check if disk thumbnails exist (no Python needed)
 ipcMain.handle('check-thumbnails-exist', async (_, filePaths) => {
     const thumbDir = isDev
