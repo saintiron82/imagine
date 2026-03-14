@@ -2285,6 +2285,24 @@ class SQLiteDB:
         except Exception:
             stats['fully_archived'] = 0
 
+        # Preview-only vs searchable breakdown
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN preview_only = 0 OR preview_only IS NULL THEN 1 ELSE 0 END) as searchable,
+                    SUM(CASE WHEN preview_only = 1 THEN 1 ELSE 0 END) as preview_only
+                FROM files
+            """)
+            row = cursor.fetchone()
+            stats['total'] = row[0]
+            stats['searchable'] = row[1]
+            stats['preview_only'] = row[2]
+        except Exception:
+            stats['total'] = stats['total_files']
+            stats['searchable'] = stats['total_files']
+            stats['preview_only'] = 0
+
         # Format distribution
         cursor.execute("""
             SELECT format, COUNT(*) as count

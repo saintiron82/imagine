@@ -858,5 +858,12 @@
   "admin.thumb_has_thumb": "Has Thumbnail",
   "admin.thumb_missing": "Missing",
   "admin.thumb_progress": "Progress",
-  "admin.thumb_no_data": "No files found"
+  "admin.thumb_no_data": "No files found",
+  "admin.tab_dashboard": "Dashboard",
+  "admin.dash_db_stats": "DB Stats",
+  "admin.dash_total": "Total",
+  "admin.dash_searchable": "Searchable",
+  "admin.dash_preview": "Preview Only",
+  "admin.dash_cache": "Download Cache",
+  "admin.dash_cleanup": "Clean Up"
 }
