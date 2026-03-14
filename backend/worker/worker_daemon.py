@@ -109,7 +109,9 @@ class WorkerDaemon:
 
         self.server_url = get_server_url()
         self.session = requests.Session()
-        self.session.headers["Content-Type"] = "application/json"
+        # Do NOT set Content-Type on session — requests sets it automatically:
+        # json= param → application/json, files= param → multipart/form-data.
+        # A session-level Content-Type: application/json breaks multipart uploads.
         self.access_token = None
         self.refresh_token = None
         self.uploader = ResultUploader(self.session, self.server_url)
