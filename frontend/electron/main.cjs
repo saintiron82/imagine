@@ -770,6 +770,38 @@ ipcMain.handle('generate-thumbnails-batch', async (_, filePaths) => {
     });
 });
 
+// IPC Handler: Generate Thumbnails + Phase P Parse (preview_only)
+ipcMain.handle('generate-thumbnails-and-parse', async (_, filePaths) => {
+    return new Promise((resolve) => {
+        const proc = spawnBackend('thumbnail', ['--batch', JSON.stringify(filePaths), '--size', '256', '--return-paths', '--parse'], {},
+            'backend/utils/thumbnail_generator.py', ['--batch', JSON.stringify(filePaths), '--size', '256', '--return-paths', '--parse']);
+        let output = '';
+        let error = '';
+
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.stderr.on('data', (data) => error += data.toString());
+
+        proc.on('close', (code) => {
+            if (code === 0 && output.trim()) {
+                try {
+                    const results = JSON.parse(output.trim());
+                    resolve(results);
+                } catch {
+                    resolve({});
+                }
+            } else {
+                console.error('[Batch Thumbnail+Parse Error]', error);
+                resolve({});
+            }
+        });
+
+        proc.on('error', (err) => {
+            console.error('[Batch Thumbnail+Parse Spawn Error]', err);
+            resolve({});
+        });
+    });
+});
+
 // IPC Handler: Check if disk thumbnails exist (no Python needed)
 ipcMain.handle('check-thumbnails-exist', async (_, filePaths) => {
     const thumbDir = isDev

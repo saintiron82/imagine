@@ -465,6 +465,11 @@ def scan_folder(
                 "UPDATE files SET uploaded_by = ? WHERE id = ? AND uploaded_by IS NULL",
                 (admin["id"], fid)
             )
+            # Promote preview-only files to searchable
+            cursor.execute(
+                "UPDATE files SET preview_only = 0 WHERE id = ? AND preview_only = 1",
+                (fid,)
+            )
 
             # Group by immediate subfolder (1st level relative to scan root)
             try:

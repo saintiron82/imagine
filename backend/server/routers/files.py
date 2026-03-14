@@ -109,6 +109,9 @@ def list_files(
     conditions = []
     params = []
 
+    # Exclude preview-only files (parsed during browse, not searchable)
+    conditions.append("preview_only = 0")
+
     # Hide incomplete files by default (Phase V not done yet)
     if not include_incomplete:
         conditions.append("mc_caption IS NOT NULL")

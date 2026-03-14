@@ -298,12 +298,54 @@ if __name__ == '__main__':
     parser.add_argument('--batch', type=str, help='JSON array of file paths for batch mode')
     parser.add_argument('--size', type=int, default=DEFAULT_SIZE)
     parser.add_argument('--return-paths', action='store_true', help='Return disk paths instead of base64')
+    parser.add_argument('--parse', action='store_true', help='Also run Phase P parsing and store to DB as preview_only')
     args = parser.parse_args()
 
     if args.batch:
         # Batch mode
         paths = json.loads(args.batch)
         results = generate_batch(paths, args.size, return_paths=args.return_paths)
+
+        # Optional: Phase P parse + DB upsert (preview_only)
+        if args.parse:
+            try:
+                from backend.pipeline.ingest_engine import ParserFactory
+                from backend.db.sqlite_client import SQLiteDB
+
+                db = SQLiteDB()
+                for fp in paths:
+                    fp_path = Path(fp)
+                    if not fp_path.exists():
+                        continue
+                    # Skip if already in DB (not preview_only)
+                    try:
+                        row = db.conn.execute(
+                            "SELECT preview_only FROM files WHERE file_path = ?",
+                            (str(fp_path),)
+                        ).fetchone()
+                        if row and row[0] == 0:
+                            continue  # Already fully registered
+                    except Exception:
+                        pass
+
+                    try:
+                        parser = ParserFactory.get_parser(fp_path)
+                        if parser is None:
+                            continue
+                        parse_result = parser.parse(fp_path)
+                        if not parse_result.success:
+                            continue
+                        meta = parse_result.asset_meta.model_dump()
+                        thumb = results.get(fp)
+                        if thumb:
+                            meta["thumbnail_url"] = thumb
+                        db.upsert_metadata(str(fp_path), meta, preview_only=True)
+                    except Exception as e:
+                        print(f"[Parse] Error: {fp_path.name}: {e}", file=sys.stderr)
+                db.close()
+            except Exception as e:
+                print(f"[Parse] Init error: {e}", file=sys.stderr)
+
         print(json.dumps(results))
     elif args.file_path:
         # Single file mode

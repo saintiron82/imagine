@@ -166,7 +166,8 @@ class SqliteVectorSearch:
                     (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
                 FROM files f
                 JOIN vec_files v ON f.id = v.file_id
-                WHERE (1.0 - vec_distance_cosine(v.embedding, ?)) >= ?
+                WHERE f.preview_only = 0
+                  AND (1.0 - vec_distance_cosine(v.embedding, ?)) >= ?
                 ORDER BY vec_distance_cosine(v.embedding, ?) ASC
                 LIMIT ?
             """, (embedding_json, embedding_json, threshold, embedding_json, top_k))
@@ -312,7 +313,8 @@ class SqliteVectorSearch:
                     (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
                 FROM files f
                 JOIN vec_files v ON f.id = v.file_id
-                WHERE (1.0 - vec_distance_cosine(v.embedding, ?)) >= ?
+                WHERE f.preview_only = 0
+                  AND (1.0 - vec_distance_cosine(v.embedding, ?)) >= ?
                 {where_sql}
                 ORDER BY vec_distance_cosine(v.embedding, ?) ASC
                 LIMIT ?
@@ -377,7 +379,8 @@ class SqliteVectorSearch:
             where_clauses.append("folder_tags LIKE ?")
             params.append(f"%\"{filters['folder_tag']}\"%")
 
-        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        where_clauses.insert(0, "preview_only = 0")
+        where_sql = " AND ".join(where_clauses)
         params.append(top_k)
 
         cursor = self.db.conn.cursor()
@@ -535,7 +538,8 @@ class SqliteVectorSearch:
                     (1.0 - vec_distance_cosine(vt.embedding, ?)) AS text_similarity
                 FROM files f
                 JOIN vec_text vt ON f.id = vt.file_id
-                WHERE (1.0 - vec_distance_cosine(vt.embedding, ?)) >= ?
+                WHERE f.preview_only = 0
+                  AND (1.0 - vec_distance_cosine(vt.embedding, ?)) >= ?
                 ORDER BY vec_distance_cosine(vt.embedding, ?) ASC
                 LIMIT ?
             """, (embedding_json, embedding_json, threshold, embedding_json, top_k))
@@ -605,7 +609,8 @@ class SqliteVectorSearch:
                     (1.0 - vec_distance_cosine(vt.embedding, ?)) AS text_similarity
                 FROM files f
                 JOIN vec_text vt ON f.id = vt.file_id
-                WHERE (1.0 - vec_distance_cosine(vt.embedding, ?)) >= ?
+                WHERE f.preview_only = 0
+                  AND (1.0 - vec_distance_cosine(vt.embedding, ?)) >= ?
                 ORDER BY vec_distance_cosine(vt.embedding, ?) ASC
                 LIMIT ?
             """, (embedding_json, embedding_json, threshold, embedding_json, top_k))
@@ -680,7 +685,8 @@ class SqliteVectorSearch:
                     (1.0 - vec_distance_cosine(vs.embedding, ?)) AS structural_similarity
                 FROM files f
                 JOIN vec_structure vs ON f.id = vs.file_id
-                WHERE (1.0 - vec_distance_cosine(vs.embedding, ?)) >= ?
+                WHERE f.preview_only = 0
+                  AND (1.0 - vec_distance_cosine(vs.embedding, ?)) >= ?
                 ORDER BY vec_distance_cosine(vs.embedding, ?) ASC
                 LIMIT ?
             """, (embedding_json, embedding_json, threshold, embedding_json, top_k))
@@ -875,6 +881,7 @@ class SqliteVectorSearch:
                 FROM files_fts fts
                 JOIN files f ON f.id = fts.rowid
                 WHERE files_fts MATCH ?
+                  AND f.preview_only = 0
                 ORDER BY fts_rank
                 LIMIT ?
             """, (w_strong, w_weak, match_expr, top_k))

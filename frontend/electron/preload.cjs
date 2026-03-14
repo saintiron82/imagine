@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('electron', {
         openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
         generateThumbnail: (filePath) => ipcRenderer.invoke('generate-thumbnail', filePath),
         generateThumbnailsBatch: (filePaths) => ipcRenderer.invoke('generate-thumbnails-batch', filePaths),
+        generateThumbnailsAndParse: (filePaths) => ipcRenderer.invoke('generate-thumbnails-and-parse', filePaths),
         checkThumbnailsExist: (filePaths) => ipcRenderer.invoke('check-thumbnails-exist', filePaths),
         readMetadata: (filePath) => ipcRenderer.invoke('read-metadata', filePath),
         checkMetadataExists: (filePaths) => ipcRenderer.invoke('check-metadata-exists', filePaths),

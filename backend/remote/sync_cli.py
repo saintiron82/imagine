@@ -299,14 +299,21 @@ def cmd_browse(config: dict):
     if cached:
         _emit({"event": "cached", "files": cached})
 
-    if not uncached:
-        _emit({"event": "done", "cached": len(cached), "processed": 0})
-        if db:
-            db.close()
-        client.close()
-        return
+    # Skip uncached files — only show files with existing thumbnails
+    # (direct thumbnail generation is local-only)
+    if uncached:
+        for f in uncached:
+            canonical = f"webdav://{source_id}{f['path']}"
+            _emit({"event": "skipped", "path": canonical, "name": f['name']})
+        print(f"[WebDAV Browse] skipped {len(uncached)} uncached files (local-only thumbnails)", file=sys.stderr, flush=True)
 
-    # 3. Producer-Consumer: download (background) + parse (main)
+    _emit({"event": "done", "cached": len(cached), "processed": 0, "skipped": len(uncached)})
+    if db:
+        db.close()
+    client.close()
+    return
+
+    # 3. Producer-Consumer: download (background) + parse (main) — DISABLED
     download_queue = Queue(maxsize=2)
 
     def downloader():

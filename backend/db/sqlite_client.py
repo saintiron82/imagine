@@ -122,6 +122,7 @@ class SQLiteDB:
                 self._migrate_content_hash()
                 self._migrate_structure_table()
                 self._migrate_uploaded_by()
+                self._migrate_preview_only()
                 self._migrate_backfill_storage_root()
                 self._ensure_system_meta()
                 self._ensure_fts()
@@ -887,6 +888,16 @@ class SQLiteDB:
             self.conn.commit()
             logger.info("✅ uploaded_by migration complete")
 
+    def _migrate_preview_only(self):
+        """Add preview_only column for browse-time pre-parsing."""
+        try:
+            self.conn.execute("SELECT preview_only FROM files LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.info("Migrating: adding preview_only column to files table...")
+            self.conn.execute("ALTER TABLE files ADD COLUMN preview_only INTEGER DEFAULT 0")
+            self.conn.commit()
+            logger.info("✅ preview_only migration complete")
+
     # ── FTS5 columns: 2-column BM25-weighted architecture ──
     #
     # meta_strong (BM25 3.0): Direct identification facts
@@ -1259,7 +1270,7 @@ class SQLiteDB:
             logger.warning(f"⚠️ FTS refresh failed for file_id={file_id}: {e}")
 
     @_retry_on_locked
-    def upsert_metadata(self, file_path: str, metadata: Dict[str, Any], commit: bool = True) -> int:
+    def upsert_metadata(self, file_path: str, metadata: Dict[str, Any], commit: bool = True, preview_only: bool = False) -> int:
         """
         Phase 1 storage: INSERT basic metadata, preserve existing AI fields on conflict.
 
@@ -1308,8 +1319,8 @@ class SQLiteDB:
                     embedding_model, embedding_version,
                     mode_tier, caption_model, text_embed_model,
                     runtime_version, preprocess_params,
-                    content_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content_hash, preview_only
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_path) DO UPDATE SET
                     file_name = excluded.file_name,
                     file_size = excluded.file_size,
@@ -1332,7 +1343,8 @@ class SQLiteDB:
                     text_embed_model = excluded.text_embed_model,
                     runtime_version = excluded.runtime_version,
                     preprocess_params = excluded.preprocess_params,
-                    content_hash = excluded.content_hash
+                    content_hash = excluded.content_hash,
+                    preview_only = MIN(files.preview_only, excluded.preview_only)
             """, (
                 file_path,
                 metadata.get("file_name"),
@@ -1349,6 +1361,7 @@ class SQLiteDB:
                 mode_tier, caption_model, text_embed_model,
                 runtime_version, preprocess_params_json,
                 content_hash,
+                1 if preview_only else 0,
             ))
 
             # cursor.lastrowid is unreliable for INSERT ON CONFLICT DO UPDATE:

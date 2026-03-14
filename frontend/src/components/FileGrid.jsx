@@ -44,7 +44,9 @@ async function runQueue() {
         const chunk = thumbnailQueue.splice(0, BATCH_SIZE);
         chunk.forEach(fp => inFlightPaths.add(fp));
         try {
-            const results = await window.electron?.pipeline?.generateThumbnailsBatch(chunk);
+            const generateFn = window.electron?.pipeline?.generateThumbnailsAndParse
+                || window.electron?.pipeline?.generateThumbnailsBatch;
+            const results = await generateFn?.(chunk);
             if (results) {
                 for (const [fp, thumbPath] of Object.entries(results)) {
                     if (thumbPath) thumbnailPathCache.set(fp, thumbPath);
@@ -810,6 +812,9 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
                 webdavBrowseDone = 0;
                 webdavProgressListeners.forEach(cb => cb());
                 console.log('[WebDAV] done: cached=', evt.cached, 'processed=', evt.processed);
+            } else if (evt.event === 'skipped') {
+                // Uncached WebDAV file — no thumbnail available (local-only)
+                console.log('[WebDAV] skipped (no thumbnail):', evt.name);
             } else if (evt.event === 'error') {
                 inFlightPaths.delete(evt.path);
                 console.error('[WebDAV] error:', evt.path, evt.message);

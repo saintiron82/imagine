@@ -87,7 +87,10 @@ CREATE TABLE IF NOT EXISTS files (
     -- NULL: normal (unprocessed or successfully completed)
     -- 'failed': permanently failed (non-retryable or max retries exceeded)
     processing_status TEXT DEFAULT NULL,
-    processing_error TEXT DEFAULT NULL
+    processing_error TEXT DEFAULT NULL,
+
+    -- Preview-only flag: 1 = parsed during browse (excluded from search)
+    preview_only INTEGER DEFAULT 0
 );
 
 -- Layers table: Layer-level metadata (optional)
