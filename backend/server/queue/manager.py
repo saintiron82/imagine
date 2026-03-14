@@ -1334,7 +1334,11 @@ class JobQueueManager:
                 parts.append(f"{repaired_files} repaired")
             if skipped_non_retryable > 0:
                 parts.append(f"{skipped_non_retryable} permanently failed (skipped)")
-            logger.warning(", ".join(parts))
+            # Only warn when there are actionable repairs; permanently-failed-only is informational
+            if repaired_files > 0:
+                logger.warning(", ".join(parts))
+            else:
+                logger.info(", ".join(parts))
         else:
             logger.info(f"Audit: {total_files} files scanned, all complete")
 
