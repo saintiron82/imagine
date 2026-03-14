@@ -252,18 +252,26 @@ class JobQueueManager:
                     except (json.JSONDecodeError, TypeError):
                         pass
 
+        # Common WHERE clause for work_request status filtering
+        _WR_FILTER = ("AND (jq.work_request_id IS NULL "
+                       "OR wr.status NOT IN ('paused', 'cancelled'))")
+        _WR_ORDER = ("ORDER BY COALESCE(wr.sort_order, 999999) ASC, "
+                      "jq.priority DESC, jq.created_at ASC")
+
         if processing_mode == "embed_only":
             # embed_only (lightweight) workers: claim pre-parsed + vision-done jobs.
             # Server gap-fills V(MC) for these jobs. Worker does VV+MV only.
             cursor.execute(
-                """SELECT id, file_id, file_path, priority, parsed_metadata
-                   FROM job_queue
-                   WHERE status = 'pending' AND file_ready = 1
-                     AND parse_status = 'parsed'
-                     AND json_extract(phase_completed, '$.vision') = 1
-                     AND (json_extract(phase_completed, '$.embed') IS NULL
-                          OR json_extract(phase_completed, '$.embed') = 0)
-                   ORDER BY priority DESC, created_at ASC
+                f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+                   FROM job_queue jq
+                   LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
+                   WHERE jq.status = 'pending' AND jq.file_ready = 1
+                     AND jq.parse_status = 'parsed'
+                     AND json_extract(jq.phase_completed, '$.vision') = 1
+                     AND (json_extract(jq.phase_completed, '$.embed') IS NULL
+                          OR json_extract(jq.phase_completed, '$.embed') = 0)
+                     {_WR_FILTER}
+                   {_WR_ORDER}
                    LIMIT ?""",
                 (count,)
             )
@@ -273,11 +281,13 @@ class JobQueueManager:
             # mc_only workers: only claim pre-parsed jobs (Phase P done by ParseAhead).
             # complete_mc() requires file metadata already upserted by ParseAhead.
             cursor.execute(
-                """SELECT id, file_id, file_path, priority, parsed_metadata
-                   FROM job_queue
-                   WHERE status = 'pending' AND file_ready = 1
-                     AND parse_status = 'parsed'
-                   ORDER BY priority DESC, created_at ASC
+                f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+                   FROM job_queue jq
+                   LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
+                   WHERE jq.status = 'pending' AND jq.file_ready = 1
+                     AND jq.parse_status = 'parsed'
+                     {_WR_FILTER}
+                   {_WR_ORDER}
                    LIMIT ?""",
                 (count,)
             )
@@ -289,14 +299,16 @@ class JobQueueManager:
             # Priority: vision-done jobs first (VV+MV only), then regular (V+VV+MV).
             # 1) Vision-done jobs (server gap-filled MC — just needs VV+MV)
             cursor.execute(
-                """SELECT id, file_id, file_path, priority, parsed_metadata
-                   FROM job_queue
-                   WHERE status = 'pending' AND file_ready = 1
-                     AND parse_status = 'parsed'
-                     AND json_extract(phase_completed, '$.vision') = 1
-                     AND (json_extract(phase_completed, '$.embed') IS NULL
-                          OR json_extract(phase_completed, '$.embed') = 0)
-                   ORDER BY priority DESC, created_at ASC
+                f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+                   FROM job_queue jq
+                   LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
+                   WHERE jq.status = 'pending' AND jq.file_ready = 1
+                     AND jq.parse_status = 'parsed'
+                     AND json_extract(jq.phase_completed, '$.vision') = 1
+                     AND (json_extract(jq.phase_completed, '$.embed') IS NULL
+                          OR json_extract(jq.phase_completed, '$.embed') = 0)
+                     {_WR_FILTER}
+                   {_WR_ORDER}
                    LIMIT ?""",
                 (count,)
             )
@@ -310,26 +322,30 @@ class JobQueueManager:
                 if claimed_ids:
                     placeholders = ",".join("?" * len(claimed_ids))
                     cursor.execute(
-                        f"""SELECT id, file_id, file_path, priority, parsed_metadata
-                            FROM job_queue
-                            WHERE status = 'pending' AND file_ready = 1
-                              AND parse_status = 'parsed'
-                              AND (json_extract(phase_completed, '$.vision') IS NULL
-                                   OR json_extract(phase_completed, '$.vision') = 0)
-                              AND id NOT IN ({placeholders})
-                            ORDER BY priority DESC, created_at ASC
+                        f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+                            FROM job_queue jq
+                            LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
+                            WHERE jq.status = 'pending' AND jq.file_ready = 1
+                              AND jq.parse_status = 'parsed'
+                              AND (json_extract(jq.phase_completed, '$.vision') IS NULL
+                                   OR json_extract(jq.phase_completed, '$.vision') = 0)
+                              AND jq.id NOT IN ({placeholders})
+                              {_WR_FILTER}
+                            {_WR_ORDER}
                             LIMIT ?""",
                         (*claimed_ids, remainder)
                     )
                 else:
                     cursor.execute(
-                        """SELECT id, file_id, file_path, priority, parsed_metadata
-                           FROM job_queue
-                           WHERE status = 'pending' AND file_ready = 1
-                             AND parse_status = 'parsed'
-                             AND (json_extract(phase_completed, '$.vision') IS NULL
-                                  OR json_extract(phase_completed, '$.vision') = 0)
-                           ORDER BY priority DESC, created_at ASC
+                        f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+                           FROM job_queue jq
+                           LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
+                           WHERE jq.status = 'pending' AND jq.file_ready = 1
+                             AND jq.parse_status = 'parsed'
+                             AND (json_extract(jq.phase_completed, '$.vision') IS NULL
+                                  OR json_extract(jq.phase_completed, '$.vision') = 0)
+                             {_WR_FILTER}
+                           {_WR_ORDER}
                            LIMIT ?""",
                         (remainder,)
                     )
@@ -467,6 +483,22 @@ class JobQueueManager:
 
                 claimed.append(job_data)
 
+        # Mark work requests as 'processing' when jobs are first claimed
+        if claimed:
+            wr_ids = set()
+            for r in rows:
+                # rows columns: id, file_id, file_path, priority, parsed_metadata
+                # We need work_request_id — fetch from claimed job ids
+                pass
+            # Batch update: set queued → processing for any WR that has assigned jobs
+            cursor.execute("""
+                UPDATE work_requests SET status = 'processing', started_at = ?
+                WHERE status = 'queued' AND id IN (
+                    SELECT DISTINCT work_request_id FROM job_queue
+                    WHERE work_request_id IS NOT NULL AND status = 'assigned'
+                )
+            """, (_utcnow_sql(),))
+
         self.db.conn.commit()
         pre_parsed_count = sum(1 for j in claimed if j.get("pre_parsed"))
         logger.info(
@@ -507,9 +539,10 @@ class JobQueueManager:
         """Complete a job: cleanup temp files, log completion, DELETE from queue."""
         cursor = self.db.conn.cursor()
 
-        # Verify ownership and get file_id before deletion
+        # Verify ownership and get file_id + work request refs before deletion
         cursor.execute(
-            "SELECT file_id FROM job_queue WHERE id = ? AND assigned_to = ?",
+            "SELECT file_id, work_request_id, work_subtask_id "
+            "FROM job_queue WHERE id = ? AND assigned_to = ?",
             (job_id, user_id)
         )
         row = cursor.fetchone()
@@ -517,7 +550,7 @@ class JobQueueManager:
             self.db.conn.rollback()
             return False
 
-        file_id = row[0]
+        file_id, wr_id, ws_id = row
 
         # Cleanup temp files BEFORE deleting the job row
         self._cleanup_temp_file(job_id)
@@ -533,6 +566,9 @@ class JobQueueManager:
             "INSERT INTO job_completions (file_id, worker_session_id) VALUES (?, ?)",
             (file_id, self._get_worker_session_id(cursor, user_id))
         )
+
+        # Update work request/subtask counters
+        self._update_wr_counters(cursor, wr_id, ws_id, 'completed')
 
         # DELETE the completed job
         cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
@@ -551,6 +587,153 @@ class JobQueueManager:
             return row[0] if row else None
         except Exception:
             return None
+
+    # ── Work Request helpers ──────────────────────────────────────
+
+    def _update_wr_counters(self, cursor, wr_id, ws_id, event: str):
+        """Update work_request/subtask counters on job completion or failure.
+
+        Args:
+            event: 'completed' or 'failed'
+        """
+        if not wr_id:
+            return
+        col = 'completed_count' if event == 'completed' else 'failed_count'
+        cursor.execute(
+            f"UPDATE work_requests SET {col} = {col} + 1 WHERE id = ?",
+            (wr_id,)
+        )
+        if ws_id:
+            cursor.execute(
+                f"UPDATE work_subtasks SET {col} = {col} + 1 WHERE id = ?",
+                (ws_id,)
+            )
+        # Auto-complete check
+        self._check_work_request_completion(cursor, wr_id)
+
+    def _check_work_request_completion(self, cursor, wr_id: int):
+        """Mark work request as completed when all files are done."""
+        cursor.execute(
+            "SELECT total_files, completed_count, failed_count, status "
+            "FROM work_requests WHERE id = ?",
+            (wr_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return
+        total, completed, failed, status = row
+        if total > 0 and (completed + failed) >= total and status not in ('completed', 'cancelled'):
+            cursor.execute(
+                "UPDATE work_requests SET status = 'completed', completed_at = ? WHERE id = ?",
+                (_utcnow_sql(), wr_id)
+            )
+
+    def _next_sort_order(self, cursor) -> int:
+        """Get next sort_order value for a new work request."""
+        row = cursor.execute("SELECT MAX(sort_order) FROM work_requests").fetchone()
+        return (row[0] or 0) + 1 if row else 1
+
+    def create_work_request(self, name: str, source_path: str,
+                            file_groups: Dict[str, List[tuple]],
+                            priority: int = 0, created_by: int = None) -> dict:
+        """Create a work request with sub-tasks and jobs.
+
+        Args:
+            name: Display name (usually folder name)
+            source_path: Source folder path
+            file_groups: {folder_path: [(file_id, file_path), ...]}
+            priority: Default job priority
+            created_by: User ID
+
+        Returns:
+            {"work_request_id": int, "total_files": int, "subtask_count": int, "jobs_created": int}
+        """
+        from pathlib import Path
+
+        cursor = self.db.conn.cursor()
+
+        # Calculate totals
+        total = sum(len(files) for files in file_groups.values())
+        if total == 0:
+            return {"work_request_id": 0, "total_files": 0, "subtask_count": 0, "jobs_created": 0}
+
+        sort_order = self._next_sort_order(cursor)
+        cursor.execute(
+            """INSERT INTO work_requests (name, source_path, total_files, sort_order, created_by)
+               VALUES (?, ?, ?, ?, ?)""",
+            (name, source_path, total, sort_order, created_by)
+        )
+        wr_id = cursor.lastrowid
+
+        # Batch check existing data for all files
+        all_file_ids = [fid for files in file_groups.values() for fid, _ in files]
+        existing_data = self._batch_check_existing_data(all_file_ids)
+
+        jobs_created = 0
+        subtask_count = 0
+
+        for folder_path, files in file_groups.items():
+            if not files:
+                continue
+            folder_name = Path(folder_path).name or name
+            cursor.execute(
+                """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
+                   VALUES (?, ?, ?, ?)""",
+                (wr_id, folder_path, folder_name, len(files))
+            )
+            st_id = cursor.lastrowid
+            subtask_count += 1
+
+            for fid, fpath in files:
+                fpath = unicodedata.normalize('NFC', fpath)
+                data = existing_data.get(fid, {})
+                phase_completed = json.dumps({
+                    "parse": True,
+                    "vision": data.get("has_mc", False),
+                    "embed": data.get("has_vv", False) and data.get("has_mv", False),
+                })
+                file_ready = 0 if fpath.startswith("webdav://") else 1
+
+                try:
+                    cursor.execute(
+                        """INSERT INTO job_queue
+                           (file_id, file_path, status, priority, phase_completed,
+                            file_ready, work_request_id, work_subtask_id)
+                           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)
+                           ON CONFLICT DO NOTHING""",
+                        (fid, fpath, priority, phase_completed, file_ready, wr_id, st_id)
+                    )
+                    if cursor.rowcount > 0:
+                        jobs_created += 1
+                except Exception as e:
+                    logger.warning(f"Failed to create job for file_id={fid}: {e}")
+
+        # Adjust total_files if some jobs were skipped (duplicates)
+        if jobs_created < total:
+            cursor.execute(
+                "UPDATE work_requests SET total_files = ? WHERE id = ?",
+                (jobs_created, wr_id)
+            )
+            # Also adjust subtask totals by recounting
+            cursor.execute("""
+                UPDATE work_subtasks SET total_files = (
+                    SELECT COUNT(*) FROM job_queue
+                    WHERE work_subtask_id = work_subtasks.id
+                )
+                WHERE work_request_id = ?
+            """, (wr_id,))
+
+        self.db.conn.commit()
+        logger.info(
+            f"Work request '{name}' created: id={wr_id}, "
+            f"{jobs_created}/{total} jobs, {subtask_count} subtasks"
+        )
+        return {
+            "work_request_id": wr_id,
+            "total_files": jobs_created,
+            "subtask_count": subtask_count,
+            "jobs_created": jobs_created,
+        }
 
     def _cleanup_temp_file(self, job_id: int):
         """Delete temp file for a WebDAV job and release buffer slot.
@@ -620,7 +803,8 @@ class JobQueueManager:
             # Partial completion → check retry count before releasing
             missing = [k for k, v in phases.items() if not v]
             cursor.execute(
-                "SELECT file_id, retry_count, max_retries FROM job_queue WHERE id = ? AND assigned_to = ?",
+                "SELECT file_id, retry_count, max_retries, work_request_id, work_subtask_id "
+                "FROM job_queue WHERE id = ? AND assigned_to = ?",
                 (job_id, user_id)
             )
             retry_row = cursor.fetchone()
@@ -631,6 +815,8 @@ class JobQueueManager:
             file_id = retry_row[0]
             retry_count = retry_row[1] or 0
             max_retries = retry_row[2] or 3
+            wr_id = retry_row[3]
+            ws_id = retry_row[4]
 
             if retry_count >= max_retries:
                 # Too many retries — permanently fail
@@ -646,6 +832,8 @@ class JobQueueManager:
                     "UPDATE files SET processing_status = 'failed', processing_error = ? WHERE id = ?",
                     (error_msg, file_id)
                 )
+                # Update work request/subtask counters
+                self._update_wr_counters(cursor, wr_id, ws_id, 'failed')
                 # DELETE the job
                 cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
             else:
@@ -681,7 +869,8 @@ class JobQueueManager:
         cursor = self.db.conn.cursor()
 
         cursor.execute(
-            "SELECT file_id, retry_count, max_retries FROM job_queue WHERE id = ? AND assigned_to = ?",
+            "SELECT file_id, retry_count, max_retries, work_request_id, work_subtask_id "
+            "FROM job_queue WHERE id = ? AND assigned_to = ?",
             (job_id, user_id)
         )
         row = cursor.fetchone()
@@ -689,7 +878,7 @@ class JobQueueManager:
             self.db.conn.rollback()
             return False
 
-        file_id, retry_count, max_retries = row
+        file_id, retry_count, max_retries, wr_id, ws_id = row
 
         # Non-retryable errors → immediate permanent failure
         non_retryable = error_code and error_code in NON_RETRYABLE_ERRORS
@@ -707,6 +896,9 @@ class JobQueueManager:
                 "UPDATE files SET processing_status = 'failed', processing_error = ? WHERE id = ?",
                 (error_message, file_id)
             )
+
+            # Update work request/subtask counters
+            self._update_wr_counters(cursor, wr_id, ws_id, 'failed')
 
             # DELETE the job from queue
             cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
@@ -1602,3 +1794,132 @@ class JobQueueManager:
             }
             for row in cursor.fetchall()
         ]
+
+    # ── Work Request CRUD ──────────────────────────────────────
+
+    def get_work_requests(self, include_completed: bool = False) -> List[Dict[str, Any]]:
+        """Get work requests list with counters."""
+        cursor = self.db.conn.cursor()
+        if include_completed:
+            cursor.execute(
+                "SELECT id, name, source_path, status, sort_order, "
+                "total_files, completed_count, failed_count, "
+                "created_at, started_at, completed_at "
+                "FROM work_requests ORDER BY sort_order ASC, created_at DESC"
+            )
+        else:
+            cursor.execute(
+                "SELECT id, name, source_path, status, sort_order, "
+                "total_files, completed_count, failed_count, "
+                "created_at, started_at, completed_at "
+                "FROM work_requests WHERE status NOT IN ('completed', 'cancelled') "
+                "ORDER BY sort_order ASC, created_at DESC"
+            )
+        return [
+            {
+                "id": r[0], "name": r[1], "source_path": r[2],
+                "status": r[3], "sort_order": r[4],
+                "total_files": r[5], "completed_count": r[6], "failed_count": r[7],
+                "created_at": r[8], "started_at": r[9], "completed_at": r[10],
+            }
+            for r in cursor.fetchall()
+        ]
+
+    def get_work_request_detail(self, wr_id: int) -> Optional[Dict[str, Any]]:
+        """Get work request with sub-tasks."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "SELECT id, name, source_path, status, sort_order, "
+            "total_files, completed_count, failed_count, "
+            "created_at, started_at, completed_at "
+            "FROM work_requests WHERE id = ?",
+            (wr_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        result = {
+            "id": row[0], "name": row[1], "source_path": row[2],
+            "status": row[3], "sort_order": row[4],
+            "total_files": row[5], "completed_count": row[6], "failed_count": row[7],
+            "created_at": row[8], "started_at": row[9], "completed_at": row[10],
+        }
+
+        # Sub-tasks
+        cursor.execute(
+            "SELECT id, folder_path, folder_name, total_files, completed_count, failed_count "
+            "FROM work_subtasks WHERE work_request_id = ? ORDER BY folder_name",
+            (wr_id,)
+        )
+        result["subtasks"] = [
+            {
+                "id": r[0], "folder_path": r[1], "folder_name": r[2],
+                "total_files": r[3], "completed_count": r[4], "failed_count": r[5],
+            }
+            for r in cursor.fetchall()
+        ]
+        return result
+
+    def reorder_work_requests(self, ordered_ids: List[int]):
+        """Update sort_order based on user-defined order."""
+        cursor = self.db.conn.cursor()
+        for idx, wr_id in enumerate(ordered_ids):
+            cursor.execute(
+                "UPDATE work_requests SET sort_order = ? WHERE id = ?",
+                (idx, wr_id)
+            )
+        self.db.conn.commit()
+
+    def pause_work_request(self, wr_id: int) -> bool:
+        """Pause a work request — its jobs will be excluded from claim."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "UPDATE work_requests SET status = 'paused' WHERE id = ? AND status IN ('queued', 'processing')",
+            (wr_id,)
+        )
+        self.db.conn.commit()
+        return cursor.rowcount > 0
+
+    def resume_work_request(self, wr_id: int) -> bool:
+        """Resume a paused work request."""
+        cursor = self.db.conn.cursor()
+        # Check if there are pending jobs — if so, go back to queued/processing
+        cursor.execute(
+            "SELECT COUNT(*) FROM job_queue WHERE work_request_id = ? AND status IN ('pending', 'assigned', 'processing')",
+            (wr_id,)
+        )
+        active_count = cursor.fetchone()[0]
+        new_status = 'processing' if active_count > 0 else 'queued'
+        cursor.execute(
+            "UPDATE work_requests SET status = ? WHERE id = ? AND status = 'paused'",
+            (new_status, wr_id)
+        )
+        self.db.conn.commit()
+        return cursor.rowcount > 0
+
+    def cancel_work_request(self, wr_id: int) -> Dict[str, int]:
+        """Cancel a work request — delete all pending/assigned jobs."""
+        cursor = self.db.conn.cursor()
+
+        # Count pending jobs that will be removed
+        cursor.execute(
+            "SELECT COUNT(*) FROM job_queue WHERE work_request_id = ? AND status IN ('pending', 'assigned')",
+            (wr_id,)
+        )
+        to_remove = cursor.fetchone()[0]
+
+        # Delete pending/assigned jobs (processing jobs are left to finish)
+        cursor.execute(
+            "DELETE FROM job_queue WHERE work_request_id = ? AND status IN ('pending', 'assigned')",
+            (wr_id,)
+        )
+        removed = cursor.rowcount
+
+        # Update status
+        cursor.execute(
+            "UPDATE work_requests SET status = 'cancelled' WHERE id = ?",
+            (wr_id,)
+        )
+        self.db.conn.commit()
+        return {"removed_jobs": removed}

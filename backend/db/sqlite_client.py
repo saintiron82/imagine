@@ -140,6 +140,7 @@ class SQLiteDB:
                 self._migrate_file_ready()
                 self._migrate_job_completions()
                 self._migrate_files_processing_status()
+                self._migrate_work_requests()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -157,6 +158,7 @@ class SQLiteDB:
                 self._migrate_file_ready()
                 self._migrate_job_completions()
                 self._migrate_files_processing_status()
+                self._migrate_work_requests()
 
             logger.info(f"Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -559,6 +561,82 @@ class SQLiteDB:
                 f"✅ processing_status columns added to files "
                 f"({backfilled} permanently failed files backfilled)"
             )
+
+    def _migrate_work_requests(self):
+        """Create work_requests and work_subtasks tables, add FK columns to job_queue."""
+        # 1) work_requests table
+        if not self._table_exists('work_requests'):
+            try:
+                logger.info("Migrating: creating work_requests table...")
+                self.conn.execute("""
+                    CREATE TABLE IF NOT EXISTS work_requests (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        source_path TEXT,
+                        status TEXT NOT NULL DEFAULT 'queued'
+                            CHECK (status IN ('queued', 'processing', 'completed', 'paused', 'cancelled')),
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+                        total_files INTEGER NOT NULL DEFAULT 0,
+                        completed_count INTEGER NOT NULL DEFAULT 0,
+                        failed_count INTEGER NOT NULL DEFAULT 0,
+                        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        created_at TEXT DEFAULT (datetime('now')),
+                        completed_at TEXT
+                    )
+                """)
+                self.conn.commit()
+                logger.info("✅ work_requests table created")
+            except Exception as e:
+                logger.warning(f"work_requests migration failed (non-fatal): {e}")
+
+        # 2) work_subtasks table
+        if not self._table_exists('work_subtasks'):
+            try:
+                logger.info("Migrating: creating work_subtasks table...")
+                self.conn.execute("""
+                    CREATE TABLE IF NOT EXISTS work_subtasks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        work_request_id INTEGER NOT NULL REFERENCES work_requests(id) ON DELETE CASCADE,
+                        folder_path TEXT NOT NULL,
+                        folder_name TEXT NOT NULL,
+                        total_files INTEGER NOT NULL DEFAULT 0,
+                        completed_count INTEGER NOT NULL DEFAULT 0,
+                        failed_count INTEGER NOT NULL DEFAULT 0,
+                        UNIQUE(work_request_id, folder_path)
+                    )
+                """)
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_work_subtasks_wr "
+                    "ON work_subtasks(work_request_id)"
+                )
+                self.conn.commit()
+                logger.info("✅ work_subtasks table created")
+            except Exception as e:
+                logger.warning(f"work_subtasks migration failed (non-fatal): {e}")
+
+        # 3) job_queue FK columns
+        if self._table_exists('job_queue'):
+            try:
+                self.conn.execute("SELECT work_request_id FROM job_queue LIMIT 1")
+            except Exception:
+                try:
+                    logger.info("Migrating: adding work_request_id/work_subtask_id to job_queue...")
+                    self.conn.execute(
+                        "ALTER TABLE job_queue ADD COLUMN work_request_id INTEGER "
+                        "REFERENCES work_requests(id) ON DELETE SET NULL"
+                    )
+                    self.conn.execute(
+                        "ALTER TABLE job_queue ADD COLUMN work_subtask_id INTEGER "
+                        "REFERENCES work_subtasks(id) ON DELETE SET NULL"
+                    )
+                    self.conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_job_queue_work_request "
+                        "ON job_queue(work_request_id)"
+                    )
+                    self.conn.commit()
+                    logger.info("✅ work_request_id/work_subtask_id columns added to job_queue")
+                except Exception as e:
+                    logger.warning(f"job_queue work_request columns migration failed (non-fatal): {e}")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""
@@ -1652,6 +1730,10 @@ class SQLiteDB:
                 cursor.execute("DELETE FROM job_queue")
             if self._table_exists('job_completions'):
                 cursor.execute("DELETE FROM job_completions")
+            if self._table_exists('work_subtasks'):
+                cursor.execute("DELETE FROM work_subtasks")
+            if self._table_exists('work_requests'):
+                cursor.execute("DELETE FROM work_requests")
 
             # Reset system meta
             self._set_system_meta(self._META_KEY_DATA_BUILD_LEVEL, "0", commit=False)

@@ -183,3 +183,42 @@ CREATE TABLE IF NOT EXISTS members (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_members_firebase_uid ON members(firebase_uid);
 CREATE INDEX IF NOT EXISTS idx_members_email ON members(email);
+
+-- ═══════════════════════════════════════════════════════════════
+-- Work Requests (folder-level work tracking)
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS work_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    source_path TEXT,
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'processing', 'completed', 'paused', 'cancelled')),
+    sort_order INTEGER NOT NULL DEFAULT 0,
+
+    -- Denormalized counters
+    total_files INTEGER NOT NULL DEFAULT 0,
+    completed_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS work_subtasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_request_id INTEGER NOT NULL REFERENCES work_requests(id) ON DELETE CASCADE,
+    folder_path TEXT NOT NULL,
+    folder_name TEXT NOT NULL,
+
+    -- Counters
+    total_files INTEGER NOT NULL DEFAULT 0,
+    completed_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+
+    UNIQUE(work_request_id, folder_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_subtasks_wr ON work_subtasks(work_request_id);
+CREATE INDEX IF NOT EXISTS idx_job_queue_work_request ON job_queue(work_request_id);

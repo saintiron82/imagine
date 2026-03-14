@@ -417,9 +417,10 @@ def scan_folder(
     admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """DFS scan a folder and create processing jobs for all supported files (admin only).
+    """DFS scan a folder and create a work request with sub-tasks (admin only).
 
     Reuses the existing discover_files() logic from the pipeline engine.
+    Groups files by immediate subfolder for sub-task tracking.
     """
     from pathlib import Path as P
     from backend.pipeline.ingest_engine import discover_files
@@ -433,10 +434,9 @@ def scan_folder(
     if not discovered:
         return {"success": True, "discovered": 0, "jobs_created": 0, "skipped": 0}
 
-    # Register files and create jobs
+    # Register files and group by immediate subfolder
     cursor = db.conn.cursor()
-    file_ids = []
-    file_paths = []
+    file_groups = {}  # folder_path → [(file_id, file_path), ...]
     skipped = 0
 
     for file_path, folder_str, depth, folder_tags in discovered:
@@ -444,7 +444,6 @@ def scan_folder(
         fpath_str = unicodedata.normalize('NFC', str(file_path))
 
         # Check if job already exists for this file (avoid duplicates)
-        # In TODO-only queue, all existing jobs are active (pending/assigned/processing)
         cursor.execute(
             "SELECT id FROM job_queue WHERE file_path = ?",
             (fpath_str,)
@@ -466,26 +465,49 @@ def scan_folder(
                 "UPDATE files SET uploaded_by = ? WHERE id = ? AND uploaded_by IS NULL",
                 (admin["id"], fid)
             )
-            file_ids.append(fid)
-            file_paths.append(fpath_str)
+
+            # Group by immediate subfolder (1st level relative to scan root)
+            try:
+                rel = file_path.relative_to(folder)
+                if len(rel.parts) > 1:
+                    group_key = str(folder / rel.parts[0])
+                else:
+                    group_key = str(folder)
+            except ValueError:
+                group_key = str(folder)
+
+            file_groups.setdefault(group_key, []).append((fid, fpath_str))
         except Exception as e:
             logger.warning(f"Failed to register {fpath_str}: {e}")
 
     db.conn.commit()
 
-    # Create jobs
+    # Create work request with sub-tasks
     queue = _get_queue(db)
-    jobs_created = queue.create_jobs(file_ids, file_paths, req.priority) if file_ids else 0
+    if file_groups:
+        result = queue.create_work_request(
+            name=folder.name,
+            source_path=str(folder),
+            file_groups=file_groups,
+            priority=req.priority,
+            created_by=admin["id"],
+        )
+        jobs_created = result.get("jobs_created", 0)
+        work_request_id = result.get("work_request_id", 0)
+    else:
+        jobs_created = 0
+        work_request_id = 0
 
     logger.info(
         f"Discover scan: {req.folder_path} → {len(discovered)} found, "
-        f"{jobs_created} jobs created, {skipped} skipped"
+        f"{jobs_created} jobs created, {skipped} skipped, wr_id={work_request_id}"
     )
     return {
         "success": True,
         "discovered": len(discovered),
         "jobs_created": jobs_created,
         "skipped": skipped,
+        "work_request_id": work_request_id,
     }
 
 
@@ -675,6 +697,87 @@ def fix_relative_paths(
     """Auto-fill missing relative_path from file_path (admin only)."""
     fixed = db.fix_missing_relative_paths()
     return {"success": True, "fixed": fixed}
+
+
+# ── Work Request API ──────────────────────────────────────────
+
+class ReorderRequest(BaseModel):
+    ordered_ids: List[int]
+
+
+@router.get("/api/v1/admin/work-requests")
+def list_work_requests(
+    include_completed: bool = False,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """List work requests with counters."""
+    queue = _get_queue(db)
+    return {"success": True, "work_requests": queue.get_work_requests(include_completed)}
+
+
+@router.get("/api/v1/admin/work-requests/{wr_id}")
+def get_work_request(
+    wr_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Get work request detail with sub-tasks."""
+    queue = _get_queue(db)
+    detail = queue.get_work_request_detail(wr_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Work request not found")
+    return {"success": True, **detail}
+
+
+@router.put("/api/v1/admin/work-requests/order")
+def reorder_work_requests(
+    req: ReorderRequest,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Update work request processing order."""
+    queue = _get_queue(db)
+    queue.reorder_work_requests(req.ordered_ids)
+    return {"success": True}
+
+
+@router.post("/api/v1/admin/work-requests/{wr_id}/pause")
+def pause_work_request(
+    wr_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Pause a work request."""
+    queue = _get_queue(db)
+    if not queue.pause_work_request(wr_id):
+        raise HTTPException(status_code=400, detail="Cannot pause this work request")
+    return {"success": True}
+
+
+@router.post("/api/v1/admin/work-requests/{wr_id}/resume")
+def resume_work_request(
+    wr_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Resume a paused work request."""
+    queue = _get_queue(db)
+    if not queue.resume_work_request(wr_id):
+        raise HTTPException(status_code=400, detail="Cannot resume this work request")
+    return {"success": True}
+
+
+@router.post("/api/v1/admin/work-requests/{wr_id}/cancel")
+def cancel_work_request(
+    wr_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Cancel a work request and remove pending jobs."""
+    queue = _get_queue(db)
+    result = queue.cancel_work_request(wr_id)
+    return {"success": True, **result}
 
 
 # ── Helpers ──────────────────────────────────────────────────

@@ -182,3 +182,29 @@ export async function getThumbnailStats() {
   return apiClient.get('/api/v1/stats/thumbnails');
 }
 
+// ── Work Requests ───────────────────────────────────────
+
+export async function getWorkRequests(includeCompleted = false) {
+  return apiClient.get(`/api/v1/admin/work-requests?include_completed=${includeCompleted}`);
+}
+
+export async function getWorkRequestDetail(id) {
+  return apiClient.get(`/api/v1/admin/work-requests/${id}`);
+}
+
+export async function reorderWorkRequests(orderedIds) {
+  return apiClient.put('/api/v1/admin/work-requests/order', { ordered_ids: orderedIds });
+}
+
+export async function pauseWorkRequest(id) {
+  return apiClient.post(`/api/v1/admin/work-requests/${id}/pause`);
+}
+
+export async function resumeWorkRequest(id) {
+  return apiClient.post(`/api/v1/admin/work-requests/${id}/resume`);
+}
+
+export async function cancelWorkRequest(id) {
+  return apiClient.post(`/api/v1/admin/work-requests/${id}/cancel`);
+}
+
