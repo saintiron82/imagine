@@ -142,6 +142,7 @@ class SQLiteDB:
                 self._migrate_job_completions()
                 self._migrate_files_processing_status()
                 self._migrate_work_requests()
+                self._migrate_members_table()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
