@@ -1,38 +1,30 @@
 /**
- * PipelineBlackboard v2 — Factorio-style factory floor simulation.
+ * PipelineBlackboard v3 — Factorio-style factory floor with machine icons & conveyors.
  *
- * 3-zone layout: Input (WR tickets + buffer) | Worker Bay | Output (storage)
- * Each worker gets an independent production lane with 4 phase mini-bars.
- *
- * ┌──────────┬────────────────────────────────────┬────────────────┐
- * │ TICKETS  │          WORKER BAY                 │    STORAGE     │
- * │ ┌──────┐ │  ┌─────────────────────────────┐   │   ┌────────┐  │
- * │ │실내소품│─┤  │ W-1: ▶[P]==[MC██]==[VV]=[MV]▶│──▶│   │ 588  │  │
- * │ │58%   │ │  └─────────────────────────────┘   │   │ ██████ │  │
- * │ └──────┘ │  ┌─────────────────────────────┐   │   └────────┘  │
- * │ ┌──────┐ │  │ W-2: ▶[P██]==[MC]==[VV]=[MV]▶│──▶│              │
- * │ │BUFFER│ │  └─────────────────────────────┘   │   ⚠ 3 failed  │
- * │ │ 24   │ │                                     │              │
- * │ └──────┘ │                                     │              │
- * └──────────┴────────────────────────────────────┴────────────────┘
+ * Each worker lane has 4 machine stations (P, MC, VV, MV) connected by
+ * conveyor belts with flowing item dots. Machines have distinct lucide icons,
+ * glow effects when active, and phase-specific animations.
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, Zap } from 'lucide-react';
+import { AlertTriangle, Zap, Layers, Eye, Scan, Brain, ChevronRight, Check } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
 import { getWorkRequests, listWorkerSessions } from '../api/admin';
 
-// Phase color palette
+// ─── Phase config ────────────────────────────────────────────
+
 const PHASE_COLORS = {
-  parse:    { bg: 'bg-blue-500',    glow: 'shadow-[0_0_12px_rgba(59,130,246,0.5)]',  dim: 'bg-blue-900/30',    text: 'text-blue-400',    border: 'border-blue-500/60' },
-  vision:   { bg: 'bg-purple-500',  glow: 'shadow-[0_0_12px_rgba(168,85,247,0.5)]',  dim: 'bg-purple-900/30',  text: 'text-purple-400',  border: 'border-purple-500/60' },
-  embed_vv: { bg: 'bg-cyan-500',    glow: 'shadow-[0_0_12px_rgba(6,182,212,0.5)]',   dim: 'bg-cyan-900/30',    text: 'text-cyan-400',    border: 'border-cyan-500/60' },
-  embed_mv: { bg: 'bg-emerald-500', glow: 'shadow-[0_0_12px_rgba(16,185,129,0.5)]',  dim: 'bg-emerald-900/30', text: 'text-emerald-400', border: 'border-emerald-500/60' },
+  parse:    { bg: 'bg-blue-500',    glow: 'shadow-[0_0_16px_rgba(59,130,246,0.4)]',   dim: 'bg-blue-900/20',    text: 'text-blue-400',    border: 'border-blue-500/60',    dot: 'bg-blue-400' },
+  vision:   { bg: 'bg-purple-500',  glow: 'shadow-[0_0_16px_rgba(168,85,247,0.4)]',   dim: 'bg-purple-900/20',  text: 'text-purple-400',  border: 'border-purple-500/60',  dot: 'bg-purple-400' },
+  embed_vv: { bg: 'bg-cyan-500',    glow: 'shadow-[0_0_16px_rgba(6,182,212,0.4)]',    dim: 'bg-cyan-900/20',    text: 'text-cyan-400',    border: 'border-cyan-500/60',    dot: 'bg-cyan-400' },
+  embed_mv: { bg: 'bg-emerald-500', glow: 'shadow-[0_0_16px_rgba(16,185,129,0.4)]',   dim: 'bg-emerald-900/20', text: 'text-emerald-400', border: 'border-emerald-500/60', dot: 'bg-emerald-400' },
 };
 
 const PHASE_LABELS = { parse: 'P', vision: 'MC', embed_vv: 'VV', embed_mv: 'MV' };
+const PHASE_ICONS = { parse: Layers, vision: Eye, embed_vv: Scan, embed_mv: Brain };
+const PHASE_ANIMS = { parse: 'animate-bounce', vision: 'animate-pulse', embed_vv: 'animate-spin-slow', embed_mv: 'animate-machine-pulse' };
 const PHASE_ORDER = ['parse', 'vision', 'embed_vv', 'embed_mv'];
 
 // ─── Main Component ────────────────────────────────────────────
@@ -137,39 +129,24 @@ export default function PipelineBlackboard({ workerProgress }) {
           }}
         />
 
-        {/* LEFT: Input Zone — WR Tickets + Buffer */}
-        <InputZone
-          workRequests={activeWRs}
-          buffer={buffer}
-          pending={pending}
-          isRunning={isRunning}
-          t={t}
-        />
+        {/* LEFT: Input Zone */}
+        <InputZone workRequests={activeWRs} buffer={buffer} pending={pending} t={t} />
 
-        {/* Pipe connector left→center */}
+        {/* Pipe left→center */}
         <div className="flex flex-col justify-center">
           <PipeConnector active={isRunning} />
         </div>
 
         {/* CENTER: Worker Bay */}
-        <WorkerBay
-          workers={allWorkers}
-          isRunning={isRunning}
-          t={t}
-        />
+        <WorkerBay workers={allWorkers} isRunning={isRunning} t={t} />
 
-        {/* Pipe connector center→right */}
+        {/* Pipe center→right */}
         <div className="flex flex-col justify-center">
           <PipeConnector active={isRunning} />
         </div>
 
-        {/* RIGHT: Output Zone — Storage + Failed */}
-        <OutputZone
-          completed={completed}
-          failed={failed}
-          total={total}
-          t={t}
-        />
+        {/* RIGHT: Output Zone */}
+        <OutputZone completed={completed} failed={failed} total={total} t={t} />
       </div>
 
       {/* ── Status Ribbon ── */}
@@ -218,97 +195,131 @@ export default function PipelineBlackboard({ workerProgress }) {
   );
 }
 
-// ─── Input Zone (Left sidebar) ───────────────────────────────
+// ─── Machine Station (single phase machine block) ────────────
 
-function InputZone({ workRequests, buffer, pending, isRunning, t }) {
+function MachineStation({ phase, isCurrent, isPast, progress, count, total }) {
+  const colors = PHASE_COLORS[phase];
+  const label = PHASE_LABELS[phase];
+  const Icon = PHASE_ICONS[phase];
+  const anim = PHASE_ANIMS[phase];
+
   return (
-    <div className="w-[140px] flex-shrink-0 flex flex-col border-r border-gray-800/30 bg-gray-900/20 p-3 gap-3 overflow-y-auto">
-      {/* Section label */}
-      <div className="text-[9px] uppercase tracking-wider text-gray-600 font-mono font-bold">
-        {t('bb.tickets')}
+    <div className={`
+      relative w-14 h-14 rounded-lg border-2 flex flex-col items-center justify-center
+      transition-all duration-300 flex-shrink-0
+      ${isCurrent
+        ? `${colors.border} ${colors.glow} bg-gradient-to-b from-gray-800/80 to-gray-900`
+        : isPast
+          ? 'border-gray-600/30 bg-gray-800/40'
+          : 'border-gray-700/20 bg-gray-800/60'
+      }
+    `}>
+      {/* Name plate — top center */}
+      <div className={`
+        absolute -top-2 left-1/2 -translate-x-1/2 px-1.5 py-0
+        rounded-sm text-[7px] uppercase tracking-widest font-mono font-bold
+        ${isCurrent
+          ? `${colors.text} bg-gray-900/90 border ${colors.border}`
+          : 'text-gray-600 bg-gray-800/90 border border-gray-700/40'
+        }
+      `}>
+        {label}
       </div>
 
-      {/* WR ticket cards */}
-      {workRequests.length > 0 ? (
-        workRequests.slice(0, 8).map(wr => (
-          <WRTicket key={wr.id} wr={wr} />
-        ))
-      ) : (
-        <div className="text-[10px] text-gray-700 font-mono">{t('bb.no_wr')}</div>
+      {/* Center icon */}
+      <Icon
+        size={20}
+        className={`
+          transition-all duration-300
+          ${isCurrent
+            ? `${colors.text} ${anim}`
+            : isPast
+              ? 'text-gray-500 opacity-30'
+              : 'text-gray-700 opacity-20'
+          }
+        `}
+      />
+
+      {/* Completed checkmark overlay */}
+      {isPast && (
+        <div className="absolute top-1 right-1">
+          <Check size={8} className="text-green-500/60" />
+        </div>
       )}
 
-      {/* Spacer */}
-      <div className="flex-1" />
-
-      {/* Buffer box */}
-      <div className="rounded border border-yellow-700/30 bg-yellow-900/10 px-2 py-2">
-        <div className="text-[9px] uppercase tracking-wider text-yellow-600/70 font-mono mb-1">
-          {t('bb.buffer')}
+      {/* Bottom gauge — internal progress */}
+      <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center gap-0.5">
+        <div className="flex-1 h-1 rounded-full bg-gray-700/50 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${
+              isCurrent ? colors.bg :
+              isPast ? 'bg-gray-600/40' : ''
+            }`}
+            style={{ width: `${progress}%` }}
+          />
         </div>
-        <div className="text-xl font-mono font-bold text-yellow-400 tabular-nums">
-          {buffer.toLocaleString()}
-        </div>
-      </div>
-
-      {/* Pending total */}
-      <div className="rounded border border-gray-700/30 bg-gray-800/20 px-2 py-2">
-        <div className="text-[9px] uppercase tracking-wider text-gray-600 font-mono mb-1">
-          {t('bb.station_queue')}
-        </div>
-        <div className="text-xl font-mono font-bold text-gray-400 tabular-nums">
-          {pending.toLocaleString()}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Worker Bay (Center, flex-1) ─────────────────────────────
-
-function WorkerBay({ workers, isRunning, t }) {
-  return (
-    <div className="flex-1 flex flex-col min-h-0 min-w-0 p-3">
-      {/* Section label */}
-      <div className="text-[9px] uppercase tracking-wider text-gray-600 font-mono font-bold mb-2">
-        {t('bb.worker_bay')}
-      </div>
-
-      {/* Worker lanes */}
-      <div className="flex-1 flex flex-col gap-2 overflow-y-auto pr-1">
-        {workers.length > 0 ? (
-          workers.map((w, i) => (
-            <WorkerLane key={i} worker={w} isRunning={isRunning} t={t} />
-          ))
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-gray-700 text-2xl mb-2">&#9881;</div>
-              <div className="text-[11px] text-gray-600 font-mono">{t('bb.no_workers')}</div>
-            </div>
-          </div>
+        {isCurrent && total > 0 && (
+          <span className={`text-[6px] font-mono tabular-nums ${colors.text} opacity-70`}>
+            {count}/{total}
+          </span>
         )}
       </div>
     </div>
   );
 }
 
-// ─── Worker Lane (individual production line) ────────────────
+// ─── Conveyor Segment (belt between machines) ────────────────
 
-function WorkerLane({ worker, isRunning, t }) {
+function ConveyorSegment({ active, dotColor }) {
+  return (
+    <div className="relative w-6 h-14 flex items-center justify-center flex-shrink-0">
+      {/* Belt track */}
+      <div className={`
+        w-full h-2 rounded-sm relative overflow-hidden
+        ${active ? 'bg-gray-700/60' : 'bg-gray-800/40'}
+      `}>
+        {/* Roller stripe pattern */}
+        <div
+          className={`absolute inset-0 ${active ? 'animate-conveyor' : ''}`}
+          style={{
+            width: '200%',
+            backgroundImage: `repeating-linear-gradient(90deg, transparent, transparent 4px, rgba(255,255,255,0.06) 4px, rgba(255,255,255,0.06) 6px)`,
+          }}
+        />
+      </div>
+
+      {/* Flowing item dots (only when active) */}
+      {active && dotColor && (
+        <>
+          <div className={`absolute w-1.5 h-1.5 rounded-sm ${dotColor} animate-item-flow opacity-80`}
+            style={{ top: '50%', marginTop: '-3px', animationDelay: '0s' }} />
+          <div className={`absolute w-1.5 h-1.5 rounded-sm ${dotColor} animate-item-flow opacity-80`}
+            style={{ top: '50%', marginTop: '-3px', animationDelay: '0.5s' }} />
+          <div className={`absolute w-1.5 h-1.5 rounded-sm ${dotColor} animate-item-flow opacity-80`}
+            style={{ top: '50%', marginTop: '-3px', animationDelay: '1s' }} />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Worker Lane (production line with machines + conveyors) ──
+
+function WorkerLane({ worker, t }) {
   const w = worker;
   const isActive = w.state === 'active' || !!w.phase;
   const isIdle = !w.phase && w.state !== 'active';
 
   return (
     <div className={`
-      rounded-lg border px-3 py-2 transition-all duration-300
+      rounded-lg border px-3 py-3 transition-all duration-300
       ${isActive
-        ? 'border-gray-600/50 bg-gray-800/40'
+        ? 'border-gray-600/50 bg-gray-800/30'
         : 'border-gray-800/30 bg-gray-900/20'
       }
     `}>
       {/* Header: name + status + throughput */}
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-3">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
           isActive ? 'bg-green-500 animate-pulse' :
           w.state === 'resting' ? 'bg-yellow-500' : 'bg-gray-600'
@@ -328,16 +339,14 @@ function WorkerLane({ worker, isRunning, t }) {
         )}
       </div>
 
-      {/* Phase pipeline — 4 mini-bars in a row */}
-      <div className="flex items-center gap-1">
-        {/* Input arrow */}
-        <span className={`text-[8px] ${isActive ? 'text-gray-500' : 'text-gray-700'}`}>&#9654;</span>
+      {/* Machine assembly line */}
+      <div className="flex items-center justify-center">
+        {/* Input chevron */}
+        <ChevronRight size={10} className={`flex-shrink-0 ${isActive ? 'text-gray-500' : 'text-gray-700'}`} />
 
         {PHASE_ORDER.map((phase, idx) => {
           const isCurrent = w.phase === phase;
           const isPast = w.phase && PHASE_ORDER.indexOf(w.phase) > idx;
-          const colors = PHASE_COLORS[phase];
-          const label = PHASE_LABELS[phase];
 
           // Progress for current phase (local worker only)
           let progress = 0;
@@ -347,67 +356,110 @@ function WorkerLane({ worker, isRunning, t }) {
             progress = 100;
           }
 
-          return (
-            <div key={phase} className="flex items-center gap-1 flex-1 min-w-0">
-              {/* Phase bar */}
-              <div className={`
-                relative flex-1 h-5 rounded overflow-hidden border transition-all duration-300
-                ${isCurrent
-                  ? `${colors.border} ${colors.glow}`
-                  : isPast
-                    ? `border-gray-600/30`
-                    : 'border-gray-800/30'
-                }
-              `}>
-                {/* Background */}
-                <div className={`absolute inset-0 ${
-                  isCurrent ? colors.dim :
-                  isPast ? 'bg-gray-700/20' : 'bg-gray-800/20'
-                }`} />
-                {/* Fill bar */}
-                <div
-                  className={`absolute left-0 top-0 bottom-0 transition-all duration-500 ${
-                    isCurrent ? colors.bg :
-                    isPast ? 'bg-gray-600/40' : ''
-                  } ${isCurrent ? 'opacity-80' : 'opacity-60'}`}
-                  style={{ width: `${progress}%` }}
-                />
-                {/* Label */}
-                <div className="relative z-10 flex items-center justify-center h-full">
-                  <span className={`text-[9px] font-mono font-bold ${
-                    isCurrent ? colors.text :
-                    isPast ? 'text-gray-500' : 'text-gray-700'
-                  }`}>
-                    {label}
-                    {isCurrent && w.phaseCount > 0 && (
-                      <span className="ml-1 font-normal text-[8px] opacity-70">
-                        {w.phaseIndex}/{w.phaseCount}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              </div>
+          // Conveyor is active if this phase or a later one is current
+          const conveyorActive = isActive && (isCurrent || isPast);
+          // Dot color: color of the item coming INTO this machine (previous phase's color, or gray for first)
+          const prevPhase = idx > 0 ? PHASE_ORDER[idx - 1] : null;
+          const dotColor = prevPhase ? PHASE_COLORS[prevPhase].dot : 'bg-gray-400';
 
-              {/* Connector between phases */}
-              {idx < PHASE_ORDER.length - 1 && (
-                <div className={`w-2 h-0.5 flex-shrink-0 ${
-                  isPast || isCurrent ? 'bg-gray-600' : 'bg-gray-800/40'
-                }`} />
-              )}
+          return (
+            <div key={phase} className="flex items-center">
+              {/* Conveyor before each machine */}
+              <ConveyorSegment
+                active={conveyorActive}
+                dotColor={conveyorActive ? dotColor : null}
+              />
+              {/* Machine */}
+              <MachineStation
+                phase={phase}
+                isCurrent={isCurrent}
+                isPast={isPast}
+                progress={progress}
+                count={isCurrent ? (w.phaseIndex || 0) : 0}
+                total={isCurrent ? (w.phaseCount || 0) : 0}
+              />
             </div>
           );
         })}
 
-        {/* Output arrow */}
-        <span className={`text-[8px] ${isActive ? 'text-gray-500' : 'text-gray-700'}`}>&#9654;</span>
+        {/* Final conveyor out */}
+        <ConveyorSegment
+          active={isActive && w.phase === 'embed_mv'}
+          dotColor={isActive && w.phase === 'embed_mv' ? PHASE_COLORS.embed_mv.dot : null}
+        />
+
+        {/* Output chevron */}
+        <ChevronRight size={10} className={`flex-shrink-0 ${isActive ? 'text-gray-500' : 'text-gray-700'}`} />
       </div>
 
       {/* Current file */}
       {w.currentFile && (
-        <div className="text-[9px] text-gray-600 truncate font-mono mt-1.5 pl-3">
+        <div className="text-[9px] text-gray-600 truncate font-mono mt-2 text-center">
           {w.currentFile}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Worker Bay (Center, flex-1) ─────────────────────────────
+
+function WorkerBay({ workers, isRunning, t }) {
+  return (
+    <div className="flex-1 flex flex-col min-h-0 min-w-0 p-3">
+      <div className="text-[9px] uppercase tracking-wider text-gray-600 font-mono font-bold mb-2">
+        {t('bb.worker_bay')}
+      </div>
+      <div className="flex-1 flex flex-col gap-2 overflow-y-auto pr-1">
+        {workers.length > 0 ? (
+          workers.map((w, i) => (
+            <WorkerLane key={i} worker={w} t={t} />
+          ))
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <div className="text-gray-700 text-2xl mb-2">&#9881;</div>
+              <div className="text-[11px] text-gray-600 font-mono">{t('bb.no_workers')}</div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Input Zone (Left sidebar) ───────────────────────────────
+
+function InputZone({ workRequests, buffer, pending, t }) {
+  return (
+    <div className="w-[140px] flex-shrink-0 flex flex-col border-r border-gray-800/30 bg-gray-900/20 p-3 gap-3 overflow-y-auto">
+      <div className="text-[9px] uppercase tracking-wider text-gray-600 font-mono font-bold">
+        {t('bb.tickets')}
+      </div>
+      {workRequests.length > 0 ? (
+        workRequests.slice(0, 8).map(wr => (
+          <WRTicket key={wr.id} wr={wr} />
+        ))
+      ) : (
+        <div className="text-[10px] text-gray-700 font-mono">{t('bb.no_wr')}</div>
+      )}
+      <div className="flex-1" />
+      <div className="rounded border border-yellow-700/30 bg-yellow-900/10 px-2 py-2">
+        <div className="text-[9px] uppercase tracking-wider text-yellow-600/70 font-mono mb-1">
+          {t('bb.buffer')}
+        </div>
+        <div className="text-xl font-mono font-bold text-yellow-400 tabular-nums">
+          {buffer.toLocaleString()}
+        </div>
+      </div>
+      <div className="rounded border border-gray-700/30 bg-gray-800/20 px-2 py-2">
+        <div className="text-[9px] uppercase tracking-wider text-gray-600 font-mono mb-1">
+          {t('bb.station_queue')}
+        </div>
+        <div className="text-xl font-mono font-bold text-gray-400 tabular-nums">
+          {pending.toLocaleString()}
+        </div>
+      </div>
     </div>
   );
 }
@@ -419,28 +471,21 @@ function OutputZone({ completed, failed, total, t }) {
 
   return (
     <div className="w-[140px] flex-shrink-0 flex flex-col border-l border-gray-800/30 bg-gray-900/20 p-3 gap-3">
-      {/* Section label */}
       <div className="text-[9px] uppercase tracking-wider text-gray-600 font-mono font-bold">
         {t('bb.storage')}
       </div>
-
-      {/* Storage warehouse — fill level visualization */}
       <div className="flex-1 flex flex-col items-center justify-center">
         <div className="relative w-full aspect-square max-w-[110px] rounded-lg border-2 border-green-700/30 bg-green-900/5 overflow-hidden">
-          {/* Fill level */}
           <div
             className="absolute bottom-0 left-0 right-0 bg-green-500/20 transition-all duration-700 ease-out"
             style={{ height: `${fillPct}%` }}
           >
-            {/* Fill pattern — stacked blocks */}
             <div className="absolute inset-0 flex flex-wrap content-end p-1 gap-0.5 overflow-hidden">
               {Array.from({ length: Math.min(Math.ceil(fillPct / 4), 25) }).map((_, i) => (
                 <div key={i} className="w-2 h-2 rounded-[2px] bg-green-500/40" />
               ))}
             </div>
           </div>
-
-          {/* Center number */}
           <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
             <span className="text-2xl font-mono font-bold text-green-400 tabular-nums leading-none">
               {completed.toLocaleString()}
@@ -456,8 +501,6 @@ function OutputZone({ completed, failed, total, t }) {
           </div>
         </div>
       </div>
-
-      {/* Failed count */}
       {failed > 0 && (
         <div className="rounded border border-red-800/30 bg-red-900/10 px-2 py-2 text-center">
           <AlertTriangle size={12} className="inline mr-1 text-red-500" />
@@ -465,8 +508,6 @@ function OutputZone({ completed, failed, total, t }) {
           <div className="text-[9px] text-red-600 font-mono mt-0.5">{t('bb.failed')}</div>
         </div>
       )}
-
-      {/* Total */}
       {total > 0 && (
         <div className="rounded border border-gray-700/30 bg-gray-800/20 px-2 py-2">
           <div className="text-[9px] uppercase tracking-wider text-gray-600 font-mono mb-1">
@@ -513,7 +554,6 @@ function WRTicket({ wr }) {
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-500 animate-pulse' : 'bg-gray-600'}`} />
         <span className="text-[10px] text-gray-300 truncate leading-tight">{wr.name}</span>
       </div>
-      {/* Progress bar */}
       <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden mb-1">
         <div
           className={`h-full rounded-full transition-all duration-500 ${isActive ? 'bg-blue-500' : 'bg-gray-600'}`}
