@@ -1128,7 +1128,7 @@ const FileGrid = ({ currentPath, selectedFiles, setSelectedFiles, selectedPaths 
         setSelectedFiles(selectedFiles.size === files.length ? new Set() : new Set(files.map(f => f.path)));
     };
 
-    if (!currentPath) return <div className="flex h-full items-center justify-center text-gray-500">{t('msg.select_folder')}</div>;
+    if (!currentPath && !(selectedPaths?.size > 0)) return <div className="flex h-full items-center justify-center text-gray-500">{t('msg.select_folder')}</div>;
     if (loading) return <div className="text-gray-400 p-4">{t('status.loading')}</div>;
     if (files.length === 0) return <div className="text-gray-500 p-4">{t('msg.no_images')}</div>;
 
