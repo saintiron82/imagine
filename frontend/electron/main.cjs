@@ -1230,6 +1230,27 @@ ipcMain.handle('queue-clear-completed', async () => {
     return spawnQueueCmd('clear-completed');
 });
 
+// Work Request IPC handlers
+ipcMain.handle('queue-list-work-requests', async (_, { includeCompleted }) => {
+    return spawnQueueCmd('list-work-requests', { include_completed: !!includeCompleted });
+});
+
+ipcMain.handle('queue-work-request-detail', async (_, { wrId }) => {
+    return spawnQueueCmd('work-request-detail', { wr_id: wrId });
+});
+
+ipcMain.handle('queue-pause-wr', async (_, { wrId }) => {
+    return spawnQueueCmd('pause-wr', { wr_id: wrId });
+});
+
+ipcMain.handle('queue-resume-wr', async (_, { wrId }) => {
+    return spawnQueueCmd('resume-wr', { wr_id: wrId });
+});
+
+ipcMain.handle('queue-cancel-wr', async (_, { wrId }) => {
+    return spawnQueueCmd('cancel-wr', { wr_id: wrId });
+});
+
 // IPC Handler: Incomplete Stats (for resume dialog on startup)
 ipcMain.handle('get-incomplete-stats', async () => {
     return new Promise((resolve) => {

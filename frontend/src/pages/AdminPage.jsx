@@ -25,6 +25,7 @@ import {
   Tag, ChevronDown, Pencil, AlertOctagon, Image,
   Pause, CircleX,
 } from 'lucide-react';
+import { isElectron } from '../api/client';
 import { listDomains, getDomainDetail, getActiveDomainConfig, setActiveDomain, saveDomainYaml } from '../services/bridge';
 
 export default function AdminPage() {
@@ -1119,14 +1120,33 @@ export function QueuePanel() {
   const [expandedWR, setExpandedWR] = useState(new Set());
   const [wrDetails, setWrDetails] = useState({});
 
+  // IPC/HTTP dual-mode helpers
+  const useIPC = isElectron && window.electron?.queue;
+
+  const fetchWR = useCallback(async (includeCompleted) => {
+    if (useIPC) {
+      const res = await window.electron.queue.listWorkRequests(includeCompleted);
+      return res?.work_requests || [];
+    }
+    return getWorkRequests(includeCompleted);
+  }, [useIPC]);
+
+  const fetchWRDetail = useCallback(async (wrId) => {
+    if (useIPC) {
+      const res = await window.electron.queue.getWorkRequestDetail(wrId);
+      return res?.success !== false ? res : null;
+    }
+    return getWorkRequestDetail(wrId);
+  }, [useIPC]);
+
   const load = useCallback(async () => {
     try {
       const [jobData, thumbData, wrData] = await Promise.all([
-        getJobStats(),
-        getThumbnailStats().catch(() => null),
-        getWorkRequests(showCompleted).catch(() => []),
+        useIPC ? window.electron.queue.getStats() : getJobStats(),
+        useIPC ? Promise.resolve(null) : getThumbnailStats().catch(() => null),
+        fetchWR(showCompleted).catch(() => []),
       ]);
-      setStats(jobData);
+      if (jobData && jobData.success !== false) setStats(jobData);
       if (thumbData && thumbData.success !== false) {
         setThumbStats(thumbData);
       }
@@ -1135,7 +1155,7 @@ export function QueuePanel() {
       console.error('Failed to load queue stats:', e);
     }
     setLoading(false);
-  }, [showCompleted]);
+  }, [showCompleted, useIPC, fetchWR]);
 
   useEffect(() => {
     load();
@@ -1212,7 +1232,7 @@ export function QueuePanel() {
     // Fetch detail (subtasks) if not yet loaded
     if (!wrDetails[wrId]) {
       try {
-        const detail = await getWorkRequestDetail(wrId);
+        const detail = await fetchWRDetail(wrId);
         setWrDetails(prev => ({ ...prev, [wrId]: detail }));
       } catch (e) {
         console.error('Failed to load WR detail:', e);
@@ -1223,9 +1243,9 @@ export function QueuePanel() {
   const handlePauseResume = async (wr) => {
     try {
       if (wr.status === 'paused') {
-        await resumeWorkRequest(wr.id);
+        useIPC ? await window.electron.queue.resumeWorkRequest(wr.id) : await resumeWorkRequest(wr.id);
       } else {
-        await pauseWorkRequest(wr.id);
+        useIPC ? await window.electron.queue.pauseWorkRequest(wr.id) : await pauseWorkRequest(wr.id);
       }
       load();
     } catch (e) {
@@ -1235,7 +1255,7 @@ export function QueuePanel() {
 
   const handleCancelWR = async (wrId) => {
     try {
-      await cancelWorkRequest(wrId);
+      useIPC ? await window.electron.queue.cancelWorkRequest(wrId) : await cancelWorkRequest(wrId);
       load();
     } catch (e) {
       console.error('Cancel WR failed:', e);

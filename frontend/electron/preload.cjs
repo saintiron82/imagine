@@ -145,6 +145,16 @@ contextBridge.exposeInMainWorld('electron', {
         cancelJob: (jobId) => ipcRenderer.invoke('queue-cancel-job', { jobId }),
         retryFailed: () => ipcRenderer.invoke('queue-retry-failed'),
         clearCompleted: () => ipcRenderer.invoke('queue-clear-completed'),
+        listWorkRequests: (includeCompleted) =>
+            ipcRenderer.invoke('queue-list-work-requests', { includeCompleted: !!includeCompleted }),
+        getWorkRequestDetail: (wrId) =>
+            ipcRenderer.invoke('queue-work-request-detail', { wrId }),
+        pauseWorkRequest: (wrId) =>
+            ipcRenderer.invoke('queue-pause-wr', { wrId }),
+        resumeWorkRequest: (wrId) =>
+            ipcRenderer.invoke('queue-resume-wr', { wrId }),
+        cancelWorkRequest: (wrId) =>
+            ipcRenderer.invoke('queue-cancel-wr', { wrId }),
     },
 
     // DB Import/Export

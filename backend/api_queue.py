@@ -264,6 +264,68 @@ def clear_completed():
         return {"success": False, "error": str(e)}
 
 
+def list_work_requests(include_completed=False):
+    """List work requests."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        wrs = queue.get_work_requests(include_completed)
+        db.close()
+        return {"success": True, "work_requests": wrs}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_work_request_detail(wr_id):
+    """Get work request detail with subtasks."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        detail = queue.get_work_request_detail(wr_id)
+        db.close()
+        if detail is None:
+            return {"success": False, "error": "Work request not found"}
+        return {"success": True, **detail}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def pause_work_request(wr_id):
+    """Pause a work request."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        ok = queue.pause_work_request(wr_id)
+        db.close()
+        return {"success": ok}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def resume_work_request(wr_id):
+    """Resume a paused work request."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        ok = queue.resume_work_request(wr_id)
+        db.close()
+        return {"success": ok}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def cancel_work_request(wr_id):
+    """Cancel a work request and its pending jobs."""
+    try:
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        result = queue.cancel_work_request(wr_id)
+        db.close()
+        return {"success": True, **result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(json.dumps({"success": False, "error": "No command specified"}))
@@ -296,6 +358,21 @@ if __name__ == "__main__":
         result = retry_failed()
     elif cmd == "clear-completed":
         result = clear_completed()
+    elif cmd == "list-work-requests":
+        data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
+        result = list_work_requests(data.get("include_completed", False))
+    elif cmd == "work-request-detail":
+        data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
+        result = get_work_request_detail(data.get("wr_id", 0))
+    elif cmd == "pause-wr":
+        data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
+        result = pause_work_request(data.get("wr_id", 0))
+    elif cmd == "resume-wr":
+        data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
+        result = resume_work_request(data.get("wr_id", 0))
+    elif cmd == "cancel-wr":
+        data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
+        result = cancel_work_request(data.get("wr_id", 0))
     else:
         result = {"success": False, "error": f"Unknown command: {cmd}"}
 
