@@ -1,8 +1,8 @@
 # Imagine — Project Report
 
-**Version**: v0.6.1
-**Date**: 2026-02-26
-**Status**: Phase 4.9 Complete (Active Development)
+**Version**: v0.6.4.20260312_08
+**Date**: 2026-03-12
+**Status**: Phase 4.6 Complete (Active Development)
 
 ---
 
@@ -59,14 +59,19 @@ QueryDecomposer auto-selects weight presets (visual/keyword/semantic/balanced).
 ```
 +---------------------------+     +---------------------------+
 |   Electron Mode (Local)   |     |   Web Mode (Browser)      |
-|   - Auth bypass           |     |   - JWT login required    |
+|   - Auth bypass           |     |   - JWT + Firebase Auth   |
 |   - IPC -> Python direct  |     |   - HTTP API -> FastAPI   |
 |   - Local DB access       |     |   - Server DB access      |
-|   - [Server] toggle       |     |   - Multi-user support    |
+|   - [Server] toggle       |     |   - Multi-user / Groups   |
 +---------------------------+     +---------------------------+
             |                                 |
             +--- Shared React 19 Frontend ----+
 ```
+
+**Recent User Management Features (Firebase 2-Layer Auth):**
+- **2-Layer Identity**: Layer 1 (Firebase Auth) handles personal identity (Google/Email), Layer 2 (Local JWT) issues specific role access (admin/user) per server.
+- **Group-Based Setup**: Invite codes replaced by Firebase Firestore discovery. Users join specific Team Groups directly.
+- **Persistent App Mode**: Bypasses SetupPage on automatic restart, showing quick-reconnect Group cards.
 
 ### 2.4 Distributed Worker System
 
@@ -133,10 +138,10 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 
 | Metric | Value |
 |--------|-------|
-| Total commits | ~350 |
-| Backend Python | ~75,000 lines |
-| Frontend JSX/JS | ~29,000 lines |
-| Electron (main/preload) | ~2,100 lines |
+| Total commits | ~370 |
+| Backend Python | ~35,800 lines |
+| Frontend JSX/JS | ~17,500 lines |
+| Server API Routers | 14 modules |
 | Database | SQLite (single file, no Docker) |
 | Supported formats | PSD, PNG, JPG, JPEG |
 | FTS index columns | 16 |
@@ -228,10 +233,12 @@ VV model is unified across all tiers. Standard <-> Pro transition is fully seaml
 - **DINOv2 Integration**: Integrated `vec_structure` generation directly into the `ParseAheadPool` with auto-queue backfill for missing structure vectors.
 - **Unified HF Models**: Standardized auto-download system for all HuggingFace models upon first use.
 
-### Phase 4.9: Web Presence & Auto Distribution
-- **Landing Site / App**: GitHub Pages landing site with English/Korean i18n support.
-- **Community Features**: Board, Q&A, Guide, and Releases pages integrated with Firebase Authentication and Firestore DB. 
-- **Auto-Update System**: Integrated `electron-updater` working with GitHub Releases for seamless local desktop app updates.
+### Phase 4.10: v0.6.4 Pipeline & Architecture
+- **Unified Pipeline (PhaseRunner)**: Consolidated various ingestion flows into a single unified PhaseRunner architecture.
+- **WebDAV & BufferPool Remote Processing**: Added support to browse and process remote NAS/WebDAV folders without downloading full source files, leveraging a new `BufferPool` to stream thumbnails natively.
+- **Firebase Auth (2-Layer Identity)**: Implemented Google Login and cloud SaaS-like member management.
+- **Embedded Worker Defense**: Implemented protective fallback and blocking to prevent external workers from conflicting with the Builtin Embedded Worker mode.
+- **WebDAV Remote Thumbnail Browsing**: Instantly view remote PSD/Image thumbnails in the web/desktop UI.
 
 ---
 
