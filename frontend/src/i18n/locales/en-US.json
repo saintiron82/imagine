@@ -7,6 +7,7 @@
   "tab.factory": "Factory",
   "tab.download": "Download",
   "archiving.selected_count": "{count} selected",
+  "archiving.folders_selected": "{count} folders selected",
   "archiving.action_enqueue": "Add to Queue",
   "factory.summary_pending": "Pending",
   "factory.summary_processing": "Processing",

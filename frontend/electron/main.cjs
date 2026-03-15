@@ -1206,6 +1206,10 @@ ipcMain.handle('queue-scan-folder', async (_, { folderPath, priority }) => {
     return spawnQueueCmd('scan-folder', { folder_path: folderPath, priority: parseInt(priority) || 0 });
 });
 
+ipcMain.handle('queue-scan-folders', async (_, { folderPaths, priority }) => {
+    return spawnQueueCmd('scan-folders', { folder_paths: folderPaths, priority: parseInt(priority) || 0 });
+});
+
 ipcMain.handle('queue-stats', async () => {
     return spawnQueueCmd('stats');
 });

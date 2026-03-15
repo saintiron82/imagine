@@ -7,6 +7,7 @@
   "tab.factory": "팩토리",
   "tab.download": "다운로드",
   "archiving.selected_count": "{count}개 선택",
+  "archiving.folders_selected": "{count}개 폴더 선택",
   "archiving.action_enqueue": "큐에 등록",
   "factory.summary_pending": "대기",
   "factory.summary_processing": "처리중",

@@ -138,6 +138,8 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('queue-register-paths', { filePaths, priority }),
         scanFolder: (folderPath, priority) =>
             ipcRenderer.invoke('queue-scan-folder', { folderPath, priority }),
+        scanFolders: (folderPaths, priority) =>
+            ipcRenderer.invoke('queue-scan-folders', { folderPaths, priority }),
         getStats: () => ipcRenderer.invoke('queue-stats'),
         listJobs: (opts) => ipcRenderer.invoke('queue-list-jobs', opts || {}),
         cancelJob: (jobId) => ipcRenderer.invoke('queue-cancel-job', { jobId }),

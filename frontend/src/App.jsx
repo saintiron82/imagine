@@ -876,7 +876,7 @@ function App() {
   };
 
   // Send all selected files to backend in one batch call
-  const handleProcess = async () => {
+  const handleProcessFiles = async () => {
     if (selectedFiles.size === 0 || isProcessing) return;
 
     const fileArray = Array.from(selectedFiles);
@@ -1028,6 +1028,58 @@ function App() {
     // Electron standalone mode: direct discover spawn (local processing)
     window.electron?.pipeline?.updateConfig('last_session.folders', [folderPath]);
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip });
+  };
+
+  // Process multiple selected folders as ONE work_request (queue)
+  const handleProcessFolders = async (folderPaths) => {
+    if (isProcessing || isDiscovering || !folderPaths.length) return;
+    setIsDiscovering(true);
+    setCurrentTab('archiving');
+    appendLog({
+      message: `Processing ${folderPaths.length} folders`,
+      type: 'info'
+    });
+
+    // Server mode Electron: scan folders → create ONE work_request via IPC
+    if (appMode === 'server' && isElectron && window.electron?.queue) {
+      try {
+        const result = await window.electron.queue.scanFolders(folderPaths, 0);
+        appendLog({
+          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
+    // Web/Client mode: scan each folder via API (creates separate work_requests)
+    if (!isElectron || (appMode === 'client' && isWorkerRunning)) {
+      let totalJobs = 0;
+      try {
+        for (const folder of folderPaths) {
+          const result = await scanFolder(folder);
+          totalJobs += result.jobs_created || 0;
+        }
+        appendLog({
+          message: t('archive.queue_registered', { jobs: totalJobs }),
+          type: 'success'
+        });
+        setQueueReloadSignal(prev => prev + 1);
+      } catch (e) {
+        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
+      }
+      setIsDiscovering(false);
+      return;
+    }
+
+    // Electron standalone mode: discover each folder sequentially
+    for (const folder of folderPaths) {
+      window.electron?.pipeline?.runDiscover({ folderPath: folder });
+    }
   };
 
   // Resume incomplete work: discover only folders that have incomplete files
@@ -1687,7 +1739,7 @@ function App() {
                 {t('status.selected', { count: selectedFiles.size })}
               </div>
               <button
-                onClick={handleProcess}
+                onClick={handleProcessFiles}
                 disabled={selectedFiles.size === 0 || isProcessing}
                 className={`
                   flex items-center space-x-1 px-4 py-1.5 rounded text-sm font-medium transition-colors
@@ -1925,8 +1977,10 @@ function App() {
                 selectedFiles={selectedFiles}
                 setSelectedFiles={setSelectedFiles}
                 selectedPaths={selectedPaths}
+                setSelectedPaths={setSelectedPaths}
                 onProcessFolder={handleProcessFolder}
                 onProcessFiles={handleProcessFiles}
+                onProcessFolders={handleProcessFolders}
                 onFindSimilar={handleFindSimilar}
                 isProcessing={isProcessing || isDiscovering}
                 reloadSignal={folderStatsVersion}

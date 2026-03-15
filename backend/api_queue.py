@@ -126,6 +126,84 @@ def scan_folder(folder_path, priority=0):
         return {"success": False, "error": str(e)}
 
 
+def scan_folders(folder_paths, priority=0):
+    """DFS scan multiple folders and create ONE Work Request with jobs."""
+    try:
+        from backend.pipeline.ingest_engine import discover_files
+        from collections import defaultdict
+
+        db = SQLiteDB()
+        queue = JobQueueManager(db)
+        cursor = db.conn.cursor()
+
+        all_file_groups = defaultdict(list)
+        total_discovered = 0
+        total_skipped = 0
+
+        for folder_path in folder_paths:
+            folder = Path(folder_path).resolve()
+            if not folder.exists() or not folder.is_dir():
+                continue
+
+            discovered = discover_files(folder)
+            total_discovered += len(discovered)
+
+            for file_path, folder_str, depth, folder_tags in discovered:
+                fpath_str = str(file_path)
+
+                # Check for existing active job
+                cursor.execute(
+                    "SELECT id FROM job_queue WHERE file_path = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
+                    (fpath_str,)
+                )
+                if cursor.fetchone():
+                    total_skipped += 1
+                    continue
+
+                meta = {
+                    "file_path": fpath_str,
+                    "file_name": file_path.name,
+                    "folder_path": folder_str,
+                    "folder_depth": depth,
+                    "folder_tags": folder_tags,
+                }
+                try:
+                    fid = db.upsert_metadata(fpath_str, meta)
+                    all_file_groups[folder_str or str(folder)].append((fid, fpath_str))
+                except Exception:
+                    pass
+
+        db.conn.commit()
+
+        if all_file_groups:
+            # Build name from folder list
+            names = [Path(p).name for p in folder_paths[:3]]
+            name = ", ".join(names)
+            if len(folder_paths) > 3:
+                name += f" +{len(folder_paths) - 3}"
+
+            result = queue.create_work_request(
+                name=name,
+                source_path=folder_paths[0],
+                file_groups=dict(all_file_groups),
+                priority=priority,
+            )
+            jobs_created = result.get("jobs_created", 0)
+        else:
+            jobs_created = 0
+
+        db.close()
+
+        return {
+            "success": True,
+            "discovered": total_discovered,
+            "jobs_created": jobs_created,
+            "skipped": total_skipped,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def get_stats():
     """Get job queue statistics."""
     try:
@@ -199,6 +277,9 @@ if __name__ == "__main__":
     elif cmd == "scan-folder":
         data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
         result = scan_folder(data.get("folder_path", ""), data.get("priority", 0))
+    elif cmd == "scan-folders":
+        data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
+        result = scan_folders(data.get("folder_paths", []), int(data.get("priority", 0)))
     elif cmd == "stats":
         result = get_stats()
     elif cmd == "list-jobs":

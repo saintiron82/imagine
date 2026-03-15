@@ -601,41 +601,48 @@ class JobQueueManager:
         jobs_created = 0
         subtask_count = 0
 
+        SUBTASK_CHUNK_SIZE = 1000
+
         for folder_path, files in file_groups.items():
             if not files:
                 continue
             folder_name = Path(folder_path).name or name
-            cursor.execute(
-                """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
-                   VALUES (?, ?, ?, ?)""",
-                (wr_id, folder_path, folder_name, len(files))
-            )
-            st_id = cursor.lastrowid
-            subtask_count += 1
 
-            for fid, fpath in files:
-                fpath = unicodedata.normalize('NFC', fpath)
-                data = existing_data.get(fid, {})
-                phase_completed = json.dumps({
-                    "parse": True,
-                    "vision": data.get("has_mc", False),
-                    "embed": data.get("has_vv", False) and data.get("has_mv", False),
-                })
-                file_ready = 0 if fpath.startswith("webdav://") else 1
+            # Split into chunks of SUBTASK_CHUNK_SIZE for large folders
+            chunks = [files[i:i + SUBTASK_CHUNK_SIZE] for i in range(0, len(files), SUBTASK_CHUNK_SIZE)]
+            for chunk_idx, chunk in enumerate(chunks):
+                suffix = f" ({chunk_idx + 1})" if len(chunks) > 1 else ""
+                cursor.execute(
+                    """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
+                       VALUES (?, ?, ?, ?)""",
+                    (wr_id, folder_path, f"{folder_name}{suffix}", len(chunk))
+                )
+                st_id = cursor.lastrowid
+                subtask_count += 1
 
-                try:
-                    cursor.execute(
-                        """INSERT INTO job_queue
-                           (file_id, file_path, status, priority, phase_completed,
-                            file_ready, work_request_id, work_subtask_id)
-                           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)
-                           ON CONFLICT DO NOTHING""",
-                        (fid, fpath, priority, phase_completed, file_ready, wr_id, st_id)
-                    )
-                    if cursor.rowcount > 0:
-                        jobs_created += 1
-                except Exception as e:
-                    logger.warning(f"Failed to create job for file_id={fid}: {e}")
+                for fid, fpath in chunk:
+                    fpath = unicodedata.normalize('NFC', fpath)
+                    data = existing_data.get(fid, {})
+                    phase_completed = json.dumps({
+                        "parse": True,
+                        "vision": data.get("has_mc", False),
+                        "embed": data.get("has_vv", False) and data.get("has_mv", False),
+                    })
+                    file_ready = 0 if fpath.startswith("webdav://") else 1
+
+                    try:
+                        cursor.execute(
+                            """INSERT INTO job_queue
+                               (file_id, file_path, status, priority, phase_completed,
+                                file_ready, work_request_id, work_subtask_id)
+                               VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)
+                               ON CONFLICT DO NOTHING""",
+                            (fid, fpath, priority, phase_completed, file_ready, wr_id, st_id)
+                        )
+                        if cursor.rowcount > 0:
+                            jobs_created += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to create job for file_id={fid}: {e}")
 
         # Adjust total_files if some jobs were skipped (duplicates)
         if jobs_created < total:

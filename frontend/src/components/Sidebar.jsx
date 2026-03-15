@@ -45,6 +45,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
     const [isOpen, setIsOpen] = useState(isRoot); // Roots start open
     const [children, setChildren] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [contextMenu, setContextMenu] = useState(null);
     const isCtrlSelected = selectedPaths.has(path);
     const isCurrentPath = currentPath === path;
     const webdav = isWebDAV || isWebDAVPath(path);
@@ -125,6 +126,21 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
         }
     };
 
+    const handleContextMenu = (e) => {
+        if (!isRoot || !onRemoveRoot) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({ x: e.clientX, y: e.clientY });
+    };
+
+    // Close context menu on click outside
+    useEffect(() => {
+        if (!contextMenu) return;
+        const close = () => setContextMenu(null);
+        window.addEventListener('click', close);
+        return () => window.removeEventListener('click', close);
+    }, [contextMenu]);
+
     const highlightClass = isCtrlSelected
         ? 'bg-purple-900/50 border-l-4 border-purple-500'
         : (isCurrentPath ? 'bg-blue-900 border-l-4 border-blue-500' : '');
@@ -135,6 +151,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                 className={`flex items-center py-1 px-2 cursor-pointer hover:bg-gray-700 transition-colors group ${highlightClass}`}
                 style={{ paddingLeft: `${level * 16 + 8}px` }}
                 onClick={handleClick}
+                onContextMenu={handleContextMenu}
             >
                 <div onClick={handleToggle} className="p-1 mr-1 text-gray-400 hover:text-white">
                     {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -226,6 +243,22 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                             {t('msg.no_subfolders')}
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* Right-click context menu for root folders */}
+            {contextMenu && (
+                <div
+                    className="fixed z-50 bg-gray-800 border border-gray-600 rounded-md shadow-xl py-1 min-w-[140px]"
+                    style={{ left: contextMenu.x, top: contextMenu.y }}
+                >
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onRemoveRoot(path); setContextMenu(null); }}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-red-400 hover:bg-gray-700 transition-colors"
+                    >
+                        <Trash2 size={14} />
+                        {t('action.remove_folder')}
+                    </button>
                 </div>
             )}
         </div>
