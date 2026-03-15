@@ -27,6 +27,7 @@ import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
 import { registerPaths, scanFolder, getJobStats, resetDatabase, auditIntegrity, retryFailedJobs, forceRetryFailedJobs, dismissPermanentlyFailedJobs } from './api/admin';
 import DomainSelectModal from './components/DomainSelectModal';
+import EnqueueFolderModal from './components/EnqueueFolderModal';
 import SubscriptionBanner from './components/SubscriptionBanner';
 
 function App() {
@@ -59,6 +60,7 @@ function App() {
     etaMs: null
   });
   const [selectedPaths, setSelectedPaths] = useState(new Set());
+  const [enqueueFolderTarget, setEnqueueFolderTarget] = useState(null); // { path, name }
   const [expandToPath, setExpandToPath] = useState(null);
   const [resumeStats, setResumeStats] = useState(null);
   const [showResumeDialog, setShowResumeDialog] = useState(false);
@@ -1411,6 +1413,17 @@ function App() {
         <DomainSelectModal onClose={() => setShowDomainSelect(false)} />
       )}
 
+      {enqueueFolderTarget && (
+        <EnqueueFolderModal
+          folderPath={enqueueFolderTarget.path}
+          folderName={enqueueFolderTarget.name}
+          onConfirm={(path, _name, _includeSub) => {
+            handleProcessFolders([path]);
+          }}
+          onClose={() => setEnqueueFolderTarget(null)}
+        />
+      )}
+
       {showResetDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
@@ -1941,6 +1954,7 @@ function App() {
                 onFolderSelect={handleFolderSelect}
                 selectedPaths={selectedPaths}
                 onFolderToggle={handleFolderToggle}
+                onEnqueueFolder={(path, name) => setEnqueueFolderTarget({ path, name })}
                 reloadSignal={folderStatsVersion}
                 expandToPath={expandToPath}
               />
