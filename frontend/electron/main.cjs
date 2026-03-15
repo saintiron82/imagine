@@ -1199,11 +1199,11 @@ function spawnQueueCmd(cmd, data) {
 }
 
 ipcMain.handle('queue-register-paths', async (_, { filePaths, priority }) => {
-    return spawnQueueCmd('register-paths', { file_paths: filePaths, priority: priority || 0 });
+    return spawnQueueCmd('register-paths', { file_paths: filePaths, priority: parseInt(priority) || 0 });
 });
 
 ipcMain.handle('queue-scan-folder', async (_, { folderPath, priority }) => {
-    return spawnQueueCmd('scan-folder', { folder_path: folderPath, priority: priority || 0 });
+    return spawnQueueCmd('scan-folder', { folder_path: folderPath, priority: parseInt(priority) || 0 });
 });
 
 ipcMain.handle('queue-stats', async () => {

@@ -1926,11 +1926,11 @@ function App() {
                 setSelectedFiles={setSelectedFiles}
                 selectedPaths={selectedPaths}
                 onProcessFolder={handleProcessFolder}
+                onProcessFiles={handleProcessFiles}
                 onFindSimilar={handleFindSimilar}
                 isProcessing={isProcessing || isDiscovering}
                 reloadSignal={folderStatsVersion}
                 appMode={appMode}
-                queueReloadSignal={queueReloadSignal}
                 onShowToast={showToast}
               />
             ) : currentTab === 'factory' ? (
