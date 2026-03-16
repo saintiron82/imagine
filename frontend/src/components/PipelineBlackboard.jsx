@@ -24,7 +24,7 @@ const PHASE_CFG = {
 };
 const PHASES = ['vision', 'embed_vv', 'embed_mv'];
 
-export default function PipelineBlackboard({ workerProgress, reloadSignal, isWorkerRunning }) {
+export default function PipelineBlackboard({ workerProgress, reloadSignal, isWorkerRunning, appMode }) {
   const { t } = useLocale();
   const [view, setView] = useState('pipeline'); // 'pipeline' | 'board'
   const [stats, setStats] = useState(null);
@@ -32,6 +32,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
   const [workers, setWorkers] = useState([]);
 
   const useIPC = isElectron && window.electron?.queue;
+  const isServerMode = appMode === 'server';
 
   const load = useCallback(async () => {
     try {
@@ -40,13 +41,17 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
         useIPC
           ? window.electron.queue.listWorkRequests(false).then(r => r?.work_requests || [])
           : getWorkRequests(false).catch(() => []),
-        !useIPC ? listWorkerSessions().then(d => d?.workers || []).catch(() => []) : Promise.resolve([]),
+        // Always fetch server workers in server mode (even Electron)
+        // so embedded worker and remote workers are visible
+        (isServerMode || !useIPC)
+          ? listWorkerSessions().then(d => d?.workers || []).catch(() => [])
+          : Promise.resolve([]),
       ]);
       if (sData && sData.success !== false) setStats(sData);
       setWorkRequests(Array.isArray(wrData) ? wrData : []);
       setWorkers(Array.isArray(wData) ? wData : []);
     } catch { /* ignore */ }
-  }, [useIPC]);
+  }, [useIPC, isServerMode]);
 
   useEffect(() => {
     load();
@@ -313,6 +318,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
                 <div className="flex items-center gap-1.5 mb-2">
                   <Download size={14} className="text-blue-400" />
                   <span className="text-[9px] font-mono text-blue-400 font-bold uppercase">Download Lane</span>
+                  {isServerMode && dlWaiting > 0 && <span className="text-[6px] font-mono px-1 rounded bg-amber-800/60 text-amber-400 border border-amber-700/40">SERVER</span>}
                   <span className="text-[8px] font-mono text-gray-600 ml-auto">WebDAV → Local</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -344,7 +350,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
           <Belt active={isRunning} color="teal" label="file_ready=1" />
 
           {/* ── STAGE 3: Parser ── */}
-          <Stage label="STAGE 3" title="PARSER (Server CPU)" color="teal">
+          <Stage label="STAGE 3" title={`PARSER${isServerMode ? ' (Server)' : ' (Server CPU)'}`} color="teal">
             <div className="flex items-center gap-4 mt-1">
               <div className={`rounded-lg border-2 ${parsing > 0 || parsePending > 0 ? 'border-teal-600/40 shadow-[0_0_12px_rgba(45,212,191,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-teal-900/15 to-gray-900 w-16 h-16 flex flex-col items-center justify-center flex-shrink-0`}>
                 <span className={`text-2xl ${parsing > 0 || parsePending > 0 ? 'animate-spin-slow' : 'opacity-30'}`}>&#8862;</span>
@@ -574,8 +580,11 @@ function WorkerLine({ worker, t }) {
   return (
     <div className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${isActive ? 'border-gray-600/30 bg-gray-800/20' : 'border-gray-800/20 bg-gray-900/10'}`}>
       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
-      <div className="flex flex-col w-20 flex-shrink-0">
-        <span className="text-[11px] font-mono text-gray-300 font-bold truncate">{w.isBuiltin ? 'Embedded' : w.name}</span>
+      <div className="flex flex-col w-24 flex-shrink-0">
+        <div className="flex items-center gap-1">
+          <span className="text-[11px] font-mono text-gray-300 font-bold truncate">{w.isBuiltin ? 'Embedded' : w.name}</span>
+          {w.isBuiltin && <span className="text-[6px] font-mono px-1 py-0 rounded bg-amber-800/60 text-amber-400 border border-amber-700/40">SERVER</span>}
+        </div>
         <span className={`text-[7px] font-mono ${MODE_COLORS[mode]}`}>{MODE_LABELS[mode]}</span>
       </div>
 
