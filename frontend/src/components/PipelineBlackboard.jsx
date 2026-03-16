@@ -24,14 +24,13 @@ const PHASE_CFG = {
 };
 const PHASES = ['vision', 'embed_vv', 'embed_mv'];
 
-export default function PipelineBlackboard({ workerProgress, reloadSignal, isWorkerRunning, appMode }) {
+export default function PipelineBlackboard({ reloadSignal, appMode }) {
   const { t } = useLocale();
   const [stats, setStats] = useState(null);
   const [workRequests, setWorkRequests] = useState([]);
   const [workers, setWorkers] = useState([]);
 
   const useIPC = isElectron && window.electron?.queue;
-  const isServerMode = appMode === 'server';
 
   const load = useCallback(async () => {
     try {
@@ -62,8 +61,6 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
 
   // Reload immediately on external triggers
   useEffect(() => { if (reloadSignal > 0) load(); }, [reloadSignal, load]);
-  useEffect(() => { load(); }, [isWorkerRunning, load]);
-  useEffect(() => { if (workerProgress?.completed > 0) load(); }, [workerProgress?.completed, load]);
 
   // ── Computed stats ──
   const s = stats || {};
@@ -158,27 +155,10 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
   const total = activeWRsAll.reduce((sum, wr) => sum + (wr.total_files || 0), 0);
   const pct = total > 0 ? ((completed / total) * 100).toFixed(1) : '0.0';
 
-  // ── Workers ──
-  const wp = workerProgress;
-  const localWorker = (isElectron && (isWorkerRunning || (wp && (wp.currentPhase || wp.completed > 0)))) ? {
-    name: t('bb.local_worker'),
-    phase: wp?.currentPhase || null,
-    phaseIndex: wp?.phaseIndex || 0,
-    phaseCount: wp?.phaseCount || 0,
-    batchSize: wp?.batchSize || 0,
-    currentFile: wp?.currentFile || '',
-    throughput: wp?.throughput || 0,
-    state: wp?.workerState || (isWorkerRunning ? 'idle' : 'idle'),
-    mode: wp?.processingMode || 'full',
-  } : null;
-
-  // Remote workers from server sessions:
-  // - Exclude __builtin__ (embedded worker = server auto-processing, shown in Stage 3)
-  // - Exclude local IPC worker duplicate (already shown as localWorker)
-  const remoteWorkers = workers
+  // ── Workers (external only, embedded worker shown in Stage 3) ──
+  const allWorkers = workers
     .filter(w => w.status === 'online')
     .filter(w => w.worker_name !== '__builtin__')
-    .filter(w => !(localWorker && isElectron))
     .map(w => ({
       name: w.worker_name || w.username,
       phase: w.current_phase,
@@ -188,10 +168,8 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
       state: w.current_phase ? 'active' : 'idle',
       mode: w.processing_mode_override || 'full',
     }));
-
-  const allWorkers = localWorker ? [localWorker, ...remoteWorkers] : remoteWorkers;
   const activeWRs = activeWRsAll;
-  const isRunning = throughput > 0 || processing > 0 || (wp?.currentPhase != null);
+  const isRunning = throughput > 0 || processing > 0 || ewRunning;
   isActiveRef.current = isRunning;
 
   return (

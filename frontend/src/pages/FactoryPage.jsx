@@ -1,6 +1,5 @@
 /**
- * FactoryPage — Processing factory: Queue dashboard + Workers + Dashboard + Logs
- * Combines panels previously in AdminPage + ClientWorkerView
+ * FactoryPage — Processing factory: Pipeline dashboard + Workers + Dashboard + Logs
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -10,16 +9,11 @@ import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
 import { WorkersPanel, DashboardPanel } from './AdminPage';
 import { MyWorkersSection, ConnectMyPC } from './WorkerPage';
-import ClientWorkerView from '../components/ClientWorkerView';
 import PipelineBlackboard from '../components/PipelineBlackboard';
 
 export default function FactoryPage({
   isAdmin,
   appMode,
-  isWorkerRunning,
-  workerProgress,
-  onWorkerStart,
-  onWorkerStop,
   queueReloadSignal,
 }) {
   const { t } = useLocale();
@@ -79,7 +73,6 @@ export default function FactoryPage({
             <span className={`font-bold ${failed > 0 ? 'text-red-400' : 'text-gray-500'}`}>{failed}</span>
           </span>
 
-          {/* Progress bar when there are active jobs */}
           {(pending + processing) > 0 && (completed + pending + processing) > 0 && (
             <div className="flex items-center gap-2 flex-1 max-w-xs">
               <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
@@ -125,22 +118,16 @@ export default function FactoryPage({
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {activeTab === 'pipeline' && (
-          <PipelineBlackboard workerProgress={workerProgress} reloadSignal={queueReloadSignal} isWorkerRunning={isWorkerRunning} appMode={appMode} />
+          <PipelineBlackboard reloadSignal={queueReloadSignal} appMode={appMode} />
         )}
         {activeTab === 'workers' && (
           <div className="p-4 space-y-6">
-            {/* Admin: full workers panel; Non-admin: my workers + connect */}
             {isAdmin ? (
               <WorkersPanel />
             ) : (
               <>
-                <ClientWorkerView
-                  appMode={appMode}
-                  isWorkerRunning={isWorkerRunning}
-                  workerProgress={workerProgress}
-                  onWorkerStart={onWorkerStart}
-                  onWorkerStop={onWorkerStop}
-                />
+                <MyWorkersSection />
+                <ConnectMyPC />
               </>
             )}
           </div>

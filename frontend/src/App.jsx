@@ -5,7 +5,6 @@ import SearchPanel from './components/SearchPanel';
 import ResumeDialog from './components/ResumeDialog';
 import ImportDbDialog from './components/ImportDbDialog';
 import ServerArchiveView from './components/ServerArchiveView';
-import ClientWorkerView from './components/ClientWorkerView';
 import LoginPage from './pages/LoginPage';
 import LoginPageV2 from './pages/LoginPageV2';
 import AdminPage from './pages/AdminPage';
@@ -77,26 +76,6 @@ function App() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditResult, setAuditResult] = useState(null);
   const [retryLoading, setRetryLoading] = useState(false);
-
-  // Worker progress state (client mode)
-  const [isWorkerRunning, setIsWorkerRunning] = useState(false);
-  const [workerProgress, setWorkerProgress] = useState({
-    batchSize: 0,
-    currentPhase: '',       // "parse" | "vision" | "embed_vv" | "embed_mv" | "uploading"
-    phaseIndex: 0,          // 1-based progress within current phase
-    phaseCount: 0,          // total files in current phase
-    currentFile: '',
-    completed: 0, failed: 0,
-    totalQueue: 0, pending: 0,
-    etaMs: null, throughput: 0,  // overall items/min
-    processingMode: 'full',     // "full" | "mc_only" | "embed_only" — controls phase pill dimming
-    workerState: 'active',      // "active" | "idle" | "resting" — from state machine
-    // Per-phase speed (files/min) — updated on phase_complete
-    phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
-    // Per-phase elapsed (seconds) — updated on phase_complete
-    phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
-  });
-  const workerThroughputRef = useRef({ windowTimes: [] });
 
   // App mode: 'server' | 'client' | 'web'
   // Electron: restore from localStorage, default null (LoginPage decides after login)
@@ -201,18 +180,6 @@ function App() {
 
   const handleModeReset = async () => {
     // Stop ALL running backend processes before returning to LoginPage
-    if (isWorkerRunning) {
-      try { await window.electron?.worker?.stop(); } catch { /* ignore */ }
-      setIsWorkerRunning(false);
-      setWorkerProgress({
-        batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
-        currentFile: '', completed: 0, failed: 0, totalQueue: 0, pending: 0,
-        etaMs: null, throughput: 0, processingMode: 'full', workerState: 'active',
-        phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
-        phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
-      });
-      workerThroughputRef.current = { windowTimes: [] };
-    }
     if (isProcessing) {
       window.electron?.pipeline?.stop();
       setIsProcessing(false);
@@ -566,148 +533,6 @@ function App() {
     return () => clearTimeout(timer);
   }, [appMode, serverPort, serverRunning]);
 
-  // Worker IPC event listeners (Electron — both server and client mode)
-  useEffect(() => {
-    if (!isElectron) return;
-    const w = window.electron?.worker;
-    if (!w) return;
-
-    const onStatus = (data) => {
-      if (data.status === 'error') {
-        setIsWorkerRunning(false);
-      } else {
-        setIsWorkerRunning(data.status === 'running');
-      }
-    };
-
-    const onBatchStart = (data) => {
-      setWorkerProgress(prev => ({
-        ...prev,
-        batchSize: data.batch_size,
-        currentPhase: 'starting',
-        phaseIndex: 0,
-      }));
-    };
-
-    const onBatchPhaseStart = (data) => {
-      setWorkerProgress(prev => ({
-        ...prev,
-        currentPhase: data.phase,
-        phaseIndex: 0,
-        phaseCount: data.count,
-      }));
-    };
-
-    const onBatchFileDone = (data) => {
-      setWorkerProgress(prev => ({
-        ...prev,
-        currentPhase: data.phase,
-        phaseIndex: data.index,
-        phaseCount: data.count,
-        currentFile: data.file_name || prev.currentFile,
-      }));
-    };
-
-    const onBatchPhaseComplete = (data) => {
-      // Update per-phase speed when a phase finishes
-      setWorkerProgress(prev => ({
-        ...prev,
-        phaseFpm: { ...prev.phaseFpm, [data.phase]: data.files_per_min || 0 },
-        phaseElapsed: { ...prev.phaseElapsed, [data.phase]: data.elapsed_s || 0 },
-      }));
-    };
-
-    const onBatchComplete = (data) => {
-      // Batch complete — update overall throughput from backend timing
-      if (data.phase_fpm) {
-        setWorkerProgress(prev => ({
-          ...prev,
-          phaseFpm: { ...prev.phaseFpm, ...data.phase_fpm },
-        }));
-      }
-    };
-
-    const onJobDone = (data) => {
-      if (!data.success) {
-        setWorkerProgress(prev => ({ ...prev, failed: prev.failed + 1 }));
-        return;
-      }
-      const now = Date.now();
-      const ref = workerThroughputRef.current;
-      ref.windowTimes.push(now);
-      // Keep 60-second sliding window for items/min calculation
-      ref.windowTimes = ref.windowTimes.filter(t => now - t < 60000);
-      const elapsedSec = ref.windowTimes.length > 1
-        ? (now - ref.windowTimes[0]) / 1000
-        : 0;
-      // Throughput in items/min
-      const throughput = elapsedSec > 0
-        ? (ref.windowTimes.length / elapsedSec) * 60
-        : 0;
-
-      setWorkerProgress(prev => {
-        const newCompleted = prev.completed + 1;
-        const remaining = Math.max(0, prev.pending - 1);
-        const perSec = throughput / 60;
-        const etaMs = perSec > 0 && remaining > 0 ? (remaining / perSec) * 1000 : null;
-        return { ...prev, completed: newCompleted, pending: remaining, throughput, etaMs };
-      });
-    };
-
-    const onProcessingMode = (data) => {
-      setWorkerProgress(prev => ({ ...prev, processingMode: data.mode || 'full' }));
-    };
-
-    const onWorkerState = (data) => {
-      setWorkerProgress(prev => ({ ...prev, workerState: data.state || 'active' }));
-    };
-
-    w.onStatus(onStatus);
-    w.onBatchStart?.(onBatchStart);
-    w.onBatchPhaseStart?.(onBatchPhaseStart);
-    w.onBatchFileDone?.(onBatchFileDone);
-    w.onBatchPhaseComplete?.(onBatchPhaseComplete);
-    w.onBatchComplete?.(onBatchComplete);
-    w.onJobDone(onJobDone);
-    w.onProcessingMode?.(onProcessingMode);
-    w.onWorkerState?.(onWorkerState);
-
-    return () => {
-      w.offStatus();
-      w.offBatchStart?.();
-      w.offBatchPhaseStart?.();
-      w.offBatchFileDone?.();
-      w.offBatchPhaseComplete?.();
-      w.offBatchComplete?.();
-      w.offJobDone();
-      w.offProcessingMode?.();
-      w.offWorkerState?.();
-    };
-  }, [appMode]);
-
-  // Worker queue stats polling (client mode, 5s interval)
-  useEffect(() => {
-    if (appMode !== 'client' || !isWorkerRunning) return;
-    const fetchStats = async () => {
-      try {
-        const data = await getJobStats();
-        if (data && data.success !== false) {
-          setWorkerProgress(prev => ({
-            ...prev,
-            totalQueue: data.total || 0,
-            pending: (data.pending || 0) + (data.assigned || 0) + (data.processing || 0),
-            failed: data.failed || prev.failed,
-            etaMs: data.eta_seconds != null ? data.eta_seconds * 1000 : prev.etaMs,
-            throughput: data.throughput || prev.throughput,
-          }));
-        }
-      } catch { /* ignore */ }
-    };
-    fetchStats();
-    const interval = setInterval(fetchStats, 5000);
-    return () => clearInterval(interval);
-  }, [appMode, isWorkerRunning]);
-
   // Server queue stats polling (server mode, 5s interval)
   const [serverQueueStats, setServerQueueStats] = useState(null);
   useEffect(() => {
@@ -760,41 +585,6 @@ function App() {
     checkDomain();
   }, [appMode, skipAuth, isAuthenticated]);
 
-  // Manual worker start handler (called from ClientWorkerView)
-  const handleWorkerStart = async () => {
-    if (!isElectron || isWorkerRunning) return;
-    const w = window.electron?.worker;
-    if (!w) return;
-
-    try {
-      // Check if server is in builtin_worker mode — no separate worker needed
-      const cfgResult = await window.electron?.pipeline?.getConfig();
-      const processingMode = cfgResult?.config?.server?.processing_mode;
-      if (processingMode === 'builtin_worker') {
-        showToast(t('audit.worker_already_running'), 'info');
-        return;
-      }
-
-      const creds = getWorkerCredentials();
-      const result = await w.start({
-        serverUrl: getServerUrl() || `http://localhost:${serverPort}`,
-        accessToken: creds ? '' : (getAccessToken() || ''),   // Only use tokens if no credentials
-        refreshToken: creds ? '' : (getRefreshToken() || ''), // Credentials = independent login
-        username: creds?.username || '',
-        password: creds?.password || '',
-      });
-      if (result?.success) {
-        setIsWorkerRunning(true);
-      } else if (result?.error?.includes('already running')) {
-        setIsWorkerRunning(true);
-      } else if (result?.success === false) {
-        appendLog({ message: result.error || 'Failed to start worker', type: 'error' });
-      }
-    } catch (e) {
-      appendLog({ message: `Worker start failed: ${e.message}`, type: 'error' });
-    }
-  };
-
   const handleTunnelStart = async () => {
     if (!window.electron?.tunnel) return;
     setTunnelDownloading(true);
@@ -811,24 +601,6 @@ function App() {
     await window.electron.tunnel.stop();
     setTunnelRunning(false);
     setTunnelUrl(null);
-  };
-
-  const handleWorkerStop = async () => {
-    if (!isElectron || !window.electron?.worker) return;
-    try {
-      await window.electron.worker.stop();
-      setIsWorkerRunning(false);
-      setWorkerProgress({
-        batchSize: 0, currentPhase: '', phaseIndex: 0, phaseCount: 0,
-        currentFile: '', completed: 0, failed: 0, totalQueue: 0, pending: 0,
-        etaMs: null, throughput: 0, processingMode: 'full', workerState: 'active',
-        phaseFpm: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
-        phaseElapsed: { parse: 0, vision: 0, embed_vv: 0, embed_mv: 0 },
-      });
-      workerThroughputRef.current = { windowTimes: [] };
-    } catch (e) {
-      appendLog({ message: `Worker stop failed: ${e.message}`, type: 'error' });
-    }
   };
 
   const handleServerToggle = async () => {
@@ -1013,7 +785,7 @@ function App() {
     }
 
     // Electron client mode with active worker: route through server API → queue for workers
-    if (appMode === 'client' && isWorkerRunning) {
+    if (appMode === 'client' && false /* isWorkerRunning removed */) {
       try {
         const result = await scanFolder(folderPath);
         appendLog({
@@ -1060,7 +832,7 @@ function App() {
     }
 
     // Web/Client mode: scan each folder via API (creates separate work_requests)
-    if (!isElectron || (appMode === 'client' && isWorkerRunning)) {
+    if (!isElectron || (appMode === 'client' && false /* isWorkerRunning removed */)) {
       let totalJobs = 0;
       try {
         for (const folder of folderPaths) {
@@ -1099,7 +871,7 @@ function App() {
     setCurrentPath(incompleteFolders[0]);
 
     // Client mode with active worker: route all folders through server API
-    if (appMode === 'client' && isWorkerRunning) {
+    if (appMode === 'client' && false /* isWorkerRunning removed */) {
       let totalJobs = 0;
       try {
         for (const folder of incompleteFolders) {
@@ -1160,7 +932,7 @@ function App() {
     }
 
     // Client mode with active worker: route all folders through server API
-    if (appMode === 'client' && isWorkerRunning) {
+    if (appMode === 'client' && false /* isWorkerRunning removed */) {
       let totalJobs = 0;
       try {
         for (const folder of folderPaths) {
@@ -1340,14 +1112,14 @@ function App() {
           handleServerToggle();
           break;
         case 'toggle-worker':
-          if (isWorkerRunning) handleWorkerStop();
-          else handleWorkerStart();
+          if (false /* isWorkerRunning removed */) /* handleWorkerStop removed */;
+          else /* handleWorkerStart removed */;
           break;
       }
     };
     window.addEventListener('electron-menu-action', handler);
     return () => window.removeEventListener('electron-menu-action', handler);
-  }, [isElectron, isWorkerRunning]);
+  }, [isElectron, false /* isWorkerRunning removed */]);
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
 
@@ -1621,8 +1393,8 @@ function App() {
                 <button
                   onClick={() => {
                     setAuditResult(null);
-                    if (!isWorkerRunning) {
-                      handleWorkerStart();
+                    if (!false /* isWorkerRunning removed */) {
+                      /* handleWorkerStart removed */;
                       showToast(t('audit.worker_started'), 'success');
                     } else {
                       showToast(t('audit.worker_already_running'), 'info');
@@ -1931,7 +1703,7 @@ function App() {
                 <span>{user.username}</span>
               </div>
               <button
-                onClick={() => { if (isWorkerRunning) handleWorkerStop(); logout(); }}
+                onClick={() => { if (false /* isWorkerRunning removed */) /* handleWorkerStop removed */; logout(); }}
                 className="flex items-center space-x-1 px-2 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-red-400 hover:bg-gray-700/50 transition-colors"
                 title={t('auth.logout')}
               >
@@ -2011,10 +1783,10 @@ function App() {
               <FactoryPage
                 isAdmin={isAdmin}
                 appMode={appMode}
-                isWorkerRunning={isWorkerRunning}
-                workerProgress={workerProgress}
-                onWorkerStart={handleWorkerStart}
-                onWorkerStop={handleWorkerStop}
+                false /* isWorkerRunning removed */={false /* isWorkerRunning removed */}
+                /* workerProgress removed */
+                /* onWorkerStart removed */
+                /* onWorkerStop removed */
                 queueReloadSignal={queueReloadSignal}
               />
             ) : null}
@@ -2054,9 +1826,9 @@ function App() {
             batchInfo={processProgress.batchInfo}
             fileStep={fileStep}
             onStop={handleStopProcess}
-            isWorkerProcessing={isWorkerRunning && appMode === 'client'}
-            workerProgress={workerProgress}
-            onWorkerStop={handleWorkerStop}
+            isWorkerProcessing={false /* isWorkerRunning removed */ && appMode === 'client'}
+            /* workerProgress removed */
+            /* onWorkerStop removed */
             serverQueueStats={serverQueueStats}
           />
         </div>
