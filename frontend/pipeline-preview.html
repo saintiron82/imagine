@@ -43,7 +43,9 @@ body { background: #030712; color: #e5e7eb; font-family: ui-monospace, monospace
   <div class="flex items-center gap-2">
     <button onclick="addWR('webdav')" class="toolbar-btn border-blue-700/40 text-blue-400 bg-blue-900/20">+ WR (WebDAV)</button>
     <button onclick="addWR('local')" class="toolbar-btn border-teal-700/40 text-teal-400 bg-teal-900/20">+ WR (Local)</button>
-    <button onclick="addWorker()" class="toolbar-btn border-purple-700/40 text-purple-400 bg-purple-900/20">+ Worker</button>
+    <button onclick="addWorker('full')" class="toolbar-btn border-purple-700/40 text-purple-400 bg-purple-900/20">+ Full</button>
+    <button onclick="addWorker('mc_only')" class="toolbar-btn border-amber-700/40 text-amber-400 bg-amber-900/20">+ MC Only</button>
+    <button onclick="addWorker('embed_only')" class="toolbar-btn border-orange-700/40 text-orange-400 bg-orange-900/20">+ Embed</button>
     <div class="w-px h-4 bg-gray-800"></div>
     <button onclick="tick()" class="toolbar-btn border-green-700/40 text-green-400 bg-green-900/20">▶ Tick</button>
     <button onclick="toggleAuto()" id="auto-btn" class="toolbar-btn border-emerald-700/40 text-emerald-400 bg-emerald-900/20">▶▶ Auto</button>
@@ -260,8 +262,9 @@ function init() {
   });
 
   data.workers = [
-    { id: 'w-0', name: 'W-1', phase: 'vision', idx: 3, count: 5, throughput: 4.2, file: 'hero.psd', jobId: null, state: 'active' },
-    { id: 'w-1', name: 'W-2', phase: 'embed_vv', idx: 2, count: 5, throughput: 3.1, file: 'bg.psd', jobId: null, state: 'active' },
+    { id: 'w-0', name: 'W-1', mode: 'full', phase: 'vision', idx: 3, count: 5, throughput: 4.2, file: 'hero.psd', jobId: null, state: 'active' },
+    { id: 'w-1', name: 'W-2', mode: 'embed_only', phase: 'embed_vv', idx: 2, count: 5, throughput: 3.1, file: 'bg.psd', jobId: null, state: 'active' },
+    { id: 'w-2', name: 'W-3', mode: 'mc_only', phase: null, idx: 0, count: 0, throughput: 0, file: null, jobId: null, state: 'idle' },
   ];
 }
 
@@ -305,22 +308,47 @@ function tick() {
   const toParse = j.find(x => x.fileReady === 1 && !x.parseStatus && x.workerStatus === 'pending');
   if (toParse) { toParse.parseStatus = 'parsed'; }
 
-  // Workers
+  // Workers — respect processing mode
+  const MODE_PHASES = { full: ['vision','embed_vv','embed_mv'], mc_only: ['vision'], embed_only: ['embed_vv','embed_mv'] };
+
   data.workers.forEach(w => {
+    const phases = MODE_PHASES[w.mode] || MODE_PHASES.full;
+    const firstPhase = phases[0];
+    const nextPhase = (current) => { const i = phases.indexOf(current); return i < phases.length - 1 ? phases[i + 1] : null; };
+
     if (w.state === 'idle') {
-      const ready = j.find(x => x.parseStatus === 'parsed' && x.workerStatus === 'pending');
+      // mc_only workers need parsed+pending jobs (MC not done)
+      // embed_only workers need jobs with vision done but embed not done
+      // full workers need parsed+pending jobs
+      let ready;
+      if (w.mode === 'embed_only') {
+        ready = j.find(x => x.parseStatus === 'parsed' && x.workerStatus === 'pending' && x.phase.vision && !x.phase.embed_vv);
+      } else {
+        ready = j.find(x => x.parseStatus === 'parsed' && x.workerStatus === 'pending' && !x.phase.vision);
+      }
       if (ready) {
         ready.workerStatus = 'processing';
-        w.state = 'active'; w.phase = 'vision'; w.idx = 0; w.count = 1;
+        w.state = 'active'; w.phase = firstPhase; w.idx = 0; w.count = 1;
         w.file = ready.fileName; w.jobId = ready.id;
       }
     } else if (w.state === 'active' && w.jobId) {
       const job = j.find(x => x.id === w.jobId);
       if (!job) { w.state = 'idle'; w.phase = null; return; }
-      if (w.phase === 'vision') { job.phase.vision = true; w.phase = 'embed_vv'; }
-      else if (w.phase === 'embed_vv') { job.phase.embed_vv = true; w.phase = 'embed_mv'; }
-      else if (w.phase === 'embed_mv') {
-        job.phase.embed_mv = true; job.workerStatus = 'completed';
+      // Mark current phase done and advance
+      if (w.phase === 'vision') job.phase.vision = true;
+      else if (w.phase === 'embed_vv') job.phase.embed_vv = true;
+      else if (w.phase === 'embed_mv') job.phase.embed_mv = true;
+
+      const next = nextPhase(w.phase);
+      if (next) {
+        w.phase = next;
+      } else {
+        // Check if all 3 phases are done (might need another worker mode to finish)
+        if (job.phase.vision && job.phase.embed_vv && job.phase.embed_mv) {
+          job.workerStatus = 'completed';
+        } else {
+          job.workerStatus = 'pending'; // Return to pool for another worker
+        }
         w.state = 'idle'; w.phase = null; w.file = null; w.jobId = null;
         w.throughput = +(Math.random() * 3 + 2).toFixed(1);
       }
@@ -373,9 +401,9 @@ function addWR(type) {
   render();
 }
 
-function addWorker() {
+function addWorker(mode) {
   const id = `w-${wN}`;
-  data.workers.push({ id, name: `W-${wN + 1}`, phase: null, idx: 0, count: 0, throughput: 0, file: null, jobId: null, state: 'idle' });
+  data.workers.push({ id, name: `W-${wN + 1}`, mode: mode || 'full', phase: null, idx: 0, count: 0, throughput: 0, file: null, jobId: null, state: 'idle' });
   wN++;
   render();
 }
@@ -439,15 +467,32 @@ function render() {
   // Stage 4: Buffer
   document.getElementById('buffer-count').textContent = s.parsed;
 
-  // Stage 5: Workers
+  // Stage 5: Workers — with processing mode
+  const MODE_PH = { full: ['vision','embed_vv','embed_mv'], mc_only: ['vision'], embed_only: ['embed_vv','embed_mv'] };
+  const MODE_LBL = { full: 'FULL', mc_only: 'MC ONLY', embed_only: 'EMBED' };
+  const MODE_CLR = { full: 'text-gray-500', mc_only: 'text-amber-500', embed_only: 'text-orange-500' };
+
   document.getElementById('worker-area').innerHTML = data.workers.map(w => {
     const isActive = w.state === 'active';
     const phIdx = w.phase ? PHASES.indexOf(w.phase) : -1;
+    const enabledPhases = MODE_PH[w.mode] || MODE_PH.full;
+
     const phases = PHASES.map((p, i) => {
-      const cfg = PH[p]; const cur = w.phase === p; const past = phIdx > i;
+      const cfg = PH[p];
+      const enabled = enabledPhases.includes(p);
+      const cur = enabled && w.phase === p;
+      const past = enabled && phIdx > i;
+
+      if (!enabled) {
+        return `<div class="relative w-11 h-11 rounded-lg border-2 border-gray-800/20 bg-gray-900/30 flex items-center justify-center flex-shrink-0">
+          <div class="absolute -top-1.5 left-1/2 -translate-x-1/2 px-1 rounded-sm text-[5px] uppercase tracking-widest font-mono font-bold bg-gray-900/90 border border-gray-700/30 text-gray-800">${cfg.label}</div>
+          <span class="text-[8px] text-gray-800 font-mono">—</span>
+        </div>`;
+      }
+
       const bc = cur ? `${cfg.border} ${cfg.shadow}` : past ? 'border-gray-600/30' : 'border-gray-700/20';
       const bg = cur ? 'bg-gradient-to-b from-gray-800/80 to-gray-900' : 'bg-gray-800/60';
-      const ic = cur ? `${cfg.anim}` : past ? 'opacity-30' : 'opacity-20';
+      const ic = cur ? cfg.anim : past ? 'opacity-30' : 'opacity-20';
       const ck = past ? '<span class="absolute -top-0.5 -right-0.5 text-[6px] text-green-500/70">✓</span>' : '';
       return `<div class="relative w-11 h-11 rounded-lg border-2 ${bc} ${bg} flex items-center justify-center flex-shrink-0">
         <div class="absolute -top-1.5 left-1/2 -translate-x-1/2 px-1 rounded-sm text-[5px] uppercase tracking-widest font-mono font-bold bg-gray-900/90 border border-gray-700/30" ${cur ? `style="color:${cfg.color}"` : ''}>${cfg.label}</div>
@@ -457,7 +502,10 @@ function render() {
 
     return `<div class="flex items-center gap-3 rounded-lg border ${isActive ? 'border-gray-600/30 bg-gray-800/20' : 'border-gray-800/20 bg-gray-900/10'} px-3 py-2">
       <span class="w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'} flex-shrink-0"></span>
-      <span class="text-[11px] font-mono text-gray-300 font-bold w-8">${w.name}</span>
+      <div class="flex flex-col w-12 flex-shrink-0">
+        <span class="text-[11px] font-mono text-gray-300 font-bold">${w.name}</span>
+        <span class="text-[7px] font-mono ${MODE_CLR[w.mode]}">${MODE_LBL[w.mode]}</span>
+      </div>
       <div class="flex items-center gap-0">${phases}</div>
       <div class="flex-1 min-w-0 ml-2">
         ${w.throughput > 0 ? `<span class="text-[8px] font-mono text-gray-500 tabular-nums">${w.throughput}/m</span>` : ''}
