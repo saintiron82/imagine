@@ -77,16 +77,38 @@ def _get_actual_server_mode() -> str:
 
 
 def _get_embedded_worker_status() -> dict:
-    """Get embedded worker status for stats API."""
+    """Get embedded worker status including current phase from DB session."""
+    result = {"running": False, "jobs_completed": 0, "current_phase": None, "current_file": None}
     try:
         from backend.server.embedded_worker import get_status
         ew = get_status()
-        return {
-            "running": ew.get("running", False),
-            "jobs_completed": ew.get("jobs_completed", 0),
-        }
+        result["running"] = ew.get("running", False)
+        result["jobs_completed"] = ew.get("jobs_completed", 0)
     except Exception:
-        return {"running": False, "jobs_completed": 0}
+        pass
+
+    # Get current phase/file from __builtin__ worker session in DB
+    try:
+        from backend.db.sqlite_client import SQLiteDB
+        db = SQLiteDB()
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """SELECT current_phase, current_file, jobs_completed
+               FROM worker_sessions
+               WHERE worker_name = '__builtin__' AND status = 'online'
+               ORDER BY id DESC LIMIT 1"""
+        )
+        row = cursor.fetchone()
+        if row:
+            result["current_phase"] = row[0]
+            result["current_file"] = row[1]
+            if row[2] and row[2] > result["jobs_completed"]:
+                result["jobs_completed"] = row[2]
+        db.close()
+    except Exception:
+        pass
+
+    return result
 
 
 def _utcnow_sql() -> str:

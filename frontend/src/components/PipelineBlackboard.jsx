@@ -77,6 +77,14 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
   const ew = s.embedded_worker || {};
   const ewRunning = ew.running || false;
   const ewCompleted = ew.jobs_completed || 0;
+  const ewPhase = ew.current_phase || null;
+  const ewFile = ew.current_file || null;
+
+  // Which phases the server handles
+  const serverParse = true; // always
+  const serverMC = ewRunning; // embedded worker does MC
+  const serverVV = serverMode === 'parse_vv' || ewRunning;
+  const serverMV = ewRunning; // embedded worker does MV
   const processing = (s.assigned ?? 0) + (s.processing ?? 0);
   const remaining = (s.pending ?? 0) + (s.assigned ?? 0) + (s.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
@@ -268,40 +276,42 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
           <Belt active={isRunning} color="teal" label="file_ready=1" />
 
           {/* ── STAGE 3: Server Auto-Processing ── */}
-          <Stage label="STAGE 3" title={(() => {
-            if (ewRunning) return 'SERVER · Auto Processing';
-            if (serverMode === 'parse_vv') return 'SERVER · Parse + VV';
-            if (parsing > 0 || parsePending > 0) return 'SERVER · Parsing';
-            return 'SERVER · Idle';
-          })()} color="teal">
-            <div className="flex items-center gap-4 mt-1">
-              <div className={`rounded-lg border-2 ${ewRunning || parsing > 0 || parsePending > 0 ? 'border-teal-600/40 shadow-[0_0_12px_rgba(45,212,191,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-teal-900/15 to-gray-900 w-16 h-16 flex flex-col items-center justify-center flex-shrink-0`}>
-                <span className={`text-2xl ${ewRunning || parsing > 0 || parsePending > 0 ? 'animate-spin-slow' : 'opacity-30'}`}>&#8862;</span>
-                {ewRunning && <span className="text-[6px] text-green-500 font-mono mt-0.5">AUTO</span>}
-                {!ewRunning && <span className="text-[6px] text-teal-600 font-mono mt-0.5">parse</span>}
+          <Stage label="STAGE 3" title="SERVER PROCESSING" color="teal">
+            <div className="mt-1 space-y-2">
+              {/* Phase pills — shows which phases the server handles */}
+              <div className="flex items-center gap-1.5">
+                <PhasePill label="Parse" active={serverParse} current={parsing > 0} done={parsePending === 0 && parsing === 0 && buffer > 0} />
+                <span className="text-gray-700 text-[8px]">→</span>
+                <PhasePill label="MC" active={serverMC} current={ewPhase === 'vision'} color="purple" />
+                <span className="text-gray-700 text-[8px]">→</span>
+                <PhasePill label="VV" active={serverVV} current={ewPhase === 'embed_vv'} color="cyan" />
+                <span className="text-gray-700 text-[8px]">→</span>
+                <PhasePill label="MV" active={serverMV} current={ewPhase === 'embed_mv'} color="emerald" />
+                <span className="text-[7px] text-gray-600 font-mono ml-auto">
+                  {ewRunning ? 'Full Pipeline' : serverMode === 'parse_vv' ? 'Parse + VV' : 'Parse Only'}
+                </span>
               </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-4 mb-1.5">
-                  <div>
-                    <div className="text-[8px] font-mono text-gray-600 mb-0.5">parsing</div>
-                    <span className="text-lg font-mono font-bold text-teal-400 tabular-nums">{parsing}</span>
-                  </div>
-                  <div>
-                    <div className="text-[8px] font-mono text-gray-600 mb-0.5">await</div>
-                    <span className="text-lg font-mono font-bold text-gray-400 tabular-nums">{parsePending}</span>
-                  </div>
-                  {ewRunning && (
-                    <div>
-                      <div className="text-[8px] font-mono text-green-600 mb-0.5">auto done</div>
-                      <span className="text-lg font-mono font-bold text-green-400 tabular-nums">{ewCompleted}</span>
-                    </div>
-                  )}
+              {/* Stats row */}
+              <div className="flex items-center gap-4 text-[9px] font-mono">
+                <span className="text-gray-500">parsing: <span className="text-teal-400 font-bold">{parsing}</span></span>
+                <span className="text-gray-500">await: <span className="text-gray-400">{parsePending}</span></span>
+                {ewCompleted > 0 && <span className="text-gray-500">done: <span className="text-green-400 font-bold">{ewCompleted}</span></span>}
+                {throughput > 0 && <span className="text-gray-500"><Zap size={9} className="inline text-yellow-500" /> {throughput.toFixed(1)}/m</span>}
+              </div>
+              {/* Current file */}
+              {ewFile && (
+                <div className="text-[8px] text-gray-600 font-mono truncate">
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${ewPhase ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
+                  {ewFile}
                 </div>
-                <div className="text-[7px] text-gray-600 font-mono">
-                  {ewRunning
-                    ? 'Parse + Download + MC + VV + MV (server self-processing)'
-                    : 'PSD/PNG → thumbnail + metadata extraction'}
-                </div>
+              )}
+              {/* Mode description */}
+              <div className="text-[7px] text-gray-700 font-mono pt-1 border-t border-gray-800/30">
+                {ewRunning
+                  ? 'Server self-processing: Parse → MC → VV → MV (all phases)'
+                  : serverMode === 'parse_vv'
+                    ? 'Server: Parse + VV — workers handle MC + MV'
+                    : 'Server: Parse only — workers handle MC + VV + MV'}
               </div>
             </div>
           </Stage>
@@ -453,6 +463,29 @@ function Belt({ active, color, label }) {
 }
 
 // ─── Worker Line ─────────────────────────────────────────
+
+// ─── Phase Pill (server processing indicator) ────────────
+
+const PILL_COLORS = {
+  teal:    { active: 'border-teal-500/60 bg-teal-900/30 text-teal-400', current: 'border-teal-400 bg-teal-800/40 text-teal-300 shadow-[0_0_8px_rgba(45,212,191,0.3)]' },
+  purple:  { active: 'border-purple-500/60 bg-purple-900/30 text-purple-400', current: 'border-purple-400 bg-purple-800/40 text-purple-300 shadow-[0_0_8px_rgba(168,85,247,0.3)]' },
+  cyan:    { active: 'border-cyan-500/60 bg-cyan-900/30 text-cyan-400', current: 'border-cyan-400 bg-cyan-800/40 text-cyan-300 shadow-[0_0_8px_rgba(6,182,212,0.3)]' },
+  emerald: { active: 'border-emerald-500/60 bg-emerald-900/30 text-emerald-400', current: 'border-emerald-400 bg-emerald-800/40 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]' },
+};
+
+function PhasePill({ label, active, current, done, color = 'teal' }) {
+  const c = PILL_COLORS[color] || PILL_COLORS.teal;
+  if (!active) {
+    return <span className="px-2 py-0.5 rounded border border-gray-800/30 text-[8px] font-mono text-gray-700 bg-gray-900/20">
+      {label} <span className="text-[6px]">—</span>
+    </span>;
+  }
+  return (
+    <span className={`px-2 py-0.5 rounded border text-[8px] font-mono font-bold transition-all ${current ? c.current + ' animate-pulse' : c.active}`}>
+      {label} {current ? '●' : done ? '✓' : '○'}
+    </span>
+  );
+}
 
 // Which phases each mode can execute
 const MODE_PHASES = {
