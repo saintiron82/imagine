@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Pipeline Blackboard — Tollgate Architecture</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    animation: {
+      'spin-slow': 'spin 3s linear infinite',
+      'machine-pulse': 'machine-pulse 2s ease-in-out infinite',
+      'flow-right': 'flow-right 1.2s linear infinite',
+    },
+    keyframes: {
+      'machine-pulse': { '0%, 100%': { transform: 'scale(1)' }, '50%': { transform: 'scale(1.12)' } },
+      'flow-right': { '0%': { transform: 'translateX(-100%)' }, '100%': { transform: 'translateX(200%)' } },
+    },
+  }},
+}
+</script>
+<style>
+body { background: #030712; color: #e5e7eb; font-family: ui-monospace, monospace; margin: 0; }
+.stage { @apply border-2 rounded-xl p-3 relative; }
+.stage-label { @apply absolute -top-3 left-3 px-2 py-0 text-[9px] uppercase tracking-widest font-mono font-bold rounded-sm; }
+.belt { @apply relative h-2 rounded-full overflow-hidden; }
+.belt-bg { @apply absolute inset-0 bg-gray-700/40; }
+.belt-flow { @apply absolute inset-0 w-[50%] rounded-full; }
+.toolbar-btn { @apply px-2.5 py-1 text-[9px] font-mono border rounded cursor-pointer transition-all hover:brightness-125; }
+</style>
+</head>
+<body class="h-screen flex flex-col bg-gray-950 select-none overflow-hidden">
+
+<!-- Title Bar -->
+<div class="flex items-center justify-between px-4 py-2 border-b border-gray-800/50 flex-shrink-0 z-30">
+  <div class="flex items-center gap-3">
+    <span class="text-[11px] uppercase tracking-[0.2em] text-gray-500 font-mono font-bold">PIPELINE BLACKBOARD</span>
+    <span id="live-badge" class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-green-900/30 border border-green-800/40">
+      <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+      <span class="text-[10px] font-mono text-green-400">LIVE</span>
+    </span>
+  </div>
+  <div class="flex items-center gap-2">
+    <button onclick="addWR('webdav')" class="toolbar-btn border-blue-700/40 text-blue-400 bg-blue-900/20">+ WR (WebDAV)</button>
+    <button onclick="addWR('local')" class="toolbar-btn border-teal-700/40 text-teal-400 bg-teal-900/20">+ WR (Local)</button>
+    <button onclick="addWorker()" class="toolbar-btn border-purple-700/40 text-purple-400 bg-purple-900/20">+ Worker</button>
+    <div class="w-px h-4 bg-gray-800"></div>
+    <button onclick="tick()" class="toolbar-btn border-green-700/40 text-green-400 bg-green-900/20">▶ Tick</button>
+    <button onclick="toggleAuto()" id="auto-btn" class="toolbar-btn border-emerald-700/40 text-emerald-400 bg-emerald-900/20">▶▶ Auto</button>
+    <button onclick="resetAll()" class="toolbar-btn border-gray-700/40 text-gray-500 bg-gray-900/20">Reset</button>
+  </div>
+</div>
+
+<!-- Factory Floor -->
+<div class="flex-1 overflow-auto p-4">
+  <div class="flex flex-col gap-3 max-w-6xl mx-auto">
+
+    <!-- ══════ STAGE 1: WORK REQUESTS (발주서) ══════ -->
+    <div class="stage border-gray-700/30 bg-gray-900/30">
+      <div class="stage-label bg-gray-800 text-gray-400 border border-gray-700/40">STAGE 1 · WORK REQUESTS</div>
+      <div id="wr-area" class="flex flex-wrap gap-2 mt-1 min-h-[40px]"></div>
+    </div>
+
+    <!-- Belt: WR → Stage 2 -->
+    <div class="flex items-center gap-2 px-6">
+      <div class="text-[8px] text-gray-600">▼</div>
+      <div class="flex-1 belt"><div class="belt-bg"></div><div id="belt-1" class="belt-flow bg-blue-500/30"></div></div>
+      <div class="text-[7px] text-gray-600 font-mono w-20 text-right" id="belt-1-label">파일 등록</div>
+    </div>
+
+    <!-- ══════ STAGE 2: JOB POOL (작업 풀) — 2 lanes ══════ -->
+    <div class="stage border-yellow-700/20 bg-yellow-900/5">
+      <div class="stage-label bg-yellow-900/80 text-yellow-500 border border-yellow-700/30">STAGE 2 · JOB POOL</div>
+      <div class="grid grid-cols-2 gap-3 mt-1">
+        <!-- Lane A: Download Required -->
+        <div class="rounded-lg border border-blue-800/30 bg-blue-900/5 p-2">
+          <div class="flex items-center gap-1.5 mb-2">
+            <span class="text-lg">⬇</span>
+            <span class="text-[9px] font-mono text-blue-400 font-bold uppercase">Download Lane</span>
+            <span class="text-[9px] font-mono text-gray-600 ml-auto">WebDAV → Local</span>
+          </div>
+          <div class="flex items-center gap-2 mb-1.5">
+            <div class="text-[8px] font-mono text-gray-600">대기</div>
+            <div id="dl-waiting" class="text-lg font-mono font-bold text-blue-400 tabular-nums">0</div>
+            <div class="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden"><div id="dl-bar" class="h-full bg-blue-500/50 rounded-full transition-all"></div></div>
+            <div class="text-[8px] font-mono text-gray-600">완료</div>
+            <div id="dl-done" class="text-lg font-mono font-bold text-teal-400 tabular-nums">0</div>
+          </div>
+          <div class="text-[7px] text-gray-600 font-mono">DownloadPool: <span id="dl-threads" class="text-blue-400">3</span> threads 병렬</div>
+        </div>
+        <!-- Lane B: Direct (Local) -->
+        <div class="rounded-lg border border-teal-800/30 bg-teal-900/5 p-2">
+          <div class="flex items-center gap-1.5 mb-2">
+            <span class="text-lg">📁</span>
+            <span class="text-[9px] font-mono text-teal-400 font-bold uppercase">Direct Lane</span>
+            <span class="text-[9px] font-mono text-gray-600 ml-auto">Local → Ready</span>
+          </div>
+          <div class="flex items-center gap-2 mb-1.5">
+            <div class="text-[8px] font-mono text-gray-600">즉시</div>
+            <div id="direct-count" class="text-lg font-mono font-bold text-teal-400 tabular-nums">0</div>
+            <div class="text-[7px] text-gray-500 font-mono">file_ready=1 (등록 즉시)</div>
+          </div>
+          <div class="text-[7px] text-gray-600 font-mono">다운로드 불필요 · 바로 파서 진입</div>
+        </div>
+      </div>
+      <!-- Pool summary -->
+      <div class="flex items-center gap-4 mt-2 pt-2 border-t border-gray-800/30">
+        <div class="text-[8px] font-mono text-gray-500">전체 풀:</div>
+        <div class="text-[8px] font-mono"><span class="text-yellow-400 font-bold" id="pool-total">0</span> total</div>
+        <div class="text-[8px] font-mono"><span class="text-green-400 font-bold" id="pool-ready">0</span> ready (file_ready=1)</div>
+        <div class="text-[8px] font-mono"><span class="text-blue-400" id="pool-waiting">0</span> DL waiting</div>
+        <div class="text-[8px] font-mono text-gray-600">ORDER BY priority DESC, created_at ASC</div>
+      </div>
+    </div>
+
+    <!-- Belt: Pool → Parser -->
+    <div class="flex items-center gap-2 px-6">
+      <div class="text-[8px] text-gray-600">▼</div>
+      <div class="flex-1 belt"><div class="belt-bg"></div><div id="belt-2" class="belt-flow bg-teal-500/30"></div></div>
+      <div class="text-[7px] text-gray-600 font-mono w-20 text-right">file_ready=1</div>
+    </div>
+
+    <!-- ══════ STAGE 3: PARSER (서버 전담) ══════ -->
+    <div class="stage border-teal-700/20 bg-teal-900/5">
+      <div class="stage-label bg-teal-900/80 text-teal-400 border border-teal-700/30">STAGE 3 · PARSER (Server CPU)</div>
+      <div class="flex items-center gap-4 mt-1">
+        <div class="rounded-lg border-2 border-teal-600/40 bg-gradient-to-b from-teal-900/20 to-gray-900 w-16 h-16 flex flex-col items-center justify-center flex-shrink-0">
+          <span id="parser-icon" class="text-2xl">⊞</span>
+          <div class="text-[6px] text-teal-600 font-mono mt-0.5">1 thread</div>
+        </div>
+        <div class="flex-1">
+          <div class="flex items-center gap-3 mb-1">
+            <div class="text-[9px] font-mono text-gray-500">파싱 중:</div>
+            <div id="parsing-count" class="text-lg font-mono font-bold text-teal-400 tabular-nums">0</div>
+            <div class="text-[9px] font-mono text-gray-500 ml-4">대기:</div>
+            <div id="parse-queue" class="text-lg font-mono font-bold text-gray-400 tabular-nums">0</div>
+          </div>
+          <div class="text-[7px] text-gray-600 font-mono">ParseAheadPool · 순차 처리 · PSD 레이어 추출 + 썸네일 생성 + 메타데이터</div>
+          <div class="text-[7px] text-gray-600 font-mono">ParserFactory → PSDParser | ImageParser → parse() + _create_thumbnail()</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Belt: Parser → Buffer -->
+    <div class="flex items-center gap-2 px-6">
+      <div class="text-[8px] text-gray-600">▼</div>
+      <div class="flex-1 belt"><div class="belt-bg"></div><div id="belt-3" class="belt-flow bg-orange-500/30"></div></div>
+      <div class="text-[7px] text-gray-600 font-mono w-20 text-right">parse=parsed</div>
+    </div>
+
+    <!-- ══════ STAGE 4: BUFFER (워커 대기) ══════ -->
+    <div class="stage border-orange-700/20 bg-orange-900/5">
+      <div class="stage-label bg-orange-900/80 text-orange-400 border border-orange-700/30">STAGE 4 · BUFFER</div>
+      <div class="flex items-center gap-4 mt-1">
+        <div class="rounded-lg border-2 border-orange-600/40 bg-gradient-to-b from-orange-900/20 to-gray-900 w-16 h-16 flex flex-col items-center justify-center flex-shrink-0">
+          <span class="text-2xl">📦</span>
+        </div>
+        <div class="flex-1">
+          <div class="flex items-center gap-3 mb-1">
+            <div class="text-[9px] font-mono text-gray-500">준비 완료:</div>
+            <div id="buffer-count" class="text-2xl font-mono font-bold text-orange-400 tabular-nums">0</div>
+            <div class="text-[9px] font-mono text-gray-500 ml-4">목표:</div>
+            <div class="text-sm font-mono text-gray-600">워커 demand × 2</div>
+          </div>
+          <div class="text-[7px] text-gray-600 font-mono">파싱 완료 + 썸네일 생성됨 · 워커가 claim하면 할당</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Belt: Buffer → Workers -->
+    <div class="flex items-center gap-2 px-6">
+      <div class="text-[8px] text-gray-600">▼</div>
+      <div class="flex-1 belt"><div class="belt-bg"></div><div id="belt-4" class="belt-flow bg-purple-500/30"></div></div>
+      <div class="text-[7px] text-gray-600 font-mono w-20 text-right">워커 claim</div>
+    </div>
+
+    <!-- ══════ STAGE 5: WORKERS (GPU 단말) ══════ -->
+    <div class="stage border-purple-700/20 bg-purple-900/5">
+      <div class="stage-label bg-purple-900/80 text-purple-400 border border-purple-700/30">STAGE 5 · WORKERS (GPU Terminals)</div>
+      <div id="worker-area" class="flex flex-col gap-2 mt-1"></div>
+      <div class="text-[7px] text-gray-600 font-mono mt-2 pt-2 border-t border-gray-800/30">
+        각 워커: MC(Vision) → VV(Visual Vector) → MV(Meaning Vector) · 3 Phase 배치 처리 · Phase당 모델 1개 로드
+      </div>
+    </div>
+
+    <!-- Belt: Workers → Output -->
+    <div class="flex items-center gap-2 px-6">
+      <div class="text-[8px] text-gray-600">▼</div>
+      <div class="flex-1 belt"><div class="belt-bg"></div><div id="belt-5" class="belt-flow bg-green-500/30"></div></div>
+      <div class="text-[7px] text-gray-600 font-mono w-20 text-right">완료 업로드</div>
+    </div>
+
+    <!-- ══════ STAGE 6: OUTPUT ══════ -->
+    <div class="stage border-green-700/20 bg-green-900/5">
+      <div class="stage-label bg-green-900/80 text-green-400 border border-green-700/30">STAGE 6 · OUTPUT</div>
+      <div class="flex items-center gap-6 mt-1">
+        <!-- Storage -->
+        <div class="rounded-lg border-2 border-green-600/40 bg-gradient-to-b from-green-900/20 to-gray-900 px-4 py-3 text-center relative overflow-hidden min-w-[120px]">
+          <div id="storage-fill" class="absolute bottom-0 left-0 right-0 bg-green-500/10 transition-all duration-500"></div>
+          <div class="relative z-10">
+            <div class="text-[7px] uppercase tracking-widest text-green-600 font-mono font-bold mb-1">STORAGE</div>
+            <div id="storage-count" class="text-2xl font-mono font-bold text-green-400 tabular-nums leading-none">0</div>
+            <div id="storage-pct" class="text-[9px] text-green-600 font-mono mt-0.5">0%</div>
+          </div>
+        </div>
+        <!-- Failed -->
+        <div id="failed-block" class="rounded-lg border-2 border-red-800/40 bg-gradient-to-b from-red-900/15 to-gray-900 px-4 py-3 text-center min-w-[80px]" style="display:none">
+          <div class="text-[7px] uppercase tracking-widest text-red-600 font-mono font-bold mb-1">FAILED</div>
+          <div id="failed-count" class="text-xl font-mono font-bold text-red-400 tabular-nums">0</div>
+        </div>
+        <!-- Stats -->
+        <div class="flex-1 text-[8px] font-mono text-gray-600">
+          <div>전체: <span id="out-total" class="text-gray-400">0</span> files</div>
+          <div>처리 중: <span id="out-processing" class="text-purple-400">0</span></div>
+          <div>처리량: <span id="out-throughput" class="text-blue-400">0</span> /min</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Status Ribbon -->
+<div class="px-4 py-2 border-t border-gray-800/50 bg-gray-900/50 flex-shrink-0 z-30">
+  <div id="status-bar" class="flex items-center justify-center gap-6 text-[11px] font-mono text-gray-500"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// DATA
+// ═══════════════════════════════════════════════════════════
+
+let data = { wrs: [], jobs: [], workers: [] };
+let autoTimer = null;
+
+function init() {
+  data.wrs = [
+    { id: 'wr-0', name: '실내소품', type: 'local', totalFiles: 200, status: 'processing' },
+    { id: 'wr-1', name: '서버에셋', type: 'webdav', totalFiles: 500, status: 'queued' },
+  ];
+  // Generate jobs
+  data.wrs.forEach(wr => {
+    for (let i = 0; i < wr.totalFiles; i++) {
+      data.jobs.push({
+        id: `${wr.id}-${i}`, wrId: wr.id, type: wr.type,
+        fileName: `${wr.name}_${i.toString().padStart(4,'0')}.psd`,
+        fileReady: wr.type === 'local' ? 1 : 0,
+        parseStatus: null, workerStatus: 'pending',
+        phase: { vision: false, embed_vv: false, embed_mv: false },
+      });
+    }
+  });
+  // Pre-complete some for demo
+  data.jobs.filter(j => j.wrId === 'wr-0').slice(0, 120).forEach(j => {
+    j.parseStatus = 'parsed'; j.workerStatus = 'completed';
+    j.phase = { vision: true, embed_vv: true, embed_mv: true };
+  });
+  data.jobs.filter(j => j.wrId === 'wr-0').slice(120, 135).forEach(j => {
+    j.parseStatus = 'parsed'; j.workerStatus = 'pending';
+  });
+
+  data.workers = [
+    { id: 'w-0', name: 'W-1', phase: 'vision', idx: 3, count: 5, throughput: 4.2, file: 'hero.psd', jobId: null, state: 'active' },
+    { id: 'w-1', name: 'W-2', phase: 'embed_vv', idx: 2, count: 5, throughput: 3.1, file: 'bg.psd', jobId: null, state: 'active' },
+  ];
+}
+
+// ═══════════════════════════════════════════════════════════
+// STATS
+// ═══════════════════════════════════════════════════════════
+
+function stats() {
+  const j = data.jobs;
+  return {
+    total: j.length,
+    dlWaiting: j.filter(x => x.fileReady === 0).length,
+    dlDone: j.filter(x => x.type === 'webdav' && x.fileReady === 1).length,
+    directReady: j.filter(x => x.type === 'local' && x.fileReady === 1 && !x.parseStatus).length,
+    readyUnparsed: j.filter(x => x.fileReady === 1 && !x.parseStatus).length,
+    parsing: j.filter(x => x.parseStatus === 'parsing').length,
+    parsed: j.filter(x => x.parseStatus === 'parsed' && x.workerStatus === 'pending').length,
+    processing: j.filter(x => x.workerStatus === 'processing').length,
+    completed: j.filter(x => x.workerStatus === 'completed').length,
+    failed: j.filter(x => x.workerStatus === 'failed' || x.parseStatus === 'failed').length,
+  };
+}
+
+function wrStats(wrId) {
+  const j = data.jobs.filter(x => x.wrId === wrId);
+  const t = j.length, c = j.filter(x => x.workerStatus === 'completed').length;
+  return { total: t, completed: c, pct: t > 0 ? c / t * 100 : 0 };
+}
+
+// ═══════════════════════════════════════════════════════════
+// SIMULATION
+// ═══════════════════════════════════════════════════════════
+
+function tick() {
+  const j = data.jobs;
+
+  // Download: 3 files per tick
+  j.filter(x => x.fileReady === 0).slice(0, 3).forEach(x => { x.fileReady = 1; });
+
+  // Parser: 1 file per tick (sequential)
+  const toParse = j.find(x => x.fileReady === 1 && !x.parseStatus && x.workerStatus === 'pending');
+  if (toParse) { toParse.parseStatus = 'parsed'; }
+
+  // Workers
+  data.workers.forEach(w => {
+    if (w.state === 'idle') {
+      const ready = j.find(x => x.parseStatus === 'parsed' && x.workerStatus === 'pending');
+      if (ready) {
+        ready.workerStatus = 'processing';
+        w.state = 'active'; w.phase = 'vision'; w.idx = 0; w.count = 1;
+        w.file = ready.fileName; w.jobId = ready.id;
+      }
+    } else if (w.state === 'active' && w.jobId) {
+      const job = j.find(x => x.id === w.jobId);
+      if (!job) { w.state = 'idle'; w.phase = null; return; }
+      if (w.phase === 'vision') { job.phase.vision = true; w.phase = 'embed_vv'; }
+      else if (w.phase === 'embed_vv') { job.phase.embed_vv = true; w.phase = 'embed_mv'; }
+      else if (w.phase === 'embed_mv') {
+        job.phase.embed_mv = true; job.workerStatus = 'completed';
+        w.state = 'idle'; w.phase = null; w.file = null; w.jobId = null;
+        w.throughput = +(Math.random() * 3 + 2).toFixed(1);
+      }
+    }
+  });
+
+  // Auto-set WR status
+  data.wrs.forEach(wr => {
+    const ws = wrStats(wr.id);
+    if (ws.completed > 0 && wr.status === 'queued') wr.status = 'processing';
+    if (ws.completed >= ws.total) wr.status = 'completed';
+  });
+
+  render();
+}
+
+function toggleAuto() {
+  if (autoTimer) {
+    clearInterval(autoTimer); autoTimer = null;
+    document.getElementById('auto-btn').innerHTML = '▶▶ Auto';
+    document.getElementById('auto-btn').className = 'toolbar-btn border-emerald-700/40 text-emerald-400 bg-emerald-900/20';
+  } else {
+    autoTimer = setInterval(tick, 350);
+    document.getElementById('auto-btn').innerHTML = '■ Stop';
+    document.getElementById('auto-btn').className = 'toolbar-btn border-red-700/40 text-red-400 bg-red-900/20';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// ADD
+// ═══════════════════════════════════════════════════════════
+
+let wrN = data.wrs?.length || 2;
+let wN = data.workers?.length || 2;
+
+function addWR(type) {
+  const name = prompt('WR 이름:', type === 'webdav' ? '서버폴더' : '로컬폴더') || '폴더';
+  const count = parseInt(prompt('파일 수:', '100')) || 100;
+  const id = `wr-${wrN++}`;
+  data.wrs.push({ id, name, type, totalFiles: count, status: 'queued' });
+  for (let i = 0; i < count; i++) {
+    data.jobs.push({
+      id: `${id}-${i}`, wrId: id, type,
+      fileName: `${name}_${i.toString().padStart(4,'0')}.psd`,
+      fileReady: type === 'local' ? 1 : 0,
+      parseStatus: null, workerStatus: 'pending',
+      phase: { vision: false, embed_vv: false, embed_mv: false },
+    });
+  }
+  render();
+}
+
+function addWorker() {
+  const id = `w-${wN}`;
+  data.workers.push({ id, name: `W-${wN + 1}`, phase: null, idx: 0, count: 0, throughput: 0, file: null, jobId: null, state: 'idle' });
+  wN++;
+  render();
+}
+
+function resetAll() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  document.getElementById('auto-btn').innerHTML = '▶▶ Auto';
+  document.getElementById('auto-btn').className = 'toolbar-btn border-emerald-700/40 text-emerald-400 bg-emerald-900/20';
+  data = { wrs: [], jobs: [], workers: [] };
+  wrN = 0; wN = 0;
+  init();
+  render();
+}
+
+// ═══════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════
+
+const PH = {
+  vision:   { label: 'MC', color: '#c084fc', icon: '👁', anim: 'animate-pulse', border: 'border-purple-500/60', shadow: 'shadow-[0_0_10px_rgba(168,85,247,0.3)]' },
+  embed_vv: { label: 'VV', color: '#22d3ee', icon: '⊙', anim: 'animate-spin-slow', border: 'border-cyan-500/60', shadow: 'shadow-[0_0_10px_rgba(6,182,212,0.3)]' },
+  embed_mv: { label: 'MV', color: '#34d399', icon: '🧠', anim: 'animate-machine-pulse', border: 'border-emerald-500/60', shadow: 'shadow-[0_0_10px_rgba(16,185,129,0.3)]' },
+};
+const PHASES = ['vision', 'embed_vv', 'embed_mv'];
+
+function render() {
+  const s = stats();
+
+  // WR area
+  document.getElementById('wr-area').innerHTML = data.wrs.map(wr => {
+    const ws = wrStats(wr.id);
+    const active = wr.status === 'processing';
+    const typeLabel = wr.type === 'webdav' ? '⬇ WebDAV' : '📁 Local';
+    const typeCls = wr.type === 'webdav' ? 'text-blue-500' : 'text-teal-500';
+    return `<div class="rounded-lg border ${active ? 'border-blue-700/50 bg-blue-900/15' : wr.status === 'completed' ? 'border-green-700/30 bg-green-900/10' : 'border-gray-700/30 bg-gray-800/30'} px-3 py-2 w-[150px]">
+      <div class="flex items-center gap-1.5 mb-1">
+        <span class="w-1.5 h-1.5 rounded-full ${active ? 'bg-blue-500 animate-pulse' : wr.status === 'completed' ? 'bg-green-500' : 'bg-gray-600'} flex-shrink-0"></span>
+        <span class="text-[10px] text-gray-300 font-medium truncate">${wr.name}</span>
+        <span class="text-[7px] font-mono ${typeCls} ml-auto">${typeLabel}</span>
+      </div>
+      <div class="h-1 bg-gray-700/50 rounded-full overflow-hidden"><div class="h-full rounded-full ${active ? 'bg-blue-500' : wr.status === 'completed' ? 'bg-green-500' : 'bg-gray-600'} transition-all" style="width:${ws.pct}%"></div></div>
+      <div class="flex justify-between mt-0.5"><span class="text-[8px] font-mono text-gray-600">${ws.completed}/${ws.total}</span><span class="text-[8px] font-mono text-gray-500">${ws.pct.toFixed(0)}%</span></div>
+    </div>`;
+  }).join('');
+
+  // Stage 2: Job Pool
+  const webdavTotal = data.jobs.filter(j => j.type === 'webdav').length;
+  document.getElementById('dl-waiting').textContent = s.dlWaiting;
+  document.getElementById('dl-done').textContent = s.dlDone;
+  document.getElementById('dl-bar').style.width = webdavTotal > 0 ? ((s.dlDone / webdavTotal) * 100) + '%' : '0%';
+  document.getElementById('direct-count').textContent = data.jobs.filter(j => j.type === 'local').length;
+  document.getElementById('pool-total').textContent = s.total;
+  document.getElementById('pool-ready').textContent = s.total - s.dlWaiting;
+  document.getElementById('pool-waiting').textContent = s.dlWaiting;
+
+  // Stage 3: Parser
+  document.getElementById('parsing-count').textContent = s.parsing;
+  document.getElementById('parse-queue').textContent = s.readyUnparsed;
+  document.getElementById('parser-icon').className = s.readyUnparsed > 0 || s.parsing > 0 ? 'text-2xl animate-spin-slow' : 'text-2xl opacity-30';
+
+  // Stage 4: Buffer
+  document.getElementById('buffer-count').textContent = s.parsed;
+
+  // Stage 5: Workers
+  document.getElementById('worker-area').innerHTML = data.workers.map(w => {
+    const isActive = w.state === 'active';
+    const phIdx = w.phase ? PHASES.indexOf(w.phase) : -1;
+    const phases = PHASES.map((p, i) => {
+      const cfg = PH[p]; const cur = w.phase === p; const past = phIdx > i;
+      const bc = cur ? `${cfg.border} ${cfg.shadow}` : past ? 'border-gray-600/30' : 'border-gray-700/20';
+      const bg = cur ? 'bg-gradient-to-b from-gray-800/80 to-gray-900' : 'bg-gray-800/60';
+      const ic = cur ? `${cfg.anim}` : past ? 'opacity-30' : 'opacity-20';
+      const ck = past ? '<span class="absolute -top-0.5 -right-0.5 text-[6px] text-green-500/70">✓</span>' : '';
+      return `<div class="relative w-11 h-11 rounded-lg border-2 ${bc} ${bg} flex items-center justify-center flex-shrink-0">
+        <div class="absolute -top-1.5 left-1/2 -translate-x-1/2 px-1 rounded-sm text-[5px] uppercase tracking-widest font-mono font-bold bg-gray-900/90 border border-gray-700/30" ${cur ? `style="color:${cfg.color}"` : ''}>${cfg.label}</div>
+        <span class="text-sm ${ic}" ${cur ? `style="color:${cfg.color}"` : ''}>${cfg.icon}</span>${ck}
+      </div>`;
+    }).join('<div class="w-2 h-px bg-gray-700/20 flex-shrink-0"></div>');
+
+    return `<div class="flex items-center gap-3 rounded-lg border ${isActive ? 'border-gray-600/30 bg-gray-800/20' : 'border-gray-800/20 bg-gray-900/10'} px-3 py-2">
+      <span class="w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'} flex-shrink-0"></span>
+      <span class="text-[11px] font-mono text-gray-300 font-bold w-8">${w.name}</span>
+      <div class="flex items-center gap-0">${phases}</div>
+      <div class="flex-1 min-w-0 ml-2">
+        ${w.throughput > 0 ? `<span class="text-[8px] font-mono text-gray-500 tabular-nums">${w.throughput}/m</span>` : ''}
+        ${w.file ? `<div class="text-[7px] text-gray-600 font-mono truncate">${w.file}</div>` : ''}
+        ${!isActive ? '<span class="text-[8px] font-mono text-gray-600 italic">idle</span>' : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Stage 6: Output
+  const pct = s.total > 0 ? (s.completed / s.total * 100) : 0;
+  document.getElementById('storage-count').textContent = s.completed;
+  document.getElementById('storage-pct').textContent = pct.toFixed(1) + '%';
+  document.getElementById('storage-fill').style.height = pct + '%';
+  document.getElementById('failed-count').textContent = s.failed;
+  document.getElementById('failed-block').style.display = s.failed > 0 ? '' : 'none';
+  document.getElementById('out-total').textContent = s.total;
+  document.getElementById('out-processing').textContent = s.processing;
+  const tp = data.workers.reduce((a, w) => a + (w.throughput || 0), 0);
+  document.getElementById('out-throughput').textContent = tp.toFixed(1);
+
+  // Belts animation
+  const anyActive = s.total > s.completed;
+  ['belt-1','belt-2','belt-3','belt-4','belt-5'].forEach(id => {
+    document.getElementById(id).className = `belt-flow rounded-full transition-all ${anyActive ? 'animate-flow-right' : ''} ` +
+      (id === 'belt-1' ? 'bg-blue-500/30' : id === 'belt-2' ? 'bg-teal-500/30' : id === 'belt-3' ? 'bg-orange-500/30' : id === 'belt-4' ? 'bg-purple-500/30' : 'bg-green-500/30');
+  });
+
+  // Status bar
+  const parts = [];
+  if (tp > 0) parts.push(`<span class="text-blue-400 font-bold">${tp.toFixed(1)}</span> /min`);
+  if (s.total > 0) parts.push(`<span class="text-green-400">${s.completed}</span>/${s.total} (<span class="text-gray-300">${pct.toFixed(1)}%</span>)`);
+  if (s.dlWaiting > 0) parts.push(`DL <span class="text-blue-400">${s.dlWaiting}</span>`);
+  if (s.parsed > 0) parts.push(`Buffer <span class="text-orange-400">${s.parsed}</span>`);
+  if (s.processing > 0) parts.push(`Processing <span class="text-purple-400">${s.processing}</span>`);
+  if (s.failed > 0) parts.push(`<span class="text-red-400">⚠ ${s.failed}</span>`);
+  document.getElementById('status-bar').innerHTML = parts.map(p => `<span>${p}</span>`).join('') || '<span class="text-gray-600">System idle</span>';
+}
+
+// ═══════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════
+
+init();
+wrN = data.wrs.length;
+wN = data.workers.length;
+render();
+</script>
+</body>
+</html>
