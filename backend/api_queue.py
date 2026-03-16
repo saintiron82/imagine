@@ -252,7 +252,7 @@ def _scan_webdav_folder(folder_path, db, cursor, webdav_configs=None):
         }
         try:
             fid = db.upsert_metadata(fpath_str, meta)
-            group_key = rel_parent or f"webdav://{source_id}{client.remote_path}"
+            group_key = full_parent or f"webdav://{source_id}{client.remote_path}"
             file_groups[group_key].append((fid, fpath_str))
         except Exception:
             pass

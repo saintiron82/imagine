@@ -51,12 +51,16 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
     } catch { /* ignore */ }
   }, [useIPC]);
 
-  // Adaptive polling: 3s when active, 5s when idle
+  // Adaptive polling: 3s when active, 5s when idle (setTimeout chain)
   const isActiveRef = useRef(false);
   useEffect(() => {
-    load();
-    const iv = setInterval(load, isActiveRef.current ? 3000 : 5000);
-    return () => clearInterval(iv);
+    let timer;
+    const poll = () => {
+      load();
+      timer = setTimeout(poll, isActiveRef.current ? 3000 : 5000);
+    };
+    poll();
+    return () => clearTimeout(timer);
   }, [load]);
 
   // Reload immediately on external triggers
@@ -232,7 +236,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
                 <div className="flex items-center gap-1.5 mb-2">
                   <Download size={14} className="text-blue-400" />
                   <span className="text-[9px] font-mono text-blue-400 font-bold uppercase">Download Lane</span>
-                  {isServerMode && dlWaiting > 0 && <span className="text-[6px] font-mono px-1 rounded bg-amber-800/60 text-amber-400 border border-amber-700/40">SERVER</span>}
+                  {appMode === 'server' && dlWaiting > 0 && <span className="text-[6px] font-mono px-1 rounded bg-amber-800/60 text-amber-400 border border-amber-700/40">SERVER</span>}
                   <span className="text-[8px] font-mono text-gray-600 ml-auto">WebDAV → Local</span>
                 </div>
                 <div className="flex items-center gap-2">
