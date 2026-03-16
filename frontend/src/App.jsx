@@ -1417,8 +1417,8 @@ function App() {
         <EnqueueFolderModal
           folderPath={enqueueFolderTarget.path}
           folderName={enqueueFolderTarget.name}
-          onConfirm={(path, _name, _includeSub) => {
-            handleProcessFolders([path]);
+          onConfirm={(path, name, includeSub) => {
+            handleProcessFolders([path], name);
           }}
           onClose={() => setEnqueueFolderTarget(null)}
         />
