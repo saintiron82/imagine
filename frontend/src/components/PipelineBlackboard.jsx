@@ -105,6 +105,7 @@ export default function PipelineBlackboard({ workerProgress }) {
     throughput: w.throughput,
     state: w.current_phase ? 'active' : 'idle',
     mode: w.processing_mode_override || 'full',
+    isBuiltin: w.worker_name === '__builtin__',
   }));
 
   const allWorkers = localWorker ? [localWorker, ...remoteWorkers] : remoteWorkers;
@@ -312,16 +313,46 @@ export default function PipelineBlackboard({ workerProgress }) {
 
           {/* ── STAGE 5: Workers ── */}
           <Stage label="STAGE 5" title="WORKERS (GPU Terminals)" color="purple">
-            <div className="flex flex-col gap-2 mt-1">
-              {allWorkers.length > 0 ? allWorkers.map((w, i) => (
-                <WorkerLine key={i} worker={w} t={t} />
-              )) : (
-                <div className="text-center py-4">
-                  <div className="text-gray-700 text-2xl mb-1">&#9881;</div>
-                  <div className="text-[10px] text-gray-600 font-mono">{t('bb.no_workers')}</div>
+            {(() => {
+              const builtinWorkers = allWorkers.filter(w => w.isBuiltin);
+              const externalWorkers = allWorkers.filter(w => !w.isBuiltin);
+              return (
+                <div className="space-y-3 mt-1">
+                  {/* Built-in worker (server internal) */}
+                  {builtinWorkers.length > 0 && (
+                    <div>
+                      <div className="text-[8px] font-mono text-gray-500 mb-1 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-sm bg-amber-500/60 flex-shrink-0" />
+                        SERVER EMBEDDED
+                      </div>
+                      {builtinWorkers.map((w, i) => <WorkerLine key={`b-${i}`} worker={w} t={t} />)}
+                    </div>
+                  )}
+
+                  {/* External workers */}
+                  {externalWorkers.length > 0 && (
+                    <div>
+                      {builtinWorkers.length > 0 && (
+                        <div className="text-[8px] font-mono text-gray-500 mb-1 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-sm bg-purple-500/60 flex-shrink-0" />
+                          EXTERNAL WORKERS
+                        </div>
+                      )}
+                      {externalWorkers.map((w, i) => <WorkerLine key={`e-${i}`} worker={w} t={t} />)}
+                    </div>
+                  )}
+
+                  {/* No workers */}
+                  {allWorkers.length === 0 && (
+                    <div className="text-center py-4 border border-dashed border-gray-700/30 rounded-lg">
+                      <div className="text-gray-700 text-2xl mb-1">&#9881;</div>
+                      <div className="text-[10px] text-gray-600 font-mono">{t('bb.no_workers')}</div>
+                      <div className="text-[8px] text-gray-700 font-mono mt-1">Parser buffer paused (no demand)</div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
             <div className="text-[7px] text-gray-600 font-mono mt-2 pt-2 border-t border-gray-800/30">
               MC(Vision) → VV(Visual Vector) → MV(Meaning Vector) · Phase-batch · GPU model swap
             </div>
@@ -461,8 +492,8 @@ function WorkerLine({ worker, t }) {
   return (
     <div className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${isActive ? 'border-gray-600/30 bg-gray-800/20' : 'border-gray-800/20 bg-gray-900/10'}`}>
       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
-      <div className="flex flex-col w-16 flex-shrink-0">
-        <span className="text-[11px] font-mono text-gray-300 font-bold truncate">{w.name}</span>
+      <div className="flex flex-col w-20 flex-shrink-0">
+        <span className="text-[11px] font-mono text-gray-300 font-bold truncate">{w.isBuiltin ? 'Embedded' : w.name}</span>
         <span className={`text-[7px] font-mono ${MODE_COLORS[mode]}`}>{MODE_LABELS[mode]}</span>
       </div>
 
