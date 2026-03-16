@@ -9,8 +9,8 @@
  * STAGE 6: Output (Storage + Failed)
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, Zap, Eye, Scan, Brain, Check, Download, FolderOpen, LayoutList, LayoutGrid, Pause, Play, X } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { AlertTriangle, Zap, Eye, Scan, Brain, Check, Download, FolderOpen, LayoutList, LayoutGrid, Pause, Play, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
@@ -72,6 +72,33 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal }) {
 
   // Active WRs completed/failed — from work_requests table (survives job deletion)
   const activeWRsAll = workRequests.filter(wr => wr.status === 'queued' || wr.status === 'processing' || wr.status === 'paused');
+
+  // Group WRs by common parent path for collapsed display
+  const wrGroups = useMemo(() => {
+    if (activeWRsAll.length <= 1) return null; // No grouping needed
+    const groups = {};
+    for (const wr of activeWRsAll) {
+      const sp = wr.source_path || '';
+      // Parent = up one level from source_path
+      const lastSlash = sp.replace(/\/$/, '').lastIndexOf('/');
+      const parent = lastSlash > 0 ? sp.substring(0, lastSlash) : sp;
+      if (!groups[parent]) groups[parent] = [];
+      groups[parent].push(wr);
+    }
+    // Only group if >1 WR shares a parent; singletons stay ungrouped
+    const result = [];
+    for (const [parent, wrs] of Object.entries(groups)) {
+      if (wrs.length > 1) {
+        // Extract display name from parent path
+        const parts = parent.replace(/^webdav:\/\/[^/]+/, '').split('/').filter(Boolean);
+        const displayName = parts.slice(-2).join('/') || parent;
+        result.push({ type: 'group', parent, displayName, wrs });
+      } else {
+        result.push({ type: 'single', wr: wrs[0] });
+      }
+    }
+    return result;
+  }, [activeWRsAll]);
 
   const handleWRAction = useCallback(async (wrId, action) => {
     try {
@@ -227,11 +254,19 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal }) {
         <div className="flex flex-col gap-3 max-w-5xl mx-auto">
 
           {/* ── STAGE 1: Work Requests ── */}
-          <Stage label="STAGE 1" title="WORK REQUESTS" color="gray">
-            <div className="flex flex-wrap gap-2 mt-1">
-              {activeWRs.length > 0 ? activeWRs.slice(0, 8).map(wr => (
-                <WRCard key={wr.id} wr={wr} onAction={handleWRAction} />
-              )) : (
+          <Stage label="STAGE 1" title={`WORK REQUESTS${activeWRs.length > 0 ? ` (${activeWRs.length})` : ''}`} color="gray">
+            <div className="flex flex-col gap-2 mt-1 max-h-[300px] overflow-y-auto">
+              {activeWRs.length > 0 ? (
+                wrGroups ? wrGroups.map((item, idx) =>
+                  item.type === 'group' ? (
+                    <WRGroupCard key={idx} group={item} onAction={handleWRAction} />
+                  ) : (
+                    <WRCard key={item.wr.id} wr={item.wr} onAction={handleWRAction} />
+                  )
+                ) : activeWRs.map(wr => (
+                  <WRCard key={wr.id} wr={wr} onAction={handleWRAction} />
+                ))
+              ) : (
                 <div className="text-[10px] text-gray-700 font-mono py-1">{t('bb.no_wr')}</div>
               )}
             </div>
@@ -676,6 +711,93 @@ function WRCard({ wr, onAction }) {
           )}
           {/* Timestamps */}
           {wr.created_at && <div className="text-[7px] text-gray-700 font-mono">Created: {new Date(wr.created_at).toLocaleString()}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── WR Group Card (collapsed parent with expandable children) ───
+
+function WRGroupCard({ group, onAction }) {
+  const [expanded, setExpanded] = useState(false);
+  const totalFiles = group.wrs.reduce((s, wr) => s + (wr.total_files || 0), 0);
+  const totalDone = group.wrs.reduce((s, wr) => s + (wr.completed_count || 0), 0);
+  const totalFailed = group.wrs.reduce((s, wr) => s + (wr.failed_count || 0), 0);
+  const pct = totalFiles > 0 ? (totalDone / totalFiles) * 100 : 0;
+  const hasActive = group.wrs.some(wr => wr.status === 'processing');
+  const hasPaused = group.wrs.some(wr => wr.status === 'paused');
+
+  const handleCancelAll = (e) => {
+    e.stopPropagation();
+    group.wrs.forEach(wr => onAction(wr.id, 'cancel'));
+  };
+
+  return (
+    <div className="rounded-lg border border-gray-700/30 bg-gray-800/30">
+      {/* Group header */}
+      <div className="px-3 py-2 cursor-pointer flex items-center gap-2" onClick={() => setExpanded(!expanded)}>
+        {expanded ? <ChevronDown size={12} className="text-gray-500 flex-shrink-0" /> : <ChevronRight size={12} className="text-gray-500 flex-shrink-0" />}
+        <FolderOpen size={12} className="text-gray-500 flex-shrink-0" />
+        <span className="text-[10px] text-gray-300 font-medium truncate flex-1">{group.displayName}</span>
+        <span className="text-[8px] font-mono text-gray-500 flex-shrink-0">{group.wrs.length} WRs</span>
+        <span className="text-[8px] font-mono text-gray-600 tabular-nums flex-shrink-0">{totalDone}/{totalFiles}</span>
+        {onAction && (
+          <button onClick={handleCancelAll}
+            className="p-0.5 rounded hover:bg-gray-700 text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Cancel all">
+            <X size={9} />
+          </button>
+        )}
+      </div>
+      {/* Progress bar */}
+      <div className="px-3 pb-2">
+        <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${hasActive ? 'bg-blue-500' : hasPaused ? 'bg-yellow-500/60' : 'bg-gray-600'}`} style={{ width: `${pct}%` }} />
+        </div>
+        {totalFailed > 0 && <span className="text-[7px] text-red-400 font-mono"><AlertTriangle size={7} className="inline mr-0.5" />{totalFailed}</span>}
+      </div>
+      {/* Expanded children */}
+      {expanded && (
+        <div className="px-3 pb-2 border-t border-gray-700/30 pt-2 space-y-1 max-h-[200px] overflow-y-auto">
+          {group.wrs.map(wr => (
+            <WRChildRow key={wr.id} wr={wr} onAction={onAction} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WRChildRow({ wr, onAction }) {
+  const total = wr.total_files || 0;
+  const done = wr.completed_count || 0;
+  const pct = total > 0 ? (done / total) * 100 : 0;
+  const isActive = wr.status === 'processing';
+  const isPaused = wr.status === 'paused';
+
+  return (
+    <div className="flex items-center gap-2 text-[8px] font-mono group">
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-500 animate-pulse' : isPaused ? 'bg-yellow-500' : 'bg-gray-600'}`} />
+      <span className="text-gray-400 truncate flex-1" title={wr.source_path}>{wr.name}</span>
+      <span className="text-gray-600 tabular-nums flex-shrink-0">{done}/{total}</span>
+      <div className="w-16 h-1 bg-gray-700/50 rounded-full overflow-hidden flex-shrink-0">
+        <div className={`h-full rounded-full ${isActive ? 'bg-blue-500' : 'bg-gray-600'}`} style={{ width: `${pct}%` }} />
+      </div>
+      {onAction && (
+        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          {isActive && (
+            <button onClick={() => onAction(wr.id, 'pause')} className="p-0.5 rounded hover:bg-gray-700 text-gray-600 hover:text-yellow-400" title="Pause">
+              <Pause size={8} />
+            </button>
+          )}
+          {isPaused && (
+            <button onClick={() => onAction(wr.id, 'resume')} className="p-0.5 rounded hover:bg-gray-700 text-gray-600 hover:text-green-400" title="Resume">
+              <Play size={8} />
+            </button>
+          )}
+          <button onClick={() => onAction(wr.id, 'cancel')} className="p-0.5 rounded hover:bg-gray-700 text-gray-600 hover:text-red-400" title="Cancel">
+            <X size={8} />
+          </button>
         </div>
       )}
     </div>
