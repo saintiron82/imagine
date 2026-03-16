@@ -20,6 +20,7 @@ export default function FactoryPage({
   workerProgress,
   onWorkerStart,
   onWorkerStop,
+  queueReloadSignal,
 }) {
   const { t } = useLocale();
   const [activeTab, setActiveTab] = useState('pipeline');
@@ -124,7 +125,7 @@ export default function FactoryPage({
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {activeTab === 'pipeline' && (
-          <PipelineBlackboard workerProgress={workerProgress} />
+          <PipelineBlackboard workerProgress={workerProgress} reloadSignal={queueReloadSignal} />
         )}
         {activeTab === 'workers' && (
           <div className="p-4 space-y-6">

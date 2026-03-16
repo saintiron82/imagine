@@ -2015,6 +2015,7 @@ function App() {
                 workerProgress={workerProgress}
                 onWorkerStart={handleWorkerStart}
                 onWorkerStop={handleWorkerStop}
+                queueReloadSignal={queueReloadSignal}
               />
             ) : null}
           </div>

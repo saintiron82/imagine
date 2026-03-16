@@ -24,7 +24,7 @@ const PHASE_CFG = {
 };
 const PHASES = ['vision', 'embed_vv', 'embed_mv'];
 
-export default function PipelineBlackboard({ workerProgress }) {
+export default function PipelineBlackboard({ workerProgress, reloadSignal }) {
   const { t } = useLocale();
   const [view, setView] = useState('pipeline'); // 'pipeline' | 'board'
   const [stats, setStats] = useState(null);
@@ -53,6 +53,11 @@ export default function PipelineBlackboard({ workerProgress }) {
     const iv = setInterval(load, 5000);
     return () => clearInterval(iv);
   }, [load]);
+
+  // Reload immediately when queue changes (e.g. folder scan completed)
+  useEffect(() => {
+    if (reloadSignal > 0) load();
+  }, [reloadSignal, load]);
 
   // ── Computed stats ──
   const s = stats || {};
