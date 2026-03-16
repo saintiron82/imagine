@@ -73,31 +73,62 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
   // Active WRs completed/failed — from work_requests table (survives job deletion)
   const activeWRsAll = workRequests.filter(wr => wr.status === 'queued' || wr.status === 'processing' || wr.status === 'paused');
 
-  // Group WRs by common parent path for collapsed display
+  // Group WRs by path ancestry — if WR A's source_path is a prefix of WR B's,
+  // they belong to the same tree. Display only top-level roots.
   const wrGroups = useMemo(() => {
-    if (activeWRsAll.length <= 1) return null; // No grouping needed
-    const groups = {};
-    for (const wr of activeWRsAll) {
-      const sp = wr.source_path || '';
-      // Parent = up one level from source_path
-      const lastSlash = sp.replace(/\/$/, '').lastIndexOf('/');
-      const parent = lastSlash > 0 ? sp.substring(0, lastSlash) : sp;
-      if (!groups[parent]) groups[parent] = [];
-      groups[parent].push(wr);
-    }
-    // Only group if >1 WR shares a parent; singletons stay ungrouped
-    const result = [];
-    for (const [parent, wrs] of Object.entries(groups)) {
-      if (wrs.length > 1) {
-        // Extract display name from parent path
-        const parts = parent.replace(/^webdav:\/\/[^/]+/, '').split('/').filter(Boolean);
-        const displayName = parts.slice(-2).join('/') || parent;
-        result.push({ type: 'group', parent, displayName, wrs });
-      } else {
-        result.push({ type: 'single', wr: wrs[0] });
+    if (activeWRsAll.length <= 1) return null;
+
+    // Normalize paths: strip trailing slash, sort shortest first
+    const items = activeWRsAll.map(wr => ({
+      wr,
+      path: (wr.source_path || '').replace(/\/$/, ''),
+    })).sort((a, b) => a.path.length - b.path.length);
+
+    const roots = [];      // top-level groups or singletons
+    const assigned = new Set();
+
+    // Pass 1: find WRs whose path is a prefix of others → they become roots
+    for (let i = 0; i < items.length; i++) {
+      if (assigned.has(items[i].wr.id)) continue;
+      const root = items[i];
+      const children = [];
+      for (let j = i + 1; j < items.length; j++) {
+        if (assigned.has(items[j].wr.id)) continue;
+        if (items[j].path.startsWith(root.path + '/')) {
+          children.push(items[j].wr);
+          assigned.add(items[j].wr.id);
+        }
+      }
+      if (children.length > 0) {
+        assigned.add(root.wr.id);
+        const parts = root.path.replace(/^webdav:\/?\/?[^/]*/, '').split('/').filter(Boolean);
+        roots.push({
+          type: 'group',
+          displayName: parts.slice(-2).join('/') || root.wr.name,
+          wrs: [root.wr, ...children],
+        });
       }
     }
-    return result;
+
+    // Pass 2: remaining unassigned WRs — group by common parent
+    const remaining = items.filter(it => !assigned.has(it.wr.id));
+    const parentGroups = {};
+    for (const it of remaining) {
+      const lastSlash = it.path.lastIndexOf('/');
+      const parent = lastSlash > 0 ? it.path.substring(0, lastSlash) : it.path;
+      if (!parentGroups[parent]) parentGroups[parent] = [];
+      parentGroups[parent].push(it.wr);
+    }
+    for (const [parent, wrs] of Object.entries(parentGroups)) {
+      if (wrs.length > 1) {
+        const parts = parent.replace(/^webdav:\/?\/?[^/]*/, '').split('/').filter(Boolean);
+        roots.push({ type: 'group', displayName: parts.slice(-2).join('/') || parent, wrs });
+      } else {
+        roots.push({ type: 'single', wr: wrs[0] });
+      }
+    }
+
+    return roots.length > 0 ? roots : null;
   }, [activeWRsAll]);
 
   const handleWRAction = useCallback(async (wrId, action) => {
@@ -730,35 +761,38 @@ function WRGroupCard({ group, onAction }) {
 
   const handleCancelAll = (e) => {
     e.stopPropagation();
-    group.wrs.forEach(wr => onAction(wr.id, 'cancel'));
+    if (confirm(`Cancel all ${group.wrs.length} work requests?`)) {
+      group.wrs.forEach(wr => onAction(wr.id, 'cancel'));
+    }
   };
 
   return (
-    <div className="rounded-lg border border-gray-700/30 bg-gray-800/30">
-      {/* Group header */}
-      <div className="px-3 py-2 cursor-pointer flex items-center gap-2" onClick={() => setExpanded(!expanded)}>
-        {expanded ? <ChevronDown size={12} className="text-gray-500 flex-shrink-0" /> : <ChevronRight size={12} className="text-gray-500 flex-shrink-0" />}
-        <FolderOpen size={12} className="text-gray-500 flex-shrink-0" />
-        <span className="text-[10px] text-gray-300 font-medium truncate flex-1">{group.displayName}</span>
-        <span className="text-[8px] font-mono text-gray-500 flex-shrink-0">{group.wrs.length} WRs</span>
-        <span className="text-[8px] font-mono text-gray-600 tabular-nums flex-shrink-0">{totalDone}/{totalFiles}</span>
+    <div className={`rounded-lg border ${hasActive ? 'border-blue-700/40 bg-blue-900/10' : hasPaused ? 'border-yellow-700/40 bg-yellow-900/10' : 'border-gray-700/30 bg-gray-800/30'}`}>
+      {/* Group header — single row, looks like one work request */}
+      <div className="px-3 py-2.5 cursor-pointer flex items-center gap-2" onClick={() => setExpanded(!expanded)}>
+        {expanded
+          ? <ChevronDown size={14} className="text-gray-400 flex-shrink-0" />
+          : <ChevronRight size={14} className="text-gray-400 flex-shrink-0" />}
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasActive ? 'bg-blue-500 animate-pulse' : hasPaused ? 'bg-yellow-500' : 'bg-gray-600'}`} />
+        <span className="text-[11px] text-gray-200 font-medium truncate flex-1">{group.displayName}</span>
+        <span className="text-[8px] font-mono text-gray-500 flex-shrink-0">{group.wrs.length}</span>
+        <span className="text-[9px] font-mono text-gray-500 tabular-nums flex-shrink-0">{totalDone}/{totalFiles}</span>
+        <span className="text-[8px] font-mono text-gray-600 tabular-nums flex-shrink-0 w-8 text-right">{pct.toFixed(0)}%</span>
+        {/* Progress bar inline */}
+        <div className="w-20 h-1.5 bg-gray-700/50 rounded-full overflow-hidden flex-shrink-0">
+          <div className={`h-full rounded-full transition-all ${hasActive ? 'bg-blue-500' : hasPaused ? 'bg-yellow-500/60' : 'bg-gray-600'}`} style={{ width: `${pct}%` }} />
+        </div>
+        {totalFailed > 0 && <span className="text-[8px] text-red-400 font-mono flex-shrink-0"><AlertTriangle size={8} className="inline mr-0.5" />{totalFailed}</span>}
         {onAction && (
           <button onClick={handleCancelAll}
             className="p-0.5 rounded hover:bg-gray-700 text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Cancel all">
-            <X size={9} />
+            <X size={10} />
           </button>
         )}
       </div>
-      {/* Progress bar */}
-      <div className="px-3 pb-2">
-        <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
-          <div className={`h-full rounded-full transition-all ${hasActive ? 'bg-blue-500' : hasPaused ? 'bg-yellow-500/60' : 'bg-gray-600'}`} style={{ width: `${pct}%` }} />
-        </div>
-        {totalFailed > 0 && <span className="text-[7px] text-red-400 font-mono"><AlertTriangle size={7} className="inline mr-0.5" />{totalFailed}</span>}
-      </div>
-      {/* Expanded children */}
+      {/* Expanded: child WR list */}
       {expanded && (
-        <div className="px-3 pb-2 border-t border-gray-700/30 pt-2 space-y-1 max-h-[200px] overflow-y-auto">
+        <div className="px-3 pb-2 border-t border-gray-700/20 pt-2 space-y-1 max-h-[300px] overflow-y-auto">
           {group.wrs.map(wr => (
             <WRChildRow key={wr.id} wr={wr} onAction={onAction} />
           ))}
@@ -776,9 +810,9 @@ function WRChildRow({ wr, onAction }) {
   const isPaused = wr.status === 'paused';
 
   return (
-    <div className="flex items-center gap-2 text-[8px] font-mono group">
+    <div className="flex items-center gap-2 text-[9px] font-mono group py-0.5">
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-500 animate-pulse' : isPaused ? 'bg-yellow-500' : 'bg-gray-600'}`} />
-      <span className="text-gray-400 truncate flex-1" title={wr.source_path}>{wr.name}</span>
+      <span className="text-gray-300 truncate flex-1" title={wr.source_path}>{wr.name.replace(/^\[Recovery\]\s*/, '')}</span>
       <span className="text-gray-600 tabular-nums flex-shrink-0">{done}/{total}</span>
       <div className="w-16 h-1 bg-gray-700/50 rounded-full overflow-hidden flex-shrink-0">
         <div className={`h-full rounded-full ${isActive ? 'bg-blue-500' : 'bg-gray-600'}`} style={{ width: `${pct}%` }} />
