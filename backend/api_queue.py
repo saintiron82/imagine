@@ -21,6 +21,42 @@ from backend.db.sqlite_client import SQLiteDB
 from backend.server.queue.manager import JobQueueManager
 
 
+def _extract_folder_from_path(fpath):
+    """Extract folder_path/folder_depth/folder_tags from file_path.
+
+    WebDAV:  webdav://source_id/발송작품/작품/원피스/1/file.psd
+             → ("발송작품/작품/원피스/1", 4, ["발송작품", "작품", "원피스", "1"])
+    Local:   /Users/user/imageDB/마캬베리즈무/장소/강다외부/file.psd
+             → ("마캬베리즈무/장소/강다외부", 3, ["마캬베리즈무", "장소", "강다외부"])
+    """
+    if fpath.startswith("webdav://"):
+        without_scheme = fpath.replace("webdav://", "", 1)
+        slash_idx = without_scheme.find("/")
+        if slash_idx != -1:
+            sub = without_scheme[slash_idx:]  # /발송작품/작품/원피스/1/file.psd
+            parent = str(PurePosixPath(sub).parent).lstrip("/")
+            if parent:
+                tags = [p for p in parent.split("/") if p]
+                return parent, len(tags), tags
+    else:
+        # Local: use path relative to home directory (skip system dirs)
+        fp = Path(fpath)
+        try:
+            home = Path.home()
+            rel = fp.parent.relative_to(home)
+            parts = [p for p in rel.parts if p]
+            if parts:
+                folder_str = "/".join(parts)
+                return folder_str, len(parts), parts
+        except ValueError:
+            pass
+        # Fallback: parent folder name only
+        parent = fp.parent.name
+        if parent and parent not in (".", ""):
+            return parent, 0, [parent]
+    return None, 0, []
+
+
 def register_paths(file_paths, priority=0):
     """Register file paths and create processing jobs."""
     try:
@@ -34,6 +70,11 @@ def register_paths(file_paths, priority=0):
         for fpath in file_paths:
             fname = fpath.rsplit("/", 1)[-1] if "/" in fpath else fpath.rsplit("\\", 1)[-1] if "\\" in fpath else fpath
             meta = {"file_path": fpath, "file_name": fname}
+            folder_path, depth, tags = _extract_folder_from_path(fpath)
+            if folder_path:
+                meta["folder_path"] = folder_path
+                meta["folder_depth"] = depth
+                meta["folder_tags"] = tags
             try:
                 fid = db.upsert_metadata(fpath, meta)
                 file_ids.append(fid)
@@ -182,10 +223,10 @@ def _scan_webdav_folder(folder_path, db, cursor, webdav_configs=None):
         fpath_str = f"webdav://{source_id}{rf.remote_path}"
         file_name = PurePosixPath(rf.remote_path).name
 
-        # Folder path relative to scan root
-        rel_parent = str(PurePosixPath(rf.relative_path).parent)
-        if rel_parent == ".":
-            rel_parent = ""
+        # Folder path from full remote path (not relative to scan root)
+        # e.g. remote_path="/발송작품/작품/원피스/1/44-040.psd" → "발송작품/작품/원피스/1"
+        full_parent = str(PurePosixPath(rf.remote_path).parent).lstrip("/")
+        folder_tags = [p for p in full_parent.split("/") if p]
 
         discovered += 1
 
@@ -201,9 +242,9 @@ def _scan_webdav_folder(folder_path, db, cursor, webdav_configs=None):
         meta = {
             "file_path": fpath_str,
             "file_name": file_name,
-            "folder_path": rel_parent,
-            "folder_depth": rf.relative_path.count("/"),
-            "folder_tags": [p for p in rel_parent.split("/") if p],
+            "folder_path": full_parent,
+            "folder_depth": len(folder_tags),
+            "folder_tags": folder_tags,
             "storage_root": f"webdav://{source_id}{client.remote_path}",
         }
         try:
@@ -438,6 +479,39 @@ def cancel_work_request(wr_id):
         return {"success": False, "error": str(e)}
 
 
+def backfill_folders():
+    """Backfill folder_path/folder_tags from file_path for all files.
+
+    - Files with missing folder info: always update
+    - WebDAV files: always recalculate (previous scan may have stored incomplete paths)
+    - Local files with existing folder info: skip
+    """
+    try:
+        db = SQLiteDB()
+        cursor = db.conn.cursor()
+        # All files: recalculate folder_path from file_path
+        # (previous logic may have stored incomplete paths)
+        cursor.execute("SELECT id, file_path, folder_path FROM files")
+        rows = cursor.fetchall()
+        updated = 0
+        for file_id, fpath, current_folder in rows:
+            folder_path, depth, tags = _extract_folder_from_path(fpath)
+            if folder_path and folder_path != current_folder:
+                tags_json = json.dumps(tags)
+                cursor.execute(
+                    "UPDATE files SET folder_path=?, folder_depth=?, folder_tags=? WHERE id=?",
+                    (folder_path, depth, tags_json, file_id)
+                )
+                db._refresh_fts_row(cursor, file_id)
+                updated += 1
+        db.conn.commit()
+        db.close()
+        return {"success": True, "updated": updated, "total": len(rows)}
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": f"{e}\n{traceback.format_exc()}"}
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(json.dumps({"success": False, "error": "No command specified"}))
@@ -485,6 +559,8 @@ if __name__ == "__main__":
     elif cmd == "cancel-wr":
         data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
         result = cancel_work_request(data.get("wr_id", 0))
+    elif cmd == "backfill-folders":
+        result = backfill_folders()
     else:
         result = {"success": False, "error": f"Unknown command: {cmd}"}
 
