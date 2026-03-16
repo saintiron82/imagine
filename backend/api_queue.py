@@ -170,7 +170,7 @@ def _scan_webdav_folder(folder_path, db, cursor, webdav_configs=None):
 
     # Override remote_path to scan the specific subfolder
     original_remote = client.remote_path
-    client.remote_path = sub_path if sub_path != "/" else original_remote
+    client.remote_path = original_remote.rstrip('/') + '/' + sub_path.lstrip('/') if sub_path != "/" else original_remote
 
     remote_files = client.list_files_recursive()
     file_groups = defaultdict(list)

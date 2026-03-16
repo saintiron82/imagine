@@ -10,11 +10,11 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, Zap, Eye, Scan, Brain, Check, Download, FolderOpen, LayoutList, LayoutGrid } from 'lucide-react';
+import { AlertTriangle, Zap, Eye, Scan, Brain, Check, Download, FolderOpen, LayoutList, LayoutGrid, Pause, Play, X } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
-import { getWorkRequests, listWorkerSessions } from '../api/admin';
+import { getWorkRequests, listWorkerSessions, pauseWorkRequest, resumeWorkRequest, cancelWorkRequest } from '../api/admin';
 
 // Phase config (workers do MC → VV → MV only, no Parse)
 const PHASE_CFG = {
@@ -66,7 +66,20 @@ export default function PipelineBlackboard({ workerProgress }) {
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
 
   // Active WRs completed/failed — from work_requests table (survives job deletion)
-  const activeWRsAll = workRequests.filter(wr => wr.status === 'queued' || wr.status === 'processing');
+  const activeWRsAll = workRequests.filter(wr => wr.status === 'queued' || wr.status === 'processing' || wr.status === 'paused');
+
+  const handleWRAction = useCallback(async (wrId, action) => {
+    try {
+      if (action === 'pause') {
+        useIPC ? await window.electron.queue.pauseWorkRequest(wrId) : await pauseWorkRequest(wrId);
+      } else if (action === 'resume') {
+        useIPC ? await window.electron.queue.resumeWorkRequest(wrId) : await resumeWorkRequest(wrId);
+      } else if (action === 'cancel') {
+        useIPC ? await window.electron.queue.cancelWorkRequest(wrId) : await cancelWorkRequest(wrId);
+      }
+      load();
+    } catch { /* ignore */ }
+  }, [useIPC, load]);
   const completed = activeWRsAll.reduce((sum, wr) => sum + (wr.completed_count || 0), 0);
   const failed = activeWRsAll.reduce((sum, wr) => sum + (wr.failed_count || 0), 0);
   const total = activeWRsAll.reduce((sum, wr) => sum + (wr.total_files || 0), 0);
@@ -146,7 +159,7 @@ export default function PipelineBlackboard({ workerProgress }) {
         /* ══ BOARD VIEW — flat summary cards ══ */
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-w-5xl mx-auto">
           {/* WR cards */}
-          {activeWRs.map(wr => <WRCard key={wr.id} wr={wr} />)}
+          {activeWRs.map(wr => <WRCard key={wr.id} wr={wr} onAction={handleWRAction} />)}
 
           {/* DL */}
           <BoardCard label="DOWNLOAD" color="blue" icon={<Download size={18} className="text-blue-400" />}
@@ -517,21 +530,48 @@ function WorkerLine({ worker, t }) {
 
 // ─── WR Card ─────────────────────────────────────────────
 
-function WRCard({ wr }) {
+function WRCard({ wr, onAction }) {
   const total = wr.total_files || 0;
   const done = wr.completed_count || 0;
   const failed = wr.failed_count || 0;
   const pct = total > 0 ? (done / total) * 100 : 0;
   const isActive = wr.status === 'processing';
+  const isPaused = wr.status === 'paused';
+
+  const dotColor = isActive ? 'bg-blue-500 animate-pulse' : isPaused ? 'bg-yellow-500' : 'bg-gray-600';
+  const borderColor = isActive ? 'border-blue-700/50 bg-blue-900/15' : isPaused ? 'border-yellow-700/50 bg-yellow-900/10' : 'border-gray-700/30 bg-gray-800/30';
+  const barColor = isActive ? 'bg-blue-500' : isPaused ? 'bg-yellow-500/60' : 'bg-gray-600';
 
   return (
-    <div className={`rounded-lg border px-3 py-2 w-[150px] ${isActive ? 'border-blue-700/50 bg-blue-900/15' : 'border-gray-700/30 bg-gray-800/30'}`}>
+    <div className={`rounded-lg border px-3 py-2 w-[150px] ${borderColor}`}>
       <div className="flex items-center gap-1.5 mb-1">
-        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-500 animate-pulse' : 'bg-gray-600'}`} />
-        <span className="text-[10px] text-gray-300 font-medium truncate">{wr.name}</span>
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`} />
+        <span className="text-[10px] text-gray-300 font-medium truncate flex-1">{wr.name}</span>
+        {/* Control buttons */}
+        {onAction && (
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            {isActive && (
+              <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'pause'); }}
+                className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-yellow-400 transition-colors" title="Pause">
+                <Pause size={9} />
+              </button>
+            )}
+            {isPaused && (
+              <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'resume'); }}
+                className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-green-400 transition-colors" title="Resume">
+                <Play size={9} />
+              </button>
+            )}
+            <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'cancel'); }}
+              className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-red-400 transition-colors" title="Cancel">
+              <X size={9} />
+            </button>
+          </div>
+        )}
       </div>
+      {isPaused && <div className="text-[7px] text-yellow-500 font-mono mb-1">PAUSED</div>}
       <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${isActive ? 'bg-blue-500' : 'bg-gray-600'}`} style={{ width: `${pct}%` }} />
+        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
       </div>
       <div className="flex justify-between mt-0.5">
         <span className="text-[8px] font-mono text-gray-600 tabular-nums">{done}/{total}</span>
