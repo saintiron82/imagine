@@ -76,6 +76,19 @@ def _get_actual_server_mode() -> str:
     return _server_pool_mode
 
 
+def _get_embedded_worker_status() -> dict:
+    """Get embedded worker status for stats API."""
+    try:
+        from backend.server.embedded_worker import get_status
+        ew = get_status()
+        return {
+            "running": ew.get("running", False),
+            "jobs_completed": ew.get("jobs_completed", 0),
+        }
+    except Exception:
+        return {"running": False, "jobs_completed": 0}
+
+
 def _utcnow_sql() -> str:
     """Return current UTC time in SQLite-native format: YYYY-MM-DD HH:MM:SS.
 
@@ -1098,6 +1111,7 @@ class JobQueueManager:
             **file_ready_stats,
             "download_buffer": download_buffer,
             "server_mode": _get_actual_server_mode(),
+            "embedded_worker": _get_embedded_worker_status(),
         }
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0) -> Dict[str, Any]:

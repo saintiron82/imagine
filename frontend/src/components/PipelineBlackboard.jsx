@@ -40,9 +40,9 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
         useIPC
           ? window.electron.queue.listWorkRequests(false).then(r => r?.work_requests || [])
           : getWorkRequests(false).catch(() => []),
-        // Always fetch server workers in server mode (even Electron)
-        // so embedded worker and remote workers are visible
-        (isServerMode || !useIPC)
+        // Only fetch worker sessions in web client mode (not Electron)
+        // Electron: local worker via IPC events, embedded worker via stats.embedded_worker
+        !useIPC
           ? listWorkerSessions().then(d => d?.workers || []).catch(() => [])
           : Promise.resolve([]),
       ]);
@@ -50,7 +50,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
       setWorkRequests(Array.isArray(wrData) ? wrData : []);
       setWorkers(Array.isArray(wData) ? wData : []);
     } catch { /* ignore */ }
-  }, [useIPC, isServerMode]);
+  }, [useIPC]);
 
   // Adaptive polling: 3s when active, 5s when idle
   const isActiveRef = useRef(false);
@@ -73,6 +73,9 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
   const parsing = s.parse_ahead_parsing ?? 0;
   const buffer = s.parse_ahead_parsed ?? 0;
   const serverMode = s.server_mode || 'parse_only';
+  const ew = s.embedded_worker || {};
+  const ewRunning = ew.running || false;
+  const ewCompleted = ew.jobs_completed || 0;
   const processing = (s.assigned ?? 0) + (s.processing ?? 0);
   const remaining = (s.pending ?? 0) + (s.assigned ?? 0) + (s.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
@@ -282,12 +285,18 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
 
           <Belt active={isRunning} color="teal" label="file_ready=1" />
 
-          {/* ── STAGE 3: Parser ── */}
-          <Stage label="STAGE 3" title={`PARSER${serverMode === 'parse_vv' ? ' + VV (Server GPU)' : ' (Server CPU)'}`} color="teal">
+          {/* ── STAGE 3: Server Auto-Processing ── */}
+          <Stage label="STAGE 3" title={(() => {
+            if (ewRunning) return 'SERVER · Auto Processing';
+            if (serverMode === 'parse_vv') return 'SERVER · Parse + VV';
+            if (parsing > 0 || parsePending > 0) return 'SERVER · Parsing';
+            return 'SERVER · Idle';
+          })()} color="teal">
             <div className="flex items-center gap-4 mt-1">
-              <div className={`rounded-lg border-2 ${parsing > 0 || parsePending > 0 ? 'border-teal-600/40 shadow-[0_0_12px_rgba(45,212,191,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-teal-900/15 to-gray-900 w-16 h-16 flex flex-col items-center justify-center flex-shrink-0`}>
-                <span className={`text-2xl ${parsing > 0 || parsePending > 0 ? 'animate-spin-slow' : 'opacity-30'}`}>&#8862;</span>
-                <span className="text-[6px] text-teal-600 font-mono mt-0.5">1 thread</span>
+              <div className={`rounded-lg border-2 ${ewRunning || parsing > 0 || parsePending > 0 ? 'border-teal-600/40 shadow-[0_0_12px_rgba(45,212,191,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-teal-900/15 to-gray-900 w-16 h-16 flex flex-col items-center justify-center flex-shrink-0`}>
+                <span className={`text-2xl ${ewRunning || parsing > 0 || parsePending > 0 ? 'animate-spin-slow' : 'opacity-30'}`}>&#8862;</span>
+                {ewRunning && <span className="text-[6px] text-green-500 font-mono mt-0.5">AUTO</span>}
+                {!ewRunning && <span className="text-[6px] text-teal-600 font-mono mt-0.5">parse</span>}
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-4 mb-1.5">
@@ -296,11 +305,21 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
                     <span className="text-lg font-mono font-bold text-teal-400 tabular-nums">{parsing}</span>
                   </div>
                   <div>
-                    <div className="text-[8px] font-mono text-gray-600 mb-0.5">await parse</div>
+                    <div className="text-[8px] font-mono text-gray-600 mb-0.5">await</div>
                     <span className="text-lg font-mono font-bold text-gray-400 tabular-nums">{parsePending}</span>
                   </div>
+                  {ewRunning && (
+                    <div>
+                      <div className="text-[8px] font-mono text-green-600 mb-0.5">auto done</div>
+                      <span className="text-lg font-mono font-bold text-green-400 tabular-nums">{ewCompleted}</span>
+                    </div>
+                  )}
                 </div>
-                <div className="text-[7px] text-gray-600 font-mono">PSD/PNG → thumbnail + metadata extraction</div>
+                <div className="text-[7px] text-gray-600 font-mono">
+                  {ewRunning
+                    ? 'Parse + Download + MC + VV + MV (server self-processing)'
+                    : 'PSD/PNG → thumbnail + metadata extraction'}
+                </div>
               </div>
             </div>
           </Stage>
