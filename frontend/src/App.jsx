@@ -715,9 +715,10 @@ function App() {
       setServerQueueStats(null);
       return;
     }
+    const useIPC = isElectron && window.electron?.queue;
     const fetchStats = async () => {
       try {
-        const data = await getJobStats();
+        const data = useIPC ? await window.electron.queue.getStats() : await getJobStats();
         if (data && data.success !== false) {
           setServerQueueStats({
             total: data.total || 0,
