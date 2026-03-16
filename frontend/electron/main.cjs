@@ -1203,11 +1203,49 @@ ipcMain.handle('queue-register-paths', async (_, { filePaths, priority }) => {
 });
 
 ipcMain.handle('queue-scan-folder', async (_, { folderPath, priority }) => {
-    return spawnQueueCmd('scan-folder', { folder_path: folderPath, priority: parseInt(priority) || 0 });
+    const data = { folder_path: folderPath, priority: parseInt(priority) || 0 };
+    // Resolve WebDAV credentials if needed
+    if (folderPath.startsWith('webdav://')) {
+        const { sourceId } = _parseWebDAVPath(folderPath);
+        const userConfig = readYamlFile(userSettingsPath);
+        const source = (userConfig.webdav_sources || []).find(s => s.id === sourceId);
+        if (source) {
+            data.webdav_configs = { [sourceId]: {
+                url: source.url, username: source.username,
+                password: _decryptWebdavPassword(source),
+                remote_path: source.remote_path || '/', verify_ssl: source.verify_ssl !== false,
+            }};
+        }
+    }
+    return spawnQueueCmd('scan-folder', data);
 });
 
 ipcMain.handle('queue-scan-folders', async (_, { folderPaths, priority }) => {
-    return spawnQueueCmd('scan-folders', { folder_paths: folderPaths, priority: parseInt(priority) || 0 });
+    // Resolve WebDAV credentials for any webdav:// paths
+    const webdavConfigs = {};
+    for (const fp of folderPaths) {
+        if (fp.startsWith('webdav://')) {
+            const { sourceId } = _parseWebDAVPath(fp);
+            if (!webdavConfigs[sourceId]) {
+                const userConfig = readYamlFile(userSettingsPath);
+                const source = (userConfig.webdav_sources || []).find(s => s.id === sourceId);
+                if (source) {
+                    webdavConfigs[sourceId] = {
+                        url: source.url,
+                        username: source.username,
+                        password: _decryptWebdavPassword(source),
+                        remote_path: source.remote_path || '/',
+                        verify_ssl: source.verify_ssl !== false,
+                    };
+                }
+            }
+        }
+    }
+    return spawnQueueCmd('scan-folders', {
+        folder_paths: folderPaths,
+        priority: parseInt(priority) || 0,
+        webdav_configs: Object.keys(webdavConfigs).length > 0 ? webdavConfigs : undefined,
+    });
 });
 
 ipcMain.handle('queue-stats', async () => {

@@ -10,7 +10,7 @@ Commands:
 import sys
 import json
 import io
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -54,11 +54,15 @@ def register_paths(file_paths, priority=0):
         return {"success": False, "error": str(e)}
 
 
-def scan_folder(folder_path, priority=0):
+def scan_folder(folder_path, priority=0, webdav_configs=None):
     """DFS scan folder and create Work Request with jobs."""
     try:
         from backend.pipeline.ingest_engine import discover_files
         from collections import defaultdict
+
+        # WebDAV: delegate to scan_folders (reuses shared logic)
+        if folder_path.startswith("webdav://"):
+            return scan_folders([folder_path], priority, webdav_configs)
 
         folder = Path(folder_path).resolve()
         if not folder.exists() or not folder.is_dir():
@@ -126,8 +130,99 @@ def scan_folder(folder_path, priority=0):
         return {"success": False, "error": str(e)}
 
 
-def scan_folders(folder_paths, priority=0):
-    """DFS scan multiple folders and create ONE Work Request with jobs."""
+def _parse_webdav_path(webdav_path):
+    """Parse webdav://source-id/sub/path into (source_id, sub_path)."""
+    without_scheme = webdav_path.replace("webdav://", "", 1)
+    slash_idx = without_scheme.find("/")
+    if slash_idx == -1:
+        return without_scheme, "/"
+    return without_scheme[:slash_idx], without_scheme[slash_idx:] or "/"
+
+
+def _get_webdav_client(source_id, webdav_configs=None):
+    """Create a WebDAVClient from provided configs (Electron-decrypted)."""
+    from backend.remote.webdav_client import WebDAVClient
+
+    if not webdav_configs or source_id not in webdav_configs:
+        return None, None
+
+    cfg = webdav_configs[source_id]
+    client = WebDAVClient(
+        base_url=cfg["url"],
+        username=cfg.get("username", ""),
+        password=cfg.get("password", ""),
+        remote_path=cfg.get("remote_path", "/"),
+        verify_ssl=cfg.get("verify_ssl", True),
+    )
+    return client, cfg
+
+
+def _scan_webdav_folder(folder_path, db, cursor, webdav_configs=None):
+    """Scan a webdav:// folder and return (discovered, skipped, file_groups)."""
+    from backend.remote.webdav_client import WebDAVClient
+    from pathlib import PurePosixPath
+    from collections import defaultdict
+
+    source_id, sub_path = _parse_webdav_path(folder_path)
+    client, source = _get_webdav_client(source_id, webdav_configs)
+    if not client:
+        return 0, 0, {}
+
+    # Override remote_path to scan the specific subfolder
+    original_remote = client.remote_path
+    client.remote_path = sub_path if sub_path != "/" else original_remote
+
+    remote_files = client.list_files_recursive()
+    file_groups = defaultdict(list)
+    discovered = 0
+    skipped = 0
+
+    for rf in remote_files:
+        # Build webdav:// URI for this file
+        fpath_str = f"webdav://{source_id}{rf.remote_path}"
+        file_name = PurePosixPath(rf.remote_path).name
+
+        # Folder path relative to scan root
+        rel_parent = str(PurePosixPath(rf.relative_path).parent)
+        if rel_parent == ".":
+            rel_parent = ""
+
+        discovered += 1
+
+        # Check for existing active job
+        cursor.execute(
+            "SELECT id FROM job_queue WHERE file_path = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
+            (fpath_str,)
+        )
+        if cursor.fetchone():
+            skipped += 1
+            continue
+
+        meta = {
+            "file_path": fpath_str,
+            "file_name": file_name,
+            "folder_path": rel_parent,
+            "folder_depth": rf.relative_path.count("/"),
+            "folder_tags": [p for p in rel_parent.split("/") if p],
+            "storage_root": f"webdav://{source_id}{client.remote_path}",
+        }
+        try:
+            fid = db.upsert_metadata(fpath_str, meta)
+            group_key = rel_parent or f"webdav://{source_id}{client.remote_path}"
+            file_groups[group_key].append((fid, fpath_str))
+        except Exception:
+            pass
+
+    return discovered, skipped, dict(file_groups)
+
+
+def scan_folders(folder_paths, priority=0, webdav_configs=None):
+    """DFS scan multiple folders and create ONE Work Request with jobs.
+
+    Supports both local paths and webdav:// URIs.
+    webdav_configs: {source_id: {url, username, password, remote_path, verify_ssl}}
+                    Pre-decrypted by Electron IPC.
+    """
     try:
         from backend.pipeline.ingest_engine import discover_files
         from collections import defaultdict
@@ -141,6 +236,16 @@ def scan_folders(folder_paths, priority=0):
         total_skipped = 0
 
         for folder_path in folder_paths:
+            # WebDAV path: use remote file listing
+            if folder_path.startswith("webdav://"):
+                discovered, skipped, file_groups = _scan_webdav_folder(folder_path, db, cursor, webdav_configs)
+                total_discovered += discovered
+                total_skipped += skipped
+                for k, v in file_groups.items():
+                    all_file_groups[k].extend(v)
+                continue
+
+            # Local path: use filesystem DFS
             folder = Path(folder_path).resolve()
             if not folder.exists() or not folder.is_dir():
                 continue
@@ -177,7 +282,13 @@ def scan_folders(folder_paths, priority=0):
 
         if all_file_groups:
             # Build name from folder list
-            names = [Path(p).name for p in folder_paths[:3]]
+            names = []
+            for p in folder_paths[:3]:
+                if p.startswith("webdav://"):
+                    _, sub = _parse_webdav_path(p)
+                    names.append(PurePosixPath(sub).name or sub)
+                else:
+                    names.append(Path(p).name)
             name = ", ".join(names)
             if len(folder_paths) > 3:
                 name += f" +{len(folder_paths) - 3}"
@@ -201,7 +312,8 @@ def scan_folders(folder_paths, priority=0):
             "skipped": total_skipped,
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        import traceback
+        return {"success": False, "error": f"{e}\n{traceback.format_exc()}"}
 
 
 def get_stats():
@@ -338,10 +450,10 @@ if __name__ == "__main__":
         result = register_paths(data.get("file_paths", []), data.get("priority", 0))
     elif cmd == "scan-folder":
         data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
-        result = scan_folder(data.get("folder_path", ""), data.get("priority", 0))
+        result = scan_folder(data.get("folder_path", ""), data.get("priority", 0), data.get("webdav_configs"))
     elif cmd == "scan-folders":
         data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.loads(sys.stdin.readline())
-        result = scan_folders(data.get("folder_paths", []), int(data.get("priority", 0)))
+        result = scan_folders(data.get("folder_paths", []), int(data.get("priority", 0)), data.get("webdav_configs"))
     elif cmd == "stats":
         result = get_stats()
     elif cmd == "list-jobs":
