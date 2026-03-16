@@ -1417,8 +1417,13 @@ function App() {
         <EnqueueFolderModal
           folderPath={enqueueFolderTarget.path}
           folderName={enqueueFolderTarget.name}
-          onConfirm={(path, name, includeSub) => {
-            handleProcessFolders([path], name);
+          onConfirm={async (path, name, includeSub) => {
+            if (appMode === 'server' && isElectron && window.electron?.queue) {
+              const result = await window.electron.queue.scanFolders([path], 0);
+              setQueueReloadSignal(prev => prev + 1);
+              return result;
+            }
+            return { success: false, error: 'Not in server mode' };
           }}
           onClose={() => setEnqueueFolderTarget(null)}
         />
