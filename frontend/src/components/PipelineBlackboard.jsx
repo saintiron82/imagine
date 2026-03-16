@@ -61,12 +61,15 @@ export default function PipelineBlackboard({ workerProgress }) {
   const parsePending = s.ready_pending ?? 0;
   const parsing = s.parse_ahead_parsing ?? 0;
   const buffer = s.parse_ahead_parsed ?? 0;
-  const completed = s.completed ?? 0;
-  const failed = s.failed ?? 0;
-  const total = s.total ?? 0;
   const processing = (s.assigned ?? 0) + (s.processing ?? 0);
   const remaining = (s.pending ?? 0) + (s.assigned ?? 0) + (s.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
+
+  // Active WRs completed/failed — from work_requests table (survives job deletion)
+  const activeWRsAll = workRequests.filter(wr => wr.status === 'queued' || wr.status === 'processing');
+  const completed = activeWRsAll.reduce((sum, wr) => sum + (wr.completed_count || 0), 0);
+  const failed = activeWRsAll.reduce((sum, wr) => sum + (wr.failed_count || 0), 0);
+  const total = activeWRsAll.reduce((sum, wr) => sum + (wr.total_files || 0), 0);
   const pct = total > 0 ? ((completed / total) * 100).toFixed(1) : '0.0';
 
   // ── Workers ──
@@ -92,7 +95,7 @@ export default function PipelineBlackboard({ workerProgress }) {
   }));
 
   const allWorkers = localWorker ? [localWorker, ...remoteWorkers] : remoteWorkers;
-  const activeWRs = workRequests.filter(wr => wr.status === 'queued' || wr.status === 'processing');
+  const activeWRs = activeWRsAll;
   const isRunning = throughput > 0 || processing > 0 || (wp?.currentPhase != null);
 
   return (
