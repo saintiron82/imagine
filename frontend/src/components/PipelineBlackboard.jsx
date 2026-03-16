@@ -280,18 +280,22 @@ export default function PipelineBlackboard({ workerProgress }) {
                 <span className="text-[6px] text-teal-600 font-mono mt-0.5">1 thread</span>
               </div>
               <div className="flex-1">
-                <div className="flex items-center gap-3 mb-1">
-                  <span className="text-[9px] font-mono text-gray-500">{t('factory.summary_processing')}:</span>
-                  <span className="text-lg font-mono font-bold text-teal-400 tabular-nums">{parsing}</span>
-                  <span className="text-[9px] font-mono text-gray-500 ml-4">{t('bb.station_queue')}:</span>
-                  <span className="text-lg font-mono font-bold text-gray-400 tabular-nums">{parsePending}</span>
+                <div className="flex items-center gap-4 mb-1.5">
+                  <div>
+                    <div className="text-[8px] font-mono text-gray-600 mb-0.5">parsing</div>
+                    <span className="text-lg font-mono font-bold text-teal-400 tabular-nums">{parsing}</span>
+                  </div>
+                  <div>
+                    <div className="text-[8px] font-mono text-gray-600 mb-0.5">await parse</div>
+                    <span className="text-lg font-mono font-bold text-gray-400 tabular-nums">{parsePending}</span>
+                  </div>
                 </div>
-                <div className="text-[7px] text-gray-600 font-mono">ParseAheadPool · PSD/PNG → thumbnail + metadata</div>
+                <div className="text-[7px] text-gray-600 font-mono">PSD/PNG → thumbnail + metadata extraction</div>
               </div>
             </div>
           </Stage>
 
-          <Belt active={isRunning && buffer > 0} color="orange" label="parse=parsed" />
+          <Belt active={isRunning && buffer > 0} color="orange" label="parsed → buffer" />
 
           {/* ── STAGE 4: Buffer ── */}
           <Stage label="STAGE 4" title="BUFFER" color="orange">
@@ -300,11 +304,18 @@ export default function PipelineBlackboard({ workerProgress }) {
                 <span className="text-2xl">&#128230;</span>
               </div>
               <div>
-                <div className="flex items-center gap-3 mb-1">
-                  <span className="text-[9px] font-mono text-gray-500">{t('bb.completed_label')}:</span>
-                  <span className="text-2xl font-mono font-bold text-orange-400 tabular-nums">{buffer}</span>
+                <div className="flex items-center gap-4 mb-1.5">
+                  <div>
+                    <div className="text-[8px] font-mono text-gray-600 mb-0.5">ready for worker</div>
+                    <span className="text-2xl font-mono font-bold text-orange-400 tabular-nums">{buffer}</span>
+                  </div>
                 </div>
-                <div className="text-[7px] text-gray-600 font-mono">{t('bb.buffer')} · demand × 2</div>
+                <div className="text-[7px] text-gray-600 font-mono">
+                  {allWorkers.length > 0
+                    ? `target: ${allWorkers.length} workers × 2 = ${allWorkers.length * 2}`
+                    : 'no workers → buffer paused'
+                  }
+                </div>
               </div>
             </div>
           </Stage>
