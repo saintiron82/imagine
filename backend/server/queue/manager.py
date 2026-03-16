@@ -72,8 +72,23 @@ def set_server_pool_mode(mode: str):
     _server_pool_mode = mode
 
 def _get_actual_server_mode() -> str:
-    """Get the actual server processing mode (parse_only, parse_vv)."""
-    return _server_pool_mode
+    """Get the actual server processing mode (parse_only, parse_vv).
+
+    In FastAPI process: _server_pool_mode is set by _recalculate_server_pools.
+    In IPC subprocess (api_queue.py): _server_pool_mode is always initial value,
+    so we fall back to config-based inference.
+    """
+    if _server_pool_mode != "parse_only":
+        return _server_pool_mode
+    # Fallback: infer from config (for IPC subprocess)
+    try:
+        from backend.utils.config import get_config
+        cfg = get_config()
+        if cfg.get("server.auto_processing.enabled", False):
+            return "parse_vv"
+    except Exception:
+        pass
+    return "parse_only"
 
 
 def _get_embedded_worker_status() -> dict:
