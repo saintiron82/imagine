@@ -9,8 +9,8 @@
  * STAGE 6: Output (Storage + Failed)
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertTriangle, Zap, Eye, Scan, Brain, Check, Download, FolderOpen, LayoutList, LayoutGrid, Pause, Play, X, ChevronRight, ChevronDown } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { AlertTriangle, Zap, Eye, Scan, Brain, Check, Download, FolderOpen, Pause, Play, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
@@ -26,7 +26,6 @@ const PHASES = ['vision', 'embed_vv', 'embed_mv'];
 
 export default function PipelineBlackboard({ workerProgress, reloadSignal, isWorkerRunning, appMode }) {
   const { t } = useLocale();
-  const [view, setView] = useState('pipeline'); // 'pipeline' | 'board'
   const [stats, setStats] = useState(null);
   const [workRequests, setWorkRequests] = useState([]);
   const [workers, setWorkers] = useState([]);
@@ -53,16 +52,18 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
     } catch { /* ignore */ }
   }, [useIPC, isServerMode]);
 
+  // Adaptive polling: 3s when active, 5s when idle
+  const isActiveRef = useRef(false);
   useEffect(() => {
     load();
-    const iv = setInterval(load, 5000);
+    const iv = setInterval(load, isActiveRef.current ? 3000 : 5000);
     return () => clearInterval(iv);
   }, [load]);
 
-  // Reload immediately when queue changes (e.g. folder scan completed)
-  useEffect(() => {
-    if (reloadSignal > 0) load();
-  }, [reloadSignal, load]);
+  // Reload immediately on external triggers
+  useEffect(() => { if (reloadSignal > 0) load(); }, [reloadSignal, load]);
+  useEffect(() => { load(); }, [isWorkerRunning, load]);
+  useEffect(() => { if (wp?.completed > 0) load(); }, [wp?.completed, load]);
 
   // ── Computed stats ──
   const s = stats || {};
@@ -179,6 +180,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
   const allWorkers = localWorker ? [localWorker, ...remoteWorkers] : remoteWorkers;
   const activeWRs = activeWRsAll;
   const isRunning = throughput > 0 || processing > 0 || (wp?.currentPhase != null);
+  isActiveRef.current = isRunning;
 
   return (
     <div className="h-full flex flex-col bg-gray-950 select-none overflow-hidden">
@@ -197,21 +199,6 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
           )}
         </div>
         <div className="flex items-center gap-2">
-          {/* View toggle */}
-          <div className="flex items-center border border-gray-700/40 rounded overflow-hidden">
-            <button
-              onClick={() => setView('pipeline')}
-              className={`px-2 py-0.5 text-[9px] font-mono flex items-center gap-1 transition-colors ${view === 'pipeline' ? 'bg-gray-700/50 text-gray-300' : 'text-gray-600 hover:text-gray-400'}`}
-            >
-              <LayoutList size={10} />Pipeline
-            </button>
-            <button
-              onClick={() => setView('board')}
-              className={`px-2 py-0.5 text-[9px] font-mono flex items-center gap-1 transition-colors ${view === 'board' ? 'bg-gray-700/50 text-gray-300' : 'text-gray-600 hover:text-gray-400'}`}
-            >
-              <LayoutGrid size={10} />Board
-            </button>
-          </div>
           {throughput > 0 && (
             <span className="text-xs font-mono text-gray-400 tabular-nums">
               <Zap size={11} className="inline mr-1 text-yellow-500" />
@@ -224,69 +211,6 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
       {/* Factory Floor */}
       <div className="flex-1 overflow-auto p-4">
 
-       {view === 'board' ? (
-        /* ══ BOARD VIEW — flat summary cards ══ */
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-w-5xl mx-auto">
-          {/* WR cards */}
-          {activeWRs.map(wr => <WRCard key={wr.id} wr={wr} onAction={handleWRAction} />)}
-
-          {/* DL */}
-          <BoardCard label="DOWNLOAD" color="blue" icon={<Download size={18} className="text-blue-400" />}
-            value={dlWaiting} sub="waiting" active={dlWaiting > 0} />
-
-          {/* Parser */}
-          <BoardCard label="PARSER" color="teal"
-            icon={<span className={`text-xl ${parsing > 0 || parsePending > 0 ? 'animate-spin-slow' : 'opacity-30'}`}>&#8862;</span>}
-            value={parsing} sub={`${parsePending} queued`} active={parsing > 0 || parsePending > 0} />
-
-          {/* Buffer */}
-          <BoardCard label="BUFFER" color="orange" icon={<span className="text-xl">&#128230;</span>}
-            value={buffer} sub="ready" active={buffer > 0} />
-
-          {/* Workers */}
-          {allWorkers.map((w, i) => {
-            const mode = w.mode || 'full';
-            const modeLabel = MODE_LABELS[mode];
-            const modeColor = MODE_COLORS[mode];
-            const isActive = w.state === 'active' || !!w.phase;
-            const phaseCfg = w.phase ? PHASE_CFG[w.phase] : null;
-            const PhaseIcon = phaseCfg?.icon;
-            return (
-              <div key={i} className={`rounded-xl border-2 p-3 ${isActive ? 'border-gray-600/40 bg-gray-800/25' : 'border-gray-800/20 bg-gray-900/15'}`}>
-                <div className="flex items-center gap-1.5 mb-2">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
-                  <span className="text-[11px] font-mono text-gray-300 font-bold">{w.name}</span>
-                  <span className={`text-[7px] font-mono ${modeColor} ml-auto`}>{modeLabel}</span>
-                </div>
-                <div className="flex items-center justify-center py-2">
-                  {PhaseIcon ? (
-                    <PhaseIcon size={24} className={`${phaseCfg.text} ${phaseCfg.anim}`} />
-                  ) : (
-                    <span className="text-gray-700 text-xl">&#9881;</span>
-                  )}
-                </div>
-                <div className="text-center">
-                  {w.throughput > 0 && <div className="text-[9px] font-mono text-gray-500 tabular-nums">{w.throughput.toFixed(1)}/m</div>}
-                  {w.currentFile && <div className="text-[7px] text-gray-600 font-mono truncate">{w.currentFile}</div>}
-                  {!isActive && <div className="text-[8px] text-gray-600 font-mono italic">{w.state === 'resting' ? t('bb.resting') : t('bb.phase_idle')}</div>}
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Storage */}
-          <BoardCard label="STORAGE" color="green" icon={<span className="text-xl">&#9745;</span>}
-            value={completed} sub={`${pct}%`} active={completed > 0} />
-
-          {/* Failed */}
-          {failed > 0 && (
-            <BoardCard label="FAILED" color="red" icon={<AlertTriangle size={18} className="text-red-400" />}
-              value={failed} sub="errors" active />
-          )}
-        </div>
-
-       ) : (
-        /* ══ PIPELINE VIEW — 6 stages ══ */
         <div className="flex flex-col gap-3 max-w-5xl mx-auto">
 
           {/* ── STAGE 1: Work Requests ── */}
@@ -479,7 +403,6 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
           </Stage>
 
         </div>
-       )}
       </div>
 
       {/* Status Ribbon */}
@@ -847,24 +770,3 @@ function WRChildRow({ wr, onAction }) {
   );
 }
 
-// ─── Board Card (flat summary card) ──────────────────────
-
-const BOARD_COLORS = {
-  blue:   { border: 'border-blue-700/40',   bg: 'bg-blue-900/10',   text: 'text-blue-400',    label: 'text-blue-600' },
-  teal:   { border: 'border-teal-700/40',   bg: 'bg-teal-900/10',   text: 'text-teal-400',    label: 'text-teal-600' },
-  orange: { border: 'border-orange-700/40', bg: 'bg-orange-900/10', text: 'text-orange-400',  label: 'text-orange-600' },
-  green:  { border: 'border-green-700/40',  bg: 'bg-green-900/10',  text: 'text-green-400',   label: 'text-green-600' },
-  red:    { border: 'border-red-800/40',    bg: 'bg-red-900/10',    text: 'text-red-400',     label: 'text-red-600' },
-};
-
-function BoardCard({ label, color, icon, value, sub, active }) {
-  const c = BOARD_COLORS[color] || BOARD_COLORS.blue;
-  return (
-    <div className={`rounded-xl border-2 ${active ? c.border : 'border-gray-800/20'} ${active ? c.bg : 'bg-gray-900/15'} p-3 text-center`}>
-      <div className={`text-[7px] uppercase tracking-widest font-mono font-bold mb-2 ${c.label}`}>{label}</div>
-      <div className="flex justify-center mb-1">{icon}</div>
-      <div className={`text-xl font-mono font-bold tabular-nums ${active ? c.text : 'text-gray-600'}`}>{typeof value === 'number' ? value.toLocaleString() : value}</div>
-      {sub && <div className="text-[8px] font-mono text-gray-600 mt-0.5">{sub}</div>}
-    </div>
-  );
-}
