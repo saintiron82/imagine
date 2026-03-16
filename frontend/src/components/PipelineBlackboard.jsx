@@ -162,25 +162,28 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
     phase: wp?.currentPhase || null,
     phaseIndex: wp?.phaseIndex || 0,
     phaseCount: wp?.phaseCount || 0,
+    batchSize: wp?.batchSize || 0,
     currentFile: wp?.currentFile || '',
     throughput: wp?.throughput || 0,
     state: wp?.workerState || (isWorkerRunning ? 'idle' : 'idle'),
     mode: wp?.processingMode || 'full',
   } : null;
 
-  // Filter out the local IPC worker from server session list to avoid duplicates
-  // (IPC worker registers a session on the server, so it appears in both places)
+  // Remote workers from server sessions:
+  // - Exclude __builtin__ (embedded worker = server auto-processing, shown in Stage 3)
+  // - Exclude local IPC worker duplicate (already shown as localWorker)
   const remoteWorkers = workers
     .filter(w => w.status === 'online')
-    .filter(w => !(localWorker && !w.worker_name?.startsWith('__builtin__') && isElectron))
+    .filter(w => w.worker_name !== '__builtin__')
+    .filter(w => !(localWorker && isElectron))
     .map(w => ({
       name: w.worker_name || w.username,
       phase: w.current_phase,
       currentFile: w.current_file,
       throughput: w.throughput,
+      batchSize: w.batch_capacity || 0,
       state: w.current_phase ? 'active' : 'idle',
       mode: w.processing_mode_override || 'full',
-      isBuiltin: w.worker_name === '__builtin__',
     }));
 
   const allWorkers = localWorker ? [localWorker, ...remoteWorkers] : remoteWorkers;
@@ -331,46 +334,16 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
 
           {/* ── STAGE 5: Workers ── */}
           <Stage label="STAGE 5" title="WORKERS (GPU Terminals)" color="purple">
-            {(() => {
-              const builtinWorkers = allWorkers.filter(w => w.isBuiltin);
-              const externalWorkers = allWorkers.filter(w => !w.isBuiltin);
-              return (
-                <div className="space-y-3 mt-1">
-                  {/* Built-in worker (server internal) */}
-                  {builtinWorkers.length > 0 && (
-                    <div>
-                      <div className="text-[8px] font-mono text-gray-500 mb-1 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-sm bg-amber-500/60 flex-shrink-0" />
-                        SERVER EMBEDDED
-                      </div>
-                      {builtinWorkers.map((w, i) => <WorkerLine key={`b-${i}`} worker={w} t={t} />)}
-                    </div>
-                  )}
+            <div className="space-y-3 mt-1">
+              {allWorkers.map((w, i) => <WorkerLine key={i} worker={w} t={t} />)}
 
-                  {/* External workers */}
-                  {externalWorkers.length > 0 && (
-                    <div>
-                      {builtinWorkers.length > 0 && (
-                        <div className="text-[8px] font-mono text-gray-500 mb-1 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-sm bg-purple-500/60 flex-shrink-0" />
-                          EXTERNAL WORKERS
-                        </div>
-                      )}
-                      {externalWorkers.map((w, i) => <WorkerLine key={`e-${i}`} worker={w} t={t} />)}
-                    </div>
-                  )}
-
-                  {/* No workers */}
-                  {allWorkers.length === 0 && (
-                    <div className="text-center py-4 border border-dashed border-gray-700/30 rounded-lg">
-                      <div className="text-gray-700 text-2xl mb-1">&#9881;</div>
-                      <div className="text-[10px] text-gray-600 font-mono">{t('bb.no_workers')}</div>
-                      <div className="text-[8px] text-gray-700 font-mono mt-1">Parser buffer paused (no demand)</div>
-                    </div>
-                  )}
+              {allWorkers.length === 0 && (
+                <div className="text-center py-4 border border-dashed border-gray-700/30 rounded-lg">
+                  <div className="text-gray-700 text-2xl mb-1">&#9881;</div>
+                  <div className="text-[10px] text-gray-600 font-mono">{t('bb.no_workers')}</div>
                 </div>
-              );
-            })()}
+              )}
+            </div>
             <div className="text-[7px] text-gray-600 font-mono mt-2 pt-2 border-t border-gray-800/30">
               MC(Vision) → VV(Visual Vector) → MV(Meaning Vector) · Phase-batch · GPU model swap
             </div>
@@ -510,10 +483,7 @@ function WorkerLine({ worker, t }) {
     <div className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${isActive ? 'border-gray-600/30 bg-gray-800/20' : 'border-gray-800/20 bg-gray-900/10'}`}>
       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
       <div className="flex flex-col w-24 flex-shrink-0">
-        <div className="flex items-center gap-1">
-          <span className="text-[11px] font-mono text-gray-300 font-bold truncate">{w.isBuiltin ? 'Embedded' : w.name}</span>
-          {w.isBuiltin && <span className="text-[6px] font-mono px-1 py-0 rounded bg-amber-800/60 text-amber-400 border border-amber-700/40">SERVER</span>}
-        </div>
+        <span className="text-[11px] font-mono text-gray-300 font-bold truncate">{w.name}</span>
         <span className={`text-[7px] font-mono ${MODE_COLORS[mode]}`}>{MODE_LABELS[mode]}</span>
       </div>
 
@@ -570,6 +540,7 @@ function WorkerLine({ worker, t }) {
       {/* Worker info */}
       <div className="flex-1 min-w-0 ml-2">
         <div className="flex items-center gap-2">
+          {w.batchSize > 0 && <span className="text-[8px] font-mono text-yellow-600 tabular-nums">B:{w.batchSize}</span>}
           {w.throughput > 0 && <span className="text-[8px] font-mono text-gray-500 tabular-nums">{w.throughput.toFixed(1)}/m</span>}
           {!isActive && <span className="text-[8px] font-mono text-gray-600 italic">{w.state === 'resting' ? t('bb.resting') : t('bb.phase_idle')}</span>}
         </div>
