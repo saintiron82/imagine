@@ -168,15 +168,20 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
     mode: wp?.processingMode || 'full',
   } : null;
 
-  const remoteWorkers = workers.filter(w => w.status === 'online').map(w => ({
-    name: w.worker_name || w.username,
-    phase: w.current_phase,
-    currentFile: w.current_file,
-    throughput: w.throughput,
-    state: w.current_phase ? 'active' : 'idle',
-    mode: w.processing_mode_override || 'full',
-    isBuiltin: w.worker_name === '__builtin__',
-  }));
+  // Filter out the local IPC worker from server session list to avoid duplicates
+  // (IPC worker registers a session on the server, so it appears in both places)
+  const remoteWorkers = workers
+    .filter(w => w.status === 'online')
+    .filter(w => !(localWorker && !w.worker_name?.startsWith('__builtin__') && isElectron))
+    .map(w => ({
+      name: w.worker_name || w.username,
+      phase: w.current_phase,
+      currentFile: w.current_file,
+      throughput: w.throughput,
+      state: w.current_phase ? 'active' : 'idle',
+      mode: w.processing_mode_override || 'full',
+      isBuiltin: w.worker_name === '__builtin__',
+    }));
 
   const allWorkers = localWorker ? [localWorker, ...remoteWorkers] : remoteWorkers;
   const activeWRs = activeWRsAll;
