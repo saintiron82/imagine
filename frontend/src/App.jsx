@@ -785,7 +785,7 @@ function App() {
     }
 
     // Electron client mode with active worker: route through server API → queue for workers
-    if (appMode === 'client' && false /* isWorkerRunning removed */) {
+    if (appMode === 'client' && false) {
       try {
         const result = await scanFolder(folderPath);
         appendLog({
@@ -832,7 +832,7 @@ function App() {
     }
 
     // Web/Client mode: scan each folder via API (creates separate work_requests)
-    if (!isElectron || (appMode === 'client' && false /* isWorkerRunning removed */)) {
+    if (!isElectron || (appMode === 'client' && false)) {
       let totalJobs = 0;
       try {
         for (const folder of folderPaths) {
@@ -871,7 +871,7 @@ function App() {
     setCurrentPath(incompleteFolders[0]);
 
     // Client mode with active worker: route all folders through server API
-    if (appMode === 'client' && false /* isWorkerRunning removed */) {
+    if (appMode === 'client' && false) {
       let totalJobs = 0;
       try {
         for (const folder of incompleteFolders) {
@@ -932,7 +932,7 @@ function App() {
     }
 
     // Client mode with active worker: route all folders through server API
-    if (appMode === 'client' && false /* isWorkerRunning removed */) {
+    if (appMode === 'client' && false) {
       let totalJobs = 0;
       try {
         for (const folder of folderPaths) {
@@ -1112,14 +1112,12 @@ function App() {
           handleServerToggle();
           break;
         case 'toggle-worker':
-          if (false /* isWorkerRunning removed */) /* handleWorkerStop removed */;
-          else /* handleWorkerStart removed */;
           break;
       }
     };
     window.addEventListener('electron-menu-action', handler);
     return () => window.removeEventListener('electron-menu-action', handler);
-  }, [isElectron, false /* isWorkerRunning removed */]);
+  }, [isElectron]);
 
   const localeLabel = locale === 'ko-KR' ? 'KR' : 'EN';
 
@@ -1391,13 +1389,14 @@ function App() {
             <div className="flex justify-end gap-2">
               {isAdmin && auditResult.incomplete_files > 0 && (
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     setAuditResult(null);
-                    if (!false /* isWorkerRunning removed */) {
-                      /* handleWorkerStart removed */;
+                    try {
+                      const { apiClient } = await import('./api/client');
+                      await apiClient.patch('/api/v1/admin/workers/auto-processing', { enabled: true });
                       showToast(t('audit.worker_started'), 'success');
-                    } else {
-                      showToast(t('audit.worker_already_running'), 'info');
+                    } catch {
+                      showToast('Failed to start auto-processing', 'error');
                     }
                   }}
                   className="flex items-center gap-1.5 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
@@ -1703,7 +1702,7 @@ function App() {
                 <span>{user.username}</span>
               </div>
               <button
-                onClick={() => { if (false /* isWorkerRunning removed */) /* handleWorkerStop removed */; logout(); }}
+                onClick={() => logout()}
                 className="flex items-center space-x-1 px-2 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-red-400 hover:bg-gray-700/50 transition-colors"
                 title={t('auth.logout')}
               >
@@ -1783,11 +1782,8 @@ function App() {
               <FactoryPage
                 isAdmin={isAdmin}
                 appMode={appMode}
-                false /* isWorkerRunning removed */={false /* isWorkerRunning removed */}
-                /* workerProgress removed */
-                /* onWorkerStart removed */
-                /* onWorkerStop removed */
-                queueReloadSignal={queueReloadSignal}
+                false={false}
+                                                                queueReloadSignal={queueReloadSignal}
               />
             ) : null}
           </div>
@@ -1826,10 +1822,8 @@ function App() {
             batchInfo={processProgress.batchInfo}
             fileStep={fileStep}
             onStop={handleStopProcess}
-            isWorkerProcessing={false /* isWorkerRunning removed */ && appMode === 'client'}
-            /* workerProgress removed */
-            /* onWorkerStop removed */
-            serverQueueStats={serverQueueStats}
+            isWorkerProcessing={false && appMode === 'client'}
+                                    serverQueueStats={serverQueueStats}
           />
         </div>
       </div>
