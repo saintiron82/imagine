@@ -40,7 +40,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
           ? window.electron.queue.listWorkRequests(false).then(r => r?.work_requests || [])
           : getWorkRequests(false).catch(() => []),
         // Only fetch worker sessions in web client mode (not Electron)
-        // Electron: local worker via IPC events, embedded worker via stats.embedded_worker
+        // Server auto-processing status comes via stats.embedded_worker
         !useIPC
           ? listWorkerSessions().then(d => d?.workers || []).catch(() => [])
           : Promise.resolve([]),

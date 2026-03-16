@@ -92,33 +92,44 @@ def _get_actual_server_mode() -> str:
 
 
 def _get_embedded_worker_status() -> dict:
-    """Get embedded worker status including current phase from DB session."""
+    """Get server auto-processing status from DB + in-process state.
+
+    Works correctly in both:
+    - FastAPI process: embedded_worker module state is live
+    - IPC subprocess: falls back to DB __builtin__ session status
+    """
     result = {"running": False, "jobs_completed": 0, "current_phase": None, "current_file": None}
+
+    # 1. In-process state (only valid inside FastAPI server)
     try:
         from backend.server.embedded_worker import get_status
         ew = get_status()
-        result["running"] = ew.get("running", False)
-        result["jobs_completed"] = ew.get("jobs_completed", 0)
+        if ew.get("running"):
+            result["running"] = True
+            result["jobs_completed"] = ew.get("jobs_completed", 0)
     except Exception:
         pass
 
-    # Get current phase/file from __builtin__ worker session in DB
+    # 2. DB session state (works in any process — authoritative source)
     try:
         from backend.db.sqlite_client import SQLiteDB
         db = SQLiteDB()
         cursor = db.conn.cursor()
         cursor.execute(
-            """SELECT current_phase, current_file, jobs_completed
+            """SELECT status, current_phase, current_file, jobs_completed
                FROM worker_sessions
-               WHERE worker_name = '__builtin__' AND status = 'online'
+               WHERE worker_name = '__builtin__'
                ORDER BY id DESC LIMIT 1"""
         )
         row = cursor.fetchone()
         if row:
-            result["current_phase"] = row[0]
-            result["current_file"] = row[1]
-            if row[2] and row[2] > result["jobs_completed"]:
-                result["jobs_completed"] = row[2]
+            # DB says online → running (even if in-process check failed in IPC)
+            if row[0] == 'online':
+                result["running"] = True
+            result["current_phase"] = row[1]
+            result["current_file"] = row[2]
+            if row[3] and row[3] > result["jobs_completed"]:
+                result["jobs_completed"] = row[3]
         db.close()
     except Exception:
         pass
