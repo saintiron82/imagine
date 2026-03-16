@@ -938,7 +938,6 @@ export function DiscoverPanel() {
 
 export function DashboardPanel() {
   const { t } = useLocale();
-  const [thumbData, setThumbData] = useState(null);
   const [cacheData, setCacheData] = useState(null);
   const [dbStats, setDbStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -947,12 +946,10 @@ export function DashboardPanel() {
   const fetchAll = useCallback(async () => {
     try {
       setLoading(true);
-      const [thumbResult, cacheResult, dbResult] = await Promise.all([
-        getThumbnailStats().catch(() => null),
+      const [cacheResult, dbResult] = await Promise.all([
         window.electron?.pipeline?.downloadCache?.stats?.().catch(() => null),
         window.electron?.pipeline?.getDbStats?.().catch(() => null),
       ]);
-      if (thumbResult?.success) setThumbData(thumbResult);
       if (cacheResult) setCacheData(cacheResult);
       if (dbResult) setDbStats(dbResult);
     } finally {
@@ -975,7 +972,7 @@ export function DashboardPanel() {
     }
   };
 
-  if (loading && !thumbData && !cacheData) {
+  if (loading && !cacheData) {
     return <div className="flex items-center gap-2 text-gray-400"><Loader2 className="animate-spin" size={16} /> Loading...</div>;
   }
 
@@ -1051,57 +1048,6 @@ export function DashboardPanel() {
         </div>
       )}
 
-      {/* Thumbnail Stats (existing) */}
-      {thumbData && thumbData.sources?.length > 0 && (
-        <div className="bg-gray-800 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('admin.thumb_title')}</h3>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-gray-400">{t('admin.thumb_total')}</span>
-            <span className="font-mono font-bold text-white">{thumbData.grand_total.toLocaleString()}</span>
-          </div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-green-400">{t('admin.thumb_has_thumb')}</span>
-            <span className="font-mono font-bold text-green-400">{thumbData.grand_has_thumb.toLocaleString()}</span>
-          </div>
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-amber-400">{t('admin.thumb_missing')}</span>
-            <span className="font-mono font-bold text-amber-400">{thumbData.grand_missing.toLocaleString()}</span>
-          </div>
-          <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden flex">
-            <div className="bg-green-500 h-full transition-all" style={{ width: `${thumbData.grand_total > 0 ? (thumbData.grand_has_thumb / thumbData.grand_total * 100) : 0}%` }} />
-            <div className="bg-amber-500 h-full transition-all" style={{ width: `${thumbData.grand_total > 0 ? (thumbData.grand_missing / thumbData.grand_total * 100) : 0}%` }} />
-          </div>
-          <div className="text-right text-[10px] text-gray-500 mt-1">
-            {thumbData.grand_total > 0 ? Math.round(thumbData.grand_has_thumb / thumbData.grand_total * 100) : 0}%
-          </div>
-
-          {/* Per-source breakdown */}
-          <div className="space-y-2 mt-3">
-            {thumbData.sources.map(src => {
-              const pct = src.total > 0 ? Math.round(src.has_thumb / src.total * 100) : 0;
-              return (
-                <div key={src.source} className="bg-gray-900/50 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm font-medium text-gray-300 truncate max-w-[300px]" title={src.source}>
-                      {src.source.startsWith('webdav://') ? src.source.replace('webdav://', '') : src.source}
-                    </span>
-                    <span className="text-xs text-gray-500">{src.total.toLocaleString()} files</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs">
-                    <span className="text-green-400">{src.has_thumb}</span>
-                    <span className="text-gray-600">/</span>
-                    <span className="text-amber-400">{src.missing} {t('admin.thumb_missing')}</span>
-                    <div className="flex-1 bg-gray-700 rounded-full h-1.5 overflow-hidden flex">
-                      <div className="bg-green-500 h-full" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="font-mono text-gray-400 text-[10px]">{pct}%</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
