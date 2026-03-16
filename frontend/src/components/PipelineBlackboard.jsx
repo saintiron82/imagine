@@ -230,7 +230,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal }) {
           <Stage label="STAGE 1" title="WORK REQUESTS" color="gray">
             <div className="flex flex-wrap gap-2 mt-1">
               {activeWRs.length > 0 ? activeWRs.slice(0, 8).map(wr => (
-                <WRCard key={wr.id} wr={wr} />
+                <WRCard key={wr.id} wr={wr} onAction={handleWRAction} />
               )) : (
                 <div className="text-[10px] text-gray-700 font-mono py-1">{t('bb.no_wr')}</div>
               )}
