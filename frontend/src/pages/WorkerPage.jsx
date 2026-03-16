@@ -407,10 +407,16 @@ function WorkerScheduleSettings({ t }) {
           <label className="text-xs text-gray-400 mb-2 block">{t('worker.auto_title')}</label>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {
+              onClick={async () => {
                 const newVal = !autoProcessing;
                 setAutoProcessing(newVal);
-                saveSetting('server.auto_processing.enabled', newVal);
+                // Use PATCH API to also start/stop embedded worker
+                try {
+                  const { apiClient } = await import('../api/client');
+                  await apiClient.patch('/api/v1/admin/workers/auto-processing', { enabled: newVal });
+                } catch { /* fallback */
+                  saveSetting('server.auto_processing.enabled', newVal);
+                }
               }}
               className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
                 autoProcessing

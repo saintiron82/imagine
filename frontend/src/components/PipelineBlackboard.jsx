@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AlertTriangle, Zap, Eye, Scan, Brain, Check, Download, FolderOpen, Pause, Play, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { useLocale } from '../i18n';
-import { isElectron } from '../api/client';
+import { isElectron, apiClient } from '../api/client';
 import { getJobStats } from '../api/worker';
 import { getWorkRequests, getWorkRequestDetail, listWorkerSessions, pauseWorkRequest, resumeWorkRequest, cancelWorkRequest } from '../api/admin';
 
@@ -276,7 +276,13 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
           <Belt active={isRunning} color="teal" label="file_ready=1" />
 
           {/* ── STAGE 3: Server Auto-Processing ── */}
-          <Stage label="STAGE 3" title="SERVER PROCESSING" color="teal">
+          <Stage label="STAGE 3" title="SERVER PROCESSING" color="teal"
+            extra={<AutoToggle running={ewRunning} onToggle={async (val) => {
+              try {
+                await apiClient.patch('/api/v1/admin/workers/auto-processing', { enabled: val });
+                load(); // refresh stats immediately
+              } catch { /* ignore */ }
+            }} />}>
             <div className="mt-1 space-y-2">
               {/* Phase pills — shows which phases the server handles */}
               <div className="flex items-center gap-1.5">
@@ -432,11 +438,14 @@ const LABEL_COLORS = {
   green:  'bg-green-900/80 text-green-400 border-green-700/30',
 };
 
-function Stage({ label, title, color, children }) {
+function Stage({ label, title, color, children, extra }) {
   return (
     <div className={`border-2 rounded-xl p-3 relative ${STAGE_COLORS[color]}`}>
-      <div className={`absolute -top-3 left-3 px-2 py-0 text-[9px] uppercase tracking-widest font-mono font-bold rounded-sm border ${LABEL_COLORS[color]}`}>
-        {label} · {title}
+      <div className="flex items-center">
+        <div className={`absolute -top-3 left-3 px-2 py-0 text-[9px] uppercase tracking-widest font-mono font-bold rounded-sm border ${LABEL_COLORS[color]}`}>
+          {label} · {title}
+        </div>
+        {extra && <div className="absolute -top-3 right-3">{extra}</div>}
       </div>
       {children}
     </div>
@@ -463,6 +472,23 @@ function Belt({ active, color, label }) {
 }
 
 // ─── Worker Line ─────────────────────────────────────────
+
+// ─── Auto Processing Toggle ──────────────────────────────
+
+function AutoToggle({ running, onToggle }) {
+  return (
+    <button
+      onClick={() => onToggle(!running)}
+      className={`px-2 py-0 text-[8px] font-mono font-bold rounded-sm border transition-colors ${
+        running
+          ? 'bg-green-900/80 text-green-400 border-green-700/40 hover:bg-green-800/80'
+          : 'bg-gray-800 text-gray-500 border-gray-700/40 hover:text-gray-300'
+      }`}
+    >
+      AUTO {running ? 'ON' : 'OFF'}
+    </button>
+  );
+}
 
 // ─── Phase Pill (server processing indicator) ────────────
 

@@ -119,13 +119,10 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     auto_enabled = get_config().get("server.auto_processing.enabled", False)
 
     if has_workers and all(m == "mc_only" for m in worker_modes):
-        # All workers can only do MC → server should do VV
         new_mode = "parse_vv"
     elif not has_workers and auto_enabled:
-        # No workers but auto_processing ON → server pre-processes VV
         new_mode = "parse_vv"
     else:
-        # Workers handle full pipeline, server does parse only
         new_mode = "parse_only"
 
     old_mode = getattr(pa, "_processing_mode", None)
@@ -147,7 +144,23 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         except Exception:
             pass
 
-    logger.debug(f"Pool recalculated: mode={new_mode}, workers={len(worker_modes)}, auto={auto_enabled}")
+    # Dynamic embedded worker control:
+    # - No external workers + auto ON → start embedded worker (full self-processing)
+    # - Full workers connected → stop embedded worker (workers handle everything)
+    # - mc_only workers only → keep embedded worker for VV/MV (or let ParseAhead handle VV)
+    from backend.server.embedded_worker import get_status as _ew_get_status
+    ew_running = _ew_get_status().get("running", False)
+
+    if auto_enabled and not has_workers and not ew_running:
+        # No workers → start embedded worker for full self-processing
+        _start_embedded_worker(app)
+        logger.info("Embedded worker started (no external workers, auto_processing ON)")
+    elif has_workers and all(m == "full" for m in worker_modes) and ew_running:
+        # Full workers available → embedded worker not needed
+        _stop_embedded_worker()
+        logger.info("Embedded worker stopped (full external workers connected)")
+
+    logger.debug(f"Pool recalculated: mode={new_mode}, workers={len(worker_modes)}, auto={auto_enabled}, ew={ew_running}")
 
 
 # ── Builtin worker virtual session ──────────────────────────
