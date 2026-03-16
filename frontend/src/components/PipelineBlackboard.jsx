@@ -78,6 +78,7 @@ export default function PipelineBlackboard({ workerProgress }) {
     currentFile: wp.currentFile,
     throughput: wp.throughput,
     state: wp.workerState || (wp.currentPhase ? 'active' : 'idle'),
+    mode: wp.processingMode || 'full',
   } : null;
 
   const remoteWorkers = workers.filter(w => w.status === 'online').map(w => ({
@@ -86,6 +87,7 @@ export default function PipelineBlackboard({ workerProgress }) {
     currentFile: w.current_file,
     throughput: w.throughput,
     state: w.current_phase ? 'active' : 'idle',
+    mode: w.processing_mode_override || 'full',
   }));
 
   const allWorkers = localWorker ? [localWorker, ...remoteWorkers] : remoteWorkers;
@@ -331,22 +333,47 @@ function Belt({ active, color, label }) {
 
 // ─── Worker Line ─────────────────────────────────────────
 
+// Which phases each mode can execute
+const MODE_PHASES = {
+  full:       ['vision', 'embed_vv', 'embed_mv'],
+  mc_only:    ['vision'],
+  embed_only: ['embed_vv', 'embed_mv'],
+};
+
+const MODE_LABELS = {
+  full: 'FULL',
+  mc_only: 'MC ONLY',
+  embed_only: 'EMBED',
+};
+
+const MODE_COLORS = {
+  full: 'text-gray-500',
+  mc_only: 'text-amber-500',
+  embed_only: 'text-orange-500',
+};
+
 function WorkerLine({ worker, t }) {
   const w = worker;
   const isActive = w.state === 'active' || !!w.phase;
   const phaseIdx = w.phase ? PHASES.indexOf(w.phase) : -1;
+  const mode = w.mode || 'full';
+  const enabledPhases = MODE_PHASES[mode] || MODE_PHASES.full;
 
   return (
     <div className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${isActive ? 'border-gray-600/30 bg-gray-800/20' : 'border-gray-800/20 bg-gray-900/10'}`}>
       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
-      <span className="text-[11px] font-mono text-gray-300 font-bold w-16 truncate">{w.name}</span>
+      <div className="flex flex-col w-16 flex-shrink-0">
+        <span className="text-[11px] font-mono text-gray-300 font-bold truncate">{w.name}</span>
+        <span className={`text-[7px] font-mono ${MODE_COLORS[mode]}`}>{MODE_LABELS[mode]}</span>
+      </div>
 
       {/* Phase machines */}
       <div className="flex items-center gap-0">
         {PHASES.map((phase, idx) => {
           const cfg = PHASE_CFG[phase];
-          const isCurrent = w.phase === phase;
-          const isPast = phaseIdx > idx;
+          const enabled = enabledPhases.includes(phase);
+          const isCurrent = enabled && w.phase === phase;
+          const isPast = enabled && phaseIdx > idx;
           const Icon = cfg.icon;
 
           let progress = 0;
@@ -357,15 +384,26 @@ function WorkerLine({ worker, t }) {
             <div key={phase} className="flex items-center">
               <div className={`
                 relative w-11 h-11 rounded-lg border-2 flex items-center justify-center flex-shrink-0 transition-all duration-300
-                ${isCurrent ? `${cfg.border} ${cfg.glow} bg-gradient-to-b from-gray-800/80 to-gray-900` : isPast ? 'border-gray-600/30 bg-gray-800/40' : 'border-gray-700/20 bg-gray-800/60'}
+                ${!enabled
+                  ? 'border-gray-800/20 bg-gray-900/30'
+                  : isCurrent
+                    ? `${cfg.border} ${cfg.glow} bg-gradient-to-b from-gray-800/80 to-gray-900`
+                    : isPast
+                      ? 'border-gray-600/30 bg-gray-800/40'
+                      : 'border-gray-700/20 bg-gray-800/60'
+                }
               `}>
-                <div className={`absolute -top-1.5 left-1/2 -translate-x-1/2 px-1 rounded-sm text-[5px] uppercase tracking-widest font-mono font-bold bg-gray-900/90 border border-gray-700/30 ${isCurrent ? cfg.text : ''}`}>
+                <div className={`absolute -top-1.5 left-1/2 -translate-x-1/2 px-1 rounded-sm text-[5px] uppercase tracking-widest font-mono font-bold bg-gray-900/90 border border-gray-700/30 ${isCurrent ? cfg.text : !enabled ? 'text-gray-800' : ''}`}>
                   {cfg.label}
                 </div>
-                <Icon size={16} className={`transition-all ${isCurrent ? `${cfg.text} ${cfg.anim}` : isPast ? 'text-gray-500 opacity-30' : 'text-gray-700 opacity-20'}`} />
+                {enabled ? (
+                  <Icon size={16} className={`transition-all ${isCurrent ? `${cfg.text} ${cfg.anim}` : isPast ? 'text-gray-500 opacity-30' : 'text-gray-700 opacity-20'}`} />
+                ) : (
+                  <span className="text-[8px] text-gray-800 font-mono">&#8212;</span>
+                )}
                 {isPast && <div className="absolute -top-0.5 -right-0.5"><Check size={7} className="text-green-500/70" /></div>}
                 {/* Gauge */}
-                {(isCurrent || isPast) && (
+                {enabled && (isCurrent || isPast) && (
                   <div className="absolute bottom-0.5 left-1 right-1">
                     <div className="h-0.5 rounded-full bg-gray-700/50 overflow-hidden">
                       <div className={`h-full rounded-full transition-all duration-500 ${isCurrent ? cfg.bg : 'bg-gray-600/40'}`} style={{ width: `${progress}%` }} />
@@ -373,7 +411,7 @@ function WorkerLine({ worker, t }) {
                   </div>
                 )}
               </div>
-              {idx < PHASES.length - 1 && <div className={`w-2 h-px flex-shrink-0 ${isPast || isCurrent ? 'bg-gray-600' : 'bg-gray-800/30'}`} />}
+              {idx < PHASES.length - 1 && <div className={`w-2 h-px flex-shrink-0 ${!enabled ? 'bg-gray-900/20' : isPast || isCurrent ? 'bg-gray-600' : 'bg-gray-800/30'}`} />}
             </div>
           );
         })}
