@@ -10,9 +10,12 @@ Commands:
 import sys
 import json
 import io
+import logging
 from pathlib import Path, PurePosixPath
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+# Force all logging to stderr so stdout stays clean for JSON IPC
+logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))

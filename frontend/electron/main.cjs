@@ -1188,6 +1188,19 @@ function spawnQueueCmd(cmd, data) {
                 try {
                     resolve(JSON.parse(output.trim()));
                 } catch {
+                    // stdout may contain non-JSON lines (e.g. Python logging);
+                    // try extracting the last JSON line
+                    const lines = output.trim().split('\n');
+                    for (let i = lines.length - 1; i >= 0; i--) {
+                        const line = lines[i].trim();
+                        if (line.startsWith('{')) {
+                            try {
+                                resolve(JSON.parse(line));
+                                return;
+                            } catch { /* continue searching */ }
+                        }
+                    }
+                    writeLog('ERROR', `[QueueCmd:${cmd}] Failed to parse output: ${output.slice(0, 500)}`);
                     resolve({ success: false, error: 'Failed to parse output' });
                 }
             } else {
@@ -1352,6 +1365,18 @@ function spawnArchiveCmd(cmd, data) {
                 try {
                     resolve(JSON.parse(output.trim()));
                 } catch {
+                    // Try extracting last JSON line from mixed output
+                    const lines = output.trim().split('\n');
+                    for (let i = lines.length - 1; i >= 0; i--) {
+                        const line = lines[i].trim();
+                        if (line.startsWith('{')) {
+                            try {
+                                resolve(JSON.parse(line));
+                                return;
+                            } catch { /* continue */ }
+                        }
+                    }
+                    writeLog('ERROR', `[ArchiveCmd:${cmd}] Failed to parse output: ${output.slice(0, 500)}`);
                     resolve({ success: false, error: 'Failed to parse output' });
                 }
             } else {
