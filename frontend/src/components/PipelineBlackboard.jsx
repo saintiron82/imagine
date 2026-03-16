@@ -14,7 +14,7 @@ import { AlertTriangle, Zap, Eye, Scan, Brain, Check, Download, FolderOpen, Layo
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
-import { getWorkRequests, listWorkerSessions, pauseWorkRequest, resumeWorkRequest, cancelWorkRequest } from '../api/admin';
+import { getWorkRequests, getWorkRequestDetail, listWorkerSessions, pauseWorkRequest, resumeWorkRequest, cancelWorkRequest } from '../api/admin';
 
 // Phase config (workers do MC → VV → MV only, no Parse)
 const PHASE_CFG = {
@@ -531,53 +531,106 @@ function WorkerLine({ worker, t }) {
 // ─── WR Card ─────────────────────────────────────────────
 
 function WRCard({ wr, onAction }) {
+  const { t } = useLocale();
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState(null);
+
   const total = wr.total_files || 0;
   const done = wr.completed_count || 0;
   const failed = wr.failed_count || 0;
   const pct = total > 0 ? (done / total) * 100 : 0;
   const isActive = wr.status === 'processing';
   const isPaused = wr.status === 'paused';
+  const isWebDAV = wr.source_path?.startsWith('webdav://');
 
   const dotColor = isActive ? 'bg-blue-500 animate-pulse' : isPaused ? 'bg-yellow-500' : 'bg-gray-600';
   const borderColor = isActive ? 'border-blue-700/50 bg-blue-900/15' : isPaused ? 'border-yellow-700/50 bg-yellow-900/10' : 'border-gray-700/30 bg-gray-800/30';
   const barColor = isActive ? 'bg-blue-500' : isPaused ? 'bg-yellow-500/60' : 'bg-gray-600';
 
+  const handleToggle = async () => {
+    if (!expanded && !detail) {
+      try {
+        const useIPC = isElectron && window.electron?.queue;
+        const res = useIPC
+          ? await window.electron.queue.getWorkRequestDetail(wr.id)
+          : await getWorkRequestDetail(wr.id);
+        setDetail(res);
+      } catch { /* ignore */ }
+    }
+    setExpanded(!expanded);
+  };
+
   return (
-    <div className={`rounded-lg border px-3 py-2 w-[150px] ${borderColor}`}>
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`} />
-        <span className="text-[10px] text-gray-300 font-medium truncate flex-1">{wr.name}</span>
-        {/* Control buttons */}
-        {onAction && (
-          <div className="flex items-center gap-0.5 flex-shrink-0">
-            {isActive && (
-              <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'pause'); }}
-                className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-yellow-400 transition-colors" title="Pause">
-                <Pause size={9} />
+    <div className={`rounded-lg border ${borderColor} ${expanded ? 'w-full' : 'w-[180px]'} transition-all`}>
+      {/* Header — clickable to expand */}
+      <div className="px-3 py-2 cursor-pointer" onClick={handleToggle}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`} />
+          <span className="text-[10px] text-gray-300 font-medium truncate flex-1">{wr.name}</span>
+          {isWebDAV && <span className="text-[7px] font-mono text-blue-500">WebDAV</span>}
+          {/* Control buttons */}
+          {onAction && (
+            <div className="flex items-center gap-0.5 flex-shrink-0">
+              {isActive && (
+                <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'pause'); }}
+                  className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-yellow-400 transition-colors" title="Pause">
+                  <Pause size={9} />
+                </button>
+              )}
+              {isPaused && (
+                <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'resume'); }}
+                  className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-green-400 transition-colors" title="Resume">
+                  <Play size={9} />
+                </button>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'cancel'); }}
+                className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-red-400 transition-colors" title="Cancel">
+                <X size={9} />
               </button>
-            )}
-            {isPaused && (
-              <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'resume'); }}
-                className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-green-400 transition-colors" title="Resume">
-                <Play size={9} />
-              </button>
-            )}
-            <button onClick={(e) => { e.stopPropagation(); onAction(wr.id, 'cancel'); }}
-              className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-red-400 transition-colors" title="Cancel">
-              <X size={9} />
-            </button>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
+        {isPaused && <div className="text-[7px] text-yellow-500 font-mono mb-1">PAUSED</div>}
+        <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+        <div className="flex justify-between mt-0.5">
+          <span className="text-[8px] font-mono text-gray-600 tabular-nums">{done}/{total}</span>
+          <span className="text-[8px] font-mono text-gray-500 tabular-nums">{pct.toFixed(0)}%</span>
+        </div>
+        {failed > 0 && <span className="text-[7px] text-red-400 font-mono"><AlertTriangle size={7} className="inline mr-0.5" />{failed}</span>}
       </div>
-      {isPaused && <div className="text-[7px] text-yellow-500 font-mono mb-1">PAUSED</div>}
-      <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
-      </div>
-      <div className="flex justify-between mt-0.5">
-        <span className="text-[8px] font-mono text-gray-600 tabular-nums">{done}/{total}</span>
-        <span className="text-[8px] font-mono text-gray-500 tabular-nums">{pct.toFixed(0)}%</span>
-      </div>
-      {failed > 0 && <span className="text-[7px] text-red-400 font-mono"><AlertTriangle size={7} className="inline mr-0.5" />{failed}</span>}
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div className="px-3 pb-2 border-t border-gray-700/30 pt-2 space-y-1.5">
+          {/* Source path */}
+          <div className="text-[8px] font-mono text-gray-600 truncate" title={wr.source_path}>{wr.source_path}</div>
+          {/* Subtasks */}
+          {detail?.subtasks?.length > 0 ? (
+            <div className="space-y-1 max-h-[120px] overflow-y-auto">
+              {detail.subtasks.map((st, i) => {
+                const stPct = st.total_files > 0 ? (st.completed_count / st.total_files * 100) : 0;
+                return (
+                  <div key={i} className="flex items-center gap-2 text-[8px] font-mono">
+                    <span className="text-gray-500 truncate flex-1" title={st.folder_path}>{st.folder_path || '/'}</span>
+                    <span className="text-gray-600 tabular-nums flex-shrink-0">{st.completed_count}/{st.total_files}</span>
+                    <div className="w-12 h-0.5 bg-gray-700/50 rounded-full overflow-hidden flex-shrink-0">
+                      <div className="h-full bg-blue-500/60 rounded-full" style={{ width: `${stPct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : detail ? (
+            <div className="text-[8px] text-gray-600 font-mono">{t('bb.no_wr')}</div>
+          ) : (
+            <div className="text-[8px] text-gray-600 font-mono">{t('status.loading') || 'Loading...'}</div>
+          )}
+          {/* Timestamps */}
+          {wr.created_at && <div className="text-[7px] text-gray-700 font-mono">Created: {new Date(wr.created_at).toLocaleString()}</div>}
+        </div>
+      )}
     </div>
   );
 }

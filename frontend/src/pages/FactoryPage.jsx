@@ -8,7 +8,7 @@ import { Activity, Server, BarChart3, FileText, RefreshCw, Monitor } from 'lucid
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
-import { QueuePanel, WorkersPanel, DashboardPanel } from './AdminPage';
+import { WorkersPanel, DashboardPanel } from './AdminPage';
 import { MyWorkersSection, ConnectMyPC } from './WorkerPage';
 import ClientWorkerView from '../components/ClientWorkerView';
 import PipelineBlackboard from '../components/PipelineBlackboard';
@@ -51,7 +51,6 @@ export default function FactoryPage({
 
   const tabs = [
     { id: 'pipeline', label: t('factory.tab_pipeline'), icon: Monitor },
-    { id: 'queue', label: t('factory.tab_queue'), icon: Activity },
     { id: 'workers', label: t('factory.tab_workers'), icon: Server },
     { id: 'dashboard', label: t('factory.tab_dashboard'), icon: BarChart3 },
     { id: 'logs', label: t('factory.tab_logs'), icon: FileText },
@@ -126,11 +125,6 @@ export default function FactoryPage({
       <div className="flex-1 overflow-auto">
         {activeTab === 'pipeline' && (
           <PipelineBlackboard workerProgress={workerProgress} />
-        )}
-        {activeTab === 'queue' && (
-          <div className="p-4">
-            <QueuePanel />
-          </div>
         )}
         {activeTab === 'workers' && (
           <div className="p-4 space-y-6">
