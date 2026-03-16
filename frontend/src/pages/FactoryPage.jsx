@@ -125,7 +125,7 @@ export default function FactoryPage({
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {activeTab === 'pipeline' && (
-          <PipelineBlackboard workerProgress={workerProgress} reloadSignal={queueReloadSignal} />
+          <PipelineBlackboard workerProgress={workerProgress} reloadSignal={queueReloadSignal} isWorkerRunning={isWorkerRunning} />
         )}
         {activeTab === 'workers' && (
           <div className="p-4 space-y-6">

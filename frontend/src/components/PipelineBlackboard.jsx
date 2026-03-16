@@ -24,7 +24,7 @@ const PHASE_CFG = {
 };
 const PHASES = ['vision', 'embed_vv', 'embed_mv'];
 
-export default function PipelineBlackboard({ workerProgress, reloadSignal }) {
+export default function PipelineBlackboard({ workerProgress, reloadSignal, isWorkerRunning }) {
   const { t } = useLocale();
   const [view, setView] = useState('pipeline'); // 'pipeline' | 'board'
   const [stats, setStats] = useState(null);
@@ -119,15 +119,15 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal }) {
 
   // ── Workers ──
   const wp = workerProgress;
-  const localWorker = (isElectron && wp && (wp.currentPhase || wp.completed > 0)) ? {
+  const localWorker = (isElectron && (isWorkerRunning || (wp && (wp.currentPhase || wp.completed > 0)))) ? {
     name: t('bb.local_worker'),
-    phase: wp.currentPhase,
-    phaseIndex: wp.phaseIndex,
-    phaseCount: wp.phaseCount,
-    currentFile: wp.currentFile,
-    throughput: wp.throughput,
-    state: wp.workerState || (wp.currentPhase ? 'active' : 'idle'),
-    mode: wp.processingMode || 'full',
+    phase: wp?.currentPhase || null,
+    phaseIndex: wp?.phaseIndex || 0,
+    phaseCount: wp?.phaseCount || 0,
+    currentFile: wp?.currentFile || '',
+    throughput: wp?.throughput || 0,
+    state: wp?.workerState || (isWorkerRunning ? 'idle' : 'idle'),
+    mode: wp?.processingMode || 'full',
   } : null;
 
   const remoteWorkers = workers.filter(w => w.status === 'online').map(w => ({
