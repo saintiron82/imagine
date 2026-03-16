@@ -566,9 +566,9 @@ function App() {
     return () => clearTimeout(timer);
   }, [appMode, serverPort, serverRunning]);
 
-  // Worker IPC event listeners (Electron client mode)
+  // Worker IPC event listeners (Electron — both server and client mode)
   useEffect(() => {
-    if (!isElectron || appMode !== 'client') return;
+    if (!isElectron) return;
     const w = window.electron?.worker;
     if (!w) return;
 
