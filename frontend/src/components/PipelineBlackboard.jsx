@@ -72,6 +72,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
   const parsePending = s.ready_pending ?? 0;
   const parsing = s.parse_ahead_parsing ?? 0;
   const buffer = s.parse_ahead_parsed ?? 0;
+  const serverMode = s.server_mode || 'parse_only';
   const processing = (s.assigned ?? 0) + (s.processing ?? 0);
   const remaining = (s.pending ?? 0) + (s.assigned ?? 0) + (s.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
@@ -274,7 +275,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
           <Belt active={isRunning} color="teal" label="file_ready=1" />
 
           {/* ── STAGE 3: Parser ── */}
-          <Stage label="STAGE 3" title={`PARSER${isServerMode ? ' (Server)' : ' (Server CPU)'}`} color="teal">
+          <Stage label="STAGE 3" title={`PARSER${serverMode === 'parse_vv' ? ' + VV (Server GPU)' : ' (Server CPU)'}`} color="teal">
             <div className="flex items-center gap-4 mt-1">
               <div className={`rounded-lg border-2 ${parsing > 0 || parsePending > 0 ? 'border-teal-600/40 shadow-[0_0_12px_rgba(45,212,191,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-teal-900/15 to-gray-900 w-16 h-16 flex flex-col items-center justify-center flex-shrink-0`}>
                 <span className={`text-2xl ${parsing > 0 || parsePending > 0 ? 'animate-spin-slow' : 'opacity-30'}`}>&#8862;</span>

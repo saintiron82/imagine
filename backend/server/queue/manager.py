@@ -56,13 +56,24 @@ def _infer_error_code(error_message: str) -> str | None:
 
 
 def get_processing_mode() -> str:
-    """Get effective processing mode.
+    """Get effective processing mode for worker claim logic.
 
     Tollgate architecture: server always does Phase P only (parse_only).
     AI processing (V→VV→MV) is handled by workers (embedded or external).
-    Mode is fixed to parse_only (tollgate architecture).
     """
     return "parse_only"
+
+
+_server_pool_mode = "parse_only"
+
+def set_server_pool_mode(mode: str):
+    """Set the current server pool mode (called by _recalculate_server_pools)."""
+    global _server_pool_mode
+    _server_pool_mode = mode
+
+def _get_actual_server_mode() -> str:
+    """Get the actual server processing mode (parse_only, parse_vv)."""
+    return _server_pool_mode
 
 
 def _utcnow_sql() -> str:
@@ -1086,6 +1097,7 @@ class JobQueueManager:
             **parse_ahead_stats,
             **file_ready_stats,
             "download_buffer": download_buffer,
+            "server_mode": _get_actual_server_mode(),
         }
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0) -> Dict[str, Any]:

@@ -148,14 +148,14 @@ async def startup():
     # workers (embedded or external) handle V→VV→MV.
     logger.info("Processing mode: parse_only (tollgate architecture)")
 
-    # Embedded worker auto-start (if enabled in config)
+    # Embedded worker auto-start (if auto_processing enabled)
     try:
         from backend.utils.config import get_config
-        ew_cfg = get_config()
-        if ew_cfg.get("server.embedded_worker.enabled", False):
+        _ap_cfg = get_config()
+        if _ap_cfg.get("server.auto_processing.enabled", False):
             from backend.server.routers.workers import _start_embedded_worker
             _start_embedded_worker(app)
-            logger.info("Embedded worker auto-started (config: enabled)")
+            logger.info("Embedded worker auto-started (auto_processing: enabled)")
     except Exception as e:
         logger.warning(f"Embedded worker auto-start failed: {e}")
 

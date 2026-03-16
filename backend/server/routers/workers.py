@@ -90,29 +90,56 @@ def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
 
 
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
-    """Tollgate architecture: server always parse_only, workers do V→VV→MV.
+    """Dynamic server pool mode based on connected worker capabilities.
 
-    ParseAheadPool is fixed to parse_only mode (Phase P only, zero GPU).
-    Workers (embedded or external) handle all AI processing.
+    - All workers mc_only (VRAM limited) → server does parse + VV
+    - Workers full or mixed → server does parse only
+    - No workers + auto_processing ON → server does parse + VV (pre-process)
     """
     if not app:
         return
 
-    # ParseAheadPool: always parse_only
-    if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
-        old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
-        app.state.parse_ahead._processing_mode = "parse_only"
-        if old_mode != "parse_only":
-            app.state.parse_ahead._unload_models()
-            logger.info(f"ParseAheadPool mode set to parse_only (was {old_mode})")
+    pa = getattr(app.state, "parse_ahead", None)
+    if not pa:
+        return
 
-    # Seed demand so ParseAhead keeps parsing even without workers
     cursor = db.conn.cursor()
+
+    # Survey online worker modes (exclude builtin embedded worker)
     cursor.execute(
-        "SELECT COUNT(*) FROM worker_sessions WHERE status = 'online' AND worker_name != ?",
+        """SELECT processing_mode_override FROM worker_sessions
+           WHERE status = 'online' AND worker_name != ?""",
         (BUILTIN_WORKER_NAME,),
     )
-    has_workers = cursor.fetchone()[0] > 0
+    worker_modes = [r[0] or "full" for r in cursor.fetchall()]
+    has_workers = len(worker_modes) > 0
+
+    # Determine optimal server mode
+    from backend.utils.config import get_config
+    auto_enabled = get_config().get("server.auto_processing.enabled", False)
+
+    if has_workers and all(m == "mc_only" for m in worker_modes):
+        # All workers can only do MC → server should do VV
+        new_mode = "parse_vv"
+    elif not has_workers and auto_enabled:
+        # No workers but auto_processing ON → server pre-processes VV
+        new_mode = "parse_vv"
+    else:
+        # Workers handle full pipeline, server does parse only
+        new_mode = "parse_only"
+
+    old_mode = getattr(pa, "_processing_mode", None)
+    if old_mode != new_mode:
+        pa._processing_mode = new_mode
+        if new_mode == "parse_only":
+            pa._unload_models()
+        logger.info(f"ParseAheadPool mode: {old_mode} → {new_mode}")
+
+    # Publish mode for stats API
+    from backend.server.queue.manager import set_server_pool_mode
+    set_server_pool_mode(new_mode)
+
+    # Seed demand for workers
     if has_workers:
         try:
             from backend.server.queue.base_ahead_pool import BaseAheadPool
@@ -120,7 +147,7 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         except Exception:
             pass
 
-    logger.debug(f"Pool recalculated: parse_only, workers={has_workers}")
+    logger.debug(f"Pool recalculated: mode={new_mode}, workers={len(worker_modes)}, auto={auto_enabled}")
 
 
 # ── Builtin worker virtual session ──────────────────────────
@@ -768,6 +795,13 @@ def admin_update_auto_processing(
         _recalculate_server_pools(request.app, db)
     except Exception as e:
         logger.warning(f"Pool recalculation on auto-processing update failed: {e}")
+
+    # Start/stop embedded worker based on auto_processing toggle
+    if req.enabled is not None:
+        if req.enabled:
+            _start_embedded_worker(request.app)
+        else:
+            _stop_embedded_worker()
 
     logger.info(f"Admin updated auto_processing: enabled={req.enabled}, rest={req.rest_after_batch_s}s, batch={req.batch_size}")
     return {"ok": True}
