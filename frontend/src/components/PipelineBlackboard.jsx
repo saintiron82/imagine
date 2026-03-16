@@ -63,7 +63,7 @@ export default function PipelineBlackboard({ workerProgress, reloadSignal, isWor
   // Reload immediately on external triggers
   useEffect(() => { if (reloadSignal > 0) load(); }, [reloadSignal, load]);
   useEffect(() => { load(); }, [isWorkerRunning, load]);
-  useEffect(() => { if (wp?.completed > 0) load(); }, [wp?.completed, load]);
+  useEffect(() => { if (workerProgress?.completed > 0) load(); }, [workerProgress?.completed, load]);
 
   // ── Computed stats ──
   const s = stats || {};
