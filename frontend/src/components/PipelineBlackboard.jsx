@@ -63,7 +63,7 @@ export default function PipelineBlackboard({ workerProgress }) {
   const buffer = s.parse_ahead_parsed ?? 0;
   const completed = s.completed ?? 0;
   const failed = s.failed ?? 0;
-  const total = (s.pending ?? 0) + (s.assigned ?? 0) + (s.processing ?? 0) + completed + failed;
+  const total = s.total ?? 0;
   const processing = (s.assigned ?? 0) + (s.processing ?? 0);
   const remaining = (s.pending ?? 0) + (s.assigned ?? 0) + (s.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;

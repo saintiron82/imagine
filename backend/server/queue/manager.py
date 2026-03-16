@@ -1062,15 +1062,22 @@ class JobQueueManager:
 
         self.db.conn.commit()  # commit the pruning DELETE above
 
+        # Job-queue-based counts (current session work)
+        queue_completed = status_counts.get("completed", 0)
+        queue_failed = status_counts.get("failed", 0)
+        queue_total = pending + assigned + processing + queue_completed + queue_failed
+
         return {
-            "total": total_files,
+            "total": queue_total,
             "total_files": total_files,
             "complete_files": complete_files,
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": complete_files,  # files-based: fully processed
-            "failed": failed_files,       # files-based: permanently failed
+            "completed": queue_completed,  # queue-based: current session completed jobs
+            "failed": queue_failed,        # queue-based: current session failed jobs
+            "db_completed": complete_files, # files-based: total DB inventory (for reference)
+            "db_failed": failed_files,      # files-based: total DB failures
             "throughput": throughput,
             "recent_1min": recent_1min,
             "recent_5min": recent_5min,
