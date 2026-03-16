@@ -41,6 +41,12 @@ body { background: #030712; color: #e5e7eb; font-family: ui-monospace, monospace
     </span>
   </div>
   <div class="flex items-center gap-2">
+    <!-- View toggle -->
+    <div class="flex items-center border border-gray-700/40 rounded overflow-hidden">
+      <button onclick="setView('pipeline')" id="btn-pipeline" class="px-2 py-1 text-[9px] font-mono bg-gray-700/50 text-gray-300">Pipeline</button>
+      <button onclick="setView('board')" id="btn-board" class="px-2 py-1 text-[9px] font-mono text-gray-600 hover:text-gray-400">Board</button>
+    </div>
+    <div class="w-px h-4 bg-gray-800"></div>
     <button onclick="addWR('webdav')" class="toolbar-btn border-blue-700/40 text-blue-400 bg-blue-900/20">+ WR (WebDAV)</button>
     <button onclick="addWR('local')" class="toolbar-btn border-teal-700/40 text-teal-400 bg-teal-900/20">+ WR (Local)</button>
     <button onclick="addWorker('full')" class="toolbar-btn border-purple-700/40 text-purple-400 bg-purple-900/20">+ Full</button>
@@ -55,7 +61,14 @@ body { background: #030712; color: #e5e7eb; font-family: ui-monospace, monospace
 
 <!-- Factory Floor -->
 <div class="flex-1 overflow-auto p-4">
-  <div class="flex flex-col gap-3 max-w-6xl mx-auto">
+
+  <!-- Board View (hidden by default) -->
+  <div id="board-view" class="hidden max-w-6xl mx-auto">
+    <div id="board-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>
+  </div>
+
+  <!-- Pipeline View -->
+  <div id="pipeline-view" class="flex flex-col gap-3 max-w-6xl mx-auto">
 
     <!-- ══════ STAGE 1: WORK REQUESTS (발주서) ══════ -->
     <div class="stage border-gray-700/30 bg-gray-900/30">
@@ -219,8 +232,8 @@ body { background: #030712; color: #e5e7eb; font-family: ui-monospace, monospace
       </div>
     </div>
 
-  </div>
-</div>
+  </div> <!-- /pipeline-view -->
+</div> <!-- /flex-1 overflow-auto -->
 
 <!-- Status Ribbon -->
 <div class="px-4 py-2 border-t border-gray-800/50 bg-gray-900/50 flex-shrink-0 z-30">
@@ -234,6 +247,16 @@ body { background: #030712; color: #e5e7eb; font-family: ui-monospace, monospace
 
 let data = { wrs: [], jobs: [], workers: [] };
 let autoTimer = null;
+let currentView = 'pipeline'; // 'pipeline' | 'board'
+
+function setView(v) {
+  currentView = v;
+  document.getElementById('pipeline-view').classList.toggle('hidden', v !== 'pipeline');
+  document.getElementById('board-view').classList.toggle('hidden', v !== 'board');
+  document.getElementById('btn-pipeline').className = `px-2 py-1 text-[9px] font-mono ${v === 'pipeline' ? 'bg-gray-700/50 text-gray-300' : 'text-gray-600 hover:text-gray-400'}`;
+  document.getElementById('btn-board').className = `px-2 py-1 text-[9px] font-mono ${v === 'board' ? 'bg-gray-700/50 text-gray-300' : 'text-gray-600 hover:text-gray-400'}`;
+  render();
+}
 
 function init() {
   data.wrs = [
@@ -543,6 +566,82 @@ function render() {
   if (s.processing > 0) parts.push(`Processing <span class="text-purple-400">${s.processing}</span>`);
   if (s.failed > 0) parts.push(`<span class="text-red-400">⚠ ${s.failed}</span>`);
   document.getElementById('status-bar').innerHTML = parts.map(p => `<span>${p}</span>`).join('') || '<span class="text-gray-600">System idle</span>';
+
+  // ── Board View ──
+  if (currentView === 'board') renderBoard(s, pct, tp);
+}
+
+function renderBoard(s, pct, tp) {
+  const BCOLORS = {
+    blue:   { border: 'border-blue-700/40',   bg: 'bg-blue-900/10',   text: 'text-blue-400',    label: 'text-blue-600' },
+    teal:   { border: 'border-teal-700/40',   bg: 'bg-teal-900/10',   text: 'text-teal-400',    label: 'text-teal-600' },
+    orange: { border: 'border-orange-700/40', bg: 'bg-orange-900/10', text: 'text-orange-400',  label: 'text-orange-600' },
+    green:  { border: 'border-green-700/40',  bg: 'bg-green-900/10',  text: 'text-green-400',   label: 'text-green-600' },
+    red:    { border: 'border-red-800/40',    bg: 'bg-red-900/10',    text: 'text-red-400',     label: 'text-red-600' },
+    purple: { border: 'border-purple-700/40', bg: 'bg-purple-900/10', text: 'text-purple-400',  label: 'text-purple-600' },
+    amber:  { border: 'border-amber-700/40',  bg: 'bg-amber-900/10',  text: 'text-amber-400',   label: 'text-amber-600' },
+  };
+
+  function bcard(label, color, icon, value, sub, active) {
+    const c = BCOLORS[color];
+    return `<div class="rounded-xl border-2 ${active ? c.border : 'border-gray-800/20'} ${active ? c.bg : 'bg-gray-900/15'} p-3 text-center">
+      <div class="text-[7px] uppercase tracking-widest font-mono font-bold mb-2 ${c.label}">${label}</div>
+      <div class="flex justify-center mb-1 text-xl">${icon}</div>
+      <div class="text-xl font-mono font-bold tabular-nums ${active ? c.text : 'text-gray-600'}">${typeof value === 'number' ? value.toLocaleString() : value}</div>
+      ${sub ? `<div class="text-[8px] font-mono text-gray-600 mt-0.5">${sub}</div>` : ''}
+    </div>`;
+  }
+
+  const cards = [];
+
+  // WR cards
+  data.wrs.forEach(wr => {
+    const ws = wrStats(wr.id);
+    const active = wr.status === 'processing';
+    const typeIcon = wr.type === 'webdav' ? '⬇' : '📁';
+    cards.push(`<div class="rounded-xl border-2 ${active ? 'border-blue-700/50 bg-blue-900/15' : wr.status === 'completed' ? 'border-green-700/30 bg-green-900/10' : 'border-gray-700/30 bg-gray-800/30'} p-3">
+      <div class="flex items-center gap-1.5 mb-1">
+        <span class="w-1.5 h-1.5 rounded-full ${active ? 'bg-blue-500 animate-pulse' : wr.status === 'completed' ? 'bg-green-500' : 'bg-gray-600'} flex-shrink-0"></span>
+        <span class="text-[10px] text-gray-300 font-medium truncate">${wr.name}</span>
+        <span class="text-[7px] font-mono ${wr.type === 'webdav' ? 'text-blue-500' : 'text-teal-500'} ml-auto">${typeIcon} ${wr.type}</span>
+      </div>
+      <div class="h-1 bg-gray-700/50 rounded-full overflow-hidden"><div class="h-full rounded-full ${active ? 'bg-blue-500' : wr.status === 'completed' ? 'bg-green-500' : 'bg-gray-600'} transition-all" style="width:${ws.pct}%"></div></div>
+      <div class="flex justify-between mt-0.5"><span class="text-[8px] font-mono text-gray-600">${ws.completed}/${ws.total}</span><span class="text-[8px] font-mono text-gray-500">${ws.pct.toFixed(0)}%</span></div>
+    </div>`);
+  });
+
+  // Station cards
+  cards.push(bcard('DOWNLOAD', 'blue', '⬇', s.dlWaiting, 'waiting', s.dlWaiting > 0));
+  cards.push(bcard('PARSER', 'teal', `<span class="${s.readyUnparsed > 0 ? 'animate-spin-slow' : 'opacity-30'}">⊞</span>`, s.parsing || 0, `${s.readyUnparsed} queued`, s.readyUnparsed > 0));
+  cards.push(bcard('BUFFER', 'orange', '📦', s.parsed, 'ready', s.parsed > 0));
+
+  // Worker cards
+  const MODE_L = { full: 'FULL', mc_only: 'MC ONLY', embed_only: 'EMBED' };
+  const MODE_C = { full: 'text-gray-500', mc_only: 'text-amber-500', embed_only: 'text-orange-500' };
+
+  data.workers.forEach(w => {
+    const isActive = w.state === 'active';
+    const phCfg = w.phase ? PH[w.phase] : null;
+    const phIcon = phCfg ? `<span class="${phCfg.anim}" style="color:${phCfg.color}">${phCfg.icon}</span>` : '<span class="opacity-30">⚙</span>';
+
+    cards.push(`<div class="rounded-xl border-2 ${isActive ? 'border-gray-600/40 bg-gray-800/25' : 'border-gray-800/20 bg-gray-900/15'} p-3 text-center">
+      <div class="flex items-center gap-1.5 mb-2 justify-center">
+        <span class="w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'} flex-shrink-0"></span>
+        <span class="text-[11px] font-mono text-gray-300 font-bold">${w.name}</span>
+        <span class="text-[7px] font-mono ${MODE_C[w.mode]} ml-1">${MODE_L[w.mode]}</span>
+      </div>
+      <div class="flex justify-center mb-1 text-xl">${phIcon}</div>
+      ${w.throughput > 0 ? `<div class="text-[9px] font-mono text-gray-500 tabular-nums">${w.throughput}/m</div>` : ''}
+      ${w.file ? `<div class="text-[7px] text-gray-600 font-mono truncate">${w.file}</div>` : ''}
+      ${!isActive ? '<div class="text-[8px] text-gray-600 font-mono italic">idle</div>' : ''}
+    </div>`);
+  });
+
+  // Output cards
+  cards.push(bcard('STORAGE', 'green', '✅', s.completed, `${pct.toFixed(1)}%`, s.completed > 0));
+  if (s.failed > 0) cards.push(bcard('FAILED', 'red', '⚠', s.failed, 'errors', true));
+
+  document.getElementById('board-grid').innerHTML = cards.join('');
 }
 
 // ═══════════════════════════════════════════════════════════
