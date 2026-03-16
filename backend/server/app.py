@@ -149,13 +149,23 @@ async def startup():
     logger.info("Processing mode: parse_only (tollgate architecture)")
 
     # Embedded worker auto-start (if auto_processing enabled)
+    # Delayed start: server needs to be fully ready to accept loopback connections
     try:
         from backend.utils.config import get_config
         _ap_cfg = get_config()
         if _ap_cfg.get("server.auto_processing.enabled", False):
-            from backend.server.routers.workers import _start_embedded_worker
-            _start_embedded_worker(app)
-            logger.info("Embedded worker auto-started (auto_processing: enabled)")
+            import threading
+            def _delayed_embedded_worker_start():
+                import time
+                time.sleep(3)  # Wait for uvicorn to bind port
+                try:
+                    from backend.server.routers.workers import _start_embedded_worker
+                    _start_embedded_worker(app)
+                    logger.info("Embedded worker auto-started (auto_processing: enabled)")
+                except Exception as e:
+                    logger.warning(f"Embedded worker delayed start failed: {e}")
+            threading.Thread(target=_delayed_embedded_worker_start, daemon=True).start()
+            logger.info("Embedded worker scheduled for delayed start (3s)")
     except Exception as e:
         logger.warning(f"Embedded worker auto-start failed: {e}")
 

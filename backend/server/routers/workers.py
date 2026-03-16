@@ -862,7 +862,7 @@ def admin_get_embedded_worker(
     cfg = get_config()
     status = get_status()
     return {
-        "enabled": cfg.get("server.embedded_worker.enabled", False),
+        "enabled": cfg.get("server.auto_processing.enabled", False),
         **status,
     }
 
