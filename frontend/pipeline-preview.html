@@ -27,6 +27,14 @@ body { background: #030712; color: #e5e7eb; font-family: ui-monospace, monospace
 .belt-bg { @apply absolute inset-0 bg-gray-700/40; }
 .belt-flow { @apply absolute inset-0 w-[50%] rounded-full; }
 .toolbar-btn { @apply px-2.5 py-1 text-[9px] font-mono border rounded cursor-pointer transition-all hover:brightness-125; }
+/* Board draggable nodes */
+.bnode { position: absolute; cursor: grab; user-select: none; z-index: 10; transition: filter 0.15s; }
+.bnode:active { cursor: grabbing; z-index: 20; }
+.bnode:hover { filter: brightness(1.2); }
+.bnode.selected { outline: 2px solid #60a5fa; outline-offset: 2px; border-radius: 12px; }
+@keyframes dash-flow { to { stroke-dashoffset: -20; } }
+.pipe-active { stroke-dasharray: 6 4; animation: dash-flow 0.8s linear infinite; }
+.pipe-idle { stroke-dasharray: 4 6; }
 </style>
 </head>
 <body class="h-screen flex flex-col bg-gray-950 select-none overflow-hidden">
@@ -60,11 +68,14 @@ body { background: #030712; color: #e5e7eb; font-family: ui-monospace, monospace
 </div>
 
 <!-- Factory Floor -->
-<div class="flex-1 overflow-auto p-4">
+<div id="floor-container" class="flex-1 overflow-auto p-4 relative">
 
-  <!-- Board View (hidden by default) -->
-  <div id="board-view" class="hidden max-w-6xl mx-auto">
-    <div id="board-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>
+  <!-- Board View — draggable canvas -->
+  <div id="board-view" class="hidden absolute inset-0">
+    <!-- Grid background -->
+    <div class="absolute inset-0 opacity-[0.04] pointer-events-none" style="background-image: linear-gradient(rgba(255,255,255,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.15) 1px, transparent 1px); background-size: 24px 24px;"></div>
+    <svg id="board-pipes" class="absolute inset-0 w-full h-full" style="pointer-events: none; z-index: 0;"></svg>
+    <!-- Nodes rendered by JS -->
   </div>
 
   <!-- Pipeline View -->
@@ -437,6 +448,8 @@ function resetAll() {
   document.getElementById('auto-btn').className = 'toolbar-btn border-emerald-700/40 text-emerald-400 bg-emerald-900/20';
   data = { wrs: [], jobs: [], workers: [] };
   wrN = 0; wN = 0;
+  boardPos = {};
+  localStorage.removeItem(BOARD_LAYOUT_KEY);
   init();
   render();
 }
@@ -568,90 +581,258 @@ function render() {
   document.getElementById('status-bar').innerHTML = parts.map(p => `<span>${p}</span>`).join('') || '<span class="text-gray-600">System idle</span>';
 
   // ── Board View ──
-  if (currentView === 'board') renderBoard(s, pct, tp);
+  if (currentView === 'board') renderBoard();
 }
 
-function renderBoard(s, pct, tp) {
-  const BCOLORS = {
-    blue:   { border: 'border-blue-700/40',   bg: 'bg-blue-900/10',   text: 'text-blue-400',    label: 'text-blue-600' },
-    teal:   { border: 'border-teal-700/40',   bg: 'bg-teal-900/10',   text: 'text-teal-400',    label: 'text-teal-600' },
-    orange: { border: 'border-orange-700/40', bg: 'bg-orange-900/10', text: 'text-orange-400',  label: 'text-orange-600' },
-    green:  { border: 'border-green-700/40',  bg: 'bg-green-900/10',  text: 'text-green-400',   label: 'text-green-600' },
-    red:    { border: 'border-red-800/40',    bg: 'bg-red-900/10',    text: 'text-red-400',     label: 'text-red-600' },
-    purple: { border: 'border-purple-700/40', bg: 'bg-purple-900/10', text: 'text-purple-400',  label: 'text-purple-600' },
-    amber:  { border: 'border-amber-700/40',  bg: 'bg-amber-900/10',  text: 'text-amber-400',   label: 'text-amber-600' },
-  };
+// ═══════════════════════════════════════════════════════════
+// BOARD VIEW — Draggable Canvas
+// ═══════════════════════════════════════════════════════════
 
-  function bcard(label, color, icon, value, sub, active) {
-    const c = BCOLORS[color];
-    return `<div class="rounded-xl border-2 ${active ? c.border : 'border-gray-800/20'} ${active ? c.bg : 'bg-gray-900/15'} p-3 text-center">
-      <div class="text-[7px] uppercase tracking-widest font-mono font-bold mb-2 ${c.label}">${label}</div>
-      <div class="flex justify-center mb-1 text-xl">${icon}</div>
-      <div class="text-xl font-mono font-bold tabular-nums ${active ? c.text : 'text-gray-600'}">${typeof value === 'number' ? value.toLocaleString() : value}</div>
-      ${sub ? `<div class="text-[8px] font-mono text-gray-600 mt-0.5">${sub}</div>` : ''}
-    </div>`;
-  }
+const BOARD_LAYOUT_KEY = 'pipeline-board-positions';
+let boardPos = {};
+let boardDragging = null;
+let boardDragOff = { x: 0, y: 0 };
 
-  const cards = [];
+function loadBoardPos() {
+  try { const s = localStorage.getItem(BOARD_LAYOUT_KEY); boardPos = s ? JSON.parse(s) : {}; } catch { boardPos = {}; }
+}
+function saveBoardPos() { localStorage.setItem(BOARD_LAYOUT_KEY, JSON.stringify(boardPos)); }
 
-  // WR cards
+function defaultBoardPos() {
+  const p = {};
+  data.wrs.forEach((wr, i) => { p[wr.id] = { x: 20, y: 20 + i * 75 }; });
+  p['dl'] = { x: 200, y: 20 };
+  p['parser'] = { x: 350, y: 60 };
+  p['buffer'] = { x: 500, y: 60 };
+  data.workers.forEach((w, i) => { p[w.id] = { x: 650, y: 10 + i * 90 }; });
+  p['storage'] = { x: 870, y: 30 };
+  p['failed'] = { x: 870, y: 170 };
+  return p;
+}
+
+function ensureBoardPos() {
+  const def = defaultBoardPos();
+  Object.keys(def).forEach(k => { if (!boardPos[k]) boardPos[k] = def[k]; });
+}
+
+function getBoardConnections() {
+  const s = stats();
+  const conns = [];
   data.wrs.forEach(wr => {
-    const ws = wrStats(wr.id);
-    const active = wr.status === 'processing';
-    const typeIcon = wr.type === 'webdav' ? '⬇' : '📁';
-    cards.push(`<div class="rounded-xl border-2 ${active ? 'border-blue-700/50 bg-blue-900/15' : wr.status === 'completed' ? 'border-green-700/30 bg-green-900/10' : 'border-gray-700/30 bg-gray-800/30'} p-3">
-      <div class="flex items-center gap-1.5 mb-1">
-        <span class="w-1.5 h-1.5 rounded-full ${active ? 'bg-blue-500 animate-pulse' : wr.status === 'completed' ? 'bg-green-500' : 'bg-gray-600'} flex-shrink-0"></span>
-        <span class="text-[10px] text-gray-300 font-medium truncate">${wr.name}</span>
-        <span class="text-[7px] font-mono ${wr.type === 'webdav' ? 'text-blue-500' : 'text-teal-500'} ml-auto">${typeIcon} ${wr.type}</span>
-      </div>
-      <div class="h-1 bg-gray-700/50 rounded-full overflow-hidden"><div class="h-full rounded-full ${active ? 'bg-blue-500' : wr.status === 'completed' ? 'bg-green-500' : 'bg-gray-600'} transition-all" style="width:${ws.pct}%"></div></div>
-      <div class="flex justify-between mt-0.5"><span class="text-[8px] font-mono text-gray-600">${ws.completed}/${ws.total}</span><span class="text-[8px] font-mono text-gray-500">${ws.pct.toFixed(0)}%</span></div>
-    </div>`);
+    // Local WR → parser direct, WebDAV WR → dl
+    if (wr.type === 'webdav') {
+      conns.push({ from: wr.id, to: 'dl', active: wr.status === 'processing' });
+    } else {
+      conns.push({ from: wr.id, to: 'parser', active: wr.status === 'processing' });
+    }
   });
+  // dl → parser (only if webdav exists)
+  if (data.wrs.some(w => w.type === 'webdav')) {
+    conns.push({ from: 'dl', to: 'parser', active: s.dlWaiting > 0 || s.readyUnparsed > 0 });
+  }
+  conns.push({ from: 'parser', to: 'buffer', active: s.parsed > 0 || s.readyUnparsed > 0 });
+  data.workers.forEach(w => {
+    conns.push({ from: 'buffer', to: w.id, active: w.state === 'active' });
+    conns.push({ from: w.id, to: 'storage', active: w.state === 'active' });
+  });
+  return conns;
+}
 
-  // Station cards
-  cards.push(bcard('DOWNLOAD', 'blue', '⬇', s.dlWaiting, 'waiting', s.dlWaiting > 0));
-  cards.push(bcard('PARSER', 'teal', `<span class="${s.readyUnparsed > 0 ? 'animate-spin-slow' : 'opacity-30'}">⊞</span>`, s.parsing || 0, `${s.readyUnparsed} queued`, s.readyUnparsed > 0));
-  cards.push(bcard('BUFFER', 'orange', '📦', s.parsed, 'ready', s.parsed > 0));
-
-  // Worker cards
+function nodeHTML_board(type, d) {
+  const s = stats();
   const MODE_L = { full: 'FULL', mc_only: 'MC ONLY', embed_only: 'EMBED' };
   const MODE_C = { full: 'text-gray-500', mc_only: 'text-amber-500', embed_only: 'text-orange-500' };
 
-  data.workers.forEach(w => {
-    const isActive = w.state === 'active';
-    const phCfg = w.phase ? PH[w.phase] : null;
-    const phIcon = phCfg ? `<span class="${phCfg.anim}" style="color:${phCfg.color}">${phCfg.icon}</span>` : '<span class="opacity-30">⚙</span>';
-
-    cards.push(`<div class="rounded-xl border-2 ${isActive ? 'border-gray-600/40 bg-gray-800/25' : 'border-gray-800/20 bg-gray-900/15'} p-3 text-center">
-      <div class="flex items-center gap-1.5 mb-2 justify-center">
-        <span class="w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'} flex-shrink-0"></span>
-        <span class="text-[11px] font-mono text-gray-300 font-bold">${w.name}</span>
-        <span class="text-[7px] font-mono ${MODE_C[w.mode]} ml-1">${MODE_L[w.mode]}</span>
+  if (type === 'wr') {
+    const ws = wrStats(d.id);
+    const active = d.status === 'processing';
+    const typeIcon = d.type === 'webdav' ? '⬇' : '📁';
+    const typeCls = d.type === 'webdav' ? 'text-blue-500' : 'text-teal-500';
+    return `<div class="rounded-xl border-2 ${active ? 'border-blue-700/50 bg-blue-900/15' : 'border-gray-700/30 bg-gray-800/30'} px-3 py-2 w-[130px]">
+      <div class="flex items-center gap-1 mb-1">
+        <span class="w-1.5 h-1.5 rounded-full ${active ? 'bg-blue-500 animate-pulse' : 'bg-gray-600'} flex-shrink-0"></span>
+        <span class="text-[9px] text-gray-300 font-medium truncate">${d.name}</span>
+        <span class="text-[7px] font-mono ${typeCls} ml-auto">${typeIcon}</span>
       </div>
-      <div class="flex justify-center mb-1 text-xl">${phIcon}</div>
-      ${w.throughput > 0 ? `<div class="text-[9px] font-mono text-gray-500 tabular-nums">${w.throughput}/m</div>` : ''}
-      ${w.file ? `<div class="text-[7px] text-gray-600 font-mono truncate">${w.file}</div>` : ''}
-      ${!isActive ? '<div class="text-[8px] text-gray-600 font-mono italic">idle</div>' : ''}
-    </div>`);
+      <div class="h-1 bg-gray-700/50 rounded-full overflow-hidden"><div class="h-full rounded-full ${active ? 'bg-blue-500' : 'bg-gray-600'}" style="width:${ws.pct}%"></div></div>
+      <div class="flex justify-between mt-0.5"><span class="text-[7px] font-mono text-gray-600">${ws.completed}/${ws.total}</span><span class="text-[7px] font-mono text-gray-500">${ws.pct.toFixed(0)}%</span></div>
+    </div>`;
+  }
+  if (type === 'dl') {
+    const active = s.dlWaiting > 0;
+    return `<div class="rounded-xl border-2 ${active ? 'border-blue-700/50 shadow-[0_0_12px_rgba(59,130,246,0.2)]' : 'border-gray-700/30'} bg-gradient-to-b from-blue-900/15 to-gray-900 px-3 py-2 text-center w-[85px]">
+      <div class="text-[6px] uppercase tracking-widest text-blue-600 font-mono font-bold mb-1">DOWNLOAD</div>
+      <div class="text-xl leading-none mb-0.5 ${active ? '' : 'opacity-30'}">⬇</div>
+      <div class="text-sm font-mono font-bold ${active ? 'text-blue-400' : 'text-gray-600'} tabular-nums">${s.dlWaiting}</div>
+    </div>`;
+  }
+  if (type === 'parser') {
+    const active = s.readyUnparsed > 0;
+    return `<div class="rounded-xl border-2 ${active ? 'border-teal-700/50 shadow-[0_0_12px_rgba(45,212,191,0.2)]' : 'border-gray-700/30'} bg-gradient-to-b from-teal-900/15 to-gray-900 px-3 py-2 text-center w-[85px]">
+      <div class="text-[6px] uppercase tracking-widest text-teal-600 font-mono font-bold mb-1">PARSER</div>
+      <div class="text-xl leading-none mb-0.5 ${active ? 'animate-spin-slow' : 'opacity-30'}">⊞</div>
+      <div class="text-sm font-mono font-bold ${active ? 'text-teal-400' : 'text-gray-600'} tabular-nums">${s.readyUnparsed}</div>
+    </div>`;
+  }
+  if (type === 'buffer') {
+    return `<div class="rounded-xl border-2 ${s.parsed > 0 ? 'border-orange-700/50 shadow-[0_0_12px_rgba(251,146,60,0.2)]' : 'border-gray-700/30'} bg-gradient-to-b from-orange-900/15 to-gray-900 px-3 py-2 text-center w-[85px]">
+      <div class="text-[6px] uppercase tracking-widest text-orange-600 font-mono font-bold mb-1">BUFFER</div>
+      <div class="text-xl leading-none mb-0.5">📦</div>
+      <div class="text-sm font-mono font-bold ${s.parsed > 0 ? 'text-orange-400' : 'text-gray-600'} tabular-nums">${s.parsed}</div>
+    </div>`;
+  }
+  if (type === 'worker') {
+    const isActive = d.state === 'active';
+    const phCfg = d.phase ? PH[d.phase] : null;
+    const enabledPhases = (MODE_PH[d.mode] || MODE_PH.full);
+    const phIdx = d.phase ? PHASES.indexOf(d.phase) : -1;
+
+    const miniPhases = PHASES.map((p, i) => {
+      const cfg = PH[p];
+      const enabled = enabledPhases.includes(p);
+      const cur = enabled && d.phase === p;
+      const past = enabled && phIdx > i;
+      if (!enabled) return `<div class="w-6 h-6 rounded border border-gray-800/20 bg-gray-900/30 flex items-center justify-center"><span class="text-[6px] text-gray-800">—</span></div>`;
+      const bc = cur ? `${cfg.border} ${cfg.shadow}` : past ? 'border-gray-600/30' : 'border-gray-700/20';
+      const bg = cur ? 'bg-gradient-to-b from-gray-800/80 to-gray-900' : 'bg-gray-800/60';
+      const ic = cur ? cfg.anim : past ? 'opacity-30' : 'opacity-20';
+      const ck = past ? '<span class="absolute -top-0.5 -right-0.5 text-[5px] text-green-500">✓</span>' : '';
+      return `<div class="relative w-6 h-6 rounded border ${bc} ${bg} flex items-center justify-center">
+        <span class="text-[10px] ${ic}" ${cur ? `style="color:${cfg.color}"` : ''}>${cfg.icon}</span>${ck}
+      </div>`;
+    }).join('');
+
+    return `<div class="rounded-xl border-2 ${isActive ? 'border-gray-600/40 bg-gray-800/25' : 'border-gray-800/20 bg-gray-900/15'} px-2.5 py-2 w-[140px]">
+      <div class="flex items-center gap-1 mb-1.5">
+        <span class="w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'} flex-shrink-0"></span>
+        <span class="text-[9px] font-mono text-gray-300 font-bold">${d.name}</span>
+        <span class="text-[6px] font-mono ${MODE_C[d.mode]} ml-auto">${MODE_L[d.mode]}</span>
+      </div>
+      <div class="flex items-center gap-0.5 justify-center">${miniPhases}</div>
+      <div class="mt-1 text-center">
+        ${d.throughput > 0 ? `<span class="text-[7px] font-mono text-gray-500 tabular-nums">${d.throughput}/m</span>` : ''}
+        ${d.file ? `<div class="text-[6px] text-gray-600 font-mono truncate">${d.file}</div>` : ''}
+        ${!isActive ? '<div class="text-[7px] text-gray-600 font-mono italic">idle</div>' : ''}
+      </div>
+    </div>`;
+  }
+  if (type === 'storage') {
+    const pct = s.total > 0 ? (s.completed / s.total * 100) : 0;
+    return `<div class="rounded-xl border-2 border-green-700/40 bg-gradient-to-b from-green-900/15 to-gray-900 px-3 py-2 text-center w-[90px] relative overflow-hidden">
+      <div class="absolute bottom-0 left-0 right-0 bg-green-500/10" style="height:${pct}%"></div>
+      <div class="relative z-10">
+        <div class="text-[6px] uppercase tracking-widest text-green-600 font-mono font-bold mb-1">STORAGE</div>
+        <div class="text-lg font-mono font-bold text-green-400 tabular-nums leading-none">${s.completed}</div>
+        <div class="text-[7px] text-green-600 font-mono mt-0.5">${pct.toFixed(1)}%</div>
+      </div>
+    </div>`;
+  }
+  if (type === 'failed') {
+    return `<div class="rounded-xl border-2 border-red-800/40 bg-gradient-to-b from-red-900/15 to-gray-900 px-3 py-2 text-center w-[75px]">
+      <div class="text-[6px] uppercase tracking-widest text-red-600 font-mono font-bold mb-1">FAILED</div>
+      <div class="text-sm font-mono font-bold text-red-400 tabular-nums">⚠ ${s.failed}</div>
+    </div>`;
+  }
+  return '';
+}
+
+function renderBoard() {
+  const container = document.getElementById('board-view');
+  // Remove old nodes
+  container.querySelectorAll('.bnode').forEach(el => el.remove());
+
+  ensureBoardPos();
+
+  const allNodes = [
+    ...data.wrs.map(wr => ({ id: wr.id, type: 'wr', data: wr })),
+    { id: 'dl', type: 'dl', data: null },
+    { id: 'parser', type: 'parser', data: null },
+    { id: 'buffer', type: 'buffer', data: null },
+    ...data.workers.map(w => ({ id: w.id, type: 'worker', data: w })),
+    { id: 'storage', type: 'storage', data: null },
+    { id: 'failed', type: 'failed', data: null },
+  ];
+
+  allNodes.forEach(n => {
+    const pos = boardPos[n.id] || { x: 100, y: 100 };
+    const el = document.createElement('div');
+    el.className = 'bnode';
+    el.id = `bnode-${n.id}`;
+    el.dataset.nodeId = n.id;
+    el.style.left = pos.x + 'px';
+    el.style.top = pos.y + 'px';
+    el.innerHTML = nodeHTML_board(n.type, n.data);
+    container.appendChild(el);
   });
 
-  // Output cards
-  cards.push(bcard('STORAGE', 'green', '✅', s.completed, `${pct.toFixed(1)}%`, s.completed > 0));
-  if (s.failed > 0) cards.push(bcard('FAILED', 'red', '⚠', s.failed, 'errors', true));
-
-  document.getElementById('board-grid').innerHTML = cards.join('');
+  drawBoardPipes();
 }
+
+function drawBoardPipes() {
+  const svg = document.getElementById('board-pipes');
+  if (!svg) return;
+  svg.innerHTML = '';
+  const cr = document.getElementById('board-view').getBoundingClientRect();
+
+  getBoardConnections().forEach(conn => {
+    const fromEl = document.getElementById(`bnode-${conn.from}`);
+    const toEl = document.getElementById(`bnode-${conn.to}`);
+    if (!fromEl || !toEl) return;
+
+    const fr = fromEl.getBoundingClientRect();
+    const tr = toEl.getBoundingClientRect();
+    const x1 = fr.right - cr.left;
+    const y1 = fr.top + fr.height / 2 - cr.top;
+    const x2 = tr.left - cr.left;
+    const y2 = tr.top + tr.height / 2 - cr.top;
+
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+    line.setAttribute('stroke', conn.active ? '#4b5563' : '#1f2937');
+    line.setAttribute('stroke-width', conn.active ? '2' : '1');
+    line.classList.add(conn.active ? 'pipe-active' : 'pipe-idle');
+    svg.appendChild(line);
+  });
+}
+
+// Board drag
+document.addEventListener('mousedown', (e) => {
+  if (currentView !== 'board') return;
+  const nodeEl = e.target.closest('.bnode');
+  if (!nodeEl) return;
+  boardDragging = nodeEl;
+  const rect = nodeEl.getBoundingClientRect();
+  boardDragOff.x = e.clientX - rect.left;
+  boardDragOff.y = e.clientY - rect.top;
+  nodeEl.style.zIndex = 20;
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!boardDragging || currentView !== 'board') return;
+  const cr = document.getElementById('board-view').getBoundingClientRect();
+  const x = Math.max(0, e.clientX - cr.left - boardDragOff.x);
+  const y = Math.max(0, e.clientY - cr.top - boardDragOff.y);
+  boardDragging.style.left = x + 'px';
+  boardDragging.style.top = y + 'px';
+  boardPos[boardDragging.dataset.nodeId] = { x, y };
+  drawBoardPipes();
+});
+
+document.addEventListener('mouseup', () => {
+  if (boardDragging) { boardDragging.style.zIndex = 10; boardDragging = null; saveBoardPos(); }
+});
 
 // ═══════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════
 
 init();
+loadBoardPos();
 wrN = data.wrs.length;
 wN = data.workers.length;
 render();
+window.addEventListener('resize', () => { if (currentView === 'board') drawBoardPipes(); });
 </script>
 </body>
 </html>
