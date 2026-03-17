@@ -91,17 +91,12 @@ def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
 
 
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
-    """Dynamic server pool mode based on connected worker capabilities.
+    """Recalculate server pool state when workers connect/disconnect.
 
-    - All workers mc_only (VRAM limited) → server does parse + VV
-    - Workers full or mixed → server does parse only
-    - No workers + auto_processing ON → server does parse + VV (pre-process)
+    ParseAheadPool is always parse_only (PSD parse + thumbnail).
+    Embedded worker auto-management based on worker availability.
     """
     if not app:
-        return
-
-    pa = getattr(app.state, "parse_ahead", None)
-    if not pa:
         return
 
     cursor = db.conn.cursor()
@@ -115,14 +110,11 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     worker_modes = [r[0] or "full" for r in cursor.fetchall()]
     has_workers = len(worker_modes) > 0
 
-    # ParseAheadPool is always parse_only (PSD parse + thumbnail only)
-    # No mode switching needed — AI processing is worker-only
-
     # Publish mode for stats API
     from backend.server.queue.manager import set_server_pool_mode
     set_server_pool_mode("parse_only")
 
-    # Seed demand for workers
+    # Seed demand for ParseAheadPool when workers are active
     if has_workers:
         try:
             from backend.server.queue.base_ahead_pool import BaseAheadPool
@@ -130,19 +122,12 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         except Exception:
             pass
 
-    # Dynamic embedded worker control:
-    # - No external workers + auto ON → start embedded worker (full self-processing)
-    # - Full workers connected → stop embedded worker (workers handle everything)
-    # - mc_only workers only → keep embedded worker for VV/MV (or let ParseAhead handle VV)
+    # Embedded worker control:
+    # - External full workers connected → stop embedded (workers handle everything)
     from backend.server.embedded_worker import get_status as _ew_get_status
     ew_running = _ew_get_status().get("running", False)
 
-    if auto_enabled and not has_workers and not ew_running:
-        # No workers → start embedded worker for full self-processing
-        _start_embedded_worker(app)
-        logger.info("Embedded worker started (no external workers, auto_processing ON)")
-    elif has_workers and all(m == "full" for m in worker_modes) and ew_running:
-        # Full workers available → embedded worker not needed
+    if has_workers and all(m == "full" for m in worker_modes) and ew_running:
         _stop_embedded_worker()
         logger.info("Embedded worker stopped (full external workers connected)")
 
