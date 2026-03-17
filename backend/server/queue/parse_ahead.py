@@ -30,44 +30,24 @@ class ParseAheadPool(BaseAheadPool):
     def __init__(self, db):
         super().__init__(db)
         self._processing_mode = "parse_only"  # Fixed: parse + thumbnail only
-        self._structure_encoder = None  # Used by _process_backfill_batch (DINOv2)
+        # Backfill (DINOv2) removed — AI models are worker-only
         self._last_retry_reset = 0.0  # Timestamp of last parse_status='failed' reset
         logger.info("ParseAheadPool initialized (parse + thumbnail only)")
 
     def _unload_models(self):
-        """Unload Structure encoder if loaded (backfill mode)."""
-        if self._structure_encoder is not None:
-            try:
-                self._structure_encoder.unload()
-                logger.info("ParseAheadPool: DINOv2 Structure encoder unloaded")
-            except Exception as e:
-                logger.warning(f"ParseAheadPool: DINOv2 Structure encoder unload error: {e}")
-            self._structure_encoder = None
+        """No AI models to unload — parse + thumbnail only."""
+        pass
 
     # ── Buffer management ────────────────────────────────────────
 
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
 
-        Demand-driven: uses actual worker claim counts as the prediction.
-        When auto_processing is enabled, maintains a minimum buffer even
-        without active workers (prevents demand deadlock).
-
-        Returns:
-            Buffer target count. Minimum 10 when auto_processing enabled.
+        Pure demand-driven: only parses when workers are actively claiming.
+        No parsing without active workers.
         """
         if self.has_recent_demand():
             return max(self.get_total_demand(), 10)
-
-        # auto_processing enabled → keep minimum buffer even without workers
-        # This prevents the deadlock: no workers → no demand → no parsing
-        try:
-            auto_enabled = self._get_config_value("server.auto_processing.enabled", False)
-            if auto_enabled:
-                return 10
-        except Exception:
-            pass
-
         return 0
 
     def _run_pre_parse_buffer(self) -> bool:
@@ -80,7 +60,6 @@ class ParseAheadPool(BaseAheadPool):
         """
         target = self._calculate_buffer_target()
         if target <= 0:
-            self._process_backfill_batch()
             return False
 
         cursor = self.db.conn.cursor()
@@ -92,7 +71,6 @@ class ParseAheadPool(BaseAheadPool):
         deficit = target - current_parsed
 
         if deficit <= 0:
-            self._process_backfill_batch()
             return False
 
         # Select jobs to pre-parse (include WebDAV files with temp downloads)
@@ -124,7 +102,6 @@ class ParseAheadPool(BaseAheadPool):
                     )
                 self.db.conn.commit()  # Always commit to release WAL write lock
                 self._last_retry_reset = now
-            self._process_backfill_batch()
             return False
 
         parsed_count = 0
@@ -193,17 +170,6 @@ class ParseAheadPool(BaseAheadPool):
         """Main loop: Phase P only (PSD 파싱 + 썸네일 생성)."""
         logger.info("ParseAheadPool loop started (parse + thumbnail only)")
         poll_interval_s = self._get_config_value("server.parse_ahead.poll_interval_s", 2)
-
-        # Auto-queue backfill jobs on startup
-        try:
-            from backend.server.queue.manager import JobQueueManager
-            mgr = JobQueueManager(self.db)
-            backfill_counts = mgr.queue_backfill()
-            total = sum(backfill_counts.values())
-            if total > 0:
-                logger.info(f"ParseAheadPool: auto-queued {total} backfill jobs: {backfill_counts}")
-        except Exception as e:
-            logger.warning(f"ParseAheadPool: backfill queue scan failed: {e}")
 
         try:
             while self._running:
@@ -432,104 +398,7 @@ class ParseAheadPool(BaseAheadPool):
         logger.info(f"ParseAhead: job {job_id} pre-parsed OK ({file_p.name})")
         return True
 
-    def _process_backfill_batch(self, batch_size: int = 8) -> int:
-        """Process queued backfill jobs (DINOv2 structure vector only).
-
-        Picks up jobs with parse_status='backfill', generates the missing
-        structure vector, and marks them completed. Runs during idle time
-        without interfering with normal parsing.
-
-        Returns:
-            Number of jobs processed.
-        """
-        cursor = self.db.conn.cursor()
-        cursor.execute(
-            """SELECT id, file_id, file_path FROM job_queue
-               WHERE status = 'pending' AND parse_status = 'backfill'
-               ORDER BY created_at ASC
-               LIMIT ?""",
-            (batch_size,),
-        )
-        jobs = cursor.fetchall()
-        if not jobs:
-            return 0
-
-        # Lazy load DINOv2
-        if self._structure_encoder is None:
-            from backend.vector.dinov2_encoder import DinoV2Encoder
-            self._structure_encoder = DinoV2Encoder()
-            logger.info("ParseAheadPool: DINOv2 loaded for structure backfill")
-
-        from PIL import Image
-
-        processed = 0
-        for job_id, file_id, file_path in jobs:
-            if not self._running:
-                break
-
-            # Atomically claim
-            cursor.execute(
-                "UPDATE job_queue SET status = 'processing' WHERE id = ? AND status = 'pending'",
-                (job_id,),
-            )
-            self.db.conn.commit()
-            if cursor.rowcount == 0:
-                continue
-
-            # Find best image source (thumbnail preferred)
-            cursor.execute(
-                "SELECT thumbnail_url FROM files WHERE id = ?", (file_id,)
-            )
-            row = cursor.fetchone()
-            thumb_url = row[0] if row else None
-
-            img_source = None
-            if thumb_url:
-                p = Path(thumb_url)
-                if p.exists():
-                    img_source = p
-            if img_source is None:
-                p = Path(file_path)
-                if p.exists():
-                    img_source = p
-
-            now = _utcnow_sql()
-            if img_source is None:
-                logger.warning(f"Backfill: no image for job {job_id} (file_id={file_id}), marking failed")
-                cursor.execute(
-                    "UPDATE files SET processing_status = 'failed', processing_error = 'No image for backfill' WHERE id = ?",
-                    (file_id,),
-                )
-                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
-                self.db.conn.commit()
-                continue
-
-            try:
-                img = Image.open(str(img_source)).convert("RGB")
-                try:
-                    structure_vec = self._structure_encoder.encode_image(img)
-                finally:
-                    img.close()
-                self.db.upsert_vectors(file_id, structure_vec=structure_vec)
-                # Complete — log and DELETE
-                cursor.execute(
-                    "INSERT INTO job_completions (file_id) VALUES (?)",
-                    (file_id,),
-                )
-                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
-                processed += 1
-            except Exception as e:
-                logger.warning(f"Backfill: DINOv2 failed for job {job_id}: {e}")
-                cursor.execute(
-                    "UPDATE files SET processing_status = 'failed', processing_error = ? WHERE id = ?",
-                    (str(e), file_id),
-                )
-                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
-            self.db.conn.commit()
-
-        if processed > 0:
-            logger.info(f"Backfill: completed {processed} structure vector jobs")
-        return processed
+    # _process_backfill_batch removed — DINOv2 is an AI model, belongs to worker
 
     def _get_thumbnail_dir(self) -> Path:
         """Get server thumbnail directory (same logic as upload.py)."""
