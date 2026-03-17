@@ -492,3 +492,90 @@ def run_recovery_scan(
         "thumbnail_reset_count": result.get("thumbnail_reset_count", 0),
         "skipped_non_retryable": result["skipped_non_retryable"],
     }
+
+
+@router.get("/storage-info")
+def get_storage_info(
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Get storage usage info: DB size, thumbnails, download temp."""
+    import os
+    import tempfile
+    from pathlib import Path
+
+    result = {}
+
+    # DB file size
+    try:
+        db_path = db.db_path if hasattr(db, 'db_path') else None
+        if not db_path:
+            # Try common locations
+            for p in ["imageparser.db", "imageparser_server.db"]:
+                if os.path.exists(p):
+                    db_path = p
+                    break
+        if db_path and os.path.exists(db_path):
+            db_size = os.path.getsize(db_path)
+            # Also check WAL and SHM files
+            wal_size = os.path.getsize(db_path + "-wal") if os.path.exists(db_path + "-wal") else 0
+            result["db"] = {
+                "path": str(db_path),
+                "size_bytes": db_size + wal_size,
+                "size_mb": round((db_size + wal_size) / (1024 * 1024), 1),
+            }
+    except Exception:
+        pass
+
+    # Thumbnail directory
+    try:
+        thumb_dir = Path("output/thumbnails")
+        if thumb_dir.exists():
+            files = list(thumb_dir.rglob("*"))
+            total = sum(f.stat().st_size for f in files if f.is_file())
+            result["thumbnails"] = {
+                "path": str(thumb_dir),
+                "count": sum(1 for f in files if f.is_file()),
+                "size_bytes": total,
+                "size_mb": round(total / (1024 * 1024), 1),
+            }
+    except Exception:
+        pass
+
+    # Download temp (current session)
+    try:
+        from backend.server.queue.download_ahead import DownloadAheadPool
+        # Find current temp dir from app state
+        tmp_root = Path(tempfile.gettempdir())
+        current_dirs = list(tmp_root.glob("imagine_dl_*"))
+        total_size = 0
+        total_files = 0
+        for d in current_dirs:
+            if d.is_dir():
+                for f in d.rglob("*"):
+                    if f.is_file():
+                        total_size += f.stat().st_size
+                        total_files += 1
+        result["download_temp"] = {
+            "folder_count": len(current_dirs),
+            "file_count": total_files,
+            "size_bytes": total_size,
+            "size_mb": round(total_size / (1024 * 1024), 1),
+            "size_gb": round(total_size / (1024 * 1024 * 1024), 2),
+        }
+    except Exception:
+        pass
+
+    # File counts by status
+    try:
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM files")
+        result["total_files"] = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE thumbnail_url IS NOT NULL AND thumbnail_url != ''"
+        )
+        result["files_with_thumbnail"] = cursor.fetchone()[0]
+    except Exception:
+        pass
+
+    return result

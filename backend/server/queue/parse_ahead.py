@@ -121,20 +121,21 @@ class ParseAheadPool(BaseAheadPool):
         jobs_to_parse = cursor.fetchall()
 
         if not jobs_to_parse:
-            # No unparsed jobs — check if all are parse-failed (deadlock).
-            # Reset parse_status='failed' back to NULL every 60s for retry.
+            # No unparsed jobs — check if parse-failed jobs can be retried.
+            # Only retry jobs with retry_count < 3. After 3 failures, leave as failed.
             now = time.time()
             if now - self._last_retry_reset > 60:
                 cursor.execute(
-                    """UPDATE job_queue SET parse_status = NULL
-                       WHERE status = 'pending' AND parse_status = 'failed'"""
+                    """UPDATE job_queue SET parse_status = NULL, retry_count = COALESCE(retry_count, 0) + 1
+                       WHERE status = 'pending' AND parse_status = 'failed'
+                       AND COALESCE(retry_count, 0) < 3"""
                 )
                 if cursor.rowcount > 0:
                     logger.info(
                         f"ParseAhead: reset {cursor.rowcount} parse-failed "
-                        f"jobs for retry"
+                        f"jobs for retry (max 3 attempts)"
                     )
-                self.db.conn.commit()  # Always commit to release WAL write lock
+                self.db.conn.commit()
                 self._last_retry_reset = now
             return False
 
