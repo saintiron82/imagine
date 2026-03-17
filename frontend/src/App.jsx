@@ -997,7 +997,8 @@ function App() {
     try {
       const result = await auditIntegrity();
       const hasIssues = result.incomplete_files > 0 || (result.failed_stuck_jobs || 0) > 0;
-      if (hasIssues) {
+      // Don't show modal on auto-audit if server auto-processing is already running
+      if (hasIssues && !silent) {
         setAuditResult(result);
         const repaired = result.repaired_files || 0;
         const permFailed = result.skipped_non_retryable || 0;
