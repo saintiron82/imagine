@@ -561,7 +561,7 @@ function WorkerLine({ worker, t }) {
                   {cfg.label}
                 </div>
                 {enabled ? (
-                  <Icon size={16} className={`transition-all ${isCurrent ? `${cfg.text} ${cfg.anim}` : `${cfg.text} opacity-60`}`} />
+                  <Icon size={16} className={`transition-all ${isCurrent ? `${cfg.text} ${cfg.anim}` : `${cfg.text} opacity-15`}`} />
                 ) : (
                   <span className="text-[8px] text-gray-800 font-mono">&#8212;</span>
                 )}
