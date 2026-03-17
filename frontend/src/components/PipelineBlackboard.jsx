@@ -589,9 +589,12 @@ function WorkerLine({ worker, t }) {
           {w.batchSize > 0 && <span className="text-[8px] font-mono text-yellow-600 tabular-nums">B:{w.batchSize}</span>}
           {w.completedCount > 0 && <span className="text-[8px] font-mono text-green-600 tabular-nums">{w.completedCount} done</span>}
           {w.throughput > 0 && <span className="text-[8px] font-mono text-gray-500 tabular-nums">{w.throughput.toFixed(1)}/m</span>}
-          {isProcessing && <span className="text-[8px] font-mono text-green-500">processing</span>}
-          {isEnabled && !isProcessing && <span className="text-[8px] font-mono text-blue-500">idle</span>}
-          {!isEnabled && <span className="text-[8px] font-mono text-gray-700">OFF</span>}
+          {isProcessing
+            ? <span className="text-[8px] font-mono text-green-500">processing</span>
+            : isEnabled
+              ? <span className="text-[8px] font-mono text-blue-500">idle</span>
+              : <span className="text-[8px] font-mono text-gray-700">OFF</span>
+          }
         </div>
         {w.currentFile && <div className="text-[7px] text-gray-600 font-mono truncate">{w.currentFile}</div>}
       </div>
