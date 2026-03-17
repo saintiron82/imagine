@@ -264,12 +264,18 @@ class DownloadAheadPool(BaseAheadPool):
                 pass
 
     def _loop(self):
-        """Main loop: find pending WebDAV jobs, download originals."""
+        """Main loop: find pending WebDAV jobs, download originals.
+
+        Only downloads when workers are actively claiming (demand-driven).
+        """
         poll_interval = self._get_config_value(
             "server.parse_ahead.poll_interval_s", 2
         )
         while self._running:
             try:
+                if not self.has_recent_demand():
+                    time.sleep(poll_interval)
+                    continue
                 downloaded = self._download_batch()
                 if downloaded == 0:
                     time.sleep(poll_interval)
