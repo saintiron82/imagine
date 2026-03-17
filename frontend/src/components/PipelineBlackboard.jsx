@@ -158,10 +158,15 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
       load();
     } catch { /* ignore */ }
   }, [useIPC, load]);
-  const completed = activeWRsAll.reduce((sum, wr) => sum + (wr.completed_count || 0), 0);
-  const failed = activeWRsAll.reduce((sum, wr) => sum + (wr.failed_count || 0), 0);
-  const total = activeWRsAll.reduce((sum, wr) => sum + (wr.total_files || 0), 0);
-  const pct = total > 0 ? ((completed / total) * 100).toFixed(1) : '0.0';
+  // File-centric counts (from DB, not WR — survives job deletion)
+  const completed = s.complete_files ?? 0;
+  const totalFiles = s.total_files ?? 0;
+  const dbFailed = s.db_failed ?? 0;
+  const pct = totalFiles > 0 ? ((completed / totalFiles) * 100).toFixed(1) : '0.0';
+  // WR-level counts for WR cards
+  const wrCompleted = activeWRsAll.reduce((sum, wr) => sum + (wr.completed_count || 0), 0);
+  const wrFailed = activeWRsAll.reduce((sum, wr) => sum + (wr.failed_count || 0), 0);
+  const wrTotal = activeWRsAll.reduce((sum, wr) => sum + (wr.total_files || 0), 0);
 
   // ── Workers (external only, embedded worker shown separately in Stage 5) ──
   const allWorkers = workers
@@ -187,7 +192,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
     enabled: ewRunning,                          // ON/OFF toggle state
     state: ewPhase ? 'active' : (ewRunning ? 'idle' : 'offline'),  // active/idle/offline
     mode: 'full',
-    completedCount: ewCompleted,
+    // completedCount removed — use Output stage for totals
     isEmbedded: true,
   };
 
@@ -373,17 +378,17 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
                 </div>
               </div>
               {/* Failed */}
-              {failed > 0 && (
+              {dbFailed > 0 && (
                 <div className="rounded-lg border-2 border-red-800/40 bg-gradient-to-b from-red-900/15 to-gray-900 px-4 py-3 text-center">
                   <div className="text-[7px] uppercase tracking-widest text-red-600 font-mono font-bold mb-1">{t('bb.failed')}</div>
                   <div className="text-xl font-mono font-bold text-red-400 tabular-nums">
-                    <AlertTriangle size={14} className="inline mr-1 -mt-0.5" />{failed}
+                    <AlertTriangle size={14} className="inline mr-1 -mt-0.5" />{dbFailed}
                   </div>
                 </div>
               )}
               {/* Stats */}
               <div className="flex-1 text-[8px] font-mono text-gray-600">
-                <div>{t('bb.total')}: <span className="text-gray-400">{total.toLocaleString()}</span></div>
+                <div>{t('bb.total')}: <span className="text-gray-400">{totalFiles.toLocaleString()}</span></div>
                 <div>{t('factory.summary_processing')}: <span className="text-purple-400">{processing}</span></div>
                 {etaMin != null && <div>{t('bb.eta')}: <span className="text-gray-400">{etaMin >= 60 ? `${Math.floor(etaMin/60)}h ${etaMin%60}m` : `${etaMin}m`}</span></div>}
               </div>
@@ -398,7 +403,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
         <div className="flex items-center justify-center gap-6 text-[11px] font-mono text-gray-500">
           {throughput > 0 && <span><span className="text-blue-400 font-bold">{throughput.toFixed(1)}</span> {t('bb.per_min')}</span>}
           {etaMin != null && <span>{t('bb.eta')}: <span className="text-gray-300">{etaMin >= 60 ? `${Math.floor(etaMin/60)}h ${etaMin%60}m` : `${etaMin}m`}</span></span>}
-          {total > 0 && <span><span className="text-green-400">{completed.toLocaleString()}</span>/{total.toLocaleString()} (<span className="text-gray-300">{pct}%</span>)</span>}
+          {totalFiles > 0 && <span><span className="text-green-400">{completed.toLocaleString()}</span>/{totalFiles.toLocaleString()} (<span className="text-gray-300">{pct}%</span>)</span>}
           {dlWaiting > 0 && <span>DL <span className="text-blue-400">{dlWaiting}</span></span>}
           {buffer > 0 && <span>{t('bb.buffer')} <span className="text-orange-400">{buffer}</span></span>}
           {processing > 0 && <span>{t('factory.summary_processing')} <span className="text-purple-400">{processing}</span></span>}
