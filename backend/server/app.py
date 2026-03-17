@@ -148,37 +148,10 @@ async def startup():
     # workers (embedded or external) handle V→VV→MV.
     logger.info("Processing mode: parse_only (tollgate architecture)")
 
-    # Embedded worker auto-start: only when there are pending jobs to process
-    # Delayed start: server needs to be fully ready to accept loopback connections
-    try:
-        from backend.utils.config import get_config
-        _ap_cfg = get_config()
-        _pending = getattr(app.state, 'startup_pending_jobs', 0)
-        if _ap_cfg.get("server.auto_processing.enabled", False) and _pending > 0:
-            import threading
-            def _delayed_embedded_worker_start():
-                import time
-                from backend.server.embedded_worker import get_status as _ew_status
-                # Retry up to 3 times with increasing delay
-                for attempt in range(1, 4):
-                    time.sleep(3 + attempt * 2)  # 5s, 7s, 9s
-                    if _ew_status().get("running"):
-                        return  # Already started
-                    try:
-                        from backend.server.routers.workers import _start_embedded_worker
-                        _start_embedded_worker(app)
-                        if _ew_status().get("running"):
-                            logger.info(f"Embedded worker auto-started (attempt {attempt})")
-                            return
-                    except Exception as e:
-                        logger.warning(f"Embedded worker start attempt {attempt} failed: {e}")
-                logger.error("Embedded worker failed to start after 3 attempts")
-            threading.Thread(target=_delayed_embedded_worker_start, daemon=True).start()
-            logger.info(f"Embedded worker scheduled for delayed start ({_pending} pending jobs)")
-        elif _ap_cfg.get("server.auto_processing.enabled", False):
-            logger.info("Embedded worker standby (no pending jobs)")
-    except Exception as e:
-        logger.warning(f"Embedded worker auto-start failed: {e}")
+    # Embedded worker: NO auto-start on server startup.
+    # User must log in and explicitly enable it via Admin UI.
+    # ParseAheadPool (parse+thumbnail) runs independently — no AI, no GPU.
+    logger.info("Embedded worker: standby (requires manual activation via UI)")
 
     # ParseAheadPool is always parse_only — no mode recalculation needed
     from backend.server.queue.manager import set_server_pool_mode
