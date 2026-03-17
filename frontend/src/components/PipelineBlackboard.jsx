@@ -177,13 +177,15 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
       mode: w.processing_mode_override || 'full',
     }));
   // Embedded worker as WorkerLine-compatible object
+  // enabled = can process (ON/OFF), processing = currently doing work
   const embeddedWorker = {
     name: 'Embedded',
     phase: ewPhase,
     currentFile: ewFile,
     throughput: throughput,
     batchSize: 0,
-    state: ewRunning ? 'active' : 'offline',
+    enabled: ewRunning,                          // ON/OFF toggle state
+    state: ewPhase ? 'active' : (ewRunning ? 'idle' : 'offline'),  // active/idle/offline
     mode: 'full',
     completedCount: ewCompleted,
     isEmbedded: true,
@@ -511,16 +513,18 @@ const MODE_COLORS = {
 
 function WorkerLine({ worker, t }) {
   const w = worker;
-  const isActive = w.state === 'active' || !!w.phase;
+  const isEnabled = w.enabled !== false && w.state !== 'offline';  // ON/OFF
+  const isProcessing = w.state === 'active' || !!w.phase;          // doing work right now
   const phaseIdx = w.phase ? PHASES.indexOf(w.phase) : -1;
   const mode = w.mode || 'full';
   const enabledPhases = MODE_PHASES[mode] || MODE_PHASES.full;
 
   return (
-    <div className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${isActive ? 'border-gray-600/30 bg-gray-800/20' : 'border-gray-800/20 bg-gray-900/10'}`}>
-      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
+    <div className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${isProcessing ? 'border-gray-600/30 bg-gray-800/20' : isEnabled ? 'border-gray-700/25 bg-gray-800/15' : 'border-gray-800/20 bg-gray-900/10'}`}>
+      {/* Status indicator: green=processing, blue=enabled/idle, gray=off */}
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isProcessing ? 'bg-green-500 animate-pulse' : isEnabled ? 'bg-blue-500' : 'bg-gray-600'}`} />
       <div className="flex flex-col w-24 flex-shrink-0">
-        <span className="text-[11px] font-mono text-gray-300 font-bold truncate">{w.name}</span>
+        <span className={`text-[11px] font-mono font-bold truncate ${isEnabled ? 'text-gray-300' : 'text-gray-600'}`}>{w.name}</span>
         <span className={`text-[7px] font-mono ${MODE_COLORS[mode]}`}>{MODE_LABELS[mode]}</span>
       </div>
 
@@ -580,8 +584,9 @@ function WorkerLine({ worker, t }) {
           {w.batchSize > 0 && <span className="text-[8px] font-mono text-yellow-600 tabular-nums">B:{w.batchSize}</span>}
           {w.completedCount > 0 && <span className="text-[8px] font-mono text-green-600 tabular-nums">{w.completedCount} done</span>}
           {w.throughput > 0 && <span className="text-[8px] font-mono text-gray-500 tabular-nums">{w.throughput.toFixed(1)}/m</span>}
-          {!isActive && w.state !== 'offline' && <span className="text-[8px] font-mono text-gray-600 italic">{w.state === 'resting' ? t('bb.resting') : t('bb.phase_idle')}</span>}
-          {w.state === 'offline' && <span className="text-[8px] font-mono text-gray-700 italic">offline</span>}
+          {isProcessing && <span className="text-[8px] font-mono text-green-500">processing</span>}
+          {isEnabled && !isProcessing && <span className="text-[8px] font-mono text-blue-500">idle</span>}
+          {!isEnabled && <span className="text-[8px] font-mono text-gray-700">OFF</span>}
         </div>
         {w.currentFile && <div className="text-[7px] text-gray-600 font-mono truncate">{w.currentFile}</div>}
       </div>
