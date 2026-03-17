@@ -495,12 +495,16 @@ class WorkerDaemon:
             self._current_phase = "embed"
             _cb("embed_vv")
             self.uploader.report_progress(job_id, "embed")
+            logger.info(f"Job {job_id}: Phase VV (SigLIP2) start")
             vv_vec, structure_vec = self._run_embed_vv(thumb_path)
+            logger.info(f"Job {job_id}: Phase VV done")
             _cb("embed_vv_done")
 
             # ── Phase E-MV: Meaning Vector (Qwen3-Embedding) ──
             _cb("embed_mv")
+            logger.info(f"Job {job_id}: Phase MV (Qwen3-Embedding) start")
             mv_vec = self._run_embed_mv(metadata)
+            logger.info(f"Job {job_id}: Phase MV done")
             _cb("embed_mv_done")
 
             # ── Upload results ──
