@@ -855,8 +855,20 @@ def _start_embedded_worker(app):
         return
 
     port = getattr(app.state, "port", 8000)
+
+    # Find actual admin user_id from DB (user_id=0 doesn't exist)
+    try:
+        from backend.server.deps import get_db
+        _db = get_db()
+        _cursor = _db.conn.cursor()
+        _cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
+        _row = _cursor.fetchone()
+        admin_uid = _row[0] if _row else 1
+    except Exception:
+        admin_uid = 1
+
     token = create_access_token(
-        user_id=0, username="__embedded_worker__", role="admin",
+        user_id=admin_uid, username="__embedded_worker__", role="admin",
         expires_minutes=60 * 24 * 365,  # 1 year — internal use only
     )
     result = start_worker(f"http://127.0.0.1:{port}", token)
