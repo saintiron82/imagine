@@ -43,6 +43,8 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
         # Override server URL to point to ourselves (loopback)
         _worker_daemon.server_url = server_url
         _worker_daemon.uploader.server_url = server_url
+        # Use __builtin__ name so _recalculate_server_pools() excludes us
+        _worker_daemon.worker_name = "__builtin__"
 
         if not _worker_daemon.set_tokens(access_token, refresh_token):
             _status = "error"

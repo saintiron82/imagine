@@ -286,7 +286,7 @@ class WorkerDaemon:
                 "post",
                 f"{self.server_url}/api/v1/workers/connect",
                 json={
-                    "worker_name": f"{socket.gethostname()}-worker",
+                    "worker_name": getattr(self, 'worker_name', None) or f"{socket.gethostname()}-worker",
                     "hostname": socket.gethostname(),
                     "batch_capacity": self.batch_capacity,
                     "resources": connect_resources,
