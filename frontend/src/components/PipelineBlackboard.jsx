@@ -1,12 +1,11 @@
 /**
- * PipelineBlackboard — Tollgate Architecture 6-Stage Pipeline.
+ * PipelineBlackboard — Tollgate Architecture 5-Stage Pipeline.
  *
  * STAGE 1: Work Requests (발주서)
  * STAGE 2: Job Pool (Download Lane + Direct Lane)
- * STAGE 3: Parser (Server CPU, 1 thread sequential)
- * STAGE 4: Buffer (parsed, worker 할당 대기)
- * STAGE 5: Workers (GPU Terminals: MC → VV → MV)
- * STAGE 6: Output (Storage + Failed)
+ * STAGE 3: Parse + Thumbnail (Server CPU, no AI)
+ * STAGE 4: Worker Pool (Buffer + Workers: MC → VV → MV)
+ * STAGE 5: Output (Storage + Failed)
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -303,57 +302,50 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
             </div>
           </Stage>
 
-          <Belt active={isRunning && buffer > 0} color="orange" label="parsed → buffer" />
+          <Belt active={isRunning && buffer > 0} color="purple" label="parsed → workers" />
 
-          {/* ── STAGE 4: Buffer ── */}
-          <Stage label="STAGE 4" title="BUFFER" color="orange">
-            <div className="flex items-center gap-4 mt-1">
-              <div className={`rounded-lg border-2 ${buffer > 0 ? 'border-orange-600/40 shadow-[0_0_12px_rgba(251,146,60,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-orange-900/15 to-gray-900 w-16 h-16 flex flex-col items-center justify-center flex-shrink-0`}>
-                <span className="text-2xl">&#128230;</span>
+          {/* ── STAGE 4: Worker Pool (Buffer + Workers) ── */}
+          <Stage label="STAGE 4" title="WORKER POOL" color="purple">
+            <div className="flex items-stretch gap-3 mt-1">
+              {/* Left: Buffer hub */}
+              <div className="flex flex-col items-center justify-center flex-shrink-0">
+                <div className={`rounded-lg border-2 ${buffer > 0 ? 'border-orange-600/40 shadow-[0_0_12px_rgba(251,146,60,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-orange-900/15 to-gray-900 w-20 h-full min-h-[80px] flex flex-col items-center justify-center`}>
+                  <div className="text-[7px] font-mono text-gray-600 uppercase tracking-wider mb-1">Buffer</div>
+                  <span className="text-2xl font-mono font-bold text-orange-400 tabular-nums">{buffer}</span>
+                  <div className="text-[7px] font-mono text-gray-700 mt-1">ready</div>
+                </div>
               </div>
-              <div>
-                <div className="flex items-center gap-4 mb-1.5">
-                  <div>
-                    <div className="text-[8px] font-mono text-gray-600 mb-0.5">ready for worker</div>
-                    <span className="text-2xl font-mono font-bold text-orange-400 tabular-nums">{buffer}</span>
+
+              {/* Center: Connection lines */}
+              <div className="flex flex-col justify-center py-2 flex-shrink-0">
+                {[embeddedWorker, ...allWorkers].map((_, i, arr) => (
+                  <div key={i} className="flex items-center" style={{ height: `${100 / arr.length}%` }}>
+                    <div className={`w-4 h-px ${buffer > 0 ? 'bg-purple-500/40' : 'bg-gray-700/30'}`} />
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${buffer > 0 ? 'bg-purple-500/60' : 'bg-gray-700/40'}`} />
                   </div>
-                </div>
-                <div className="text-[7px] text-gray-600 font-mono">
-                  {allWorkers.length > 0
-                    ? `target: ${allWorkers.length} workers × 2 = ${allWorkers.length * 2}`
-                    : 'no workers → buffer paused'
-                  }
-                </div>
+                ))}
               </div>
-            </div>
-          </Stage>
 
-          <Belt active={allWorkers.some(w => w.state === 'active')} color="purple" label={t('bb.workers_title')} />
-
-          {/* ── STAGE 5: Workers ── */}
-          <Stage label="STAGE 5" title="WORKERS (AI Processing)" color="purple">
-            <div className="space-y-3 mt-1">
-              {/* Embedded Worker — always shown */}
-              <WorkerLine worker={embeddedWorker} t={t} />
-
-              {/* External Workers */}
-              {allWorkers.map((w, i) => <WorkerLine key={i} worker={w} t={t} />)}
-
-              {allWorkers.length === 0 && !ewRunning && (
-                <div className="text-[7px] text-gray-600 font-mono text-center py-1">
-                  No external workers connected
-                </div>
-              )}
+              {/* Right: Workers (세로 배치) */}
+              <div className="flex-1 space-y-2 min-w-0">
+                <WorkerLine worker={embeddedWorker} t={t} />
+                {allWorkers.map((w, i) => <WorkerLine key={i} worker={w} t={t} />)}
+                {allWorkers.length === 0 && !ewRunning && (
+                  <div className="text-[7px] text-gray-600 font-mono text-center py-1">
+                    No external workers connected
+                  </div>
+                )}
+              </div>
             </div>
             <div className="text-[7px] text-gray-600 font-mono mt-2 pt-2 border-t border-gray-800/30">
-              MC(Vision) → VV(Visual Vector) → MV(Meaning Vector) · Phase-batch · GPU model swap
+              Buffer → MC(Vision) → VV(Visual Vector) → MV(Meaning Vector) · Phase-batch · GPU model swap
             </div>
           </Stage>
 
           <Belt active={completed > 0} color="green" label={t('bb.completed_label')} />
 
-          {/* ── STAGE 6: Output ── */}
-          <Stage label="STAGE 6" title="OUTPUT" color="green">
+          {/* ── STAGE 5: Output ── */}
+          <Stage label="STAGE 5" title="OUTPUT" color="green">
             <div className="flex items-center gap-6 mt-1">
               {/* Storage */}
               <div className="rounded-lg border-2 border-green-600/40 bg-gradient-to-b from-green-900/15 to-gray-900 px-4 py-3 text-center relative overflow-hidden min-w-[120px]">
