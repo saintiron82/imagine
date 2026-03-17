@@ -516,12 +516,12 @@ class JobQueueManager:
         return claimed
 
     def update_progress(self, job_id: int, user_id: int, phase: str) -> bool:
-        """Update phase completion for a job."""
+        """Update phase completion for a job + worker session current_phase."""
         cursor = self.db.conn.cursor()
 
-        # Verify ownership
+        # Verify ownership and get file_path for worker session update
         cursor.execute(
-            "SELECT phase_completed FROM job_queue WHERE id = ? AND assigned_to = ?",
+            "SELECT phase_completed, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
             (job_id, user_id)
         )
         row = cursor.fetchone()
@@ -529,6 +529,7 @@ class JobQueueManager:
             return False
 
         phases = json.loads(row[0])
+        file_path = row[1]
         if phase in phases:
             phases[phase] = True
 
@@ -539,6 +540,17 @@ class JobQueueManager:
                WHERE id = ?""",
             (json.dumps(phases), now, job_id)
         )
+
+        # Update worker_sessions with current phase + file (real-time, not just heartbeat)
+        import os
+        file_name = os.path.basename(file_path) if file_path else None
+        cursor.execute(
+            """UPDATE worker_sessions
+               SET current_phase = ?, current_file = ?, current_job_id = ?
+               WHERE user_id = ? AND status = 'online'""",
+            (phase, file_name, job_id, user_id)
+        )
+
         self.db.conn.commit()
         return True
 
