@@ -1037,7 +1037,7 @@ class JobQueueManager:
         # Phase-level progress counts — deferred to file-centric block below
         phase_stats = {}
 
-        # Parse-ahead stats
+        # Parse-ahead stats + buffer phase breakdown
         parse_ahead_stats = {}
         try:
             cursor.execute("""
@@ -1046,10 +1046,35 @@ class JobQueueManager:
                 GROUP BY parse_status
             """)
             pa_counts = dict(cursor.fetchall())
+            parsed_count = pa_counts.get("parsed", 0)
+
+            # Buffer breakdown: among parsed pending jobs, how many need each phase?
+            buffer_need_mc = 0
+            buffer_need_vv = 0
+            buffer_need_mv = 0
+            if parsed_count > 0:
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') IS NULL
+                                          OR json_extract(phase_completed, '$.vision') = 0),
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                                         AND (json_extract(phase_completed, '$.embed') IS NULL
+                                              OR json_extract(phase_completed, '$.embed') = 0))
+                    FROM job_queue
+                    WHERE status = 'pending' AND parse_status = 'parsed'
+                """)
+                brow = cursor.fetchone()
+                buffer_need_mc = brow[0] or 0
+                buffer_need_vv = brow[1] or 0  # vision done but embed not done
+                buffer_need_mv = buffer_need_vv  # VV and MV are paired
+
             parse_ahead_stats = {
-                "parse_ahead_parsed": pa_counts.get("parsed", 0),
+                "parse_ahead_parsed": parsed_count,
                 "parse_ahead_parsing": pa_counts.get("parsing", 0),
                 "parse_ahead_failed": pa_counts.get("failed", 0),
+                "buffer_need_mc": buffer_need_mc,
+                "buffer_need_vv": buffer_need_vv,
+                "buffer_need_mv": buffer_need_mv,
             }
         except Exception:
             pass

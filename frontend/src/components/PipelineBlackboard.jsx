@@ -189,14 +189,9 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
     isEmbedded: true,
   };
 
-  // Buffer breakdown by phase
-  const phaseTotal = s.phase_total ?? 0;
-  const phaseParseDone = s.phase_parse_done ?? 0;
-  const phaseVisionDone = s.phase_vision_done ?? 0;
-  const phaseEmbedDone = s.phase_embed_done ?? 0;
-  const needMC = phaseParseDone - phaseVisionDone;
-  const needVV = phaseVisionDone - phaseEmbedDone;
-  const needMV = phaseVisionDone - phaseEmbedDone; // VV and MV are typically paired
+  // Buffer breakdown: among parsed pending jobs, how many need each phase?
+  const bufNeedMC = s.buffer_need_mc ?? 0;
+  const bufNeedVV = s.buffer_need_vv ?? 0;
 
   const activeWRs = activeWRsAll;
   const isRunning = throughput > 0 || processing > 0 || ewRunning;
@@ -322,9 +317,9 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
                   <div className="text-[7px] font-mono text-gray-600 uppercase tracking-wider mb-1">Buffer</div>
                   <span className="text-xl font-mono font-bold text-orange-400 tabular-nums">{buffer}</span>
                   <div className="w-full mt-1.5 space-y-0.5">
-                    {needMC > 0 && <div className="flex justify-between text-[7px] font-mono"><span className="text-purple-500">MC</span><span className="text-purple-400">{needMC}</span></div>}
-                    {needVV > 0 && <div className="flex justify-between text-[7px] font-mono"><span className="text-cyan-500">VV</span><span className="text-cyan-400">{needVV}</span></div>}
-                    {needMC === 0 && needVV === 0 && buffer > 0 && <div className="text-[7px] font-mono text-gray-600 text-center">all phases</div>}
+                    {bufNeedMC > 0 && <div className="flex justify-between text-[7px] font-mono"><span className="text-purple-500">→MC</span><span className="text-purple-400">{bufNeedMC}</span></div>}
+                    {bufNeedVV > 0 && <div className="flex justify-between text-[7px] font-mono"><span className="text-cyan-500">→VV</span><span className="text-cyan-400">{bufNeedVV}</span></div>}
+                    {bufNeedMC === 0 && bufNeedVV === 0 && buffer > 0 && <div className="text-[7px] font-mono text-green-600 text-center">ready</div>}
                     {buffer === 0 && <div className="text-[7px] font-mono text-gray-700 text-center">empty</div>}
                   </div>
                 </div>
