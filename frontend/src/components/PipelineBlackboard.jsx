@@ -81,10 +81,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
   const ewFile = ew.current_file || null;
 
   // Which phases the server handles
-  const serverParse = true; // always
-  const serverMC = ewRunning; // embedded worker does MC
-  const serverVV = serverMode === 'parse_vv' || ewRunning;
-  const serverMV = ewRunning; // embedded worker does MV
+  const serverParse = true; // server always does parse + thumbnail
   const processing = (s.assigned ?? 0) + (s.processing ?? 0);
   const remaining = (s.pending ?? 0) + (s.assigned ?? 0) + (s.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
@@ -275,49 +272,20 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
 
           <Belt active={isRunning} color="teal" label="file_ready=1" />
 
-          {/* ── STAGE 3: Server Auto-Processing ── */}
-          <Stage label="STAGE 3" title="SERVER PROCESSING" color="teal"
-            extra={<ServerModeControl mode={serverMode} ewRunning={ewRunning} onUpdate={async (patch) => {
-              try {
-                await apiClient.patch('/api/v1/admin/workers/auto-processing', patch);
-                load();
-              } catch { /* ignore */ }
-            }} />}>
+          {/* ── STAGE 3: Parse + Thumbnail ── */}
+          <Stage label="STAGE 3" title="PARSE + THUMBNAIL" color="teal">
             <div className="mt-1 space-y-2">
-              {/* Phase pills — shows which phases the server handles */}
+              {/* Parse status */}
               <div className="flex items-center gap-1.5">
                 <PhasePill label="Parse" active={serverParse} current={parsing > 0} done={parsePending === 0 && parsing === 0 && buffer > 0} />
-                <span className="text-gray-700 text-[8px]">→</span>
-                <PhasePill label="MC" active={serverMC} current={ewPhase === 'vision'} color="purple" />
-                <span className="text-gray-700 text-[8px]">→</span>
-                <PhasePill label="VV" active={serverVV} current={ewPhase === 'embed_vv'} color="cyan" />
-                <span className="text-gray-700 text-[8px]">→</span>
-                <PhasePill label="MV" active={serverMV} current={ewPhase === 'embed_mv'} color="emerald" />
-                <span className="text-[7px] text-gray-600 font-mono ml-auto">
-                  {ewRunning ? 'Full Pipeline' : serverMode === 'parse_vv' ? 'Parse + VV' : 'Parse Only'}
-                </span>
+                <span className="text-gray-700 text-[8px]">+</span>
+                <PhasePill label="Thumbnail" active={serverParse} current={parsing > 0} done={parsePending === 0 && parsing === 0 && buffer > 0} />
+                <span className="text-[7px] text-gray-600 font-mono ml-auto">No AI</span>
               </div>
               {/* Stats row */}
               <div className="flex items-center gap-4 text-[9px] font-mono">
                 <span className="text-gray-500">parsing: <span className="text-teal-400 font-bold">{parsing}</span></span>
                 <span className="text-gray-500">await: <span className="text-gray-400">{parsePending}</span></span>
-                {ewCompleted > 0 && <span className="text-gray-500">done: <span className="text-green-400 font-bold">{ewCompleted}</span></span>}
-                {throughput > 0 && <span className="text-gray-500"><Zap size={9} className="inline text-yellow-500" /> {throughput.toFixed(1)}/m</span>}
-              </div>
-              {/* Current file */}
-              {ewFile && (
-                <div className="text-[8px] text-gray-600 font-mono truncate">
-                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${ewPhase ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
-                  {ewFile}
-                </div>
-              )}
-              {/* Mode description */}
-              <div className="text-[7px] text-gray-700 font-mono pt-1 border-t border-gray-800/30">
-                {ewRunning
-                  ? 'Server self-processing: Parse → MC → VV → MV (all phases)'
-                  : serverMode === 'parse_vv'
-                    ? 'Server: Parse + VV — workers handle MC + MV'
-                    : 'Server: Parse only — workers handle MC + VV + MV'}
               </div>
             </div>
           </Stage>
@@ -475,42 +443,7 @@ function Belt({ active, color, label }) {
 
 // ─── Server Mode Control (ON/OFF + level selector) ──────
 
-const SERVER_MODES = [
-  { id: 'full', label: 'Full', desc: 'Parse+MC+VV+MV' },
-  { id: 'parse_vv', label: 'Parse+VV', desc: 'Parse+VV only' },
-  { id: 'parse_only', label: 'Parse', desc: 'Parse only' },
-];
-
-function ServerModeControl({ mode, ewRunning, onUpdate }) {
-  const isOn = ewRunning || mode !== 'parse_only';
-  return (
-    <div className="flex items-center gap-1">
-      {/* Mode selector (visible when ON) */}
-      {isOn && (
-        <select
-          value={mode}
-          onChange={(e) => onUpdate({ enabled: true, mode: e.target.value })}
-          className="px-1 py-0 text-[7px] font-mono bg-gray-900 text-gray-400 border border-gray-700/40 rounded-sm cursor-pointer focus:outline-none"
-        >
-          {SERVER_MODES.map(m => (
-            <option key={m.id} value={m.id}>{m.label}</option>
-          ))}
-        </select>
-      )}
-      {/* ON/OFF toggle */}
-      <button
-        onClick={() => onUpdate({ enabled: !isOn })}
-        className={`px-2 py-0 text-[8px] font-mono font-bold rounded-sm border transition-colors ${
-          isOn
-            ? 'bg-green-900/80 text-green-400 border-green-700/40 hover:bg-green-800/80'
-            : 'bg-gray-800 text-gray-500 border-gray-700/40 hover:text-gray-300'
-        }`}
-      >
-        {isOn ? 'ON' : 'OFF'}
-      </button>
-    </div>
-  );
-}
+// ServerModeControl removed — Stage 3 is always parse+thumbnail only
 
 // ─── Phase Pill (server processing indicator) ────────────
 
