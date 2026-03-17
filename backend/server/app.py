@@ -180,15 +180,9 @@ async def startup():
     except Exception as e:
         logger.warning(f"Embedded worker auto-start failed: {e}")
 
-    # Determine initial processing mode (auto if no workers online + auto_processing enabled)
-    try:
-        from backend.server.routers.workers import _recalculate_server_pools
-        from backend.server.deps import get_db
-        db = get_db()
-        _recalculate_server_pools(app, db)
-        logger.info(f"Initial processing mode: {getattr(app.state.parse_ahead, '_processing_mode', 'unknown') if hasattr(app.state, 'parse_ahead') and app.state.parse_ahead else 'N/A'}")
-    except Exception as e:
-        logger.warning(f"Initial pool recalculation failed: {e}")
+    # ParseAheadPool is always parse_only — no mode recalculation needed
+    from backend.server.queue.manager import set_server_pool_mode
+    set_server_pool_mode("parse_only")
 
     # Heartbeat watchdog: periodically detect dead workers and reclaim their jobs
     try:
