@@ -183,11 +183,20 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
     currentFile: ewFile,
     throughput: throughput,
     batchSize: 0,
-    state: ewRunning ? (ewPhase ? 'active' : 'idle') : 'offline',
+    state: ewRunning ? 'active' : 'offline',
     mode: 'full',
     completedCount: ewCompleted,
     isEmbedded: true,
   };
+
+  // Buffer breakdown by phase
+  const phaseTotal = s.phase_total ?? 0;
+  const phaseParseDone = s.phase_parse_done ?? 0;
+  const phaseVisionDone = s.phase_vision_done ?? 0;
+  const phaseEmbedDone = s.phase_embed_done ?? 0;
+  const needMC = phaseParseDone - phaseVisionDone;
+  const needVV = phaseVisionDone - phaseEmbedDone;
+  const needMV = phaseVisionDone - phaseEmbedDone; // VV and MV are typically paired
 
   const activeWRs = activeWRsAll;
   const isRunning = throughput > 0 || processing > 0 || ewRunning;
@@ -307,12 +316,17 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
           {/* ── STAGE 4: Worker Pool (Buffer + Workers) ── */}
           <Stage label="STAGE 4" title="WORKER POOL" color="purple">
             <div className="flex items-stretch gap-3 mt-1">
-              {/* Left: Buffer hub */}
+              {/* Left: Buffer hub — phase breakdown */}
               <div className="flex flex-col items-center justify-center flex-shrink-0">
-                <div className={`rounded-lg border-2 ${buffer > 0 ? 'border-orange-600/40 shadow-[0_0_12px_rgba(251,146,60,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-orange-900/15 to-gray-900 w-20 h-full min-h-[80px] flex flex-col items-center justify-center`}>
+                <div className={`rounded-lg border-2 ${buffer > 0 ? 'border-orange-600/40 shadow-[0_0_12px_rgba(251,146,60,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-orange-900/15 to-gray-900 w-24 h-full min-h-[80px] flex flex-col items-center justify-center px-2 py-2`}>
                   <div className="text-[7px] font-mono text-gray-600 uppercase tracking-wider mb-1">Buffer</div>
-                  <span className="text-2xl font-mono font-bold text-orange-400 tabular-nums">{buffer}</span>
-                  <div className="text-[7px] font-mono text-gray-700 mt-1">ready</div>
+                  <span className="text-xl font-mono font-bold text-orange-400 tabular-nums">{buffer}</span>
+                  <div className="w-full mt-1.5 space-y-0.5">
+                    {needMC > 0 && <div className="flex justify-between text-[7px] font-mono"><span className="text-purple-500">MC</span><span className="text-purple-400">{needMC}</span></div>}
+                    {needVV > 0 && <div className="flex justify-between text-[7px] font-mono"><span className="text-cyan-500">VV</span><span className="text-cyan-400">{needVV}</span></div>}
+                    {needMC === 0 && needVV === 0 && buffer > 0 && <div className="text-[7px] font-mono text-gray-600 text-center">all phases</div>}
+                    {buffer === 0 && <div className="text-[7px] font-mono text-gray-700 text-center">empty</div>}
+                  </div>
                 </div>
               </div>
 
