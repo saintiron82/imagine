@@ -148,12 +148,13 @@ async def startup():
     # workers (embedded or external) handle V→VV→MV.
     logger.info("Processing mode: parse_only (tollgate architecture)")
 
-    # Embedded worker auto-start (if auto_processing enabled)
+    # Embedded worker auto-start: only when there are pending jobs to process
     # Delayed start: server needs to be fully ready to accept loopback connections
     try:
         from backend.utils.config import get_config
         _ap_cfg = get_config()
-        if _ap_cfg.get("server.auto_processing.enabled", False):
+        _pending = getattr(app.state, 'startup_pending_jobs', 0)
+        if _ap_cfg.get("server.auto_processing.enabled", False) and _pending > 0:
             import threading
             def _delayed_embedded_worker_start():
                 import time
@@ -173,7 +174,9 @@ async def startup():
                         logger.warning(f"Embedded worker start attempt {attempt} failed: {e}")
                 logger.error("Embedded worker failed to start after 3 attempts")
             threading.Thread(target=_delayed_embedded_worker_start, daemon=True).start()
-            logger.info("Embedded worker scheduled for delayed start")
+            logger.info(f"Embedded worker scheduled for delayed start ({_pending} pending jobs)")
+        elif _ap_cfg.get("server.auto_processing.enabled", False):
+            logger.info("Embedded worker standby (no pending jobs)")
     except Exception as e:
         logger.warning(f"Embedded worker auto-start failed: {e}")
 
@@ -400,16 +403,23 @@ def _startup_integrity_check():
         if fixed > 0:
             logger.info(f"Startup auto-fix: filled relative_path for {fixed} files")
 
-        # 2. Audit: scan-only on startup (no Recovery WR creation).
-        #    Recovery WRs are created later when embedded worker starts or
-        #    when admin explicitly triggers audit via API.
+        # 2. Audit: full repair — re-queue incomplete files, attach to existing WRs
         queue = JobQueueManager(db)
-        result = queue.audit_completed_jobs(repair=False)
-        logger.info(
-            f"Startup audit: {result['total_files']} files, "
-            f"{result['complete_files']} complete, "
-            f"{result['incomplete_files']} incomplete"
-        )
+        result = queue.audit_completed_jobs(repair=True)
+        incomplete = result['incomplete_files']
+        repaired = result['repaired_files']
+        if repaired > 0:
+            logger.warning(
+                f"Startup audit: {result['total_files']} files, "
+                f"{incomplete} incomplete, {repaired} re-queued"
+            )
+        else:
+            logger.info(
+                f"Startup audit: {result['total_files']} files, "
+                f"{result['complete_files']} complete"
+            )
+        # Store for embedded worker decision
+        app.state.startup_pending_jobs = incomplete
     except Exception as e:
         logger.warning(f"Startup integrity check failed: {e}")
 

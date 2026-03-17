@@ -42,24 +42,7 @@ class ParseAheadPool(BaseAheadPool):
         self._last_retry_reset = 0.0  # Timestamp of last parse_status='failed' reset
         logger.info("ParseAheadPool initialized (parse_only mode — tollgate architecture)")
 
-        # Auto-audit on startup: repair completed jobs with missing data
-        self._startup_integrity_audit()
-
-    def _startup_integrity_audit(self):
-        """Run integrity audit on server startup (scan-only, no Recovery WR creation)."""
-        try:
-            from backend.server.queue.manager import JobQueueManager
-            mgr = JobQueueManager(self.db)
-            result = mgr.audit_completed_jobs(repair=False)
-            if result["incomplete_files"] > 0:
-                logger.info(
-                    f"Startup audit: {result['total_files']} files, "
-                    f"{result['incomplete_files']} incomplete (repair deferred to worker start)"
-                )
-            else:
-                logger.info(f"Startup audit: {result['total_files']} files, all complete")
-        except Exception as e:
-            logger.warning(f"Startup integrity audit failed (non-fatal): {e}")
+        # Audit is handled once by app.py startup — no duplicate here
 
     def _unload_models(self):
         """Unload VV and Structure encoders if loaded (backfill mode)."""
