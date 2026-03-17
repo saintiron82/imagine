@@ -277,10 +277,10 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
 
           {/* ── STAGE 3: Server Auto-Processing ── */}
           <Stage label="STAGE 3" title="SERVER PROCESSING" color="teal"
-            extra={<AutoToggle running={ewRunning} onToggle={async (val) => {
+            extra={<ServerModeControl mode={serverMode} ewRunning={ewRunning} onUpdate={async (patch) => {
               try {
-                await apiClient.patch('/api/v1/admin/workers/auto-processing', { enabled: val });
-                load(); // refresh stats immediately
+                await apiClient.patch('/api/v1/admin/workers/auto-processing', patch);
+                load();
               } catch { /* ignore */ }
             }} />}>
             <div className="mt-1 space-y-2">
@@ -473,20 +473,42 @@ function Belt({ active, color, label }) {
 
 // ─── Worker Line ─────────────────────────────────────────
 
-// ─── Auto Processing Toggle ──────────────────────────────
+// ─── Server Mode Control (ON/OFF + level selector) ──────
 
-function AutoToggle({ running, onToggle }) {
+const SERVER_MODES = [
+  { id: 'full', label: 'Full', desc: 'Parse+MC+VV+MV' },
+  { id: 'parse_vv', label: 'Parse+VV', desc: 'Parse+VV only' },
+  { id: 'parse_only', label: 'Parse', desc: 'Parse only' },
+];
+
+function ServerModeControl({ mode, ewRunning, onUpdate }) {
+  const isOn = ewRunning || mode !== 'parse_only';
   return (
-    <button
-      onClick={() => onToggle(!running)}
-      className={`px-2 py-0 text-[8px] font-mono font-bold rounded-sm border transition-colors ${
-        running
-          ? 'bg-green-900/80 text-green-400 border-green-700/40 hover:bg-green-800/80'
-          : 'bg-gray-800 text-gray-500 border-gray-700/40 hover:text-gray-300'
-      }`}
-    >
-      AUTO {running ? 'ON' : 'OFF'}
-    </button>
+    <div className="flex items-center gap-1">
+      {/* Mode selector (visible when ON) */}
+      {isOn && (
+        <select
+          value={mode}
+          onChange={(e) => onUpdate({ enabled: true, mode: e.target.value })}
+          className="px-1 py-0 text-[7px] font-mono bg-gray-900 text-gray-400 border border-gray-700/40 rounded-sm cursor-pointer focus:outline-none"
+        >
+          {SERVER_MODES.map(m => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+      )}
+      {/* ON/OFF toggle */}
+      <button
+        onClick={() => onUpdate({ enabled: !isOn })}
+        className={`px-2 py-0 text-[8px] font-mono font-bold rounded-sm border transition-colors ${
+          isOn
+            ? 'bg-green-900/80 text-green-400 border-green-700/40 hover:bg-green-800/80'
+            : 'bg-gray-800 text-gray-500 border-gray-700/40 hover:text-gray-300'
+        }`}
+      >
+        {isOn ? 'ON' : 'OFF'}
+      </button>
+    </div>
   );
 }
 

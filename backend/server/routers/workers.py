@@ -53,6 +53,7 @@ class WorkerConfigUpdate(BaseModel):
 
 class AutoProcessingUpdate(BaseModel):
     enabled: Optional[bool] = None
+    mode: Optional[str] = None  # "full" | "parse_vv" | "parse_only"
     rest_after_batch_s: Optional[int] = None
     batch_size: Optional[int] = None
 
@@ -798,16 +799,35 @@ def admin_update_auto_processing(
 
     if req.enabled is not None:
         cfg._set_dotted("server.auto_processing.enabled", req.enabled)
+    if req.mode is not None and req.mode in ("full", "parse_vv", "parse_only"):
+        cfg._set_dotted("server.auto_processing.mode", req.mode)
     if req.rest_after_batch_s is not None:
         cfg._set_dotted("server.auto_processing.rest_after_batch_s", req.rest_after_batch_s)
     if req.batch_size is not None:
         cfg._set_dotted("server.auto_processing.batch_size", req.batch_size)
 
+    # Apply mode to ParseAheadPool immediately
+    if req.mode is not None:
+        pa = getattr(request.app.state, "parse_ahead", None)
+        if pa:
+            old = getattr(pa, "_processing_mode", None)
+            if req.mode == "full":
+                pa._processing_mode = "parse_only"  # embedded worker handles full
+            else:
+                pa._processing_mode = req.mode
+            if old != pa._processing_mode:
+                if pa._processing_mode == "parse_only":
+                    pa._unload_models()
+                logger.info(f"ParseAheadPool mode: {old} → {pa._processing_mode}")
+        from backend.server.queue.manager import set_server_pool_mode
+        set_server_pool_mode(req.mode)
+
     # Recalculate pools so mode change takes effect immediately
-    try:
-        _recalculate_server_pools(request.app, db)
-    except Exception as e:
-        logger.warning(f"Pool recalculation on auto-processing update failed: {e}")
+    if req.mode is None:
+        try:
+            _recalculate_server_pools(request.app, db)
+        except Exception as e:
+            logger.warning(f"Pool recalculation on auto-processing update failed: {e}")
 
     # Start/stop embedded worker based on auto_processing toggle
     if req.enabled is not None:
@@ -815,8 +835,12 @@ def admin_update_auto_processing(
             _start_embedded_worker(request.app)
         else:
             _stop_embedded_worker()
+    elif req.mode == "full":
+        _start_embedded_worker(request.app)
+    elif req.mode in ("parse_vv", "parse_only"):
+        _stop_embedded_worker()
 
-    logger.info(f"Admin updated auto_processing: enabled={req.enabled}, rest={req.rest_after_batch_s}s, batch={req.batch_size}")
+    logger.info(f"Admin updated auto_processing: enabled={req.enabled}, mode={req.mode}, rest={req.rest_after_batch_s}s")
     return {"ok": True}
 
 
