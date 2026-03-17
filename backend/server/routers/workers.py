@@ -131,7 +131,7 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         _stop_embedded_worker()
         logger.info("Embedded worker stopped (full external workers connected)")
 
-    logger.debug(f"Pool recalculated: mode={new_mode}, workers={len(worker_modes)}, auto={auto_enabled}, ew={ew_running}")
+    logger.debug(f"Pool recalculated: mode=parse_only, workers={len(worker_modes)}, ew={ew_running}")
 
 
 # ── Builtin worker virtual session ──────────────────────────
