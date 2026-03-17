@@ -1370,9 +1370,10 @@ class JobQueueManager:
         Pass 2: Unmatched job cleanup
           - Jobs with file_id not in files → DELETE
 
-        Recovery WR creation:
-          - Incomplete files without jobs are grouped by parent folder
-          - Each group becomes a Recovery WR with [Recovery] prefix
+        Recovery file handling:
+          - Incomplete files are matched to existing WRs by source_path prefix
+          - Matched files are attached as subtasks under the original WR
+          - Unmatched files get a new [Recovery] WR grouped by parent folder
 
         Returns file-centric results.
         """
@@ -1496,40 +1497,40 @@ class JobQueueManager:
                      has_thumbnail)
                 )
 
-        # ── Create Recovery WRs from collected files ──
+        # ── Attach recovery files to existing WRs or create new ones ──
         recovery_wrs_created = 0
+        recovery_attached = 0
         if recovery_files:
+            # Build lookup: existing WR source_paths (longest first for best match)
+            existing_wrs = cursor.execute(
+                "SELECT id, source_path FROM work_requests WHERE status != 'cancelled' AND source_path IS NOT NULL"
+            ).fetchall()
+            # Sort by source_path length descending → most specific match first
+            existing_wrs.sort(key=lambda x: len(x[1] or ''), reverse=True)
+
+            # Classify recovery files: attach to existing WR or new Recovery WR
+            matched = defaultdict(lambda: defaultdict(list))  # {wr_id: {folder_path: [files]}}
+            unmatched = defaultdict(list)                      # {folder_path: [files]}
+
             for folder_path, files in recovery_files.items():
-                folder_name = _Path(folder_path).name or "local"
-                file_groups = {folder_path: [(f[0], f[1]) for f in files]}
+                parent_wr_id = None
+                for wr_id_candidate, wr_source in existing_wrs:
+                    if wr_source and folder_path.startswith(wr_source):
+                        parent_wr_id = wr_id_candidate
+                        break
+                if parent_wr_id:
+                    matched[parent_wr_id][folder_path].extend(files)
+                else:
+                    unmatched[folder_path].extend(files)
 
-                # Create Recovery WR
-                sort_order = self._next_sort_order(cursor)
-                total = len(files)
-                cursor.execute(
-                    """INSERT INTO work_requests (name, source_path, total_files, sort_order)
-                       VALUES (?, ?, ?, ?)""",
-                    (f"[Recovery] {folder_name}", folder_path, total, sort_order)
-                )
-                wr_id = cursor.lastrowid
-
-                # Create subtask
-                cursor.execute(
-                    """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
-                       VALUES (?, ?, ?, ?)""",
-                    (wr_id, folder_path, folder_name, total)
-                )
-                st_id = cursor.lastrowid
-
-                # Create jobs
+            # --- Helper: create jobs for a list of files under a WR/subtask ---
+            def _create_recovery_jobs(wr_id, st_id, files):
+                created = 0
                 for (file_id, file_path, actual_phases, parsed_metadata,
                      missing, has_thumbnail) in files:
                     is_webdav = file_path.startswith("webdav://") if file_path else False
-                    # If thumbnail missing, need re-parse → parse_status=NULL
-                    # If thumbnail exists, parse done → parse_status='parsed'
                     parse_status = 'parsed' if has_thumbnail else None
                     audit_file_ready = 0 if (is_webdav and not has_thumbnail) else 1
-
                     try:
                         cursor.execute(
                             """INSERT INTO job_queue
@@ -1541,15 +1542,13 @@ class JobQueueManager:
                              parsed_metadata, audit_file_ready, wr_id, st_id)
                         )
                         if cursor.rowcount > 0:
-                            repaired_files += 1
+                            created += 1
                             details.append({
                                 "file_id": file_id,
                                 "file_path": file_path,
                                 "missing": missing,
-                                "status": "recovery_wr",
+                                "status": "recovery_attached" if wr_id in matched else "recovery_wr",
                             })
-
-                            # Request re-download for WebDAV files needing re-parse
                             if is_webdav and not has_thumbnail:
                                 try:
                                     pool = _get_download_pool()
@@ -1559,8 +1558,86 @@ class JobQueueManager:
                                     pass
                     except Exception as e:
                         logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
+                return created
 
-                # Adjust WR total if some jobs were skipped
+            # --- Attach to existing WRs ---
+            for wr_id, folder_groups in matched.items():
+                wr_name = cursor.execute(
+                    "SELECT name FROM work_requests WHERE id = ?", (wr_id,)
+                ).fetchone()[0]
+                wr_jobs_added = 0
+
+                for folder_path, files in folder_groups.items():
+                    folder_name = _Path(folder_path).name or "recovery"
+
+                    # Find or create subtask under this WR
+                    existing_st = cursor.execute(
+                        "SELECT id FROM work_subtasks WHERE work_request_id = ? AND folder_path = ?",
+                        (wr_id, folder_path)
+                    ).fetchone()
+
+                    if existing_st:
+                        st_id = existing_st[0]
+                    else:
+                        cursor.execute(
+                            """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
+                               VALUES (?, ?, ?, 0)""",
+                            (wr_id, folder_path, folder_name)
+                        )
+                        st_id = cursor.lastrowid
+
+                    created = _create_recovery_jobs(wr_id, st_id, files)
+                    wr_jobs_added += created
+                    repaired_files += created
+
+                    # Update subtask total
+                    actual_st_jobs = cursor.execute(
+                        "SELECT COUNT(*) FROM job_queue WHERE work_subtask_id = ? AND status IN ('pending','assigned','processing')",
+                        (st_id,)
+                    ).fetchone()[0]
+                    cursor.execute(
+                        "UPDATE work_subtasks SET total_files = ? WHERE id = ?",
+                        (actual_st_jobs, st_id)
+                    )
+
+                if wr_jobs_added > 0:
+                    # Update WR total
+                    actual_wr_total = cursor.execute(
+                        "SELECT COALESCE(SUM(total_files), 0) FROM work_subtasks WHERE work_request_id = ?",
+                        (wr_id,)
+                    ).fetchone()[0]
+                    cursor.execute(
+                        "UPDATE work_requests SET total_files = ?, status = 'queued' WHERE id = ?",
+                        (actual_wr_total, wr_id)
+                    )
+                    recovery_attached += wr_jobs_added
+                    logger.info(
+                        f"Recovery: attached {wr_jobs_added} files to existing WR '{wr_name}' (id={wr_id})"
+                    )
+
+            # --- Create new Recovery WRs for unmatched files ---
+            for folder_path, files in unmatched.items():
+                folder_name = _Path(folder_path).name or "local"
+
+                sort_order = self._next_sort_order(cursor)
+                total = len(files)
+                cursor.execute(
+                    """INSERT INTO work_requests (name, source_path, total_files, sort_order)
+                       VALUES (?, ?, ?, ?)""",
+                    (f"[Recovery] {folder_name}", folder_path, total, sort_order)
+                )
+                wr_id = cursor.lastrowid
+
+                cursor.execute(
+                    """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
+                       VALUES (?, ?, ?, ?)""",
+                    (wr_id, folder_path, folder_name, total)
+                )
+                st_id = cursor.lastrowid
+
+                created = _create_recovery_jobs(wr_id, st_id, files)
+                repaired_files += created
+
                 actual_jobs = cursor.execute(
                     "SELECT COUNT(*) FROM job_queue WHERE work_request_id = ?",
                     (wr_id,)
@@ -1581,7 +1658,6 @@ class JobQueueManager:
                         f"Recovery WR created: '{folder_name}' ({actual_jobs} files)"
                     )
                 else:
-                    # No jobs created (all duplicates) — remove empty WR
                     cursor.execute("DELETE FROM work_subtasks WHERE work_request_id = ?", (wr_id,))
                     cursor.execute("DELETE FROM work_requests WHERE id = ?", (wr_id,))
 
@@ -1625,8 +1701,10 @@ class JobQueueManager:
             parts = [f"Audit: {total_files} files, {incomplete_files} incomplete"]
             if repaired_files > 0:
                 parts.append(f"{repaired_files} repaired")
+            if recovery_attached > 0:
+                parts.append(f"{recovery_attached} attached to existing WR(s)")
             if recovery_wrs_created > 0:
-                parts.append(f"{recovery_wrs_created} Recovery WR(s) created")
+                parts.append(f"{recovery_wrs_created} new Recovery WR(s)")
             if thumbnail_reset_count > 0:
                 parts.append(f"{thumbnail_reset_count} thumbnails reset")
             if skipped_non_retryable > 0:
@@ -1646,6 +1724,7 @@ class JobQueueManager:
             "incomplete_files": incomplete_files,
             "repaired_files": repaired_files,
             "recovery_wrs_created": recovery_wrs_created,
+            "recovery_attached": recovery_attached,
             "thumbnail_reset_count": thumbnail_reset_count,
             "skipped_non_retryable": skipped_non_retryable,
             "failed_stuck_jobs": skipped_non_retryable,  # files-based
