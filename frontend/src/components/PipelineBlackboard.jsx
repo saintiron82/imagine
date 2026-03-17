@@ -192,7 +192,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
     enabled: ewRunning,                          // ON/OFF toggle state
     state: ewPhase ? 'active' : (ewRunning ? 'idle' : 'offline'),  // active/idle/offline
     mode: 'full',
-    // completedCount removed — use Output stage for totals
+    phaseCounts: ew.phase_counts || null,
     isEmbedded: true,
   };
 
@@ -308,6 +308,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
               {/* Stats row */}
               <div className="flex items-center gap-4 text-[9px] font-mono">
                 <span className="text-gray-500">parsing: <span className="text-teal-400 font-bold">{parsing}</span></span>
+                <span className="text-gray-500">parsed: <span className="text-orange-400 font-bold">{buffer}</span></span>
                 <span className="text-gray-500">await: <span className="text-gray-400">{parsePending}</span></span>
               </div>
             </div>
@@ -584,8 +585,14 @@ function WorkerLine({ worker, t }) {
       {/* Worker info */}
       <div className="flex-1 min-w-0 ml-2">
         <div className="flex items-center gap-2">
+          {w.phaseCounts && (
+            <span className="text-[7px] font-mono tabular-nums">
+              <span className="text-purple-400">MC:{w.phaseCounts.mc || 0}</span>
+              {' '}<span className="text-cyan-400">VV:{w.phaseCounts.vv || 0}</span>
+              {' '}<span className="text-emerald-400">MV:{w.phaseCounts.mv || 0}</span>
+            </span>
+          )}
           {w.batchSize > 0 && <span className="text-[8px] font-mono text-yellow-600 tabular-nums">B:{w.batchSize}</span>}
-          {w.completedCount > 0 && <span className="text-[8px] font-mono text-green-600 tabular-nums">{w.completedCount} done</span>}
           {w.throughput > 0 && <span className="text-[8px] font-mono text-gray-500 tabular-nums">{w.throughput.toFixed(1)}/m</span>}
           {isProcessing
             ? <span className="text-[8px] font-mono text-green-500">processing</span>

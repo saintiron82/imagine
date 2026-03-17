@@ -129,6 +129,7 @@ class WorkerDaemon:
         self.processing_mode = "full"  # "full" | "mc_only" | "embed_only" — set by server on connect/heartbeat
         self._total_completed = 0
         self._total_failed = 0
+        self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
         self._current_job_id = None
         self._current_file = None
         self._current_phase = None
@@ -332,6 +333,7 @@ class WorkerDaemon:
                     "session_id": self.session_id,
                     "jobs_completed": self._total_completed,
                     "jobs_failed": self._total_failed,
+                    "phase_counts": self._phase_counts,
                     "current_job_id": self._current_job_id,
                     "current_file": self._current_file,
                     "current_phase": self._current_phase,
@@ -489,6 +491,7 @@ class WorkerDaemon:
             vision_fields = self._run_vision(local_file, thumb_path, meta_obj)
             if vision_fields:
                 metadata.update(vision_fields)
+            self._phase_counts["mc"] += 1
             _cb("vision_done")
 
             # ── Phase E-VV: Visual Vector (SigLIP2) ──
@@ -498,6 +501,7 @@ class WorkerDaemon:
             logger.info(f"Job {job_id}: Phase VV (SigLIP2) start")
             vv_vec, structure_vec = self._run_embed_vv(thumb_path)
             logger.info(f"Job {job_id}: Phase VV done")
+            self._phase_counts["vv"] += 1
             _cb("embed_vv_done")
 
             # ── Phase E-MV: Meaning Vector (Qwen3-Embedding) ──
@@ -505,6 +509,7 @@ class WorkerDaemon:
             logger.info(f"Job {job_id}: Phase MV (Qwen3-Embedding) start")
             mv_vec = self._run_embed_mv(metadata)
             logger.info(f"Job {job_id}: Phase MV done")
+            self._phase_counts["mv"] += 1
             _cb("embed_mv_done")
 
             # ── Upload results ──
@@ -1144,11 +1149,13 @@ class WorkerDaemon:
             progress=_WorkerProgress(progress_callback, self),
         )
 
-        # Phase V
+        # Phase V (MC)
         t_v = time.perf_counter()
         phase_items = runner.run_vision(phase_items)
         elapsed_vision = time.perf_counter() - t_v
         fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
+        mc_done = sum(1 for pi in phase_items if pi.get("vision_done"))
+        self._phase_counts["mc"] += mc_done
 
         if self._stop_requested:
             logger.info("Stop requested after Vision phase — aborting batch")
@@ -1159,6 +1166,7 @@ class WorkerDaemon:
         phase_items = runner.run_vv(phase_items)
         elapsed_vv = time.perf_counter() - t_vv
         fpm_vv = (len(active) / elapsed_vv * 60) if elapsed_vv > 0 else 0
+        self._phase_counts["vv"] += len(active)
 
         if self._stop_requested:
             logger.info("Stop requested after VV phase — aborting batch")
@@ -1168,6 +1176,7 @@ class WorkerDaemon:
         t_mv = time.perf_counter()
         phase_items = runner.run_mv(phase_items)
         elapsed_mv = time.perf_counter() - t_mv
+        self._phase_counts["mv"] += len(active)
         fpm_mv = (len(active) / elapsed_mv * 60) if elapsed_mv > 0 else 0
 
         # Map PhaseItem results back to _JobContext for upload

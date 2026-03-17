@@ -104,7 +104,7 @@ def _get_embedded_worker_status() -> dict:
     - FastAPI process: embedded_worker module state is live
     - IPC subprocess: falls back to DB __builtin__ session status
     """
-    result = {"running": False, "jobs_completed": 0, "current_phase": None, "current_file": None}
+    result = {"running": False, "jobs_completed": 0, "current_phase": None, "current_file": None, "phase_counts": None}
 
     # 1. In-process state (only valid inside FastAPI server)
     try:
@@ -122,7 +122,7 @@ def _get_embedded_worker_status() -> dict:
         db = SQLiteDB()
         cursor = db.conn.cursor()
         cursor.execute(
-            """SELECT status, current_phase, current_file, jobs_completed
+            """SELECT status, current_phase, current_file, jobs_completed, resources_json
                FROM worker_sessions
                WHERE worker_name = '__builtin__'
                ORDER BY id DESC LIMIT 1"""
@@ -136,6 +136,13 @@ def _get_embedded_worker_status() -> dict:
                 result["current_file"] = row[2]
             if row[3] and row[3] > result["jobs_completed"]:
                 result["jobs_completed"] = row[3]
+            # Extract phase_counts from resources_json
+            if row[4]:
+                try:
+                    resources = json.loads(row[4])
+                    result["phase_counts"] = resources.get("phase_counts")
+                except (json.JSONDecodeError, TypeError):
+                    pass
         db.close()
     except Exception:
         pass

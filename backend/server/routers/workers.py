@@ -41,6 +41,7 @@ class HeartbeatRequest(BaseModel):
     resources: Optional[dict] = None
     throttle_level: Optional[str] = None  # normal/warning/danger/critical
     worker_state: Optional[str] = None    # active/idle/resting
+    phase_counts: Optional[dict] = None  # {"mc": N, "vv": N, "mv": N}
 
 
 class DisconnectRequest(BaseModel):
@@ -345,6 +346,8 @@ def worker_heartbeat(
         resources_data["throttle_level"] = req.throttle_level
     if req.worker_state:
         resources_data["worker_state"] = req.worker_state
+    if req.phase_counts:
+        resources_data["phase_counts"] = req.phase_counts
     cursor.execute(
         """UPDATE worker_sessions
            SET last_heartbeat = ?,

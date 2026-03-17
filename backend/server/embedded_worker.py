@@ -95,12 +95,16 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
 
                     consecutive_empty = 0
 
-                    for job in jobs:
-                        if _shutdown_flag:
-                            break
-                        success = _worker_daemon.process_job(job)
-                        if success:
-                            _jobs_completed += 1
+                    # Batch processing: Phase-level sub-batching (MC→VV→MV)
+                    # Much more efficient than process_job (1 file at a time)
+                    try:
+                        results = _worker_daemon.process_batch_phased(jobs)
+                        # results = [(job_id, success_bool), ...]
+                        for item in results:
+                            if isinstance(item, tuple) and len(item) >= 2 and item[1]:
+                                _jobs_completed += 1
+                    except Exception as e:
+                        logger.error(f"Embedded worker batch failed: {e}", exc_info=True)
 
                     # Cleanup GPU memory between batches
                     gc.collect()
