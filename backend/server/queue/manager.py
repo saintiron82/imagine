@@ -2147,15 +2147,42 @@ class JobQueueManager:
         return cursor.rowcount > 0
 
     def cancel_work_request(self, wr_id: int) -> Dict[str, int]:
-        """Cancel a work request — delete all pending/assigned jobs."""
+        """Cancel a work request — delete jobs and clean up WebDAV temp files."""
+        from pathlib import Path
         cursor = self.db.conn.cursor()
 
-        # Count pending jobs that will be removed
+        # Collect WebDAV temp files to clean up before deleting jobs
         cursor.execute(
-            "SELECT COUNT(*) FROM job_queue WHERE work_request_id = ? AND status IN ('pending', 'assigned')",
+            """SELECT file_id, file_path, parsed_metadata FROM job_queue
+               WHERE work_request_id = ? AND status IN ('pending', 'assigned')
+               AND file_path LIKE 'webdav://%'""",
             (wr_id,)
         )
-        to_remove = cursor.fetchone()[0]
+        webdav_jobs = cursor.fetchall()
+
+        # Clean up temp files via DownloadAheadPool
+        dl_pool = _get_download_pool()
+        temp_cleaned = 0
+        for file_id, file_path, pm_str in webdav_jobs:
+            # Release slot in download pool (deletes temp file)
+            if dl_pool:
+                try:
+                    dl_pool.release_slot(file_id, None)  # None = don't cache, just delete
+                    temp_cleaned += 1
+                except Exception:
+                    pass
+            # Also try direct cleanup from parsed_metadata
+            if pm_str:
+                try:
+                    pm = json.loads(pm_str)
+                    tlp = pm.get("temp_local_path")
+                    if tlp:
+                        p = Path(tlp)
+                        if p.exists():
+                            p.unlink()
+                            temp_cleaned += 1
+                except Exception:
+                    pass
 
         # Delete pending/assigned jobs (processing jobs are left to finish)
         cursor.execute(
@@ -2170,4 +2197,8 @@ class JobQueueManager:
             (wr_id,)
         )
         self.db.conn.commit()
-        return {"removed_jobs": removed}
+
+        if temp_cleaned > 0:
+            logger.info(f"WR {wr_id} cancelled: {removed} jobs removed, {temp_cleaned} temp files cleaned")
+
+        return {"removed_jobs": removed, "temp_cleaned": temp_cleaned}

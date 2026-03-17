@@ -118,6 +118,9 @@ class DownloadAheadPool(BaseAheadPool):
 
     def start(self):
         """Start the download daemon and create temp directory."""
+        # Clean up stale temp folders from previous sessions
+        self._cleanup_old_temp_dirs()
+
         self._temp_dir = Path(tempfile.mkdtemp(prefix="imagine_dl_"))
         logger.info(
             f"DownloadAheadPool: temp_dir={self._temp_dir}, "
@@ -132,6 +135,38 @@ class DownloadAheadPool(BaseAheadPool):
             thread_name_prefix="dl-ahead",
         )
         super().start()
+
+    def _cleanup_old_temp_dirs(self):
+        """Remove temp folders from previous server sessions.
+
+        Each server start creates a new imagine_dl_* folder in the system
+        temp directory. Previous sessions' folders are never cleaned if the
+        server was killed (no graceful shutdown). This can waste 10s of GBs.
+        """
+        try:
+            tmp_root = Path(tempfile.gettempdir())
+            cleaned = 0
+            freed = 0
+            for d in tmp_root.glob("imagine_dl_*"):
+                if d == self._temp_dir:
+                    continue  # skip current session
+                if d.is_dir():
+                    try:
+                        # Approximate size before deletion
+                        size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                        shutil.rmtree(d)
+                        cleaned += 1
+                        freed += size
+                    except Exception:
+                        pass
+            if cleaned > 0:
+                freed_mb = freed / (1024 * 1024)
+                logger.info(
+                    f"DownloadAhead: cleaned {cleaned} old temp dirs "
+                    f"({freed_mb:.0f} MB freed)"
+                )
+        except Exception as e:
+            logger.warning(f"DownloadAhead: old temp cleanup failed: {e}")
 
     def _reset_stale_file_ready(self):
         """Reset file_ready=1 → 0 for WebDAV jobs where temp file is gone.
