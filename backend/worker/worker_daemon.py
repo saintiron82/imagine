@@ -1118,8 +1118,9 @@ class WorkerDaemon:
                 self._daemon = daemon
 
             def phase_start(self, phase, count):
-                _notify(self._cb, "phase_start", {
-                    "phase": self._PHASE_MAP.get(phase, phase), "count": count})
+                mapped = self._PHASE_MAP.get(phase, phase)
+                self._daemon._current_phase = mapped
+                _notify(self._cb, "phase_start", {"phase": mapped, "count": count})
 
             def file_done(self, phase, index, count, file_name, success):
                 mapped = self._PHASE_MAP.get(phase, phase)

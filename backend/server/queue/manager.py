@@ -108,11 +108,16 @@ def _get_embedded_worker_status() -> dict:
 
     # 1. In-process state (only valid inside FastAPI server)
     try:
-        from backend.server.embedded_worker import get_status
+        from backend.server.embedded_worker import get_status, _worker_daemon
         ew = get_status()
         if ew.get("running"):
             result["running"] = True
             result["jobs_completed"] = ew.get("jobs_completed", 0)
+            # Read live phase/file from daemon (no heartbeat delay)
+            if _worker_daemon:
+                result["current_phase"] = getattr(_worker_daemon, '_current_phase', None)
+                result["current_file"] = getattr(_worker_daemon, '_current_file', None)
+                result["phase_counts"] = getattr(_worker_daemon, '_phase_counts', None)
     except Exception:
         pass
 
