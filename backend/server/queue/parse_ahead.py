@@ -120,7 +120,7 @@ class ParseAheadPool(BaseAheadPool):
         cursor = self.db.conn.cursor()
         cursor.execute(
             "SELECT COUNT(*) FROM job_queue "
-            "WHERE parse_status = 'parsed' AND status = 'pending'"
+            "WHERE parse_status = 'parsed' AND status = 'pending' AND file_ready = 1"
         )
         current_parsed = cursor.fetchone()[0]
         deficit = target - current_parsed
