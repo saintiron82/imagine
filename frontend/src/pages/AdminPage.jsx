@@ -331,27 +331,40 @@ export function WorkersPanel() {
         </button>
       </div>
 
-      {/* Auto Processing */}
+      {/* Server Auto-Processing (unified: auto_processing + embedded worker) */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-medium text-gray-300">{t('worker.auto_title')}</div>
             <div className="text-xs text-gray-500 mt-0.5">{t('worker.auto_desc')}</div>
           </div>
-          <button
-            onClick={async () => {
-              const newVal = !autoProcessing;
-              setAutoProcessing(newVal);
-              try { await updateAutoProcessing({ enabled: newVal }); } catch (e) { console.error(e); setAutoProcessing(!newVal); }
-            }}
-            className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
-              autoProcessing
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-700 text-gray-400 hover:text-white'
-            }`}
-          >
-            {autoProcessing ? t('worker.auto_on') : t('worker.auto_off')}
-          </button>
+          <div className="flex items-center gap-3">
+            {autoProcessing && (
+              <span className={`text-xs px-2 py-0.5 rounded ${
+                embeddedStatus.running
+                  ? 'bg-green-900/50 text-green-400'
+                  : 'bg-yellow-900/50 text-yellow-400'
+              }`}>
+                {embeddedStatus.running ? t('worker.status_running') : embeddedStatus.status}
+                {embeddedStatus.jobs_completed > 0 && ` · ${embeddedStatus.jobs_completed} ${t('worker.jobs_completed')}`}
+              </span>
+            )}
+            <button
+              onClick={async () => {
+                const newVal = !autoProcessing;
+                setAutoProcessing(newVal);
+                setEmbeddedEnabled(newVal);
+                try { await updateAutoProcessing({ enabled: newVal }); } catch (e) { console.error(e); setAutoProcessing(!newVal); setEmbeddedEnabled(!newVal); }
+              }}
+              className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
+                autoProcessing
+                  ? 'bg-green-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              {autoProcessing ? t('worker.auto_on') : t('worker.auto_off')}
+            </button>
+          </div>
         </div>
         {autoProcessing && (
           <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-700/50">
@@ -368,48 +381,6 @@ export function WorkersPanel() {
             <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
           </div>
         )}
-      </div>}
-
-      {/* Embedded Worker toggle */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium text-gray-300">{t('worker.embedded_worker')}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{t('worker.embedded_desc')}</div>
-          </div>
-          <div className="flex items-center gap-3">
-            {embeddedEnabled && (
-              <span className={`text-xs px-2 py-0.5 rounded ${
-                embeddedStatus.running
-                  ? 'bg-green-900/50 text-green-400'
-                  : 'bg-yellow-900/50 text-yellow-400'
-              }`}>
-                {embeddedStatus.running ? t('worker.status_running') : embeddedStatus.status}
-                {embeddedStatus.jobs_completed > 0 && ` · ${embeddedStatus.jobs_completed} ${t('worker.jobs_completed')}`}
-              </span>
-            )}
-            <button
-              onClick={async () => {
-                const newVal = !embeddedEnabled;
-                setEmbeddedEnabled(newVal);
-                try {
-                  const res = await updateEmbeddedWorker({ enabled: newVal });
-                  setEmbeddedStatus({ running: res.running, status: res.status, jobs_completed: res.jobs_completed || 0 });
-                } catch (e) {
-                  console.error(e);
-                  setEmbeddedEnabled(!newVal);
-                }
-              }}
-              className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
-                embeddedEnabled
-                  ? 'bg-green-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {embeddedEnabled ? 'ON' : 'OFF'}
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Aggregate stats */}
