@@ -171,21 +171,25 @@ class DownloadAheadPool(BaseAheadPool):
     def _reset_stale_file_ready(self):
         """Reset file_ready=1 → 0 for WebDAV jobs where temp file is gone.
 
-        On server restart, the temp directory changes, so previously
-        downloaded files are no longer accessible. These jobs must be
-        re-downloaded.
+        ONLY resets jobs that haven't been parsed yet. Already-parsed jobs
+        don't need the original file (worker uses thumbnail from server).
+        This prevents re-downloading files that were already processed.
         """
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(
-                """SELECT id, parsed_metadata FROM job_queue
+                """SELECT id, parsed_metadata, parse_status FROM job_queue
                    WHERE file_path LIKE 'webdav://%'
                      AND file_ready = 1
                      AND status IN ('pending', 'assigned')"""
             )
             rows = cursor.fetchall()
             reset_ids = []
-            for job_id, pm_str in rows:
+            for job_id, pm_str, parse_status in rows:
+                # Already parsed → original file not needed, skip
+                if parse_status == 'parsed':
+                    continue
+
                 needs_reset = True
                 if pm_str:
                     try:
@@ -344,13 +348,16 @@ class DownloadAheadPool(BaseAheadPool):
         """
         cursor = self.db.conn.cursor()
 
-        # Find WebDAV jobs needing download (file_ready=0 means not yet downloaded)
+        # Find WebDAV jobs needing download:
+        # - file_ready=0 (not yet downloaded)
+        # - parse_status is NOT 'parsed' (already parsed = original not needed)
         cursor.execute(
             """SELECT jq.id, jq.file_id, jq.file_path, jq.parsed_metadata
                FROM job_queue jq
                WHERE jq.status IN ('pending', 'assigned')
                  AND jq.file_path LIKE 'webdav://%'
                  AND jq.file_ready = 0
+                 AND (jq.parse_status IS NULL OR jq.parse_status != 'parsed')
                ORDER BY jq.priority DESC, jq.created_at ASC
                LIMIT ?""",
             (self._max_files,),
