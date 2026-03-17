@@ -1154,8 +1154,7 @@ class WorkerDaemon:
         phase_items = runner.run_vision(phase_items)
         elapsed_vision = time.perf_counter() - t_v
         fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
-        mc_done = sum(1 for pi in phase_items if pi.get("vision_done"))
-        self._phase_counts["mc"] += mc_done
+        self._phase_counts["mc"] += len(active)
 
         if self._stop_requested:
             logger.info("Stop requested after Vision phase — aborting batch")
