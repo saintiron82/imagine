@@ -72,20 +72,26 @@ def set_server_pool_mode(mode: str):
     _server_pool_mode = mode
 
 def _get_actual_server_mode() -> str:
-    """Get the actual server processing mode (parse_only, parse_vv).
+    """Get the actual server processing mode.
 
-    In FastAPI process: _server_pool_mode is set by _recalculate_server_pools.
-    In IPC subprocess (api_queue.py): _server_pool_mode is always initial value,
-    so we fall back to config-based inference.
+    Priority:
+    1. Embedded worker running → "full" (server handles all phases)
+    2. ParseAheadPool mode from _recalculate_server_pools
+    3. Config-based inference (for IPC subprocess)
     """
+    # Server auto-processing running = full pipeline
+    ew = _get_embedded_worker_status()
+    if ew.get("running"):
+        return "full"
+
     if _server_pool_mode != "parse_only":
         return _server_pool_mode
-    # Fallback: infer from config (for IPC subprocess)
+
+    # Fallback: config-based (IPC subprocess)
     try:
         from backend.utils.config import get_config
-        cfg = get_config()
-        if cfg.get("server.auto_processing.enabled", False):
-            return "parse_vv"
+        if get_config().get("server.auto_processing.enabled", False):
+            return "full"
     except Exception:
         pass
     return "parse_only"
