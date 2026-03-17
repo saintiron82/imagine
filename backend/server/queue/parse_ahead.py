@@ -174,16 +174,13 @@ class ParseAheadPool(BaseAheadPool):
         try:
             while self._running:
                 try:
-                    # Periodic diagnostics
+                    # Periodic diagnostics (only when active)
                     if not hasattr(self, '_diag_counter'):
                         self._diag_counter = 0
                     self._diag_counter += 1
-                    if self._diag_counter % 15 == 1:  # Every ~30s
+                    if self._diag_counter % 15 == 1 and self.has_recent_demand():
                         target = self._calculate_buffer_target()
-                        demand = self.has_recent_demand()
-                        logger.info(
-                            f"[PA-DIAG] demand={demand} target={target}"
-                        )
+                        logger.info(f"[PA-DIAG] target={target}")
 
                     self._run_pre_parse_buffer()
 
