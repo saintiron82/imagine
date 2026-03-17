@@ -129,11 +129,11 @@ def _get_embedded_worker_status() -> dict:
         )
         row = cursor.fetchone()
         if row:
-            # DB says online → running (even if in-process check failed in IPC)
+            # Only report phase/file when session is actually online
             if row[0] == 'online':
                 result["running"] = True
-            result["current_phase"] = row[1]
-            result["current_file"] = row[2]
+                result["current_phase"] = row[1]
+                result["current_file"] = row[2]
             if row[3] and row[3] > result["jobs_completed"]:
                 result["jobs_completed"] = row[3]
         db.close()

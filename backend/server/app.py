@@ -321,7 +321,11 @@ def _cleanup_stale_jobs():
         # Mark all online worker sessions as offline (stale from previous run)
         cursor = db.conn.cursor()
         cursor.execute(
-            """UPDATE worker_sessions SET status = 'offline'
+            """UPDATE worker_sessions
+               SET status = 'offline',
+                   current_phase = NULL,
+                   current_file = NULL,
+                   current_job_id = NULL
                WHERE status = 'online'"""
         )
         if cursor.rowcount > 0:
