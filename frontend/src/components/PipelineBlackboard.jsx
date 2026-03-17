@@ -182,15 +182,14 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
       mode: w.processing_mode_override || 'full',
     }));
   // Embedded worker as WorkerLine-compatible object
-  // enabled = can process (ON/OFF), processing = currently doing work
   const embeddedWorker = {
     name: 'Embedded',
     phase: ewPhase,
     currentFile: ewFile,
     throughput: throughput,
     batchSize: 0,
-    enabled: ewRunning,                          // ON/OFF toggle state
-    state: ewPhase ? 'active' : (ewRunning ? 'idle' : 'offline'),  // active/idle/offline
+    enabled: ewRunning,
+    state: ewRunning ? 'active' : 'offline',  // running = active (phase may be null between batches)
     mode: 'full',
     phaseCounts: ew.phase_counts || null,
     isEmbedded: true,

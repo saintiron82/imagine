@@ -98,30 +98,36 @@ def _get_actual_server_mode() -> str:
 
 
 def _get_embedded_worker_status() -> dict:
-    """Get server auto-processing status from DB + in-process state.
+    """Get embedded worker status — live in-process state first, DB fallback.
 
-    Works correctly in both:
-    - FastAPI process: embedded_worker module state is live
-    - IPC subprocess: falls back to DB __builtin__ session status
+    Priority: in-process daemon > DB session (heartbeat is 30s delayed).
     """
-    result = {"running": False, "jobs_completed": 0, "current_phase": None, "current_file": None, "phase_counts": None}
+    result = {
+        "running": False,
+        "jobs_completed": 0,
+        "current_phase": None,
+        "current_file": None,
+        "phase_counts": None,
+    }
 
-    # 1. In-process state (only valid inside FastAPI server)
+    # 1. In-process state (real-time, no heartbeat delay)
     try:
         from backend.server.embedded_worker import get_status, _worker_daemon
         ew = get_status()
         if ew.get("running"):
             result["running"] = True
             result["jobs_completed"] = ew.get("jobs_completed", 0)
-            # Read live phase/file from daemon (no heartbeat delay)
             if _worker_daemon:
                 result["current_phase"] = getattr(_worker_daemon, '_current_phase', None)
                 result["current_file"] = getattr(_worker_daemon, '_current_file', None)
-                result["phase_counts"] = getattr(_worker_daemon, '_phase_counts', None)
+                pc = getattr(_worker_daemon, '_phase_counts', None)
+                if pc:
+                    result["phase_counts"] = dict(pc)  # copy to avoid mutation
+            return result  # Live data found — skip DB (which is stale)
     except Exception:
         pass
 
-    # 2. DB session state (works in any process — authoritative source)
+    # 2. DB fallback (IPC subprocess or in-process import failed)
     try:
         from backend.db.sqlite_client import SQLiteDB
         db = SQLiteDB()
@@ -134,14 +140,12 @@ def _get_embedded_worker_status() -> dict:
         )
         row = cursor.fetchone()
         if row:
-            # Only report phase/file when session is actually online
             if row[0] == 'online':
                 result["running"] = True
                 result["current_phase"] = row[1]
                 result["current_file"] = row[2]
             if row[3] and row[3] > result["jobs_completed"]:
                 result["jobs_completed"] = row[3]
-            # Extract phase_counts from resources_json
             if row[4]:
                 try:
                     resources = json.loads(row[4])
