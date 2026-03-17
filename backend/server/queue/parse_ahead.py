@@ -43,23 +43,35 @@ class ParseAheadPool(BaseAheadPool):
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
 
-        - Workers actively claiming → buffer = demand (min 10)
-        - Embedded worker running (no recent claims) → buffer = 10
-          (prevents deadlock: worker needs parsed jobs to claim)
-        - No workers at all → buffer = 0
+        ParseAheadPool runs independently — always parses downloaded files.
+        Each stage (download → parse → worker) runs at its own pace with
+        buffers in between, not synchronized to each other.
         """
+        # Always parse downloaded files (file_ready=1, not yet parsed)
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """SELECT COUNT(*) FROM job_queue
+                   WHERE status = 'pending' AND file_ready = 1
+                   AND (parse_status IS NULL OR parse_status = 'pending')"""
+            )
+            unparsed_ready = cursor.fetchone()[0]
+            if unparsed_ready > 0:
+                return unparsed_ready  # Parse everything that's downloaded
+        except Exception:
+            pass
+
+        # Worker demand: maintain buffer for workers to claim
         if self.has_recent_demand():
             return max(self.get_total_demand(), 10)
 
-        # Check if embedded worker is running — keep minimum buffer
+        # Workers online but not claiming yet: keep minimum buffer
         try:
             from backend.server.embedded_worker import get_status
             if get_status().get("running"):
                 return 10
         except Exception:
             pass
-
-        # Check if any external worker is online
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(

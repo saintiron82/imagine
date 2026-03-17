@@ -324,16 +324,15 @@ class DownloadAheadPool(BaseAheadPool):
     def _loop(self):
         """Main loop: find pending WebDAV jobs, download originals.
 
-        Only downloads when workers are active (embedded or external).
+        Runs independently — downloads at its own pace, bounded by
+        max_files buffer. ParseAheadPool will parse downloaded files
+        as they become ready (file_ready=1).
         """
         poll_interval = self._get_config_value(
             "server.parse_ahead.poll_interval_s", 2
         )
         while self._running:
             try:
-                if not self._has_active_workers():
-                    time.sleep(poll_interval)
-                    continue
                 downloaded = self._download_batch()
                 if downloaded == 0:
                     time.sleep(poll_interval)
