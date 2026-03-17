@@ -286,8 +286,8 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
             </div>
             {/* Pool summary */}
             <div className="flex items-center gap-4 mt-2 pt-2 border-t border-gray-800/30 text-[8px] font-mono text-gray-500">
-              <span>{t('bb.total')}: <span className="text-yellow-400 font-bold">{total}</span></span>
-              <span>Ready: <span className="text-green-400 font-bold">{total - dlWaiting}</span></span>
+              <span>{t('bb.total')}: <span className="text-yellow-400 font-bold">{remaining}</span></span>
+              <span>Ready: <span className="text-green-400 font-bold">{remaining - dlWaiting}</span></span>
               {dlWaiting > 0 && <span>DL wait: <span className="text-blue-400">{dlWaiting}</span></span>}
               <span className="text-gray-600">ORDER BY priority, created_at</span>
             </div>
@@ -407,8 +407,8 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
           {dlWaiting > 0 && <span>DL <span className="text-blue-400">{dlWaiting}</span></span>}
           {buffer > 0 && <span>{t('bb.buffer')} <span className="text-orange-400">{buffer}</span></span>}
           {processing > 0 && <span>{t('factory.summary_processing')} <span className="text-purple-400">{processing}</span></span>}
-          {failed > 0 && <span className="text-red-400"><AlertTriangle size={10} className="inline mr-0.5 -mt-0.5" />{failed}</span>}
-          {!isRunning && total === 0 && <span className="text-gray-600">{t('bb.idle')}</span>}
+          {dbFailed > 0 && <span className="text-red-400"><AlertTriangle size={10} className="inline mr-0.5 -mt-0.5" />{dbFailed}</span>}
+          {!isRunning && remaining === 0 && <span className="text-gray-600">{t('bb.idle')}</span>}
         </div>
       </div>
     </div>
