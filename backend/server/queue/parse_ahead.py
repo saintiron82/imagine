@@ -107,13 +107,13 @@ class ParseAheadPool(BaseAheadPool):
         if deficit <= 0:
             return False
 
-        # Select jobs to pre-parse (include WebDAV files with temp downloads)
+        # Select jobs to pre-parse: must be file_ready=1
+        # (local files are always ready, WebDAV files need download first)
         cursor.execute(
             """SELECT id, file_id, file_path FROM job_queue
                WHERE status = 'pending'
+                 AND file_ready = 1
                  AND (parse_status IS NULL OR parse_status = 'pending')
-                 AND (file_path NOT LIKE 'webdav://%'
-                      OR parsed_metadata LIKE '%temp_local_path%')
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (deficit,),
@@ -121,13 +121,14 @@ class ParseAheadPool(BaseAheadPool):
         jobs_to_parse = cursor.fetchall()
 
         if not jobs_to_parse:
-            # No unparsed jobs — check if parse-failed jobs can be retried.
-            # Only retry jobs with retry_count < 3. After 3 failures, leave as failed.
+            # No unparsed jobs — retry parse-failed jobs that are actually downloadable.
+            # Only retry if file_ready=1 (temp file exists) and retry_count < 3.
             now = time.time()
             if now - self._last_retry_reset > 60:
                 cursor.execute(
                     """UPDATE job_queue SET parse_status = NULL, retry_count = COALESCE(retry_count, 0) + 1
                        WHERE status = 'pending' AND parse_status = 'failed'
+                       AND file_ready = 1
                        AND COALESCE(retry_count, 0) < 3"""
                 )
                 if cursor.rowcount > 0:
