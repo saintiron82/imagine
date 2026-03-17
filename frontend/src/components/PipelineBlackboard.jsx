@@ -17,9 +17,9 @@ import { getWorkRequests, getWorkRequestDetail, listWorkerSessions, pauseWorkReq
 
 // Phase config (workers do MC → VV → MV only, no Parse)
 const PHASE_CFG = {
-  vision:   { label: 'MC', text: 'text-purple-400', border: 'border-purple-500/60', glow: 'shadow-[0_0_10px_rgba(168,85,247,0.3)]', bg: 'bg-purple-500', icon: Eye,   anim: 'animate-pulse' },
-  embed_vv: { label: 'VV', text: 'text-cyan-400',   border: 'border-cyan-500/60',   glow: 'shadow-[0_0_10px_rgba(6,182,212,0.3)]',   bg: 'bg-cyan-500',   icon: Scan,  anim: 'animate-spin-slow' },
-  embed_mv: { label: 'MV', text: 'text-emerald-400',border: 'border-emerald-500/60', glow: 'shadow-[0_0_10px_rgba(16,185,129,0.3)]', bg: 'bg-emerald-500', icon: Brain, anim: 'animate-machine-pulse' },
+  vision:   { label: 'MC', text: 'text-purple-400', border: 'border-purple-500/60', borderDim: 'border-purple-500/20', glow: 'shadow-[0_0_10px_rgba(168,85,247,0.3)]', bg: 'bg-purple-500', icon: Eye,   anim: 'animate-pulse' },
+  embed_vv: { label: 'VV', text: 'text-cyan-400',   border: 'border-cyan-500/60',   borderDim: 'border-cyan-500/20',   glow: 'shadow-[0_0_10px_rgba(6,182,212,0.3)]',   bg: 'bg-cyan-500',   icon: Scan,  anim: 'animate-spin-slow' },
+  embed_mv: { label: 'MV', text: 'text-emerald-400',border: 'border-emerald-500/60', borderDim: 'border-emerald-500/20', glow: 'shadow-[0_0_10px_rgba(16,185,129,0.3)]', bg: 'bg-emerald-500', icon: Brain, anim: 'animate-machine-pulse' },
 };
 const PHASES = ['vision', 'embed_vv', 'embed_mv'];
 
@@ -556,7 +556,7 @@ function WorkerLine({ worker, t }) {
                     ? `${cfg.border} ${cfg.glow} bg-gradient-to-b from-gray-800/80 to-gray-900`
                     : isPast
                       ? 'border-gray-600/30 bg-gray-800/40'
-                      : `${cfg.border.replace('/60', '/25')} bg-gray-800/40`
+                      : `${cfg.borderDim} bg-gray-800/40`
                 }
               `}>
                 <div className={`absolute -top-1.5 left-1/2 -translate-x-1/2 px-1 rounded-sm text-[5px] uppercase tracking-widest font-mono font-bold bg-gray-900/90 border border-gray-700/30 ${isCurrent ? cfg.text : !enabled ? 'text-gray-800' : `${cfg.text} opacity-50`}`}>
