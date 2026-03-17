@@ -307,9 +307,9 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
               </div>
               {/* Stats row */}
               <div className="flex items-center gap-4 text-[9px] font-mono">
-                <span className="text-gray-500">parsing: <span className="text-teal-400 font-bold">{parsing}</span></span>
-                <span className="text-gray-500">parsed: <span className="text-orange-400 font-bold">{buffer}</span></span>
-                <span className="text-gray-500">await: <span className="text-gray-400">{parsePending}</span></span>
+                <span className="text-gray-500">대기: <span className="text-gray-400">{parsePending}</span></span>
+                {parsing > 0 && <span className="text-gray-500">→ 파싱중: <span className="text-teal-400 font-bold">{parsing}</span></span>}
+                <span className="text-gray-500">→ 완료: <span className="text-orange-400 font-bold">{buffer}</span></span>
               </div>
             </div>
           </Stage>
