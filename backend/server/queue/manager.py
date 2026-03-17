@@ -1355,8 +1355,12 @@ class JobQueueManager:
             logger.info(f"Force-retried {count} permanently failed files from scratch")
         return count
 
-    def audit_completed_jobs(self) -> Dict[str, Any]:
+    def audit_completed_jobs(self, repair: bool = True) -> Dict[str, Any]:
         """Full data integrity audit — Recovery Factory.
+
+        Args:
+            repair: If True, create Recovery WRs for incomplete files (full audit).
+                    If False, scan and report only — no WR creation (startup mode).
 
         2-pass design:
 
@@ -1364,13 +1368,13 @@ class JobQueueManager:
           - Complete (mc+vv+mv) → OK, delete any residual jobs
           - Permanently failed (processing_status='failed') → SKIP (count only)
           - Thumbnail file missing → reset thumbnail_url, mark for re-parse
-          - Incomplete + no pending job → collect for Recovery WR
+          - Incomplete + no pending job → collect for Recovery WR (if repair=True)
           - Incomplete + pending job exists → update phase_completed
 
         Pass 2: Unmatched job cleanup
           - Jobs with file_id not in files → DELETE
 
-        Recovery file handling:
+        Recovery file handling (repair=True only):
           - Incomplete files are matched to existing WRs by source_path prefix
           - Matched files are attached as subtasks under the original WR
           - Unmatched files get a new [Recovery] WR grouped by parent folder
@@ -1490,17 +1494,18 @@ class JobQueueManager:
                     (actual_phases, parsed_metadata, existing_job[0])
                 )
             else:
-                # No job — collect for Recovery WR
-                folder_path = str(_Path(file_path).parent) if file_path else "unknown"
-                recovery_files[folder_path].append(
-                    (file_id, file_path, actual_phases, parsed_metadata, missing,
-                     has_thumbnail)
-                )
+                # No job — collect for Recovery WR (only if repair mode)
+                if repair:
+                    folder_path = str(_Path(file_path).parent) if file_path else "unknown"
+                    recovery_files[folder_path].append(
+                        (file_id, file_path, actual_phases, parsed_metadata, missing,
+                         has_thumbnail)
+                    )
 
         # ── Attach recovery files to existing WRs or create new ones ──
         recovery_wrs_created = 0
         recovery_attached = 0
-        if recovery_files:
+        if repair and recovery_files:
             # Build lookup: existing WR source_paths (longest first for best match)
             existing_wrs = cursor.execute(
                 "SELECT id, source_path FROM work_requests WHERE status != 'cancelled' AND source_path IS NOT NULL"

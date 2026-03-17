@@ -847,12 +847,31 @@ def admin_update_auto_processing(
 # ── Embedded Worker ──────────────────────────────────────────
 
 def _start_embedded_worker(app):
-    """Start the embedded worker with a self-issued JWT token."""
+    """Start the embedded worker with a self-issued JWT token.
+
+    Also runs repair audit on first start: creates Recovery WRs for
+    incomplete files that have no pending jobs.
+    """
     from backend.server.auth.jwt import create_access_token
     from backend.server.embedded_worker import start_worker, get_status
 
     if get_status()["running"]:
         return
+
+    # Run repair audit before starting worker — this is the right time
+    # to create Recovery WRs (user has committed to processing).
+    try:
+        from backend.server.deps import get_db
+        from backend.server.queue.manager import JobQueueManager
+        _audit_db = get_db()
+        _audit_mgr = JobQueueManager(_audit_db)
+        _audit_result = _audit_mgr.audit_completed_jobs(repair=True)
+        if _audit_result["repaired_files"] > 0:
+            logger.info(
+                f"Worker start audit: {_audit_result['repaired_files']} files re-queued"
+            )
+    except Exception as e:
+        logger.warning(f"Worker start audit failed (non-fatal): {e}")
 
     port = getattr(app.state, "port", 8000)
 

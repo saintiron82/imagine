@@ -400,14 +400,15 @@ def _startup_integrity_check():
         if fixed > 0:
             logger.info(f"Startup auto-fix: filled relative_path for {fixed} files")
 
-        # 2. Audit: re-queue incomplete files + cleanup residual jobs
+        # 2. Audit: scan-only on startup (no Recovery WR creation).
+        #    Recovery WRs are created later when embedded worker starts or
+        #    when admin explicitly triggers audit via API.
         queue = JobQueueManager(db)
-        result = queue.audit_completed_jobs()
+        result = queue.audit_completed_jobs(repair=False)
         logger.info(
             f"Startup audit: {result['total_files']} files, "
             f"{result['complete_files']} complete, "
-            f"{result['incomplete_files']} incomplete, "
-            f"{result['repaired_files']} re-queued"
+            f"{result['incomplete_files']} incomplete"
         )
     except Exception as e:
         logger.warning(f"Startup integrity check failed: {e}")
