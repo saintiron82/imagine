@@ -228,34 +228,6 @@ contextBridge.exposeInMainWorld('electron', {
         offStatusChange: () => ipcRenderer.removeAllListeners('tunnel-status-change'),
     },
 
-    // Worker Daemon (server-mode job processing)
-    worker: {
-        start: (opts) => ipcRenderer.invoke('worker-start', opts),
-        stop: () => ipcRenderer.invoke('worker-stop'),
-        getStatus: () => ipcRenderer.invoke('worker-status'),
-        updateTokens: (opts) => ipcRenderer.invoke('worker-update-tokens', opts),
-        onStatus: (cb) => ipcRenderer.on('worker-status', (_, data) => cb(data)),
-        offStatus: () => ipcRenderer.removeAllListeners('worker-status'),
-        onLog: (cb) => ipcRenderer.on('worker-log', (_, data) => cb(data)),
-        offLog: () => ipcRenderer.removeAllListeners('worker-log'),
-        onJobDone: (cb) => ipcRenderer.on('worker-job-done', (_, data) => cb(data)),
-        offJobDone: () => ipcRenderer.removeAllListeners('worker-job-done'),
-        onBatchStart: (cb) => ipcRenderer.on('worker-batch-start', (_, data) => cb(data)),
-        offBatchStart: () => ipcRenderer.removeAllListeners('worker-batch-start'),
-        onBatchPhaseStart: (cb) => ipcRenderer.on('worker-batch-phase-start', (_, data) => cb(data)),
-        offBatchPhaseStart: () => ipcRenderer.removeAllListeners('worker-batch-phase-start'),
-        onBatchFileDone: (cb) => ipcRenderer.on('worker-batch-file-done', (_, data) => cb(data)),
-        offBatchFileDone: () => ipcRenderer.removeAllListeners('worker-batch-file-done'),
-        onBatchPhaseComplete: (cb) => ipcRenderer.on('worker-batch-phase-complete', (_, data) => cb(data)),
-        offBatchPhaseComplete: () => ipcRenderer.removeAllListeners('worker-batch-phase-complete'),
-        onBatchComplete: (cb) => ipcRenderer.on('worker-batch-complete', (_, data) => cb(data)),
-        offBatchComplete: () => ipcRenderer.removeAllListeners('worker-batch-complete'),
-        onProcessingMode: (cb) => ipcRenderer.on('worker-processing-mode', (_, data) => cb(data)),
-        offProcessingMode: () => ipcRenderer.removeAllListeners('worker-processing-mode'),
-        onWorkerState: (cb) => ipcRenderer.on('worker-state', (_, data) => cb(data)),
-        offWorkerState: () => ipcRenderer.removeAllListeners('worker-state'),
-    },
-
     // Network utilities (LAN IP for group registration)
     network: {
         getLocalIp: () => {

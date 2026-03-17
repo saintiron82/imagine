@@ -2566,212 +2566,6 @@ ipcMain.handle('update-config', async (_, key, value) => {
 // IPC Handler: Get user settings file path
 ipcMain.handle('get-user-settings-path', () => userSettingsPath);
 
-// ── Worker Daemon (controlled via WorkerPage) ────────────────────
-// Spawns backend/worker/worker_ipc.py and relays JSON events to renderer.
-let workerProc = null;
-let workerBuffer = '';
-let workerMainWindow = null;  // BrowserWindow reference for sending events
-let workerStartCmd = null;    // Queued start command (sent after 'ready' event)
-
-function sendWorkerEvent(channel, data) {
-    try {
-        if (workerMainWindow && !workerMainWindow.isDestroyed()) {
-            workerMainWindow.webContents.send(channel, data);
-        }
-    } catch (e) { /* window may be closed */ }
-}
-
-function processWorkerOutput() {
-    let newlineIdx;
-    while ((newlineIdx = workerBuffer.indexOf('\n')) !== -1) {
-        const line = workerBuffer.slice(0, newlineIdx).trim();
-        workerBuffer = workerBuffer.slice(newlineIdx + 1);
-        if (!line) continue;
-
-        try {
-            const parsed = JSON.parse(line);
-            const evt = parsed.event;
-
-            // 'ready' signal — send queued start command
-            if (evt === 'ready') {
-                console.log('[Worker] IPC ready');
-                if (workerStartCmd && workerProc) {
-                    workerProc.stdin.write(JSON.stringify(workerStartCmd) + '\n');
-                    workerStartCmd = null;
-                }
-                continue;
-            }
-
-            // Relay events to renderer
-            if (evt === 'status') {
-                sendWorkerEvent('worker-status', parsed);
-            } else if (evt === 'log') {
-                sendWorkerEvent('worker-log', parsed);
-            } else if (evt === 'job_done') {
-                sendWorkerEvent('worker-job-done', parsed);
-            } else if (evt === 'stats') {
-                sendWorkerEvent('worker-stats', parsed);
-            } else if (evt === 'batch_start') {
-                console.log('[Worker:batch] START size=', parsed.batch_size);
-                sendWorkerEvent('worker-batch-start', parsed);
-            } else if (evt === 'batch_phase_start') {
-                console.log('[Worker:batch] PHASE_START', parsed.phase, 'count=', parsed.count);
-                sendWorkerEvent('worker-batch-phase-start', parsed);
-            } else if (evt === 'batch_file_done') {
-                console.log('[Worker:batch] FILE_DONE', parsed.phase, parsed.index, '/', parsed.count, parsed.file_name);
-                sendWorkerEvent('worker-batch-file-done', parsed);
-            } else if (evt === 'batch_phase_complete') {
-                console.log('[Worker:batch] PHASE_COMPLETE', parsed.phase);
-                sendWorkerEvent('worker-batch-phase-complete', parsed);
-            } else if (evt === 'batch_job_upload') {
-                console.log('[Worker:batch] JOB_UPLOAD', parsed.job_id, parsed.success);
-                sendWorkerEvent('worker-batch-job-upload', parsed);
-            } else if (evt === 'batch_complete') {
-                console.log('[Worker:batch] COMPLETE', parsed.count, 'files in', parsed.elapsed_s, 's', parsed.files_per_min, '/min');
-                sendWorkerEvent('worker-batch-complete', parsed);
-            } else if (evt === 'processing_mode') {
-                console.log('[Worker] Processing mode:', parsed.mode);
-                sendWorkerEvent('worker-processing-mode', parsed);
-            } else if (evt === 'worker_state') {
-                console.log('[Worker] State:', parsed.state);
-                sendWorkerEvent('worker-state', parsed);
-            }
-        } catch (e) {
-            console.error('[Worker] JSON parse error:', e, line);
-        }
-    }
-}
-
-function killWorkerProc() {
-    if (!workerProc) return;
-    const proc = workerProc;
-    workerProc = null;
-    workerBuffer = '';
-    workerStartCmd = null;
-
-    // Try graceful exit first
-    try {
-        proc.stdin.write(JSON.stringify({ cmd: 'exit' }) + '\n');
-    } catch (e) { /* ignore */ }
-    // Force kill after 2 seconds (SIGKILL works on Windows, SIGTERM doesn't)
-    setTimeout(() => {
-        try { proc.kill('SIGKILL'); } catch (e) { /* already dead */ }
-    }, 2000);
-}
-
-// IPC Handler: Start worker daemon
-ipcMain.handle('worker-start', async (event, opts) => {
-    const accessToken = opts.accessToken || '';
-    const refreshToken = opts.refreshToken || '';
-    const startCmd = {
-        cmd: 'start',
-        server_url: opts.serverUrl || 'http://localhost:8000',
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        username: opts.username || '',
-        password: opts.password || '',
-    };
-
-    // If process is alive, send start command directly (restart after stop)
-    if (workerProc) {
-        console.log('[Worker] Process alive — sending start command to existing process');
-        try {
-            workerProc.stdin.write(JSON.stringify(startCmd) + '\n');
-            return { success: true };
-        } catch (e) {
-            console.error('[Worker] Failed to write to existing process:', e);
-            // Process is dead, fall through to spawn new one
-            workerProc = null;
-        }
-    }
-
-    // Store window reference for relaying events
-    workerMainWindow = BrowserWindow.fromWebContents(event.sender);
-
-    console.log('[Worker] Starting worker_ipc.py...');
-    console.log(`[Worker] Auth: access=${accessToken ? accessToken.substring(0, 20) + '...' : '(none)'}, refresh=${refreshToken ? refreshToken.substring(0, 16) + '...' : '(none)'}`);
-
-    workerProc = spawnBackend('worker-ipc', [], {
-        env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
-        stdio: ['pipe', 'pipe', 'pipe'],
-    }, 'backend/worker/worker_ipc.py');
-
-    // Queue the start command — will be sent after 'ready' event
-    workerStartCmd = startCmd;
-
-    workerProc.stdout.on('data', (chunk) => {
-        workerBuffer += chunk.toString();
-        processWorkerOutput();
-    });
-
-    workerProc.stderr.on('data', (data) => {
-        const msg = data.toString().trim();
-        if (msg) {
-            console.error('[Worker:stderr]', msg);
-            // Forward ALL stderr to UI for debugging (not just errors)
-            const isError = /\bERROR\b|Traceback|Exception:|FAIL/i.test(msg);
-            sendWorkerEvent('worker-log', {
-                message: `[stderr] ${msg}`,
-                type: isError ? 'error' : 'warning',
-            });
-        }
-    });
-
-    workerProc.on('close', (code) => {
-        console.log(`[Worker] Process exited (code: ${code})`);
-        workerProc = null;
-        workerBuffer = '';
-        workerStartCmd = null;
-        sendWorkerEvent('worker-status', { status: 'idle', jobs: [] });
-        sendWorkerEvent('worker-log', {
-            message: code === 0 ? 'Worker stopped' : `Worker exited (code: ${code})`,
-            type: code === 0 ? 'info' : 'error',
-        });
-    });
-
-    workerProc.on('error', (err) => {
-        console.error('[Worker] Spawn error:', err);
-        workerProc = null;
-        sendWorkerEvent('worker-status', { status: 'error', jobs: [] });
-        sendWorkerEvent('worker-log', { message: `Spawn error: ${err.message}`, type: 'error' });
-    });
-
-    return { success: true };
-});
-
-// IPC Handler: Stop worker daemon
-ipcMain.handle('worker-stop', async () => {
-    if (!workerProc) return { success: true };
-    try {
-        workerProc.stdin.write(JSON.stringify({ cmd: 'stop' }) + '\n');
-    } catch (e) { /* ignore */ }
-    return { success: true };
-});
-
-// IPC Handler: Forward refreshed tokens to the worker process
-ipcMain.handle('worker-update-tokens', async (event, opts) => {
-    if (!workerProc) return { success: false, error: 'Worker not running' };
-    try {
-        workerProc.stdin.write(JSON.stringify({
-            cmd: 'update_tokens',
-            access_token: opts.accessToken || '',
-            refresh_token: opts.refreshToken || '',
-        }) + '\n');
-        return { success: true };
-    } catch (e) {
-        return { success: false, error: e.message };
-    }
-});
-
-// IPC Handler: Query worker status
-ipcMain.handle('worker-status', async () => {
-    if (!workerProc) return { status: 'idle' };
-    try {
-        workerProc.stdin.write(JSON.stringify({ cmd: 'status' }) + '\n');
-    } catch (e) { /* ignore */ }
-    return { status: 'running' };
-});
-
 // ── Server Mode (embedded FastAPI) ────────────────────────────────
 // Allows Electron app to run a local FastAPI server so other clients can connect.
 let serverProc = null;
@@ -3583,7 +3377,6 @@ function killActivePipeline() {
 app.on('before-quit', () => {
     killActivePipeline();
     killSearchDaemon();
-    killWorkerProc();
     killServerProc();
 });
 
@@ -3591,7 +3384,6 @@ app.on('before-quit', () => {
 process.on('SIGINT', () => {
     killActivePipeline();
     killSearchDaemon();
-    killWorkerProc();
     killServerProc();
     app.quit();
 });
@@ -3599,7 +3391,6 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
     killActivePipeline();
     killSearchDaemon();
-    killWorkerProc();
     killServerProc();
     app.quit();
 });
