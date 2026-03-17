@@ -177,6 +177,19 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
       state: w.current_phase ? 'active' : 'idle',
       mode: w.processing_mode_override || 'full',
     }));
+  // Embedded worker as WorkerLine-compatible object
+  const embeddedWorker = {
+    name: 'Embedded',
+    phase: ewPhase,
+    currentFile: ewFile,
+    throughput: throughput,
+    batchSize: 0,
+    state: ewRunning ? (ewPhase ? 'active' : 'idle') : 'offline',
+    mode: 'full',
+    completedCount: ewCompleted,
+    isEmbedded: true,
+  };
+
   const activeWRs = activeWRsAll;
   const isRunning = throughput > 0 || processing > 0 || ewRunning;
   isActiveRef.current = isRunning;
@@ -320,30 +333,8 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
           {/* ── STAGE 5: Workers ── */}
           <Stage label="STAGE 5" title="WORKERS (AI Processing)" color="purple">
             <div className="space-y-3 mt-1">
-              {/* Embedded Worker */}
-              <div className={`rounded-lg border ${ewRunning ? 'border-purple-500/40 bg-purple-900/10' : 'border-gray-700/30 bg-gray-900/20'} p-2`}>
-                <div className="flex items-center gap-2 text-[9px] font-mono">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${ewRunning ? 'bg-purple-500 animate-pulse' : 'bg-gray-600'}`} />
-                  <span className={`font-bold ${ewRunning ? 'text-purple-400' : 'text-gray-500'}`}>Embedded Worker</span>
-                  {ewPhase && (
-                    <span className="px-1.5 py-0.5 rounded text-[7px] font-mono bg-purple-900/40 text-purple-300 border border-purple-500/30">
-                      {ewPhase === 'vision' ? 'MC' : ewPhase === 'embed_vv' ? 'VV' : ewPhase === 'embed_mv' ? 'MV' : ewPhase}
-                    </span>
-                  )}
-                  {ewCompleted > 0 && <span className="text-gray-500 ml-auto">{ewCompleted} done</span>}
-                  {throughput > 0 && <span className="text-yellow-500 ml-1">⚡{throughput.toFixed(1)}/m</span>}
-                </div>
-                {ewFile && (
-                  <div className="text-[8px] text-gray-600 font-mono truncate mt-1 ml-4">
-                    {ewFile}
-                  </div>
-                )}
-                {!ewRunning && (
-                  <div className="text-[8px] text-gray-600 font-mono mt-1 ml-4">
-                    {buffer > 0 ? 'Standby — waiting for start' : 'Idle — no pending jobs'}
-                  </div>
-                )}
-              </div>
+              {/* Embedded Worker — always shown */}
+              <WorkerLine worker={embeddedWorker} t={t} />
 
               {/* External Workers */}
               {allWorkers.map((w, i) => <WorkerLine key={i} worker={w} t={t} />)}
@@ -581,8 +572,10 @@ function WorkerLine({ worker, t }) {
       <div className="flex-1 min-w-0 ml-2">
         <div className="flex items-center gap-2">
           {w.batchSize > 0 && <span className="text-[8px] font-mono text-yellow-600 tabular-nums">B:{w.batchSize}</span>}
+          {w.completedCount > 0 && <span className="text-[8px] font-mono text-green-600 tabular-nums">{w.completedCount} done</span>}
           {w.throughput > 0 && <span className="text-[8px] font-mono text-gray-500 tabular-nums">{w.throughput.toFixed(1)}/m</span>}
-          {!isActive && <span className="text-[8px] font-mono text-gray-600 italic">{w.state === 'resting' ? t('bb.resting') : t('bb.phase_idle')}</span>}
+          {!isActive && w.state !== 'offline' && <span className="text-[8px] font-mono text-gray-600 italic">{w.state === 'resting' ? t('bb.resting') : t('bb.phase_idle')}</span>}
+          {w.state === 'offline' && <span className="text-[8px] font-mono text-gray-700 italic">offline</span>}
         </div>
         {w.currentFile && <div className="text-[7px] text-gray-600 font-mono truncate">{w.currentFile}</div>}
       </div>
