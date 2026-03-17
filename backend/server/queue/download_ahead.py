@@ -263,17 +263,36 @@ class DownloadAheadPool(BaseAheadPool):
             except Exception:
                 pass
 
+    def _has_active_workers(self) -> bool:
+        """Check if any worker (embedded or external) is active."""
+        if self.has_recent_demand():
+            return True
+        try:
+            from backend.server.embedded_worker import get_status
+            if get_status().get("running"):
+                return True
+        except Exception:
+            pass
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM worker_sessions WHERE status = 'online'")
+            if cursor.fetchone()[0] > 0:
+                return True
+        except Exception:
+            pass
+        return False
+
     def _loop(self):
         """Main loop: find pending WebDAV jobs, download originals.
 
-        Only downloads when workers are actively claiming (demand-driven).
+        Only downloads when workers are active (embedded or external).
         """
         poll_interval = self._get_config_value(
             "server.parse_ahead.poll_interval_s", 2
         )
         while self._running:
             try:
-                if not self.has_recent_demand():
+                if not self._has_active_workers():
                     time.sleep(poll_interval)
                     continue
                 downloaded = self._download_batch()

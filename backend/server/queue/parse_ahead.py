@@ -43,11 +43,33 @@ class ParseAheadPool(BaseAheadPool):
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
 
-        Pure demand-driven: only parses when workers are actively claiming.
-        No parsing without active workers.
+        - Workers actively claiming → buffer = demand (min 10)
+        - Embedded worker running (no recent claims) → buffer = 10
+          (prevents deadlock: worker needs parsed jobs to claim)
+        - No workers at all → buffer = 0
         """
         if self.has_recent_demand():
             return max(self.get_total_demand(), 10)
+
+        # Check if embedded worker is running — keep minimum buffer
+        try:
+            from backend.server.embedded_worker import get_status
+            if get_status().get("running"):
+                return 10
+        except Exception:
+            pass
+
+        # Check if any external worker is online
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM worker_sessions WHERE status = 'online'"
+            )
+            if cursor.fetchone()[0] > 0:
+                return 10
+        except Exception:
+            pass
+
         return 0
 
     def _run_pre_parse_buffer(self) -> bool:
