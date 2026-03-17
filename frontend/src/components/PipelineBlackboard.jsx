@@ -531,6 +531,8 @@ function WorkerLine({ worker, t }) {
           const enabled = enabledPhases.includes(phase);
           const isCurrent = enabled && w.phase === phase;
           const isPast = enabled && phaseIdx > idx;
+          // When worker is active but phase is unknown → show all enabled phases as "standby"
+          const isStandby = enabled && isActive && !w.phase;
           const Icon = cfg.icon;
 
           let progress = 0;
@@ -547,14 +549,16 @@ function WorkerLine({ worker, t }) {
                     ? `${cfg.border} ${cfg.glow} bg-gradient-to-b from-gray-800/80 to-gray-900`
                     : isPast
                       ? 'border-gray-600/30 bg-gray-800/40'
-                      : 'border-gray-700/20 bg-gray-800/60'
+                      : isStandby
+                        ? `${cfg.border.replace('/60', '/30')} bg-gray-800/50`
+                        : 'border-gray-700/20 bg-gray-800/60'
                 }
               `}>
-                <div className={`absolute -top-1.5 left-1/2 -translate-x-1/2 px-1 rounded-sm text-[5px] uppercase tracking-widest font-mono font-bold bg-gray-900/90 border border-gray-700/30 ${isCurrent ? cfg.text : !enabled ? 'text-gray-800' : ''}`}>
+                <div className={`absolute -top-1.5 left-1/2 -translate-x-1/2 px-1 rounded-sm text-[5px] uppercase tracking-widest font-mono font-bold bg-gray-900/90 border border-gray-700/30 ${isCurrent ? cfg.text : isStandby ? cfg.text + ' opacity-60' : !enabled ? 'text-gray-800' : ''}`}>
                   {cfg.label}
                 </div>
                 {enabled ? (
-                  <Icon size={16} className={`transition-all ${isCurrent ? `${cfg.text} ${cfg.anim}` : isPast ? 'text-gray-500 opacity-30' : 'text-gray-700 opacity-20'}`} />
+                  <Icon size={16} className={`transition-all ${isCurrent ? `${cfg.text} ${cfg.anim}` : isPast ? 'text-gray-500 opacity-30' : isStandby ? `${cfg.text} opacity-40` : 'text-gray-700 opacity-20'}`} />
                 ) : (
                   <span className="text-[8px] text-gray-800 font-mono">&#8212;</span>
                 )}
