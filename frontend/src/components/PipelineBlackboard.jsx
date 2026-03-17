@@ -311,16 +311,21 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
           {/* ── STAGE 4: Worker Pool (Buffer + Workers) ── */}
           <Stage label="STAGE 4" title="WORKER POOL" color="purple">
             <div className="flex items-stretch gap-3 mt-1">
-              {/* Left: Buffer hub — phase breakdown */}
+              {/* Left: Buffer — phase-level queue */}
               <div className="flex flex-col items-center justify-center flex-shrink-0">
-                <div className={`rounded-lg border-2 ${buffer > 0 ? 'border-orange-600/40 shadow-[0_0_12px_rgba(251,146,60,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-orange-900/15 to-gray-900 w-24 h-full min-h-[80px] flex flex-col items-center justify-center px-2 py-2`}>
-                  <div className="text-[7px] font-mono text-gray-600 uppercase tracking-wider mb-1">Buffer</div>
-                  <span className="text-xl font-mono font-bold text-orange-400 tabular-nums">{buffer}</span>
-                  <div className="w-full mt-1.5 space-y-0.5">
-                    {bufNeedMC > 0 && <div className="flex justify-between text-[7px] font-mono"><span className="text-purple-500">→MC</span><span className="text-purple-400">{bufNeedMC}</span></div>}
-                    {bufNeedVV > 0 && <div className="flex justify-between text-[7px] font-mono"><span className="text-cyan-500">→VV</span><span className="text-cyan-400">{bufNeedVV}</span></div>}
-                    {bufNeedMC === 0 && bufNeedVV === 0 && buffer > 0 && <div className="text-[7px] font-mono text-green-600 text-center">ready</div>}
-                    {buffer === 0 && <div className="text-[7px] font-mono text-gray-700 text-center">empty</div>}
+                <div className={`rounded-lg border-2 ${buffer > 0 ? 'border-orange-600/40 shadow-[0_0_12px_rgba(251,146,60,0.15)]' : 'border-gray-700/30'} bg-gradient-to-b from-orange-900/15 to-gray-900 w-24 h-full min-h-[80px] flex flex-col justify-center px-2.5 py-2 space-y-1`}>
+                  <div className="text-[7px] font-mono text-gray-600 uppercase tracking-wider text-center mb-0.5">Queue</div>
+                  <div className="flex justify-between text-[8px] font-mono">
+                    <span className="text-purple-500">MC</span>
+                    <span className={`tabular-nums font-bold ${bufNeedMC > 0 ? 'text-purple-400' : 'text-gray-700'}`}>{bufNeedMC}</span>
+                  </div>
+                  <div className="flex justify-between text-[8px] font-mono">
+                    <span className="text-cyan-500">VV</span>
+                    <span className={`tabular-nums font-bold ${bufNeedVV > 0 ? 'text-cyan-400' : 'text-gray-700'}`}>{bufNeedVV}</span>
+                  </div>
+                  <div className="flex justify-between text-[8px] font-mono">
+                    <span className="text-emerald-500">MV</span>
+                    <span className={`tabular-nums font-bold ${bufNeedVV > 0 ? 'text-emerald-400' : 'text-gray-700'}`}>{bufNeedVV}</span>
                   </div>
                 </div>
               </div>
