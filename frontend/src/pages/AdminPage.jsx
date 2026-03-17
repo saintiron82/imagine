@@ -203,6 +203,7 @@ export function WorkersPanel() {
   const [editingCapacity, setEditingCapacity] = useState(null); // { id, value }
   const [autoProcessing, setAutoProcessing] = useState(true);
   const [restAfterBatch, setRestAfterBatch] = useState(30);
+  const [batchSize, setBatchSize] = useState(5);
   const [embeddedEnabled, setEmbeddedEnabled] = useState(false);
   const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
 
@@ -223,6 +224,7 @@ export function WorkersPanel() {
     getAutoProcessing().then(data => {
       if (data.enabled != null) setAutoProcessing(data.enabled);
       if (data.rest_after_batch_s != null) setRestAfterBatch(data.rest_after_batch_s);
+      if (data.batch_size != null) setBatchSize(data.batch_size);
     }).catch(() => {});
     // Load embedded worker status
     const loadEmbedded = () => {
@@ -367,18 +369,33 @@ export function WorkersPanel() {
           </div>
         </div>
         {autoProcessing && (
-          <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-700/50">
-            <div className="text-xs text-gray-400">{t('worker.rest_title')}</div>
-            <input
-              type="number" min="0" max="300" value={restAfterBatch}
-              onChange={async (e) => {
-                const v = Math.max(0, Math.min(300, parseInt(e.target.value) || 0));
-                setRestAfterBatch(v);
-                try { await updateAutoProcessing({ rest_after_batch_s: v }); } catch (err) { console.error(err); }
-              }}
-              className="w-20 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
-            />
-            <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
+          <div className="flex items-center gap-6 mt-3 pt-3 border-t border-gray-700/50">
+            <div className="flex items-center gap-2">
+              <div className="text-xs text-gray-400">청크 크기</div>
+              <input
+                type="number" min="1" max="20" value={batchSize}
+                onChange={async (e) => {
+                  const v = Math.max(1, Math.min(20, parseInt(e.target.value) || 5));
+                  setBatchSize(v);
+                  try { await updateAutoProcessing({ batch_size: v }); } catch (err) { console.error(err); }
+                }}
+                className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
+              />
+              <span className="text-xs text-gray-500">files</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="text-xs text-gray-400">{t('worker.rest_title')}</div>
+              <input
+                type="number" min="0" max="300" value={restAfterBatch}
+                onChange={async (e) => {
+                  const v = Math.max(0, Math.min(300, parseInt(e.target.value) || 0));
+                  setRestAfterBatch(v);
+                  try { await updateAutoProcessing({ rest_after_batch_s: v }); } catch (err) { console.error(err); }
+                }}
+                className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
+              />
+              <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
+            </div>
           </div>
         )}
       </div>
