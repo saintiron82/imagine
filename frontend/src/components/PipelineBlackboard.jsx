@@ -164,7 +164,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
   const total = activeWRsAll.reduce((sum, wr) => sum + (wr.total_files || 0), 0);
   const pct = total > 0 ? ((completed / total) * 100).toFixed(1) : '0.0';
 
-  // ── Workers (external only, embedded worker shown in Stage 3) ──
+  // ── Workers (external only, embedded worker shown separately in Stage 5) ──
   const allWorkers = workers
     .filter(w => w.status === 'online')
     .filter(w => w.worker_name !== '__builtin__')
@@ -318,14 +318,39 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
           <Belt active={allWorkers.some(w => w.state === 'active')} color="purple" label={t('bb.workers_title')} />
 
           {/* ── STAGE 5: Workers ── */}
-          <Stage label="STAGE 5" title="WORKERS (GPU Terminals)" color="purple">
+          <Stage label="STAGE 5" title="WORKERS (AI Processing)" color="purple">
             <div className="space-y-3 mt-1">
+              {/* Embedded Worker */}
+              <div className={`rounded-lg border ${ewRunning ? 'border-purple-500/40 bg-purple-900/10' : 'border-gray-700/30 bg-gray-900/20'} p-2`}>
+                <div className="flex items-center gap-2 text-[9px] font-mono">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${ewRunning ? 'bg-purple-500 animate-pulse' : 'bg-gray-600'}`} />
+                  <span className={`font-bold ${ewRunning ? 'text-purple-400' : 'text-gray-500'}`}>Embedded Worker</span>
+                  {ewPhase && (
+                    <span className="px-1.5 py-0.5 rounded text-[7px] font-mono bg-purple-900/40 text-purple-300 border border-purple-500/30">
+                      {ewPhase === 'vision' ? 'MC' : ewPhase === 'embed_vv' ? 'VV' : ewPhase === 'embed_mv' ? 'MV' : ewPhase}
+                    </span>
+                  )}
+                  {ewCompleted > 0 && <span className="text-gray-500 ml-auto">{ewCompleted} done</span>}
+                  {throughput > 0 && <span className="text-yellow-500 ml-1">⚡{throughput.toFixed(1)}/m</span>}
+                </div>
+                {ewFile && (
+                  <div className="text-[8px] text-gray-600 font-mono truncate mt-1 ml-4">
+                    {ewFile}
+                  </div>
+                )}
+                {!ewRunning && (
+                  <div className="text-[8px] text-gray-600 font-mono mt-1 ml-4">
+                    {buffer > 0 ? 'Standby — waiting for start' : 'Idle — no pending jobs'}
+                  </div>
+                )}
+              </div>
+
+              {/* External Workers */}
               {allWorkers.map((w, i) => <WorkerLine key={i} worker={w} t={t} />)}
 
-              {allWorkers.length === 0 && (
-                <div className="text-center py-4 border border-dashed border-gray-700/30 rounded-lg">
-                  <div className="text-gray-700 text-2xl mb-1">&#9881;</div>
-                  <div className="text-[10px] text-gray-600 font-mono">{t('bb.no_workers')}</div>
+              {allWorkers.length === 0 && !ewRunning && (
+                <div className="text-[7px] text-gray-600 font-mono text-center py-1">
+                  No external workers connected
                 </div>
               )}
             </div>
