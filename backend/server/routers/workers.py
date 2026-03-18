@@ -771,13 +771,13 @@ def admin_update_auto_processing(
     cfg = get_config()
 
     if req.enabled is not None:
-        cfg._set_dotted("server.auto_processing.enabled", req.enabled)
+        cfg.save_user_setting("server.auto_processing.enabled", req.enabled)
     if req.mode is not None and req.mode in ("full", "parse_vv", "parse_only"):
-        cfg._set_dotted("server.auto_processing.mode", req.mode)
+        cfg.save_user_setting("server.auto_processing.mode", req.mode)
     if req.rest_after_batch_s is not None:
-        cfg._set_dotted("server.auto_processing.rest_after_batch_s", req.rest_after_batch_s)
+        cfg.save_user_setting("server.auto_processing.rest_after_batch_s", req.rest_after_batch_s)
     if req.batch_size is not None:
-        cfg._set_dotted("server.auto_processing.batch_size", req.batch_size)
+        cfg.save_user_setting("server.auto_processing.batch_size", req.batch_size)
 
     # ParseAheadPool is always parse_only — no mode switching needed
     if req.mode is not None:

@@ -162,6 +162,29 @@ class AppConfig:
             node = node.setdefault(p, {})
         node[parts[-1]] = value
 
+    def save_user_setting(self, dotted_key: str, value: Any):
+        """Set a value in both memory and user-settings.yaml (persists across restarts)."""
+        # Update in-memory merged data
+        self._set_dotted(dotted_key, value)
+        # Update user_data and save to file
+        parts = dotted_key.split(".")
+        node = self._user_data
+        for p in parts[:-1]:
+            node = node.setdefault(p, {})
+        node[parts[-1]] = value
+        self._save_user_settings()
+
+    def _save_user_settings(self):
+        """Write user-settings.yaml to disk."""
+        if not self._user_settings_path:
+            return
+        try:
+            self._user_settings_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._user_settings_path, "w", encoding="utf-8") as f:
+                yaml.dump(self._user_data, f, default_flow_style=False, allow_unicode=True)
+        except Exception as e:
+            logger.warning(f"Failed to save user settings: {e}")
+
 
 def get_config() -> AppConfig:
     """Return the singleton AppConfig instance."""
