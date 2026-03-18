@@ -356,6 +356,16 @@ def _cleanup_stale_jobs():
         except Exception:
             pass  # Column may not exist yet (pre-migration)
 
+        # Self-repair: parsed jobs must have file_ready=1 (invariant)
+        try:
+            cursor.execute(
+                "UPDATE job_queue SET file_ready = 1 WHERE parse_status = 'parsed' AND file_ready = 0"
+            )
+            if cursor.rowcount > 0:
+                logger.info(f"Startup fix: {cursor.rowcount} parsed jobs had file_ready=0 → fixed")
+        except Exception:
+            pass
+
         db.conn.commit()
     except Exception as e:
         logger.warning(f"Startup job cleanup failed: {e}")
