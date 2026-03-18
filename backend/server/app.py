@@ -366,6 +366,30 @@ def _cleanup_stale_jobs():
         except Exception:
             pass
 
+        # Self-repair: WR counter mismatch (no jobs but completed_count < total)
+        try:
+            cursor.execute("""
+                SELECT wr.id, wr.name, wr.total_files, wr.completed_count
+                FROM work_requests wr
+                WHERE wr.status IN ('queued', 'processing')
+                  AND wr.completed_count < wr.total_files
+                  AND NOT EXISTS (
+                    SELECT 1 FROM job_queue jq WHERE jq.work_request_id = wr.id
+                  )
+            """)
+            for wr_id, wr_name, wr_total, wr_done in cursor.fetchall():
+                cursor.execute(
+                    "UPDATE work_requests SET completed_count = total_files, status = 'completed', completed_at = datetime('now') WHERE id = ?",
+                    (wr_id,)
+                )
+                cursor.execute(
+                    "UPDATE work_subtasks SET completed_count = total_files WHERE work_request_id = ?",
+                    (wr_id,)
+                )
+                logger.info(f"Startup fix: WR '{wr_name}' {wr_done}/{wr_total} → completed (no pending jobs)")
+        except Exception:
+            pass
+
         db.conn.commit()
     except Exception as e:
         logger.warning(f"Startup job cleanup failed: {e}")
