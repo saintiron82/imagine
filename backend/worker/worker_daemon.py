@@ -1179,12 +1179,16 @@ class WorkerDaemon:
             progress=_WorkerProgress(progress_callback, self),
         )
 
+        n = len(active)
+
         # Phase V (MC)
         t_v = time.perf_counter()
         phase_items = runner.run_vision(phase_items)
         elapsed_vision = time.perf_counter() - t_v
-        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
-        self._phase_counts["mc"] += len(active)
+        fpm_vision = (n / elapsed_vision * 60) if elapsed_vision > 0 else 0
+        self._phase_counts["mc"] += n
+        # Update throughput: files / elapsed since batch start
+        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
 
         if self._stop_requested:
             logger.info("Stop requested after Vision phase — aborting batch")
@@ -1194,8 +1198,9 @@ class WorkerDaemon:
         t_vv = time.perf_counter()
         phase_items = runner.run_vv(phase_items)
         elapsed_vv = time.perf_counter() - t_vv
-        fpm_vv = (len(active) / elapsed_vv * 60) if elapsed_vv > 0 else 0
-        self._phase_counts["vv"] += len(active)
+        fpm_vv = (n / elapsed_vv * 60) if elapsed_vv > 0 else 0
+        self._phase_counts["vv"] += n
+        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
 
         if self._stop_requested:
             logger.info("Stop requested after VV phase — aborting batch")
@@ -1205,8 +1210,9 @@ class WorkerDaemon:
         t_mv = time.perf_counter()
         phase_items = runner.run_mv(phase_items)
         elapsed_mv = time.perf_counter() - t_mv
-        self._phase_counts["mv"] += len(active)
-        fpm_mv = (len(active) / elapsed_mv * 60) if elapsed_mv > 0 else 0
+        self._phase_counts["mv"] += n
+        fpm_mv = (n / elapsed_mv * 60) if elapsed_mv > 0 else 0
+        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
 
         # Map PhaseItem results back to _JobContext for upload
         for i, item in enumerate(phase_items):
