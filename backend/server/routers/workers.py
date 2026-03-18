@@ -819,11 +819,11 @@ def admin_update_auto_processing(
 # ── Embedded Worker ──────────────────────────────────────────
 
 def _start_embedded_worker(app):
-    """Start the embedded worker with a self-issued JWT token.
+    """Start the embedded worker — no JWT needed (localhost auto-admin).
 
-    Audit is already done once at server startup (app.py).
+    Embedded worker connects to 127.0.0.1 → get_current_user() returns
+    localhost admin automatically. No JWT token required.
     """
-    from backend.server.auth.jwt import create_access_token
     from backend.server.embedded_worker import start_worker, get_status
 
     if get_status()["running"]:
@@ -831,22 +831,8 @@ def _start_embedded_worker(app):
 
     port = getattr(app.state, "port", 8000)
 
-    # Find actual admin user_id from DB (user_id=0 doesn't exist)
-    try:
-        from backend.server.deps import get_db
-        _db = get_db()
-        _cursor = _db.conn.cursor()
-        _cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
-        _row = _cursor.fetchone()
-        admin_uid = _row[0] if _row else 1
-    except Exception:
-        admin_uid = 1
-
-    token = create_access_token(
-        user_id=admin_uid, username="__embedded_worker__", role="admin",
-        expires_minutes=60 * 24 * 365,  # 1 year — internal use only
-    )
-    result = start_worker(f"http://127.0.0.1:{port}", token)
+    # No token needed — localhost requests get auto-admin via get_current_user
+    result = start_worker(f"http://127.0.0.1:{port}", access_token="")
     if result.get("success"):
         logger.info(f"Embedded worker started (port={port})")
     else:

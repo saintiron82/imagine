@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 _DEFAULT_SECRET = "change-this-secret-in-production"
 _cached_jwt_secret = None  # In-memory cache — survives across calls
+_jwt_lock = __import__('threading').Lock()
 
 
 def get_server_config() -> dict:
@@ -50,38 +51,45 @@ def _save_jwt_secret(secret: str) -> None:
 
 
 def get_jwt_secret() -> str:
-    """Get JWT secret. Cached in memory after first read/generate."""
+    """Get JWT secret. Thread-safe, cached in memory."""
     global _cached_jwt_secret
+
+    # Fast path: already cached
     if _cached_jwt_secret:
         return _cached_jwt_secret
 
-    # 1. Environment variable (highest priority)
-    env = os.getenv("IMAGINE_JWT_SECRET")
-    if env:
-        _cached_jwt_secret = env
-        return env
+    with _jwt_lock:
+        # Double-check after acquiring lock
+        if _cached_jwt_secret:
+            return _cached_jwt_secret
 
-    # 2. config.yaml
-    cfg = get_server_config()
-    secret = cfg.get("auth", {}).get("jwt_secret")
+        # 1. Environment variable (highest priority)
+        env = os.getenv("IMAGINE_JWT_SECRET")
+        if env:
+            _cached_jwt_secret = env
+            return env
 
-    # 3. Auto-generate if missing or insecure default
-    if not secret or secret == _DEFAULT_SECRET:
-        secret = secrets.token_urlsafe(32)
-        logger.warning(
-            "JWT secret was missing or using insecure default. "
-            "Auto-generated a secure secret."
-        )
-        _save_jwt_secret(secret)
-        # Also update AppConfig in-memory so other code sees it
+        # 2. config.yaml (dotted key to avoid user_data partial override)
+        secret = None
         try:
             from backend.utils.config import get_config
-            get_config()._set_dotted("server.auth.jwt_secret", secret)
+            secret = get_config().get("server.auth.jwt_secret")
         except Exception:
             pass
 
-    _cached_jwt_secret = secret
-    return secret
+        # 3. Auto-generate if missing or insecure default
+        if not secret or secret == _DEFAULT_SECRET:
+            secret = secrets.token_urlsafe(32)
+            logger.warning("JWT secret auto-generated (first run)")
+            _save_jwt_secret(secret)
+            try:
+                from backend.utils.config import get_config
+                get_config()._set_dotted("server.auth.jwt_secret", secret)
+            except Exception:
+                pass
+
+        _cached_jwt_secret = secret
+        return secret
 
 
 def get_access_token_minutes() -> int:
