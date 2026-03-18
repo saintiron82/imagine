@@ -84,6 +84,23 @@ class ParseAheadPool(BaseAheadPool):
 
         return 0
 
+    def _self_repair(self):
+        """Fix invariant violations every ~60s. Silent if nothing to fix."""
+        try:
+            cursor = self.db.conn.cursor()
+            # Invariant: parsed → file_ready=1
+            cursor.execute(
+                "UPDATE job_queue SET file_ready = 1 WHERE parse_status = 'parsed' AND file_ready = 0"
+            )
+            if cursor.rowcount > 0:
+                logger.warning(f"Self-repair: {cursor.rowcount} parsed jobs had file_ready=0 → fixed")
+            self.db.conn.commit()
+        except Exception:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+
     def _run_pre_parse_buffer(self) -> bool:
         """Run one cycle of pre-parse buffer filling.
 
@@ -210,13 +227,18 @@ class ParseAheadPool(BaseAheadPool):
         try:
             while self._running:
                 try:
-                    # Periodic diagnostics (only when active)
                     if not hasattr(self, '_diag_counter'):
                         self._diag_counter = 0
                     self._diag_counter += 1
+
+                    # Periodic diagnostics (only when active)
                     if self._diag_counter % 15 == 1 and self.has_recent_demand():
                         target = self._calculate_buffer_target()
                         logger.info(f"[PA-DIAG] target={target}")
+
+                    # Periodic self-repair (~60s): fix invariant violations
+                    if self._diag_counter % 30 == 0:
+                        self._self_repair()
 
                     self._run_pre_parse_buffer()
 
