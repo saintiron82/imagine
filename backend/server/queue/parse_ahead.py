@@ -85,16 +85,50 @@ class ParseAheadPool(BaseAheadPool):
         return 0
 
     def _self_repair(self):
-        """Fix invariant violations every ~60s. Silent if nothing to fix."""
+        """Fix invariant violations periodically. Silent if nothing to fix."""
         try:
             cursor = self.db.conn.cursor()
-            # Invariant: parsed → file_ready=1
+            fixed = 0
+
+            # 1. Invariant: parsed → file_ready=1
             cursor.execute(
                 "UPDATE job_queue SET file_ready = 1 WHERE parse_status = 'parsed' AND file_ready = 0"
             )
             if cursor.rowcount > 0:
+                fixed += cursor.rowcount
                 logger.warning(f"Self-repair: {cursor.rowcount} parsed jobs had file_ready=0 → fixed")
-            self.db.conn.commit()
+
+            # 2. WR with incomplete files but no jobs → re-queue missing files
+            cursor.execute("""
+                SELECT wr.id, wr.name, wr.total_files, wr.completed_count
+                FROM work_requests wr
+                WHERE wr.status IN ('queued', 'processing')
+                  AND wr.completed_count < wr.total_files
+                  AND NOT EXISTS (
+                    SELECT 1 FROM job_queue jq WHERE jq.work_request_id = wr.id
+                  )
+            """)
+            orphan_wrs = cursor.fetchall()
+            for wr_id, wr_name, wr_total, wr_done in orphan_wrs:
+                try:
+                    from backend.server.queue.manager import JobQueueManager
+                    mgr = JobQueueManager(self.db)
+                    result = mgr.audit_completed_jobs(repair=True)
+                    repaired = result.get("repaired_files", 0)
+                    if repaired > 0:
+                        logger.warning(
+                            f"Self-repair: WR '{wr_name}' had {wr_total - wr_done} "
+                            f"incomplete files with no jobs → {repaired} re-queued"
+                        )
+                        fixed += repaired
+                    break  # One audit pass covers all WRs
+                except Exception as e:
+                    logger.warning(f"Self-repair: audit failed for WR {wr_id}: {e}")
+
+            if fixed > 0:
+                self.db.conn.commit()
+            else:
+                self.db.conn.rollback()
         except Exception:
             try:
                 self.db.conn.rollback()
