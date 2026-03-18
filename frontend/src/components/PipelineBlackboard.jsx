@@ -597,7 +597,7 @@ function WorkerLine({ worker, t }) {
             </span>
           )}
           {w.batchSize > 0 && <span className="text-[8px] font-mono text-yellow-600 tabular-nums">B:{w.batchSize}</span>}
-          {w.throughput > 0 && <span className="text-[8px] font-mono text-gray-500 tabular-nums">{w.throughput.toFixed(1)}/m</span>}
+          {(w.throughput > 0 || isProcessing) && <span className="text-[8px] font-mono text-gray-500 tabular-nums">{(w.throughput || 0).toFixed(1)}/m</span>}
           {isProcessing
             ? <span className="text-[8px] font-mono text-green-500">processing</span>
             : isEnabled
