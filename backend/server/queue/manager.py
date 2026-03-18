@@ -108,6 +108,7 @@ def _get_embedded_worker_status() -> dict:
         "current_phase": None,
         "current_file": None,
         "phase_counts": None,
+        "batch_capacity": 0,
     }
 
     # 1. In-process state (real-time, no heartbeat delay)
@@ -121,6 +122,7 @@ def _get_embedded_worker_status() -> dict:
             if daemon:
                 result["current_phase"] = getattr(daemon, '_current_phase', None)
                 result["current_file"] = getattr(daemon, '_current_file', None)
+                result["batch_capacity"] = getattr(daemon, 'batch_capacity', 5)
                 pc = getattr(daemon, '_phase_counts', None)
                 if pc:
                     result["phase_counts"] = dict(pc)

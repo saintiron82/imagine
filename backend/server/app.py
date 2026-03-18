@@ -349,7 +349,10 @@ def _cleanup_stale_jobs():
                SET status = 'offline',
                    current_phase = NULL,
                    current_file = NULL,
-                   current_job_id = NULL
+                   current_job_id = NULL,
+                   jobs_completed = 0,
+                   jobs_failed = 0,
+                   resources_json = NULL
                WHERE status = 'online'"""
         )
         if cursor.rowcount > 0:
