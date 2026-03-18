@@ -389,6 +389,32 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
                   <div className="text-xl font-mono font-bold text-red-400 tabular-nums">
                     <AlertTriangle size={14} className="inline mr-1 -mt-0.5" />{dbFailed}
                   </div>
+                  <div className="flex gap-1.5 mt-2 justify-center">
+                    <button
+                      onClick={async () => {
+                        try {
+                          const { forceRetryFailedJobs } = await import('../api/admin');
+                          const r = await forceRetryFailedJobs();
+                          load();
+                        } catch (e) { console.error(e); }
+                      }}
+                      className="px-2 py-0.5 text-[7px] font-mono rounded bg-red-900/60 text-red-300 border border-red-700/30 hover:bg-red-800/60"
+                    >
+                      재시도
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const { dismissPermanentlyFailedJobs } = await import('../api/admin');
+                          await dismissPermanentlyFailedJobs();
+                          load();
+                        } catch (e) { console.error(e); }
+                      }}
+                      className="px-2 py-0.5 text-[7px] font-mono rounded bg-gray-800 text-gray-400 border border-gray-700/30 hover:bg-gray-700"
+                    >
+                      무시
+                    </button>
+                  </div>
                 </div>
               )}
               {/* Stats */}
