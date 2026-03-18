@@ -162,6 +162,10 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
 CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed
     ON job_queue(mc_completed_at);
 
+-- Prevent duplicate active jobs for the same file
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_file_id_active
+    ON job_queue(file_id) WHERE status IN ('pending', 'assigned', 'processing');
+
 -- ═══════════════════════════════════════════════════════════════
 -- Members (Firebase Auth based group membership)
 -- Replaces users table for Firebase Auth integration
