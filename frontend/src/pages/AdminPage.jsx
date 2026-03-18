@@ -374,11 +374,13 @@ export function WorkersPanel() {
               <div className="text-xs text-gray-400">청크 크기</div>
               <input
                 type="number" min="1" max="20" value={batchSize}
-                onChange={async (e) => {
-                  const v = Math.max(1, Math.min(20, parseInt(e.target.value) || 5));
+                onChange={(e) => setBatchSize(parseInt(e.target.value) || 5)}
+                onBlur={async () => {
+                  const v = Math.max(1, Math.min(20, batchSize));
                   setBatchSize(v);
                   try { await updateAutoProcessing({ batch_size: v }); } catch (err) { console.error(err); }
                 }}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                 className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
               />
               <span className="text-xs text-gray-500">files</span>
@@ -387,11 +389,13 @@ export function WorkersPanel() {
               <div className="text-xs text-gray-400">{t('worker.rest_title')}</div>
               <input
                 type="number" min="0" max="300" value={restAfterBatch}
-                onChange={async (e) => {
-                  const v = Math.max(0, Math.min(300, parseInt(e.target.value) || 0));
+                onChange={(e) => setRestAfterBatch(parseInt(e.target.value) || 0)}
+                onBlur={async () => {
+                  const v = Math.max(0, Math.min(300, restAfterBatch));
                   setRestAfterBatch(v);
                   try { await updateAutoProcessing({ rest_after_batch_s: v }); } catch (err) { console.error(err); }
                 }}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                 className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
               />
               <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
