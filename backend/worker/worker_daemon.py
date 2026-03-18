@@ -130,6 +130,7 @@ class WorkerDaemon:
         self._total_completed = 0
         self._total_failed = 0
         self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
+        self._batch_throughput = 0.0  # files/min from last completed batch
         self._current_job_id = None
         self._current_file = None
         self._current_phase = None
@@ -1288,6 +1289,7 @@ class WorkerDaemon:
         # Emit total batch timing
         total_elapsed = elapsed_parse + elapsed_vision + elapsed_vv + elapsed_mv + elapsed_upload
         total_fpm = (len(contexts) / total_elapsed * 60) if total_elapsed > 0 else 0
+        self._batch_throughput = round(total_fpm, 1)
         _notify(progress_callback, "batch_complete", {
             "count": len(contexts),
             "elapsed_s": round(total_elapsed, 2),
