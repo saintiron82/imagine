@@ -112,17 +112,18 @@ def _get_embedded_worker_status() -> dict:
 
     # 1. In-process state (real-time, no heartbeat delay)
     try:
-        from backend.server.embedded_worker import get_status, _worker_daemon
-        ew = get_status()
+        import backend.server.embedded_worker as ew_module  # module ref, not value copy
+        ew = ew_module.get_status()
         if ew.get("running"):
             result["running"] = True
             result["jobs_completed"] = ew.get("jobs_completed", 0)
-            if _worker_daemon:
-                result["current_phase"] = getattr(_worker_daemon, '_current_phase', None)
-                result["current_file"] = getattr(_worker_daemon, '_current_file', None)
-                pc = getattr(_worker_daemon, '_phase_counts', None)
+            daemon = ew_module._worker_daemon  # always current (module attribute)
+            if daemon:
+                result["current_phase"] = getattr(daemon, '_current_phase', None)
+                result["current_file"] = getattr(daemon, '_current_file', None)
+                pc = getattr(daemon, '_phase_counts', None)
                 if pc:
-                    result["phase_counts"] = dict(pc)  # copy to avoid mutation
+                    result["phase_counts"] = dict(pc)
             return result  # Live data found — skip DB (which is stale)
     except Exception:
         pass
