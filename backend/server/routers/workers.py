@@ -57,6 +57,7 @@ class AutoProcessingUpdate(BaseModel):
     mode: Optional[str] = None  # "full" | "parse_vv" | "parse_only"
     rest_after_batch_s: Optional[int] = None
     batch_size: Optional[int] = None
+    verbose_log: Optional[bool] = None
 
 
 class EmbeddedWorkerUpdate(BaseModel):
@@ -756,6 +757,7 @@ def admin_get_auto_processing(
         "enabled": cfg.get("server.auto_processing.enabled", True),
         "rest_after_batch_s": cfg.get("server.auto_processing.rest_after_batch_s", 30),
         "batch_size": cfg.get("server.auto_processing.batch_size", 5),
+        "verbose_log": cfg.get("worker.verbose_log", False),
     }
 
 
@@ -778,6 +780,15 @@ def admin_update_auto_processing(
         cfg.save_user_setting("server.auto_processing.rest_after_batch_s", req.rest_after_batch_s)
     if req.batch_size is not None:
         cfg.save_user_setting("server.auto_processing.batch_size", req.batch_size)
+    if req.verbose_log is not None:
+        cfg.save_user_setting("worker.verbose_log", req.verbose_log)
+        # Apply to running embedded worker immediately
+        try:
+            import backend.server.embedded_worker as ew_module
+            if ew_module._worker_daemon:
+                ew_module._worker_daemon.verbose_log = req.verbose_log
+        except Exception:
+            pass
 
     # ParseAheadPool is always parse_only — no mode switching needed
     if req.mode is not None:

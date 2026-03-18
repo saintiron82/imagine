@@ -137,6 +137,14 @@ class WorkerDaemon:
         # Stop signal — set by IPC controller to interrupt batch mid-flight
         self._stop_requested = False
 
+        # Verbose worker logging (toggled via config or API)
+        self.verbose_log = False
+        try:
+            from backend.utils.config import get_config
+            self.verbose_log = get_config().get("worker.verbose_log", False)
+        except Exception:
+            pass
+
         # Throttle state
         self._throttle_level = "normal"
         self._original_batch_capacity = self.batch_capacity  # preserved for restore
@@ -1063,7 +1071,10 @@ class WorkerDaemon:
         active = [c for c in contexts if not c.failed]
 
         # Phase P is always handled by the server (ParseAheadPool).
-        # All jobs should be pre-parsed — no local parsing needed.
+        if self.verbose_log:
+            file_names = [Path(c.job.get("file_path","")).name for c in active]
+            logger.info(f"[WORKER] Batch START: {len(active)} files, chunk={self.batch_capacity}, mode={self.processing_mode}")
+            logger.info(f"[WORKER] Files: {file_names}")
         logger.info(f"Phase P: {len(active)} jobs pre-parsed by server (worker skips parsing)")
         elapsed_parse = 0.0
         fpm_parse = 0.0
@@ -1120,7 +1131,8 @@ class WorkerDaemon:
             def phase_start(self, phase, count):
                 mapped = self._PHASE_MAP.get(phase, phase)
                 self._daemon._current_phase = mapped
-                # Report phase change to server immediately (1 API call per phase)
+                if self._daemon.verbose_log:
+                    logger.info(f"[WORKER] Phase {mapped} START ({count} files, batch_capacity={self._daemon.batch_capacity})")
                 try:
                     self._daemon._heartbeat()
                 except Exception:
@@ -1131,13 +1143,19 @@ class WorkerDaemon:
                 mapped = self._PHASE_MAP.get(phase, phase)
                 self._daemon._current_phase = mapped
                 self._daemon._current_file = file_name
+                if self._daemon.verbose_log:
+                    status = "OK" if success else "FAIL"
+                    logger.info(f"[WORKER] {mapped} [{index+1}/{count}] {file_name} → {status}")
                 _notify(self._cb, "file_done", {
                     "phase": mapped, "file_name": file_name,
                     "index": index + 1, "count": count, "success": success,
                 })
 
             def phase_complete(self, phase, elapsed_s):
-                # Report updated counters to server
+                mapped = self._PHASE_MAP.get(phase, phase)
+                pc = self._daemon._phase_counts
+                if self._daemon.verbose_log:
+                    logger.info(f"[WORKER] Phase {mapped} DONE in {elapsed_s:.1f}s (totals: MC:{pc['mc']} VV:{pc['vv']} MV:{pc['mv']})")
                 try:
                     self._daemon._heartbeat()
                 except Exception:

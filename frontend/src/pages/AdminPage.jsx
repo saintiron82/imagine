@@ -204,6 +204,7 @@ export function WorkersPanel() {
   const [autoProcessing, setAutoProcessing] = useState(true);
   const [restAfterBatch, setRestAfterBatch] = useState(30);
   const [batchSize, setBatchSize] = useState(5);
+  const [verboseLog, setVerboseLog] = useState(false);
   const [embeddedEnabled, setEmbeddedEnabled] = useState(false);
   const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
 
@@ -225,6 +226,7 @@ export function WorkersPanel() {
       if (data.enabled != null) setAutoProcessing(data.enabled);
       if (data.rest_after_batch_s != null) setRestAfterBatch(data.rest_after_batch_s);
       if (data.batch_size != null) setBatchSize(data.batch_size);
+      if (data.verbose_log != null) setVerboseLog(data.verbose_log);
     }).catch(() => {});
     // Load embedded worker status
     const loadEmbedded = () => {
@@ -402,6 +404,18 @@ export function WorkersPanel() {
             >
               적용
             </button>
+            <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
+              <input
+                type="checkbox" checked={verboseLog}
+                onChange={async (e) => {
+                  const v = e.target.checked;
+                  setVerboseLog(v);
+                  try { await updateAutoProcessing({ verbose_log: v }); } catch (err) { console.error(err); }
+                }}
+                className="w-3 h-3 rounded border-gray-600 bg-gray-700 text-purple-500 focus:ring-0"
+              />
+              <span className="text-xs text-gray-500">상세 로그</span>
+            </label>
           </div>
         )}
       </div>
