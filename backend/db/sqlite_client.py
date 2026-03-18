@@ -2267,19 +2267,21 @@ class SQLiteDB:
             if not file_path:
                 continue
 
-            # Compute relative_path
-            if storage_root and file_path.startswith(storage_root):
+            # Compute relative_path from file_path
+            import re as _re
+            webdav_match = _re.match(r'(webdav://[^/]+/)', file_path)
+            if webdav_match:
+                # WebDAV: prefix is webdav://SOURCE_ID/
+                storage_root = webdav_match.group(1)
+                rel = file_path[len(storage_root):]
+            elif storage_root and storage_root != file_path and file_path.startswith(storage_root):
+                # Local with valid storage_root (not equal to file_path)
                 rel = file_path[len(storage_root):].lstrip("/\\")
             else:
-                # Derive: use directory part of file_path as relative
-                import posixpath
+                # Derive from file_path directory structure
                 parts = file_path.replace("\\", "/").rsplit("/", 1)
-                rel = file_name or (parts[1] if len(parts) > 1 else file_path)
-
-            # Also fix storage_root if missing
-            if not storage_root and file_path:
-                dir_part = file_path.replace("\\", "/").rsplit("/", 1)
-                storage_root = dir_part[0] if len(dir_part) > 1 else ""
+                storage_root = parts[0] + "/" if len(parts) > 1 else ""
+                rel = parts[1] if len(parts) > 1 else file_path
 
             cursor.execute("""
                 UPDATE files SET relative_path = ?, storage_root = COALESCE(NULLIF(TRIM(storage_root), ''), ?)
