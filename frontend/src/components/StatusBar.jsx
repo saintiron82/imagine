@@ -428,7 +428,7 @@ const StatusBar = ({
                 <span className="text-[9px] text-gray-600 font-mono mr-2">
                     {typeof __APP_VERSION__ !== 'undefined' && typeof __BUILD_ID__ !== 'undefined'
                         ? `v${__APP_VERSION__}.${__BUILD_ID__}`
-                        : 'v0.8.0.20260318_01'}
+                        : 'v0.1.0.20260318_01'}
                 </span>
                 <div className="flex-shrink-0">
                     {isOpen ? <X size={14} /> : t('label.show_logs')}
