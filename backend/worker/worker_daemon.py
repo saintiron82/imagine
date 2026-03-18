@@ -129,12 +129,22 @@ class WorkerDaemon:
         self.processing_mode = "full"  # "full" | "mc_only" | "embed_only" — set by server on connect/heartbeat
         self._total_completed = 0
         self._total_failed = 0
+        self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
+        self._batch_throughput = 0.0  # files/min from last completed batch
         self._current_job_id = None
         self._current_file = None
         self._current_phase = None
 
         # Stop signal — set by IPC controller to interrupt batch mid-flight
         self._stop_requested = False
+
+        # Verbose worker logging (toggled via config or API)
+        self.verbose_log = False
+        try:
+            from backend.utils.config import get_config
+            self.verbose_log = get_config().get("worker.verbose_log", False)
+        except Exception:
+            pass
 
         # Throttle state
         self._throttle_level = "normal"
@@ -286,7 +296,7 @@ class WorkerDaemon:
                 "post",
                 f"{self.server_url}/api/v1/workers/connect",
                 json={
-                    "worker_name": f"{socket.gethostname()}-worker",
+                    "worker_name": getattr(self, 'worker_name', None) or f"{socket.gethostname()}-worker",
                     "hostname": socket.gethostname(),
                     "batch_capacity": self.batch_capacity,
                     "resources": connect_resources,
@@ -332,6 +342,7 @@ class WorkerDaemon:
                     "session_id": self.session_id,
                     "jobs_completed": self._total_completed,
                     "jobs_failed": self._total_failed,
+                    "phase_counts": self._phase_counts,
                     "current_job_id": self._current_job_id,
                     "current_file": self._current_file,
                     "current_phase": self._current_phase,
@@ -489,18 +500,25 @@ class WorkerDaemon:
             vision_fields = self._run_vision(local_file, thumb_path, meta_obj)
             if vision_fields:
                 metadata.update(vision_fields)
+            self._phase_counts["mc"] += 1
             _cb("vision_done")
 
             # ── Phase E-VV: Visual Vector (SigLIP2) ──
             self._current_phase = "embed"
             _cb("embed_vv")
             self.uploader.report_progress(job_id, "embed")
+            logger.info(f"Job {job_id}: Phase VV (SigLIP2) start")
             vv_vec, structure_vec = self._run_embed_vv(thumb_path)
+            logger.info(f"Job {job_id}: Phase VV done")
+            self._phase_counts["vv"] += 1
             _cb("embed_vv_done")
 
             # ── Phase E-MV: Meaning Vector (Qwen3-Embedding) ──
             _cb("embed_mv")
+            logger.info(f"Job {job_id}: Phase MV (Qwen3-Embedding) start")
             mv_vec = self._run_embed_mv(metadata)
+            logger.info(f"Job {job_id}: Phase MV done")
+            self._phase_counts["mv"] += 1
             _cb("embed_mv_done")
 
             # ── Upload results ──
@@ -1054,7 +1072,10 @@ class WorkerDaemon:
         active = [c for c in contexts if not c.failed]
 
         # Phase P is always handled by the server (ParseAheadPool).
-        # All jobs should be pre-parsed — no local parsing needed.
+        if self.verbose_log:
+            file_names = [Path(c.job.get("file_path","")).name for c in active]
+            logger.info(f"[WORKER] Batch START: {len(active)} files, chunk={self.batch_capacity}, mode={self.processing_mode}")
+            logger.info(f"[WORKER] Files: {file_names}")
         logger.info(f"Phase P: {len(active)} jobs pre-parsed by server (worker skips parsing)")
         elapsed_parse = 0.0
         fpm_parse = 0.0
@@ -1109,19 +1130,37 @@ class WorkerDaemon:
                 self._daemon = daemon
 
             def phase_start(self, phase, count):
-                _notify(self._cb, "phase_start", {
-                    "phase": self._PHASE_MAP.get(phase, phase), "count": count})
+                mapped = self._PHASE_MAP.get(phase, phase)
+                self._daemon._current_phase = mapped
+                if self._daemon.verbose_log:
+                    logger.info(f"[WORKER] Phase {mapped} START ({count} files, batch_capacity={self._daemon.batch_capacity})")
+                try:
+                    self._daemon._heartbeat()
+                except Exception:
+                    pass
+                _notify(self._cb, "phase_start", {"phase": mapped, "count": count})
 
             def file_done(self, phase, index, count, file_name, success):
                 mapped = self._PHASE_MAP.get(phase, phase)
                 self._daemon._current_phase = mapped
                 self._daemon._current_file = file_name
+                if self._daemon.verbose_log:
+                    status = "OK" if success else "FAIL"
+                    logger.info(f"[WORKER] {mapped} [{index+1}/{count}] {file_name} → {status}")
                 _notify(self._cb, "file_done", {
                     "phase": mapped, "file_name": file_name,
                     "index": index + 1, "count": count, "success": success,
                 })
 
             def phase_complete(self, phase, elapsed_s):
+                mapped = self._PHASE_MAP.get(phase, phase)
+                pc = self._daemon._phase_counts
+                if self._daemon.verbose_log:
+                    logger.info(f"[WORKER] Phase {mapped} DONE in {elapsed_s:.1f}s (totals: MC:{pc['mc']} VV:{pc['vv']} MV:{pc['mv']})")
+                try:
+                    self._daemon._heartbeat()
+                except Exception:
+                    pass
                 mapped = self._PHASE_MAP.get(phase, phase)
                 _notify(self._cb, "phase_complete", {
                     "phase": mapped, "count": 0,
@@ -1140,11 +1179,16 @@ class WorkerDaemon:
             progress=_WorkerProgress(progress_callback, self),
         )
 
-        # Phase V
+        n = len(active)
+
+        # Phase V (MC)
         t_v = time.perf_counter()
         phase_items = runner.run_vision(phase_items)
         elapsed_vision = time.perf_counter() - t_v
-        fpm_vision = (len(active) / elapsed_vision * 60) if elapsed_vision > 0 else 0
+        fpm_vision = (n / elapsed_vision * 60) if elapsed_vision > 0 else 0
+        self._phase_counts["mc"] += n
+        # Update throughput: files / elapsed since batch start
+        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
 
         if self._stop_requested:
             logger.info("Stop requested after Vision phase — aborting batch")
@@ -1154,7 +1198,9 @@ class WorkerDaemon:
         t_vv = time.perf_counter()
         phase_items = runner.run_vv(phase_items)
         elapsed_vv = time.perf_counter() - t_vv
-        fpm_vv = (len(active) / elapsed_vv * 60) if elapsed_vv > 0 else 0
+        fpm_vv = (n / elapsed_vv * 60) if elapsed_vv > 0 else 0
+        self._phase_counts["vv"] += n
+        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
 
         if self._stop_requested:
             logger.info("Stop requested after VV phase — aborting batch")
@@ -1164,7 +1210,9 @@ class WorkerDaemon:
         t_mv = time.perf_counter()
         phase_items = runner.run_mv(phase_items)
         elapsed_mv = time.perf_counter() - t_mv
-        fpm_mv = (len(active) / elapsed_mv * 60) if elapsed_mv > 0 else 0
+        self._phase_counts["mv"] += n
+        fpm_mv = (n / elapsed_mv * 60) if elapsed_mv > 0 else 0
+        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
 
         # Map PhaseItem results back to _JobContext for upload
         for i, item in enumerate(phase_items):
@@ -1247,6 +1295,7 @@ class WorkerDaemon:
         # Emit total batch timing
         total_elapsed = elapsed_parse + elapsed_vision + elapsed_vv + elapsed_mv + elapsed_upload
         total_fpm = (len(contexts) / total_elapsed * 60) if total_elapsed > 0 else 0
+        self._batch_throughput = round(total_fpm, 1)
         _notify(progress_callback, "batch_complete", {
             "count": len(contexts),
             "elapsed_s": round(total_elapsed, 2),

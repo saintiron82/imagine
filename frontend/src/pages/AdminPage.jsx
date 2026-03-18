@@ -25,6 +25,7 @@ import {
   Tag, ChevronDown, Pencil, AlertOctagon, Image,
   Pause, CircleX,
 } from 'lucide-react';
+import { isElectron } from '../api/client';
 import { listDomains, getDomainDetail, getActiveDomainConfig, setActiveDomain, saveDomainYaml } from '../services/bridge';
 
 export default function AdminPage() {
@@ -202,6 +203,8 @@ export function WorkersPanel() {
   const [editingCapacity, setEditingCapacity] = useState(null); // { id, value }
   const [autoProcessing, setAutoProcessing] = useState(true);
   const [restAfterBatch, setRestAfterBatch] = useState(30);
+  const [batchSize, setBatchSize] = useState(5);
+  const [verboseLog, setVerboseLog] = useState(false);
   const [embeddedEnabled, setEmbeddedEnabled] = useState(false);
   const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
 
@@ -222,6 +225,8 @@ export function WorkersPanel() {
     getAutoProcessing().then(data => {
       if (data.enabled != null) setAutoProcessing(data.enabled);
       if (data.rest_after_batch_s != null) setRestAfterBatch(data.rest_after_batch_s);
+      if (data.batch_size != null) setBatchSize(data.batch_size);
+      if (data.verbose_log != null) setVerboseLog(data.verbose_log);
     }).catch(() => {});
     // Load embedded worker status
     const loadEmbedded = () => {
@@ -330,54 +335,15 @@ export function WorkersPanel() {
         </button>
       </div>
 
-      {/* Auto Processing */}
+      {/* Server Auto-Processing (unified: auto_processing + embedded worker) */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-medium text-gray-300">{t('worker.auto_title')}</div>
             <div className="text-xs text-gray-500 mt-0.5">{t('worker.auto_desc')}</div>
           </div>
-          <button
-            onClick={async () => {
-              const newVal = !autoProcessing;
-              setAutoProcessing(newVal);
-              try { await updateAutoProcessing({ enabled: newVal }); } catch (e) { console.error(e); setAutoProcessing(!newVal); }
-            }}
-            className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
-              autoProcessing
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-700 text-gray-400 hover:text-white'
-            }`}
-          >
-            {autoProcessing ? t('worker.auto_on') : t('worker.auto_off')}
-          </button>
-        </div>
-        {autoProcessing && (
-          <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-700/50">
-            <div className="text-xs text-gray-400">{t('worker.rest_title')}</div>
-            <input
-              type="number" min="0" max="300" value={restAfterBatch}
-              onChange={async (e) => {
-                const v = Math.max(0, Math.min(300, parseInt(e.target.value) || 0));
-                setRestAfterBatch(v);
-                try { await updateAutoProcessing({ rest_after_batch_s: v }); } catch (err) { console.error(err); }
-              }}
-              className="w-20 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
-            />
-            <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
-          </div>
-        )}
-      </div>}
-
-      {/* Embedded Worker toggle */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium text-gray-300">{t('worker.embedded_worker')}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{t('worker.embedded_desc')}</div>
-          </div>
           <div className="flex items-center gap-3">
-            {embeddedEnabled && (
+            {autoProcessing && (
               <span className={`text-xs px-2 py-0.5 rounded ${
                 embeddedStatus.running
                   ? 'bg-green-900/50 text-green-400'
@@ -389,26 +355,69 @@ export function WorkersPanel() {
             )}
             <button
               onClick={async () => {
-                const newVal = !embeddedEnabled;
+                const newVal = !autoProcessing;
+                setAutoProcessing(newVal);
                 setEmbeddedEnabled(newVal);
-                try {
-                  const res = await updateEmbeddedWorker({ enabled: newVal });
-                  setEmbeddedStatus({ running: res.running, status: res.status, jobs_completed: res.jobs_completed || 0 });
-                } catch (e) {
-                  console.error(e);
-                  setEmbeddedEnabled(!newVal);
-                }
+                try { await updateAutoProcessing({ enabled: newVal }); } catch (e) { console.error(e); setAutoProcessing(!newVal); setEmbeddedEnabled(!newVal); }
               }}
               className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
-                embeddedEnabled
+                autoProcessing
                   ? 'bg-green-600 text-white'
                   : 'bg-gray-700 text-gray-400 hover:text-white'
               }`}
             >
-              {embeddedEnabled ? 'ON' : 'OFF'}
+              {autoProcessing ? t('worker.auto_on') : t('worker.auto_off')}
             </button>
           </div>
         </div>
+        {autoProcessing && (
+          <div className="flex items-center gap-6 mt-3 pt-3 border-t border-gray-700/50">
+            <div className="flex items-center gap-2">
+              <div className="text-xs text-gray-400">청크 크기</div>
+              <input
+                type="number" min="1" max="20" value={batchSize}
+                onChange={(e) => setBatchSize(parseInt(e.target.value) || 5)}
+                className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
+              />
+              <span className="text-xs text-gray-500">files</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="text-xs text-gray-400">{t('worker.rest_title')}</div>
+              <input
+                type="number" min="0" max="300" value={restAfterBatch}
+                onChange={(e) => setRestAfterBatch(parseInt(e.target.value) || 0)}
+                className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
+              />
+              <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
+            </div>
+            <button
+              onClick={async () => {
+                const bs = Math.max(1, Math.min(20, batchSize));
+                const rest = Math.max(0, Math.min(300, restAfterBatch));
+                setBatchSize(bs);
+                setRestAfterBatch(rest);
+                try {
+                  await updateAutoProcessing({ batch_size: bs, rest_after_batch_s: rest });
+                } catch (err) { console.error(err); }
+              }}
+              className="px-3 py-1 text-xs font-medium rounded bg-purple-600 text-white hover:bg-purple-500 transition-colors"
+            >
+              적용
+            </button>
+            <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
+              <input
+                type="checkbox" checked={verboseLog}
+                onChange={async (e) => {
+                  const v = e.target.checked;
+                  setVerboseLog(v);
+                  try { await updateAutoProcessing({ verbose_log: v }); } catch (err) { console.error(err); }
+                }}
+                className="w-3 h-3 rounded border-gray-600 bg-gray-700 text-purple-500 focus:ring-0"
+              />
+              <span className="text-xs text-gray-500">상세 로그</span>
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Aggregate stats */}
@@ -937,7 +946,6 @@ export function DiscoverPanel() {
 
 export function DashboardPanel() {
   const { t } = useLocale();
-  const [thumbData, setThumbData] = useState(null);
   const [cacheData, setCacheData] = useState(null);
   const [dbStats, setDbStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -946,12 +954,10 @@ export function DashboardPanel() {
   const fetchAll = useCallback(async () => {
     try {
       setLoading(true);
-      const [thumbResult, cacheResult, dbResult] = await Promise.all([
-        getThumbnailStats().catch(() => null),
+      const [cacheResult, dbResult] = await Promise.all([
         window.electron?.pipeline?.downloadCache?.stats?.().catch(() => null),
         window.electron?.pipeline?.getDbStats?.().catch(() => null),
       ]);
-      if (thumbResult?.success) setThumbData(thumbResult);
       if (cacheResult) setCacheData(cacheResult);
       if (dbResult) setDbStats(dbResult);
     } finally {
@@ -974,7 +980,7 @@ export function DashboardPanel() {
     }
   };
 
-  if (loading && !thumbData && !cacheData) {
+  if (loading && !cacheData) {
     return <div className="flex items-center gap-2 text-gray-400"><Loader2 className="animate-spin" size={16} /> Loading...</div>;
   }
 
@@ -1050,57 +1056,6 @@ export function DashboardPanel() {
         </div>
       )}
 
-      {/* Thumbnail Stats (existing) */}
-      {thumbData && thumbData.sources?.length > 0 && (
-        <div className="bg-gray-800 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('admin.thumb_title')}</h3>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-gray-400">{t('admin.thumb_total')}</span>
-            <span className="font-mono font-bold text-white">{thumbData.grand_total.toLocaleString()}</span>
-          </div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-green-400">{t('admin.thumb_has_thumb')}</span>
-            <span className="font-mono font-bold text-green-400">{thumbData.grand_has_thumb.toLocaleString()}</span>
-          </div>
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-amber-400">{t('admin.thumb_missing')}</span>
-            <span className="font-mono font-bold text-amber-400">{thumbData.grand_missing.toLocaleString()}</span>
-          </div>
-          <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden flex">
-            <div className="bg-green-500 h-full transition-all" style={{ width: `${thumbData.grand_total > 0 ? (thumbData.grand_has_thumb / thumbData.grand_total * 100) : 0}%` }} />
-            <div className="bg-amber-500 h-full transition-all" style={{ width: `${thumbData.grand_total > 0 ? (thumbData.grand_missing / thumbData.grand_total * 100) : 0}%` }} />
-          </div>
-          <div className="text-right text-[10px] text-gray-500 mt-1">
-            {thumbData.grand_total > 0 ? Math.round(thumbData.grand_has_thumb / thumbData.grand_total * 100) : 0}%
-          </div>
-
-          {/* Per-source breakdown */}
-          <div className="space-y-2 mt-3">
-            {thumbData.sources.map(src => {
-              const pct = src.total > 0 ? Math.round(src.has_thumb / src.total * 100) : 0;
-              return (
-                <div key={src.source} className="bg-gray-900/50 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm font-medium text-gray-300 truncate max-w-[300px]" title={src.source}>
-                      {src.source.startsWith('webdav://') ? src.source.replace('webdav://', '') : src.source}
-                    </span>
-                    <span className="text-xs text-gray-500">{src.total.toLocaleString()} files</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs">
-                    <span className="text-green-400">{src.has_thumb}</span>
-                    <span className="text-gray-600">/</span>
-                    <span className="text-amber-400">{src.missing} {t('admin.thumb_missing')}</span>
-                    <div className="flex-1 bg-gray-700 rounded-full h-1.5 overflow-hidden flex">
-                      <div className="bg-green-500 h-full" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="font-mono text-gray-400 text-[10px]">{pct}%</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1119,14 +1074,33 @@ export function QueuePanel() {
   const [expandedWR, setExpandedWR] = useState(new Set());
   const [wrDetails, setWrDetails] = useState({});
 
+  // IPC/HTTP dual-mode helpers
+  const useIPC = isElectron && window.electron?.queue;
+
+  const fetchWR = useCallback(async (includeCompleted) => {
+    if (useIPC) {
+      const res = await window.electron.queue.listWorkRequests(includeCompleted);
+      return res?.work_requests || [];
+    }
+    return getWorkRequests(includeCompleted);
+  }, [useIPC]);
+
+  const fetchWRDetail = useCallback(async (wrId) => {
+    if (useIPC) {
+      const res = await window.electron.queue.getWorkRequestDetail(wrId);
+      return res?.success !== false ? res : null;
+    }
+    return getWorkRequestDetail(wrId);
+  }, [useIPC]);
+
   const load = useCallback(async () => {
     try {
       const [jobData, thumbData, wrData] = await Promise.all([
-        getJobStats(),
-        getThumbnailStats().catch(() => null),
-        getWorkRequests(showCompleted).catch(() => []),
+        useIPC ? window.electron.queue.getStats() : getJobStats(),
+        useIPC ? Promise.resolve(null) : getThumbnailStats().catch(() => null),
+        fetchWR(showCompleted).catch(() => []),
       ]);
-      setStats(jobData);
+      if (jobData && jobData.success !== false) setStats(jobData);
       if (thumbData && thumbData.success !== false) {
         setThumbStats(thumbData);
       }
@@ -1135,7 +1109,7 @@ export function QueuePanel() {
       console.error('Failed to load queue stats:', e);
     }
     setLoading(false);
-  }, [showCompleted]);
+  }, [showCompleted, useIPC, fetchWR]);
 
   useEffect(() => {
     load();
@@ -1212,7 +1186,7 @@ export function QueuePanel() {
     // Fetch detail (subtasks) if not yet loaded
     if (!wrDetails[wrId]) {
       try {
-        const detail = await getWorkRequestDetail(wrId);
+        const detail = await fetchWRDetail(wrId);
         setWrDetails(prev => ({ ...prev, [wrId]: detail }));
       } catch (e) {
         console.error('Failed to load WR detail:', e);
@@ -1223,9 +1197,9 @@ export function QueuePanel() {
   const handlePauseResume = async (wr) => {
     try {
       if (wr.status === 'paused') {
-        await resumeWorkRequest(wr.id);
+        useIPC ? await window.electron.queue.resumeWorkRequest(wr.id) : await resumeWorkRequest(wr.id);
       } else {
-        await pauseWorkRequest(wr.id);
+        useIPC ? await window.electron.queue.pauseWorkRequest(wr.id) : await pauseWorkRequest(wr.id);
       }
       load();
     } catch (e) {
@@ -1235,7 +1209,7 @@ export function QueuePanel() {
 
   const handleCancelWR = async (wrId) => {
     try {
-      await cancelWorkRequest(wrId);
+      useIPC ? await window.electron.queue.cancelWorkRequest(wrId) : await cancelWorkRequest(wrId);
       load();
     } catch (e) {
       console.error('Cancel WR failed:', e);

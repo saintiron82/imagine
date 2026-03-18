@@ -21,13 +21,20 @@ _db_instance: Optional[SQLiteDB] = None
 security = HTTPBearer(auto_error=False)
 
 # Localhost auto-admin: virtual user returned for tokenless localhost requests.
-_LOCALHOST_ADMIN = {
-    "id": 0,
-    "username": "local",
-    "email": "",
-    "role": "admin",
-    "is_active": True,
-}
+def _get_localhost_admin():
+    """Get localhost admin with real user_id from DB (not hardcoded 0)."""
+    try:
+        db = get_db()
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT id, username FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
+        row = cursor.fetchone()
+        if row:
+            return {"id": row[0], "username": row[1], "email": "", "role": "admin", "is_active": True}
+    except Exception:
+        pass
+    return {"id": 0, "username": "local", "email": "", "role": "admin", "is_active": True}
+
+_LOCALHOST_ADMIN = None  # Lazy-initialized
 
 _LOCALHOST_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
 
@@ -89,7 +96,7 @@ def get_current_user(
         # Localhost auto-admin: no token + localhost = admin
         client_host = request.client.host if request.client else None
         if client_host in _LOCALHOST_HOSTS:
-            return _LOCALHOST_ADMIN
+            return _get_localhost_admin()
         logger.warning("[AUTH] 401 — No Bearer token in request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -103,7 +110,7 @@ def get_current_user(
         # Token exists but invalid/expired — try localhost fallback
         client_host = request.client.host if request.client else None
         if client_host in _LOCALHOST_HOSTS:
-            return _LOCALHOST_ADMIN
+            return _get_localhost_admin()
         logger.warning(f"[AUTH] 401 — Token decode failed (token={token_preview})")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

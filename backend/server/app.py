@@ -148,26 +148,14 @@ async def startup():
     # workers (embedded or external) handle V→VV→MV.
     logger.info("Processing mode: parse_only (tollgate architecture)")
 
-    # Embedded worker auto-start (if enabled in config)
-    try:
-        from backend.utils.config import get_config
-        ew_cfg = get_config()
-        if ew_cfg.get("server.embedded_worker.enabled", False):
-            from backend.server.routers.workers import _start_embedded_worker
-            _start_embedded_worker(app)
-            logger.info("Embedded worker auto-started (config: enabled)")
-    except Exception as e:
-        logger.warning(f"Embedded worker auto-start failed: {e}")
+    # Embedded worker: NEVER auto-start on server boot.
+    # User must log in and explicitly enable via Admin UI.
+    # Config "auto_processing.enabled" is remembered but only applied after login.
+    logger.info("Embedded worker: standby (waiting for user login)")
 
-    # Determine initial processing mode (auto if no workers online + auto_processing enabled)
-    try:
-        from backend.server.routers.workers import _recalculate_server_pools
-        from backend.server.deps import get_db
-        db = get_db()
-        _recalculate_server_pools(app, db)
-        logger.info(f"Initial processing mode: {getattr(app.state.parse_ahead, '_processing_mode', 'unknown') if hasattr(app.state, 'parse_ahead') and app.state.parse_ahead else 'N/A'}")
-    except Exception as e:
-        logger.warning(f"Initial pool recalculation failed: {e}")
+    # ParseAheadPool is always parse_only — no mode recalculation needed
+    from backend.server.queue.manager import set_server_pool_mode
+    set_server_pool_mode("parse_only")
 
     # Heartbeat watchdog: periodically detect dead workers and reclaim their jobs
     try:
@@ -333,7 +321,14 @@ def _cleanup_stale_jobs():
         # Mark all online worker sessions as offline (stale from previous run)
         cursor = db.conn.cursor()
         cursor.execute(
-            """UPDATE worker_sessions SET status = 'offline'
+            """UPDATE worker_sessions
+               SET status = 'offline',
+                   current_phase = NULL,
+                   current_file = NULL,
+                   current_job_id = NULL,
+                   jobs_completed = 0,
+                   jobs_failed = 0,
+                   resources_json = NULL
                WHERE status = 'online'"""
         )
         if cursor.rowcount > 0:
@@ -382,15 +377,23 @@ def _startup_integrity_check():
         if fixed > 0:
             logger.info(f"Startup auto-fix: filled relative_path for {fixed} files")
 
-        # 2. Audit: re-queue incomplete files + cleanup residual jobs
+        # 2. Audit: full repair — re-queue incomplete files, attach to existing WRs
         queue = JobQueueManager(db)
-        result = queue.audit_completed_jobs()
-        logger.info(
-            f"Startup audit: {result['total_files']} files, "
-            f"{result['complete_files']} complete, "
-            f"{result['incomplete_files']} incomplete, "
-            f"{result['repaired_files']} re-queued"
-        )
+        result = queue.audit_completed_jobs(repair=True)
+        incomplete = result['incomplete_files']
+        repaired = result['repaired_files']
+        if repaired > 0:
+            logger.warning(
+                f"Startup audit: {result['total_files']} files, "
+                f"{incomplete} incomplete, {repaired} re-queued"
+            )
+        else:
+            logger.info(
+                f"Startup audit: {result['total_files']} files, "
+                f"{result['complete_files']} complete"
+            )
+        # Store for embedded worker decision
+        app.state.startup_pending_jobs = incomplete
     except Exception as e:
         logger.warning(f"Startup integrity check failed: {e}")
 

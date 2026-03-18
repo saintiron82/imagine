@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare, Globe, Plus, Monitor } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, Trash2, CheckSquare, Globe, Plus, Monitor, PlusSquare, MinusSquare } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { browseFolders } from '../api/admin';
@@ -40,7 +40,7 @@ function aggregateStats(phaseStats, folderPath) {
 
 const isWebDAVPath = (p) => p && p.startsWith('webdav://');
 
-const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, isWebDAV = false, onRemoveRoot, phaseStats, expandToPath }) => {
+const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths = new Set(), onFolderToggle, isRoot = false, isWebDAV = false, onRemoveRoot, onEnqueueFolder, phaseStats, expandToPath }) => {
     const { t } = useLocale();
     const [isOpen, setIsOpen] = useState(isRoot); // Roots start open
     const [children, setChildren] = useState([]);
@@ -127,7 +127,6 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
     };
 
     const handleContextMenu = (e) => {
-        if (!isRoot || !onRemoveRoot) return;
         e.preventDefault();
         e.stopPropagation();
         setContextMenu({ x: e.clientX, y: e.clientY });
@@ -234,6 +233,7 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                             isWebDAV={webdav}
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
+                            onEnqueueFolder={onEnqueueFolder}
                             phaseStats={phaseStats}
                             expandToPath={expandToPath}
                         />
@@ -246,26 +246,42 @@ const TreeNode = ({ path, name, onSelect, currentPath, level = 0, selectedPaths 
                 </div>
             )}
 
-            {/* Right-click context menu for root folders */}
+            {/* Right-click context menu */}
             {contextMenu && (
                 <div
-                    className="fixed z-50 bg-gray-800 border border-gray-600 rounded-md shadow-xl py-1 min-w-[140px]"
+                    className="fixed z-50 bg-gray-800 border border-gray-600 rounded-md shadow-xl py-1 min-w-[160px]"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                 >
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onRemoveRoot(path); setContextMenu(null); }}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-red-400 hover:bg-gray-700 transition-colors"
-                    >
-                        <Trash2 size={14} />
-                        {t('action.remove_folder')}
-                    </button>
+                    {/* Add to queue (all folders) */}
+                    {onEnqueueFolder && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onEnqueueFolder(path, name); setContextMenu(null); }}
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 transition-colors"
+                        >
+                            <PlusSquare size={14} />
+                            {t('action.add_to_queue')}
+                        </button>
+                    )}
+                    {/* Remove root (root folders only) */}
+                    {isRoot && onRemoveRoot && (
+                        <>
+                            {onEnqueueFolder && <div className="border-t border-gray-700 my-0.5" />}
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onRemoveRoot(path); setContextMenu(null); }}
+                                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-red-400 hover:bg-gray-700 transition-colors"
+                            >
+                                <Trash2 size={14} />
+                                {t('action.remove_folder')}
+                            </button>
+                        </>
+                    )}
                 </div>
             )}
         </div>
     );
 };
 
-const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFolderToggle, reloadSignal = 0, expandToPath }) => {
+const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFolderToggle, onEnqueueFolder, reloadSignal = 0, expandToPath }) => {
     const { t } = useLocale();
     const [roots, setRoots] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -480,6 +496,7 @@ const Sidebar = ({ currentPath, onFolderSelect, selectedPaths = new Set(), onFol
                             isRoot={true}
                             isWebDAV={root.isWebDAV}
                             onRemoveRoot={handleRemoveRoot}
+                            onEnqueueFolder={onEnqueueFolder}
                             selectedPaths={selectedPaths}
                             onFolderToggle={onFolderToggle}
                             phaseStats={rootPhaseStats[root.path] || null}

@@ -44,12 +44,10 @@ export function clearTokens() {
   localStorage.removeItem(REFRESH_KEY);
 }
 
-/** Forward refreshed tokens to the embedded worker process (Electron only). */
+/** Forward refreshed tokens (no-op after IPC worker removal). */
 function _syncTokensToWorker(accessToken, refreshToken) {
-  if (typeof window !== 'undefined' && window.electron?.worker?.updateTokens) {
-    window.electron.worker.updateTokens({ accessToken, refreshToken })
-      .catch(() => { /* ignore — worker may not be running */ });
-  }
+  // Previously forwarded tokens to IPC worker process.
+  // Now a no-op — server auto-processing uses its own JWT.
 }
 
 /** Pending refresh promise to avoid concurrent refresh calls */

@@ -41,6 +41,7 @@ class HeartbeatRequest(BaseModel):
     resources: Optional[dict] = None
     throttle_level: Optional[str] = None  # normal/warning/danger/critical
     worker_state: Optional[str] = None    # active/idle/resting
+    phase_counts: Optional[dict] = None  # {"mc": N, "vv": N, "mv": N}
 
 
 class DisconnectRequest(BaseModel):
@@ -53,8 +54,10 @@ class WorkerConfigUpdate(BaseModel):
 
 class AutoProcessingUpdate(BaseModel):
     enabled: Optional[bool] = None
+    mode: Optional[str] = None  # "full" | "parse_vv" | "parse_only"
     rest_after_batch_s: Optional[int] = None
     batch_size: Optional[int] = None
+    verbose_log: Optional[bool] = None
 
 
 class EmbeddedWorkerUpdate(BaseModel):
@@ -90,29 +93,30 @@ def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
 
 
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
-    """Tollgate architecture: server always parse_only, workers do V→VV→MV.
+    """Recalculate server pool state when workers connect/disconnect.
 
-    ParseAheadPool is fixed to parse_only mode (Phase P only, zero GPU).
-    Workers (embedded or external) handle all AI processing.
+    ParseAheadPool is always parse_only (PSD parse + thumbnail).
+    Embedded worker auto-management based on worker availability.
     """
     if not app:
         return
 
-    # ParseAheadPool: always parse_only
-    if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
-        old_mode = getattr(app.state.parse_ahead, "_processing_mode", None)
-        app.state.parse_ahead._processing_mode = "parse_only"
-        if old_mode != "parse_only":
-            app.state.parse_ahead._unload_models()
-            logger.info(f"ParseAheadPool mode set to parse_only (was {old_mode})")
-
-    # Seed demand so ParseAhead keeps parsing even without workers
     cursor = db.conn.cursor()
+
+    # Survey online worker modes (exclude builtin embedded worker)
     cursor.execute(
-        "SELECT COUNT(*) FROM worker_sessions WHERE status = 'online' AND worker_name != ?",
+        """SELECT processing_mode_override FROM worker_sessions
+           WHERE status = 'online' AND worker_name != ?""",
         (BUILTIN_WORKER_NAME,),
     )
-    has_workers = cursor.fetchone()[0] > 0
+    worker_modes = [r[0] or "full" for r in cursor.fetchall()]
+    has_workers = len(worker_modes) > 0
+
+    # Publish mode for stats API
+    from backend.server.queue.manager import set_server_pool_mode
+    set_server_pool_mode("parse_only")
+
+    # Seed demand for ParseAheadPool when workers are active
     if has_workers:
         try:
             from backend.server.queue.base_ahead_pool import BaseAheadPool
@@ -120,7 +124,16 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         except Exception:
             pass
 
-    logger.debug(f"Pool recalculated: parse_only, workers={has_workers}")
+    # Embedded worker control:
+    # - External full workers connected → stop embedded (workers handle everything)
+    from backend.server.embedded_worker import get_status as _ew_get_status
+    ew_running = _ew_get_status().get("running", False)
+
+    if has_workers and all(m == "full" for m in worker_modes) and ew_running:
+        _stop_embedded_worker()
+        logger.info("Embedded worker stopped (full external workers connected)")
+
+    logger.debug(f"Pool recalculated: mode=parse_only, workers={len(worker_modes)}, ew={ew_running}")
 
 
 # ── Builtin worker virtual session ──────────────────────────
@@ -334,6 +347,8 @@ def worker_heartbeat(
         resources_data["throttle_level"] = req.throttle_level
     if req.worker_state:
         resources_data["worker_state"] = req.worker_state
+    if req.phase_counts:
+        resources_data["phase_counts"] = req.phase_counts
     cursor.execute(
         """UPDATE worker_sessions
            SET last_heartbeat = ?,
@@ -405,7 +420,17 @@ def worker_heartbeat(
         processing_mode = "full"
     else:
         processing_mode = mode_override or "full"
-    effective_batch = batch_override or batch_capacity
+    # For embedded worker: read live batch_size from config (Admin UI changes)
+    cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
+    wn_row = cursor.fetchone()
+    if wn_row and wn_row[0] == BUILTIN_WORKER_NAME:
+        try:
+            from backend.utils.config import get_config
+            effective_batch = get_config().get("server.auto_processing.batch_size", 5)
+        except Exception:
+            effective_batch = batch_override or batch_capacity
+    else:
+        effective_batch = batch_override or batch_capacity
 
     # Resource-aware batch_hint: throttle down based on worker resource pressure
     throttle = resources_data.get("throttle_level", "normal") if resources_data else "normal"
@@ -742,6 +767,7 @@ def admin_get_auto_processing(
         "enabled": cfg.get("server.auto_processing.enabled", True),
         "rest_after_batch_s": cfg.get("server.auto_processing.rest_after_batch_s", 30),
         "batch_size": cfg.get("server.auto_processing.batch_size", 5),
+        "verbose_log": cfg.get("worker.verbose_log", False),
     }
 
 
@@ -757,26 +783,46 @@ def admin_update_auto_processing(
     cfg = get_config()
 
     if req.enabled is not None:
-        cfg._set_dotted("server.auto_processing.enabled", req.enabled)
+        cfg.save_user_setting("server.auto_processing.enabled", req.enabled)
+    if req.mode is not None and req.mode in ("full", "parse_vv", "parse_only"):
+        cfg.save_user_setting("server.auto_processing.mode", req.mode)
     if req.rest_after_batch_s is not None:
-        cfg._set_dotted("server.auto_processing.rest_after_batch_s", req.rest_after_batch_s)
+        cfg.save_user_setting("server.auto_processing.rest_after_batch_s", req.rest_after_batch_s)
     if req.batch_size is not None:
-        cfg._set_dotted("server.auto_processing.batch_size", req.batch_size)
+        cfg.save_user_setting("server.auto_processing.batch_size", req.batch_size)
+    if req.verbose_log is not None:
+        cfg.save_user_setting("worker.verbose_log", req.verbose_log)
+        # Apply to running embedded worker immediately
+        try:
+            import backend.server.embedded_worker as ew_module
+            if ew_module._worker_daemon:
+                ew_module._worker_daemon.verbose_log = req.verbose_log
+        except Exception:
+            pass
 
-    # Recalculate pools so mode change takes effect immediately
-    try:
-        _recalculate_server_pools(request.app, db)
-    except Exception as e:
-        logger.warning(f"Pool recalculation on auto-processing update failed: {e}")
+    # ParseAheadPool is always parse_only — no mode switching needed
+    if req.mode is not None:
+        from backend.server.queue.manager import set_server_pool_mode
+        set_server_pool_mode(req.mode)
 
-    logger.info(f"Admin updated auto_processing: enabled={req.enabled}, rest={req.rest_after_batch_s}s, batch={req.batch_size}")
+    # Start/stop embedded worker based on auto_processing toggle
+    if req.enabled is not None:
+        if req.enabled:
+            _start_embedded_worker(request.app)
+        else:
+            _stop_embedded_worker()
+
+    logger.info(f"Admin updated auto_processing: enabled={req.enabled}, mode={req.mode}, rest={req.rest_after_batch_s}s")
     return {"ok": True}
 
 
 # ── Embedded Worker ──────────────────────────────────────────
 
 def _start_embedded_worker(app):
-    """Start the embedded worker with a self-issued JWT token."""
+    """Start the embedded worker with a self-issued JWT token.
+
+    Audit is already done once at server startup (app.py).
+    """
     from backend.server.auth.jwt import create_access_token
     from backend.server.embedded_worker import start_worker, get_status
 
@@ -784,8 +830,20 @@ def _start_embedded_worker(app):
         return
 
     port = getattr(app.state, "port", 8000)
+
+    # Find actual admin user_id from DB (user_id=0 doesn't exist)
+    try:
+        from backend.server.deps import get_db
+        _db = get_db()
+        _cursor = _db.conn.cursor()
+        _cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
+        _row = _cursor.fetchone()
+        admin_uid = _row[0] if _row else 1
+    except Exception:
+        admin_uid = 1
+
     token = create_access_token(
-        user_id=0, username="__embedded_worker__", role="admin",
+        user_id=admin_uid, username="__embedded_worker__", role="admin",
         expires_minutes=60 * 24 * 365,  # 1 year — internal use only
     )
     result = start_worker(f"http://127.0.0.1:{port}", token)
@@ -815,7 +873,7 @@ def admin_get_embedded_worker(
     cfg = get_config()
     status = get_status()
     return {
-        "enabled": cfg.get("server.embedded_worker.enabled", False),
+        "enabled": cfg.get("server.auto_processing.enabled", False),
         **status,
     }
 

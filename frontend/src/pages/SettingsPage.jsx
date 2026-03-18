@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Settings, Cpu, Server, Database, Wrench, Globe, Palette, LayoutGrid } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
-import { isElectron } from '../api/client';
+import { isElectron, apiClient } from '../api/client';
 import SettingSection from '../components/settings/SettingSection';
 import SettingRow from '../components/settings/SettingRow';
 import ToggleSwitch from '../components/settings/ToggleSwitch';
@@ -88,7 +88,16 @@ const SettingsPage = ({ onScanFolder, isBusy }) => {
 
     const handleToggle = async (key, value, setter, needsRestart = false) => {
         setter(value);
-        await updateSetting(key, value);
+        // auto_processing.enabled → use PATCH API to also start/stop embedded worker
+        if (key === 'server.auto_processing.enabled') {
+            try {
+                await apiClient.patch('/api/v1/admin/workers/auto-processing', { enabled: value });
+            } catch { /* fallback: save to config directly */
+                await updateSetting(key, value);
+            }
+        } else {
+            await updateSetting(key, value);
+        }
         if (needsRestart) markRestart(key);
     };
 

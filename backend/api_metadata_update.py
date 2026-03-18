@@ -6,8 +6,14 @@ Reads JSON from stdin and updates the database.
 
 import sys
 import json
-import sqlite3
 import os
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.db.sqlite_client import SQLiteDB
+
 
 def update_user_metadata(file_path: str, updates: dict):
     """
@@ -20,11 +26,9 @@ def update_user_metadata(file_path: str, updates: dict):
     Returns:
         Success status and message
     """
-    db_path = os.getenv('SQLITE_DB_PATH', 'imageparser.db')
-
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+        db = SQLiteDB()
+        cursor = db.conn.cursor()
 
         # Build UPDATE query dynamically
         set_clauses = []
@@ -61,13 +65,19 @@ def update_user_metadata(file_path: str, updates: dict):
         params.append(file_path)
         query = f"UPDATE files SET {', '.join(set_clauses)} WHERE file_path = ?"
         cursor.execute(query, params)
-        conn.commit()
 
         if cursor.rowcount == 0:
-            conn.close()
+            db.conn.rollback()
+            db.close()
             return {"success": False, "error": "File not found in database"}
 
-        conn.close()
+        # Refresh FTS index after update (trigger inserts empty values)
+        row = cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,)).fetchone()
+        if row:
+            db._refresh_fts_row(cursor, row[0])
+
+        db.conn.commit()
+        db.close()
         return {"success": True, "message": "Metadata updated"}
 
     except Exception as e:

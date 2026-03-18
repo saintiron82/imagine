@@ -1,14 +1,8 @@
 """
-Parse-ahead pool — server-side Phase P pre-parser (tollgate architecture).
+Parse-ahead pool — server-side Phase P pre-parser.
 
-Monitors connected workers' total capacity and pre-parses pending jobs
-so that workers receive thumbnails (~200KB) instead of raw files (~500MB).
-
-The pool runs as a background daemon thread, continuously maintaining
-a buffer of pre-parsed jobs proportional to worker demand.
-
-Mode: parse_only — Server does Phase P only (zero GPU models loaded).
-All GPU work (V+VV+MV) is delegated to workers running in full mode.
+PSD 파싱 + 썸네일 생성만 담당. AI 모델 없음.
+워커는 pre-parsed 결과(썸네일 + 메타데이터)를 받아 AI 처리(MC/VV/MV)만 수행.
 """
 
 import json
@@ -28,72 +22,67 @@ logger = logging.getLogger(__name__)
 
 
 class ParseAheadPool(BaseAheadPool):
-    """Server-side pre-parser that runs Phase P ahead of worker demand.
+    """Server-side pre-parser: PSD 파싱 + 썸네일 생성만 담당.
 
-    Tollgate architecture: parse_only mode fixed.
-    Server does Phase P only (zero GPU), workers do V+VV+MV.
+    AI 모델 없음. 워커가 AI 처리(MC/VV/MV) 전담.
     """
 
     def __init__(self, db):
         super().__init__(db)
-        self._processing_mode = "parse_only"  # Fixed: tollgate architecture
-        self._vv_encoder = None  # Used by _process_backfill_batch (DINOv2)
-        self._structure_encoder = None  # Used by _process_backfill_batch (DINOv2)
+        self._processing_mode = "parse_only"  # Fixed: parse + thumbnail only
+        # Backfill (DINOv2) removed — AI models are worker-only
         self._last_retry_reset = 0.0  # Timestamp of last parse_status='failed' reset
-        logger.info("ParseAheadPool initialized (parse_only mode — tollgate architecture)")
-
-        # Auto-audit on startup: repair completed jobs with missing data
-        self._startup_integrity_audit()
-
-    def _startup_integrity_audit(self):
-        """Run integrity audit on server startup to repair incomplete files."""
-        try:
-            from backend.server.queue.manager import JobQueueManager
-            mgr = JobQueueManager(self.db)
-            result = mgr.audit_completed_jobs()
-            if result["repaired_files"] > 0:
-                logger.warning(
-                    f"Startup audit: {result['total_files']} files, "
-                    f"{result['repaired_files']} incomplete → repaired"
-                )
-            else:
-                logger.info(f"Startup audit: {result['total_files']} files, all complete")
-        except Exception as e:
-            logger.warning(f"Startup integrity audit failed (non-fatal): {e}")
+        logger.info("ParseAheadPool initialized (parse + thumbnail only)")
 
     def _unload_models(self):
-        """Unload VV and Structure encoders if loaded (backfill mode)."""
-        if self._vv_encoder is not None:
-            try:
-                self._vv_encoder.unload()
-                logger.info("ParseAheadPool: VV encoder unloaded")
-            except Exception as e:
-                logger.warning(f"ParseAheadPool: VV encoder unload error: {e}")
-            self._vv_encoder = None
-        if self._structure_encoder is not None:
-            try:
-                self._structure_encoder.unload()
-                logger.info("ParseAheadPool: DINOv2 Structure encoder unloaded")
-            except Exception as e:
-                logger.warning(f"ParseAheadPool: DINOv2 Structure encoder unload error: {e}")
-            self._structure_encoder = None
+        """No AI models to unload — parse + thumbnail only."""
+        pass
 
     # ── Buffer management ────────────────────────────────────────
 
     def _calculate_buffer_target(self) -> int:
         """Calculate how many pre-parsed jobs to maintain.
 
-        Demand-driven: uses actual worker claim counts as the prediction.
-        Each worker's last claim count is recorded by JobQueueManager,
-        and we sum them to get the total expected demand.
-
-        Returns:
-            Sum of recent per-worker claim counts, or 0 if no demand.
+        ParseAheadPool runs independently — always parses downloaded files.
+        Each stage (download → parse → worker) runs at its own pace with
+        buffers in between, not synchronized to each other.
         """
-        if not self.has_recent_demand():
-            return 0
+        # Always parse downloaded files (file_ready=1, not yet parsed)
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """SELECT COUNT(*) FROM job_queue
+                   WHERE status = 'pending' AND file_ready = 1
+                   AND (parse_status IS NULL OR parse_status = 'pending')"""
+            )
+            unparsed_ready = cursor.fetchone()[0]
+            if unparsed_ready > 0:
+                return unparsed_ready  # Parse everything that's downloaded
+        except Exception:
+            pass
 
-        return self.get_total_demand()
+        # Worker demand: maintain buffer for workers to claim
+        if self.has_recent_demand():
+            return max(self.get_total_demand(), 10)
+
+        # Workers online but not claiming yet: keep minimum buffer
+        try:
+            from backend.server.embedded_worker import get_status
+            if get_status().get("running"):
+                return 10
+        except Exception:
+            pass
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM worker_sessions WHERE status = 'online'"
+            )
+            if cursor.fetchone()[0] > 0:
+                return 10
+        except Exception:
+            pass
+
+        return 0
 
     def _run_pre_parse_buffer(self) -> bool:
         """Run one cycle of pre-parse buffer filling.
@@ -105,28 +94,26 @@ class ParseAheadPool(BaseAheadPool):
         """
         target = self._calculate_buffer_target()
         if target <= 0:
-            self._process_backfill_batch()
             return False
 
         cursor = self.db.conn.cursor()
         cursor.execute(
             "SELECT COUNT(*) FROM job_queue "
-            "WHERE parse_status = 'parsed' AND status = 'pending'"
+            "WHERE parse_status = 'parsed' AND status = 'pending' AND file_ready = 1"
         )
         current_parsed = cursor.fetchone()[0]
         deficit = target - current_parsed
 
         if deficit <= 0:
-            self._process_backfill_batch()
             return False
 
-        # Select jobs to pre-parse (include WebDAV files with temp downloads)
+        # Select jobs to pre-parse: must be file_ready=1
+        # (local files are always ready, WebDAV files need download first)
         cursor.execute(
             """SELECT id, file_id, file_path FROM job_queue
                WHERE status = 'pending'
+                 AND file_ready = 1
                  AND (parse_status IS NULL OR parse_status = 'pending')
-                 AND (file_path NOT LIKE 'webdav://%'
-                      OR parsed_metadata LIKE '%temp_local_path%')
                ORDER BY priority DESC, created_at ASC
                LIMIT ?""",
             (deficit,),
@@ -134,22 +121,23 @@ class ParseAheadPool(BaseAheadPool):
         jobs_to_parse = cursor.fetchall()
 
         if not jobs_to_parse:
-            # No unparsed jobs — check if all are parse-failed (deadlock).
-            # Reset parse_status='failed' back to NULL every 60s for retry.
+            # No unparsed jobs — retry parse-failed jobs that are actually downloadable.
+            # Only retry if file_ready=1 (temp file exists) and retry_count < 3.
             now = time.time()
             if now - self._last_retry_reset > 60:
                 cursor.execute(
-                    """UPDATE job_queue SET parse_status = NULL
-                       WHERE status = 'pending' AND parse_status = 'failed'"""
+                    """UPDATE job_queue SET parse_status = NULL, retry_count = COALESCE(retry_count, 0) + 1
+                       WHERE status = 'pending' AND parse_status = 'failed'
+                       AND file_ready = 1
+                       AND COALESCE(retry_count, 0) < 3"""
                 )
                 if cursor.rowcount > 0:
                     logger.info(
                         f"ParseAhead: reset {cursor.rowcount} parse-failed "
-                        f"jobs for retry"
+                        f"jobs for retry (max 3 attempts)"
                     )
-                self.db.conn.commit()  # Always commit to release WAL write lock
+                self.db.conn.commit()
                 self._last_retry_reset = now
-            self._process_backfill_batch()
             return False
 
         parsed_count = 0
@@ -215,41 +203,23 @@ class ParseAheadPool(BaseAheadPool):
         return parsed_count > 0
 
     def _loop(self):
-        """Main loop: Phase P only (parse_only mode fixed).
-
-        Tollgate architecture: server pre-parses pending jobs (Phase P)
-        and workers handle AI processing (V→VV→MV).
-        """
-        logger.info("ParseAheadPool loop started (parse_only mode)")
+        """Main loop: Phase P only (PSD 파싱 + 썸네일 생성)."""
+        logger.info("ParseAheadPool loop started (parse + thumbnail only)")
         poll_interval_s = self._get_config_value("server.parse_ahead.poll_interval_s", 2)
-
-        # Auto-queue backfill jobs on startup
-        try:
-            from backend.server.queue.manager import JobQueueManager
-            mgr = JobQueueManager(self.db)
-            backfill_counts = mgr.queue_backfill()
-            total = sum(backfill_counts.values())
-            if total > 0:
-                logger.info(f"ParseAheadPool: auto-queued {total} backfill jobs: {backfill_counts}")
-        except Exception as e:
-            logger.warning(f"ParseAheadPool: backfill queue scan failed: {e}")
 
         try:
             while self._running:
                 try:
-                    # Periodic diagnostics
+                    # Periodic diagnostics (only when active)
                     if not hasattr(self, '_diag_counter'):
                         self._diag_counter = 0
                     self._diag_counter += 1
-                    if self._diag_counter % 15 == 1:  # Every ~30s
+                    if self._diag_counter % 15 == 1 and self.has_recent_demand():
                         target = self._calculate_buffer_target()
-                        demand = self.has_recent_demand()
-                        logger.info(
-                            f"[PA-DIAG] mode=parse_only "
-                            f"demand={demand} target={target}"
-                        )
+                        logger.info(f"[PA-DIAG] target={target}")
 
                     self._run_pre_parse_buffer()
+
                     time.sleep(poll_interval_s)
 
                 except Exception as e:
@@ -461,104 +431,7 @@ class ParseAheadPool(BaseAheadPool):
         logger.info(f"ParseAhead: job {job_id} pre-parsed OK ({file_p.name})")
         return True
 
-    def _process_backfill_batch(self, batch_size: int = 8) -> int:
-        """Process queued backfill jobs (DINOv2 structure vector only).
-
-        Picks up jobs with parse_status='backfill', generates the missing
-        structure vector, and marks them completed. Runs during idle time
-        without interfering with normal parsing.
-
-        Returns:
-            Number of jobs processed.
-        """
-        cursor = self.db.conn.cursor()
-        cursor.execute(
-            """SELECT id, file_id, file_path FROM job_queue
-               WHERE status = 'pending' AND parse_status = 'backfill'
-               ORDER BY created_at ASC
-               LIMIT ?""",
-            (batch_size,),
-        )
-        jobs = cursor.fetchall()
-        if not jobs:
-            return 0
-
-        # Lazy load DINOv2
-        if self._structure_encoder is None:
-            from backend.vector.dinov2_encoder import DinoV2Encoder
-            self._structure_encoder = DinoV2Encoder()
-            logger.info("ParseAheadPool: DINOv2 loaded for structure backfill")
-
-        from PIL import Image
-
-        processed = 0
-        for job_id, file_id, file_path in jobs:
-            if not self._running:
-                break
-
-            # Atomically claim
-            cursor.execute(
-                "UPDATE job_queue SET status = 'processing' WHERE id = ? AND status = 'pending'",
-                (job_id,),
-            )
-            self.db.conn.commit()
-            if cursor.rowcount == 0:
-                continue
-
-            # Find best image source (thumbnail preferred)
-            cursor.execute(
-                "SELECT thumbnail_url FROM files WHERE id = ?", (file_id,)
-            )
-            row = cursor.fetchone()
-            thumb_url = row[0] if row else None
-
-            img_source = None
-            if thumb_url:
-                p = Path(thumb_url)
-                if p.exists():
-                    img_source = p
-            if img_source is None:
-                p = Path(file_path)
-                if p.exists():
-                    img_source = p
-
-            now = _utcnow_sql()
-            if img_source is None:
-                logger.warning(f"Backfill: no image for job {job_id} (file_id={file_id}), marking failed")
-                cursor.execute(
-                    "UPDATE files SET processing_status = 'failed', processing_error = 'No image for backfill' WHERE id = ?",
-                    (file_id,),
-                )
-                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
-                self.db.conn.commit()
-                continue
-
-            try:
-                img = Image.open(str(img_source)).convert("RGB")
-                try:
-                    structure_vec = self._structure_encoder.encode_image(img)
-                finally:
-                    img.close()
-                self.db.upsert_vectors(file_id, structure_vec=structure_vec)
-                # Complete — log and DELETE
-                cursor.execute(
-                    "INSERT INTO job_completions (file_id) VALUES (?)",
-                    (file_id,),
-                )
-                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
-                processed += 1
-            except Exception as e:
-                logger.warning(f"Backfill: DINOv2 failed for job {job_id}: {e}")
-                cursor.execute(
-                    "UPDATE files SET processing_status = 'failed', processing_error = ? WHERE id = ?",
-                    (str(e), file_id),
-                )
-                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
-            self.db.conn.commit()
-
-        if processed > 0:
-            logger.info(f"Backfill: completed {processed} structure vector jobs")
-        return processed
+    # _process_backfill_batch removed — DINOv2 is an AI model, belongs to worker
 
     def _get_thumbnail_dir(self) -> Path:
         """Get server thumbnail directory (same logic as upload.py)."""

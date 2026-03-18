@@ -56,13 +56,120 @@ def _infer_error_code(error_message: str) -> str | None:
 
 
 def get_processing_mode() -> str:
-    """Get effective processing mode.
+    """Get effective processing mode for worker claim logic.
 
     Tollgate architecture: server always does Phase P only (parse_only).
     AI processing (V→VV→MV) is handled by workers (embedded or external).
-    Mode is fixed to parse_only (tollgate architecture).
     """
     return "parse_only"
+
+
+_server_pool_mode = "parse_only"
+
+def set_server_pool_mode(mode: str):
+    """Set the current server pool mode (called by _recalculate_server_pools)."""
+    global _server_pool_mode
+    _server_pool_mode = mode
+
+def _get_actual_server_mode() -> str:
+    """Get the actual server processing mode.
+
+    Priority:
+    1. Embedded worker running → "full" (server handles all phases)
+    2. ParseAheadPool mode from _recalculate_server_pools
+    3. Config-based inference (for IPC subprocess)
+    """
+    # Server auto-processing running = full pipeline
+    ew = _get_embedded_worker_status()
+    if ew.get("running"):
+        return "full"
+
+    if _server_pool_mode != "parse_only":
+        return _server_pool_mode
+
+    # Fallback: config-based (IPC subprocess)
+    try:
+        from backend.utils.config import get_config
+        if get_config().get("server.auto_processing.enabled", False):
+            return "full"
+    except Exception:
+        pass
+    return "parse_only"
+
+
+def _get_embedded_worker_status() -> dict:
+    """Get embedded worker status — live in-process state first, DB fallback.
+
+    Priority: in-process daemon > DB session (heartbeat is 30s delayed).
+    """
+    result = {
+        "running": False,
+        "jobs_completed": 0,
+        "current_phase": None,
+        "current_file": None,
+        "phase_counts": None,
+        "batch_capacity": 0,
+        "throughput": 0.0,
+    }
+
+    # 1. In-process state (real-time, no heartbeat delay)
+    try:
+        import backend.server.embedded_worker as ew_module  # module ref, not value copy
+        ew = ew_module.get_status()
+        if ew.get("running"):
+            result["running"] = True
+            result["jobs_completed"] = ew.get("jobs_completed", 0)
+            daemon = ew_module._worker_daemon  # always current (module attribute)
+            if daemon:
+                result["current_phase"] = getattr(daemon, '_current_phase', None)
+                result["current_file"] = getattr(daemon, '_current_file', None)
+                result["batch_capacity"] = getattr(daemon, 'batch_capacity', 5)
+                result["throughput"] = getattr(daemon, '_batch_throughput', 0.0)
+                pc = getattr(daemon, '_phase_counts', None)
+                if pc:
+                    result["phase_counts"] = dict(pc)
+            return result  # Live data found — skip DB (which is stale)
+    except Exception:
+        pass
+
+    # 2. DB fallback (IPC subprocess or in-process import failed)
+    try:
+        from backend.db.sqlite_client import SQLiteDB
+        db = SQLiteDB()
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """SELECT status, current_phase, current_file, jobs_completed, resources_json
+               FROM worker_sessions
+               WHERE worker_name = '__builtin__'
+               ORDER BY id DESC LIMIT 1"""
+        )
+        row = cursor.fetchone()
+        if row:
+            if row[0] == 'online':
+                result["running"] = True
+                result["current_phase"] = row[1]
+                result["current_file"] = row[2]
+            if row[3] and row[3] > result["jobs_completed"]:
+                result["jobs_completed"] = row[3]
+            if row[4]:
+                try:
+                    resources = json.loads(row[4])
+                    result["phase_counts"] = resources.get("phase_counts")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        db.close()
+    except Exception:
+        pass
+
+    # Always include configured batch_size (even when worker is offline)
+    if result["batch_capacity"] == 0:
+        try:
+            from backend.utils.config import get_config
+            result["batch_capacity"] = get_config().get("server.auto_processing.batch_size", 5)
+        except Exception:
+            result["batch_capacity"] = 5
+
+    return result
 
 
 def _utcnow_sql() -> str:
@@ -438,12 +545,12 @@ class JobQueueManager:
         return claimed
 
     def update_progress(self, job_id: int, user_id: int, phase: str) -> bool:
-        """Update phase completion for a job."""
+        """Update phase completion for a job + worker session current_phase."""
         cursor = self.db.conn.cursor()
 
-        # Verify ownership
+        # Verify ownership and get file_path for worker session update
         cursor.execute(
-            "SELECT phase_completed FROM job_queue WHERE id = ? AND assigned_to = ?",
+            "SELECT phase_completed, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
             (job_id, user_id)
         )
         row = cursor.fetchone()
@@ -451,6 +558,7 @@ class JobQueueManager:
             return False
 
         phases = json.loads(row[0])
+        file_path = row[1]
         if phase in phases:
             phases[phase] = True
 
@@ -461,6 +569,17 @@ class JobQueueManager:
                WHERE id = ?""",
             (json.dumps(phases), now, job_id)
         )
+
+        # Update worker_sessions with current phase + file (real-time, not just heartbeat)
+        import os
+        file_name = os.path.basename(file_path) if file_path else None
+        cursor.execute(
+            """UPDATE worker_sessions
+               SET current_phase = ?, current_file = ?, current_job_id = ?
+               WHERE user_id = ? AND status = 'online'""",
+            (phase, file_name, job_id, user_id)
+        )
+
         self.db.conn.commit()
         return True
 
@@ -959,7 +1078,7 @@ class JobQueueManager:
         # Phase-level progress counts — deferred to file-centric block below
         phase_stats = {}
 
-        # Parse-ahead stats
+        # Parse-ahead stats + buffer phase breakdown
         parse_ahead_stats = {}
         try:
             cursor.execute("""
@@ -968,10 +1087,35 @@ class JobQueueManager:
                 GROUP BY parse_status
             """)
             pa_counts = dict(cursor.fetchall())
+            parsed_count = pa_counts.get("parsed", 0)
+
+            # Buffer breakdown: among parsed pending jobs, how many need each phase?
+            buffer_need_mc = 0
+            buffer_need_vv = 0
+            buffer_need_mv = 0
+            if parsed_count > 0:
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') IS NULL
+                                          OR json_extract(phase_completed, '$.vision') = 0),
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                                         AND (json_extract(phase_completed, '$.embed') IS NULL
+                                              OR json_extract(phase_completed, '$.embed') = 0))
+                    FROM job_queue
+                    WHERE status = 'pending' AND parse_status = 'parsed'
+                """)
+                brow = cursor.fetchone()
+                buffer_need_mc = brow[0] or 0
+                buffer_need_vv = brow[1] or 0  # vision done but embed not done
+                buffer_need_mv = buffer_need_vv  # VV and MV are paired
+
             parse_ahead_stats = {
-                "parse_ahead_parsed": pa_counts.get("parsed", 0),
+                "parse_ahead_parsed": parsed_count,
                 "parse_ahead_parsing": pa_counts.get("parsing", 0),
                 "parse_ahead_failed": pa_counts.get("failed", 0),
+                "buffer_need_mc": buffer_need_mc,
+                "buffer_need_vv": buffer_need_vv,
+                "buffer_need_mv": buffer_need_mv,
             }
         except Exception:
             pass
@@ -1062,15 +1206,22 @@ class JobQueueManager:
 
         self.db.conn.commit()  # commit the pruning DELETE above
 
+        # Job-queue-based counts (current session work)
+        queue_completed = status_counts.get("completed", 0)
+        queue_failed = status_counts.get("failed", 0)
+        queue_total = pending + assigned + processing + queue_completed + queue_failed
+
         return {
-            "total": total_files,
+            "total": queue_total,
             "total_files": total_files,
             "complete_files": complete_files,
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": complete_files,  # files-based: fully processed
-            "failed": failed_files,       # files-based: permanently failed
+            "completed": queue_completed,  # queue-based: current session completed jobs
+            "failed": queue_failed,        # queue-based: current session failed jobs
+            "db_completed": complete_files, # files-based: total DB inventory (for reference)
+            "db_failed": failed_files,      # files-based: total DB failures
             "throughput": throughput,
             "recent_1min": recent_1min,
             "recent_5min": recent_5min,
@@ -1079,6 +1230,8 @@ class JobQueueManager:
             **parse_ahead_stats,
             **file_ready_stats,
             "download_buffer": download_buffer,
+            "server_mode": _get_actual_server_mode(),
+            "embedded_worker": _get_embedded_worker_status(),
         }
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
@@ -1268,8 +1421,12 @@ class JobQueueManager:
             logger.info(f"Force-retried {count} permanently failed files from scratch")
         return count
 
-    def audit_completed_jobs(self) -> Dict[str, Any]:
+    def audit_completed_jobs(self, repair: bool = True) -> Dict[str, Any]:
         """Full data integrity audit — Recovery Factory.
+
+        Args:
+            repair: If True, create Recovery WRs for incomplete files (full audit).
+                    If False, scan and report only — no WR creation (startup mode).
 
         2-pass design:
 
@@ -1277,15 +1434,16 @@ class JobQueueManager:
           - Complete (mc+vv+mv) → OK, delete any residual jobs
           - Permanently failed (processing_status='failed') → SKIP (count only)
           - Thumbnail file missing → reset thumbnail_url, mark for re-parse
-          - Incomplete + no pending job → collect for Recovery WR
+          - Incomplete + no pending job → collect for Recovery WR (if repair=True)
           - Incomplete + pending job exists → update phase_completed
 
         Pass 2: Unmatched job cleanup
           - Jobs with file_id not in files → DELETE
 
-        Recovery WR creation:
-          - Incomplete files without jobs are grouped by parent folder
-          - Each group becomes a Recovery WR with [Recovery] prefix
+        Recovery file handling (repair=True only):
+          - Incomplete files are matched to existing WRs by source_path prefix
+          - Matched files are attached as subtasks under the original WR
+          - Unmatched files get a new [Recovery] WR grouped by parent folder
 
         Returns file-centric results.
         """
@@ -1402,47 +1560,48 @@ class JobQueueManager:
                     (actual_phases, parsed_metadata, existing_job[0])
                 )
             else:
-                # No job — collect for Recovery WR
-                folder_path = str(_Path(file_path).parent) if file_path else "unknown"
-                recovery_files[folder_path].append(
-                    (file_id, file_path, actual_phases, parsed_metadata, missing,
-                     has_thumbnail)
-                )
+                # No job — collect for Recovery WR (only if repair mode)
+                if repair:
+                    folder_path = str(_Path(file_path).parent) if file_path else "unknown"
+                    recovery_files[folder_path].append(
+                        (file_id, file_path, actual_phases, parsed_metadata, missing,
+                         has_thumbnail)
+                    )
 
-        # ── Create Recovery WRs from collected files ──
+        # ── Attach recovery files to existing WRs or create new ones ──
         recovery_wrs_created = 0
-        if recovery_files:
+        recovery_attached = 0
+        if repair and recovery_files:
+            # Build lookup: existing WR source_paths (longest first for best match)
+            existing_wrs = cursor.execute(
+                "SELECT id, source_path FROM work_requests WHERE status != 'cancelled' AND source_path IS NOT NULL"
+            ).fetchall()
+            # Sort by source_path length descending → most specific match first
+            existing_wrs.sort(key=lambda x: len(x[1] or ''), reverse=True)
+
+            # Classify recovery files: attach to existing WR or new Recovery WR
+            matched = defaultdict(lambda: defaultdict(list))  # {wr_id: {folder_path: [files]}}
+            unmatched = defaultdict(list)                      # {folder_path: [files]}
+
             for folder_path, files in recovery_files.items():
-                folder_name = _Path(folder_path).name or "local"
-                file_groups = {folder_path: [(f[0], f[1]) for f in files]}
+                parent_wr_id = None
+                for wr_id_candidate, wr_source in existing_wrs:
+                    if wr_source and folder_path.startswith(wr_source):
+                        parent_wr_id = wr_id_candidate
+                        break
+                if parent_wr_id:
+                    matched[parent_wr_id][folder_path].extend(files)
+                else:
+                    unmatched[folder_path].extend(files)
 
-                # Create Recovery WR
-                sort_order = self._next_sort_order(cursor)
-                total = len(files)
-                cursor.execute(
-                    """INSERT INTO work_requests (name, source_path, total_files, sort_order)
-                       VALUES (?, ?, ?, ?)""",
-                    (f"[Recovery] {folder_name}", folder_path, total, sort_order)
-                )
-                wr_id = cursor.lastrowid
-
-                # Create subtask
-                cursor.execute(
-                    """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
-                       VALUES (?, ?, ?, ?)""",
-                    (wr_id, folder_path, folder_name, total)
-                )
-                st_id = cursor.lastrowid
-
-                # Create jobs
+            # --- Helper: create jobs for a list of files under a WR/subtask ---
+            def _create_recovery_jobs(wr_id, st_id, files):
+                created = 0
                 for (file_id, file_path, actual_phases, parsed_metadata,
                      missing, has_thumbnail) in files:
                     is_webdav = file_path.startswith("webdav://") if file_path else False
-                    # If thumbnail missing, need re-parse → parse_status=NULL
-                    # If thumbnail exists, parse done → parse_status='parsed'
                     parse_status = 'parsed' if has_thumbnail else None
                     audit_file_ready = 0 if (is_webdav and not has_thumbnail) else 1
-
                     try:
                         cursor.execute(
                             """INSERT INTO job_queue
@@ -1454,15 +1613,13 @@ class JobQueueManager:
                              parsed_metadata, audit_file_ready, wr_id, st_id)
                         )
                         if cursor.rowcount > 0:
-                            repaired_files += 1
+                            created += 1
                             details.append({
                                 "file_id": file_id,
                                 "file_path": file_path,
                                 "missing": missing,
-                                "status": "recovery_wr",
+                                "status": "recovery_attached" if wr_id in matched else "recovery_wr",
                             })
-
-                            # Request re-download for WebDAV files needing re-parse
                             if is_webdav and not has_thumbnail:
                                 try:
                                     pool = _get_download_pool()
@@ -1472,8 +1629,86 @@ class JobQueueManager:
                                     pass
                     except Exception as e:
                         logger.warning(f"Audit: failed to create job for file_id={file_id}: {e}")
+                return created
 
-                # Adjust WR total if some jobs were skipped
+            # --- Attach to existing WRs ---
+            for wr_id, folder_groups in matched.items():
+                wr_name = cursor.execute(
+                    "SELECT name FROM work_requests WHERE id = ?", (wr_id,)
+                ).fetchone()[0]
+                wr_jobs_added = 0
+
+                for folder_path, files in folder_groups.items():
+                    folder_name = _Path(folder_path).name or "recovery"
+
+                    # Find or create subtask under this WR
+                    existing_st = cursor.execute(
+                        "SELECT id FROM work_subtasks WHERE work_request_id = ? AND folder_path = ?",
+                        (wr_id, folder_path)
+                    ).fetchone()
+
+                    if existing_st:
+                        st_id = existing_st[0]
+                    else:
+                        cursor.execute(
+                            """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
+                               VALUES (?, ?, ?, 0)""",
+                            (wr_id, folder_path, folder_name)
+                        )
+                        st_id = cursor.lastrowid
+
+                    created = _create_recovery_jobs(wr_id, st_id, files)
+                    wr_jobs_added += created
+                    repaired_files += created
+
+                    # Update subtask total
+                    actual_st_jobs = cursor.execute(
+                        "SELECT COUNT(*) FROM job_queue WHERE work_subtask_id = ? AND status IN ('pending','assigned','processing')",
+                        (st_id,)
+                    ).fetchone()[0]
+                    cursor.execute(
+                        "UPDATE work_subtasks SET total_files = ? WHERE id = ?",
+                        (actual_st_jobs, st_id)
+                    )
+
+                if wr_jobs_added > 0:
+                    # Update WR total
+                    actual_wr_total = cursor.execute(
+                        "SELECT COALESCE(SUM(total_files), 0) FROM work_subtasks WHERE work_request_id = ?",
+                        (wr_id,)
+                    ).fetchone()[0]
+                    cursor.execute(
+                        "UPDATE work_requests SET total_files = ?, status = 'queued' WHERE id = ?",
+                        (actual_wr_total, wr_id)
+                    )
+                    recovery_attached += wr_jobs_added
+                    logger.info(
+                        f"Recovery: attached {wr_jobs_added} files to existing WR '{wr_name}' (id={wr_id})"
+                    )
+
+            # --- Create new Recovery WRs for unmatched files ---
+            for folder_path, files in unmatched.items():
+                folder_name = _Path(folder_path).name or "local"
+
+                sort_order = self._next_sort_order(cursor)
+                total = len(files)
+                cursor.execute(
+                    """INSERT INTO work_requests (name, source_path, total_files, sort_order)
+                       VALUES (?, ?, ?, ?)""",
+                    (f"[Recovery] {folder_name}", folder_path, total, sort_order)
+                )
+                wr_id = cursor.lastrowid
+
+                cursor.execute(
+                    """INSERT INTO work_subtasks (work_request_id, folder_path, folder_name, total_files)
+                       VALUES (?, ?, ?, ?)""",
+                    (wr_id, folder_path, folder_name, total)
+                )
+                st_id = cursor.lastrowid
+
+                created = _create_recovery_jobs(wr_id, st_id, files)
+                repaired_files += created
+
                 actual_jobs = cursor.execute(
                     "SELECT COUNT(*) FROM job_queue WHERE work_request_id = ?",
                     (wr_id,)
@@ -1494,7 +1729,6 @@ class JobQueueManager:
                         f"Recovery WR created: '{folder_name}' ({actual_jobs} files)"
                     )
                 else:
-                    # No jobs created (all duplicates) — remove empty WR
                     cursor.execute("DELETE FROM work_subtasks WHERE work_request_id = ?", (wr_id,))
                     cursor.execute("DELETE FROM work_requests WHERE id = ?", (wr_id,))
 
@@ -1538,8 +1772,10 @@ class JobQueueManager:
             parts = [f"Audit: {total_files} files, {incomplete_files} incomplete"]
             if repaired_files > 0:
                 parts.append(f"{repaired_files} repaired")
+            if recovery_attached > 0:
+                parts.append(f"{recovery_attached} attached to existing WR(s)")
             if recovery_wrs_created > 0:
-                parts.append(f"{recovery_wrs_created} Recovery WR(s) created")
+                parts.append(f"{recovery_wrs_created} new Recovery WR(s)")
             if thumbnail_reset_count > 0:
                 parts.append(f"{thumbnail_reset_count} thumbnails reset")
             if skipped_non_retryable > 0:
@@ -1559,6 +1795,7 @@ class JobQueueManager:
             "incomplete_files": incomplete_files,
             "repaired_files": repaired_files,
             "recovery_wrs_created": recovery_wrs_created,
+            "recovery_attached": recovery_attached,
             "thumbnail_reset_count": thumbnail_reset_count,
             "skipped_non_retryable": skipped_non_retryable,
             "failed_stuck_jobs": skipped_non_retryable,  # files-based
@@ -1923,15 +2160,42 @@ class JobQueueManager:
         return cursor.rowcount > 0
 
     def cancel_work_request(self, wr_id: int) -> Dict[str, int]:
-        """Cancel a work request — delete all pending/assigned jobs."""
+        """Cancel a work request — delete jobs and clean up WebDAV temp files."""
+        from pathlib import Path
         cursor = self.db.conn.cursor()
 
-        # Count pending jobs that will be removed
+        # Collect WebDAV temp files to clean up before deleting jobs
         cursor.execute(
-            "SELECT COUNT(*) FROM job_queue WHERE work_request_id = ? AND status IN ('pending', 'assigned')",
+            """SELECT file_id, file_path, parsed_metadata FROM job_queue
+               WHERE work_request_id = ? AND status IN ('pending', 'assigned')
+               AND file_path LIKE 'webdav://%'""",
             (wr_id,)
         )
-        to_remove = cursor.fetchone()[0]
+        webdav_jobs = cursor.fetchall()
+
+        # Clean up temp files via DownloadAheadPool
+        dl_pool = _get_download_pool()
+        temp_cleaned = 0
+        for file_id, file_path, pm_str in webdav_jobs:
+            # Release slot in download pool (deletes temp file)
+            if dl_pool:
+                try:
+                    dl_pool.release_slot(file_id, None)  # None = don't cache, just delete
+                    temp_cleaned += 1
+                except Exception:
+                    pass
+            # Also try direct cleanup from parsed_metadata
+            if pm_str:
+                try:
+                    pm = json.loads(pm_str)
+                    tlp = pm.get("temp_local_path")
+                    if tlp:
+                        p = Path(tlp)
+                        if p.exists():
+                            p.unlink()
+                            temp_cleaned += 1
+                except Exception:
+                    pass
 
         # Delete pending/assigned jobs (processing jobs are left to finish)
         cursor.execute(
@@ -1946,4 +2210,8 @@ class JobQueueManager:
             (wr_id,)
         )
         self.db.conn.commit()
-        return {"removed_jobs": removed}
+
+        if temp_cleaned > 0:
+            logger.info(f"WR {wr_id} cancelled: {removed} jobs removed, {temp_cleaned} temp files cleaned")
+
+        return {"removed_jobs": removed, "temp_cleaned": temp_cleaned}

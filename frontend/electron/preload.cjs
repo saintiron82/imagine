@@ -145,6 +145,16 @@ contextBridge.exposeInMainWorld('electron', {
         cancelJob: (jobId) => ipcRenderer.invoke('queue-cancel-job', { jobId }),
         retryFailed: () => ipcRenderer.invoke('queue-retry-failed'),
         clearCompleted: () => ipcRenderer.invoke('queue-clear-completed'),
+        listWorkRequests: (includeCompleted) =>
+            ipcRenderer.invoke('queue-list-work-requests', { includeCompleted: !!includeCompleted }),
+        getWorkRequestDetail: (wrId) =>
+            ipcRenderer.invoke('queue-work-request-detail', { wrId }),
+        pauseWorkRequest: (wrId) =>
+            ipcRenderer.invoke('queue-pause-wr', { wrId }),
+        resumeWorkRequest: (wrId) =>
+            ipcRenderer.invoke('queue-resume-wr', { wrId }),
+        cancelWorkRequest: (wrId) =>
+            ipcRenderer.invoke('queue-cancel-wr', { wrId }),
     },
 
     // DB Import/Export
@@ -216,34 +226,6 @@ contextBridge.exposeInMainWorld('electron', {
         getStatus: () => ipcRenderer.invoke('tunnel-status'),
         onStatusChange: (cb) => ipcRenderer.on('tunnel-status-change', (_, data) => cb(data)),
         offStatusChange: () => ipcRenderer.removeAllListeners('tunnel-status-change'),
-    },
-
-    // Worker Daemon (server-mode job processing)
-    worker: {
-        start: (opts) => ipcRenderer.invoke('worker-start', opts),
-        stop: () => ipcRenderer.invoke('worker-stop'),
-        getStatus: () => ipcRenderer.invoke('worker-status'),
-        updateTokens: (opts) => ipcRenderer.invoke('worker-update-tokens', opts),
-        onStatus: (cb) => ipcRenderer.on('worker-status', (_, data) => cb(data)),
-        offStatus: () => ipcRenderer.removeAllListeners('worker-status'),
-        onLog: (cb) => ipcRenderer.on('worker-log', (_, data) => cb(data)),
-        offLog: () => ipcRenderer.removeAllListeners('worker-log'),
-        onJobDone: (cb) => ipcRenderer.on('worker-job-done', (_, data) => cb(data)),
-        offJobDone: () => ipcRenderer.removeAllListeners('worker-job-done'),
-        onBatchStart: (cb) => ipcRenderer.on('worker-batch-start', (_, data) => cb(data)),
-        offBatchStart: () => ipcRenderer.removeAllListeners('worker-batch-start'),
-        onBatchPhaseStart: (cb) => ipcRenderer.on('worker-batch-phase-start', (_, data) => cb(data)),
-        offBatchPhaseStart: () => ipcRenderer.removeAllListeners('worker-batch-phase-start'),
-        onBatchFileDone: (cb) => ipcRenderer.on('worker-batch-file-done', (_, data) => cb(data)),
-        offBatchFileDone: () => ipcRenderer.removeAllListeners('worker-batch-file-done'),
-        onBatchPhaseComplete: (cb) => ipcRenderer.on('worker-batch-phase-complete', (_, data) => cb(data)),
-        offBatchPhaseComplete: () => ipcRenderer.removeAllListeners('worker-batch-phase-complete'),
-        onBatchComplete: (cb) => ipcRenderer.on('worker-batch-complete', (_, data) => cb(data)),
-        offBatchComplete: () => ipcRenderer.removeAllListeners('worker-batch-complete'),
-        onProcessingMode: (cb) => ipcRenderer.on('worker-processing-mode', (_, data) => cb(data)),
-        offProcessingMode: () => ipcRenderer.removeAllListeners('worker-processing-mode'),
-        onWorkerState: (cb) => ipcRenderer.on('worker-state', (_, data) => cb(data)),
-        offWorkerState: () => ipcRenderer.removeAllListeners('worker-state'),
     },
 
     // Network utilities (LAN IP for group registration)
