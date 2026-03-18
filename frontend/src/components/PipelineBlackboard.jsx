@@ -69,6 +69,8 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
   const s = stats || {};
   const throughput = s.throughput ?? 0;
   const dlWaiting = s.download_waiting ?? 0;
+  const dlBuffer = s.download_buffer || {};
+  const dlDiskMB = dlBuffer.disk_usage_mb ?? 0;
   const parsePending = s.ready_pending ?? 0;
   const parsing = s.parse_ahead_parsing ?? 0;
   const buffer = s.parse_ahead_parsed ?? 0;
@@ -270,7 +272,10 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
                   <span className="text-[8px] font-mono text-gray-600">{t('bb.station_queue')}</span>
                   <span className="text-lg font-mono font-bold text-blue-400 tabular-nums">{dlWaiting}</span>
                 </div>
-                <div className="text-[7px] text-gray-600 font-mono mt-1">DownloadPool: 3 threads</div>
+                <div className="text-[7px] text-gray-600 font-mono mt-1">
+                  DownloadPool: 3 threads
+                  {dlDiskMB > 0 && <span className="ml-2 text-blue-400">{dlDiskMB >= 1024 ? `${(dlDiskMB/1024).toFixed(1)}GB` : `${dlDiskMB}MB`}</span>}
+                </div>
               </div>
               {/* Direct Lane */}
               <div className="rounded-lg border border-teal-800/30 bg-teal-900/5 p-2">

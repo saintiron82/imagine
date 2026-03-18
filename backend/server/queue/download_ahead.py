@@ -503,12 +503,25 @@ class DownloadAheadPool(BaseAheadPool):
         pass
 
     def get_stats(self) -> dict:
-        """Return current download pool statistics."""
+        """Return current download pool statistics including disk usage."""
         with self._active_lock:
             active_count = len(self._active_files)
+        # Calculate temp dir size
+        temp_size_bytes = 0
+        temp_file_count = 0
+        if self._temp_dir and self._temp_dir.exists():
+            try:
+                for f in self._temp_dir.rglob("*"):
+                    if f.is_file():
+                        temp_size_bytes += f.stat().st_size
+                        temp_file_count += 1
+            except Exception:
+                pass
         return {
             "active_files": active_count,
             "max_files": self._max_files,
             "in_flight": len(self._in_flight),
             "temp_dir": str(self._temp_dir) if self._temp_dir else None,
+            "disk_usage_mb": round(temp_size_bytes / (1024 * 1024), 1),
+            "disk_file_count": temp_file_count,
         }
