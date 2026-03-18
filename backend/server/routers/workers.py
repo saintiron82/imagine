@@ -420,7 +420,17 @@ def worker_heartbeat(
         processing_mode = "full"
     else:
         processing_mode = mode_override or "full"
-    effective_batch = batch_override or batch_capacity
+    # For embedded worker: read live batch_size from config (Admin UI changes)
+    cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
+    wn_row = cursor.fetchone()
+    if wn_row and wn_row[0] == BUILTIN_WORKER_NAME:
+        try:
+            from backend.utils.config import get_config
+            effective_batch = get_config().get("server.auto_processing.batch_size", 5)
+        except Exception:
+            effective_batch = batch_override or batch_capacity
+    else:
+        effective_batch = batch_override or batch_capacity
 
     # Resource-aware batch_hint: throttle down based on worker resource pressure
     throttle = resources_data.get("throttle_level", "normal") if resources_data else "normal"
