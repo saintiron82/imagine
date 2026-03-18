@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 _DEFAULT_SECRET = "change-this-secret-in-production"
+_cached_jwt_secret = None  # In-memory cache — survives across calls
 
 
 def get_server_config() -> dict:
@@ -49,10 +50,15 @@ def _save_jwt_secret(secret: str) -> None:
 
 
 def get_jwt_secret() -> str:
-    """Get JWT secret. Auto-generates if missing or default."""
+    """Get JWT secret. Cached in memory after first read/generate."""
+    global _cached_jwt_secret
+    if _cached_jwt_secret:
+        return _cached_jwt_secret
+
     # 1. Environment variable (highest priority)
     env = os.getenv("IMAGINE_JWT_SECRET")
     if env:
+        _cached_jwt_secret = env
         return env
 
     # 2. config.yaml
@@ -67,7 +73,14 @@ def get_jwt_secret() -> str:
             "Auto-generated a secure secret."
         )
         _save_jwt_secret(secret)
+        # Also update AppConfig in-memory so other code sees it
+        try:
+            from backend.utils.config import get_config
+            get_config()._set_dotted("server.auth.jwt_secret", secret)
+        except Exception:
+            pass
 
+    _cached_jwt_secret = secret
     return secret
 
 
