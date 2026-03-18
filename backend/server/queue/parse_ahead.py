@@ -98,7 +98,8 @@ class ParseAheadPool(BaseAheadPool):
                 fixed += cursor.rowcount
                 logger.warning(f"Self-repair: {cursor.rowcount} parsed jobs had file_ready=0 → fixed")
 
-            # 2. WR with incomplete files but no jobs → re-queue missing files
+            # 2. WR counter mismatch: no jobs left but completed_count < total
+            #    Files may be fully done but WR counter wasn't updated
             cursor.execute("""
                 SELECT wr.id, wr.name, wr.total_files, wr.completed_count
                 FROM work_requests wr
@@ -108,22 +109,31 @@ class ParseAheadPool(BaseAheadPool):
                     SELECT 1 FROM job_queue jq WHERE jq.work_request_id = wr.id
                   )
             """)
-            orphan_wrs = cursor.fetchall()
-            for wr_id, wr_name, wr_total, wr_done in orphan_wrs:
-                try:
-                    from backend.server.queue.manager import JobQueueManager
-                    mgr = JobQueueManager(self.db)
-                    result = mgr.audit_completed_jobs(repair=True)
-                    repaired = result.get("repaired_files", 0)
-                    if repaired > 0:
-                        logger.warning(
-                            f"Self-repair: WR '{wr_name}' had {wr_total - wr_done} "
-                            f"incomplete files with no jobs → {repaired} re-queued"
-                        )
-                        fixed += repaired
-                    break  # One audit pass covers all WRs
-                except Exception as e:
-                    logger.warning(f"Self-repair: audit failed for WR {wr_id}: {e}")
+            stale_wrs = cursor.fetchall()
+            for wr_id, wr_name, wr_total, wr_done in stale_wrs:
+                # Check if all files are actually complete
+                cursor.execute("""
+                    SELECT COUNT(*) FROM work_subtasks ws
+                    JOIN job_queue jq ON jq.work_subtask_id = ws.id
+                    WHERE ws.work_request_id = ?
+                """, (wr_id,))
+                pending_jobs = cursor.fetchone()[0]
+
+                if pending_jobs == 0:
+                    # No jobs → mark WR as completed (files are done)
+                    cursor.execute(
+                        "UPDATE work_requests SET completed_count = total_files, status = 'completed', completed_at = datetime('now') WHERE id = ?",
+                        (wr_id,)
+                    )
+                    cursor.execute(
+                        "UPDATE work_subtasks SET completed_count = total_files WHERE work_request_id = ?",
+                        (wr_id,)
+                    )
+                    fixed += 1
+                    logger.warning(
+                        f"Self-repair: WR '{wr_name}' counter {wr_done}/{wr_total} → "
+                        f"marked completed (no pending jobs, files are done)"
+                    )
 
             if fixed > 0:
                 self.db.conn.commit()
