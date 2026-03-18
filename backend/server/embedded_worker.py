@@ -82,7 +82,14 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         _worker_daemon._heartbeat()
                         last_heartbeat = now
 
-                    jobs = _worker_daemon.claim_jobs()
+                    # Embedded worker reads its chunk size from server config
+                    try:
+                        from backend.utils.config import get_config
+                        chunk = get_config().get("server.auto_processing.batch_size", 5)
+                    except Exception:
+                        chunk = 5
+                    _worker_daemon.batch_capacity = chunk
+                    jobs = _worker_daemon.claim_jobs_count(chunk)
 
                     if not jobs:
                         consecutive_empty += 1
