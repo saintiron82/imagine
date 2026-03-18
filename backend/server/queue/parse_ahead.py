@@ -174,7 +174,7 @@ class ParseAheadPool(BaseAheadPool):
             now = _utcnow_sql()
             if success:
                 cursor.execute(
-                    "UPDATE job_queue SET parse_status = 'parsed', parsed_at = ? WHERE id = ?",
+                    "UPDATE job_queue SET parse_status = 'parsed', file_ready = 1, parsed_at = ? WHERE id = ?",
                     (now, job_id),
                 )
                 parsed_count += 1
