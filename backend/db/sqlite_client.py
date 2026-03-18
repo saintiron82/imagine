@@ -143,6 +143,7 @@ class SQLiteDB:
                 self._migrate_files_processing_status()
                 self._migrate_work_requests()
                 self._migrate_members_table()
+                self._migrate_job_queue_unique_file_id()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -690,6 +691,17 @@ class SQLiteDB:
             logger.info("✅ members table created")
         except Exception as e:
             logger.warning(f"members migration failed (non-fatal): {e}")
+
+    def _migrate_job_queue_unique_file_id(self):
+        """Add partial unique index on job_queue(file_id) for active jobs."""
+        try:
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_file_id_active "
+                "ON job_queue(file_id) WHERE status IN ('pending', 'assigned', 'processing')"
+            )
+            self.conn.commit()
+        except Exception:
+            pass  # Index may already exist
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""
