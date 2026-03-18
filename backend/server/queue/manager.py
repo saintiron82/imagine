@@ -159,6 +159,14 @@ def _get_embedded_worker_status() -> dict:
     except Exception:
         pass
 
+    # Always include configured batch_size (even when worker is offline)
+    if result["batch_capacity"] == 0:
+        try:
+            from backend.utils.config import get_config
+            result["batch_capacity"] = get_config().get("server.auto_processing.batch_size", 5)
+        except Exception:
+            result["batch_capacity"] = 5
+
     return result
 
 

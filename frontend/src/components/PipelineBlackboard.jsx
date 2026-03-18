@@ -187,7 +187,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
     phase: ewPhase,
     currentFile: ewFile,
     throughput: throughput,
-    batchSize: ew.batch_capacity || 0,
+    batchSize: ew.batch_capacity || 5,
     enabled: ewRunning,
     state: ewRunning ? 'active' : 'offline',  // running = active (phase may be null between batches)
     mode: 'full',
