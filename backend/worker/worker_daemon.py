@@ -1120,6 +1120,11 @@ class WorkerDaemon:
             def phase_start(self, phase, count):
                 mapped = self._PHASE_MAP.get(phase, phase)
                 self._daemon._current_phase = mapped
+                # Report phase change to server immediately (1 API call per phase)
+                try:
+                    self._daemon._heartbeat()
+                except Exception:
+                    pass
                 _notify(self._cb, "phase_start", {"phase": mapped, "count": count})
 
             def file_done(self, phase, index, count, file_name, success):
@@ -1132,6 +1137,11 @@ class WorkerDaemon:
                 })
 
             def phase_complete(self, phase, elapsed_s):
+                # Report updated counters to server
+                try:
+                    self._daemon._heartbeat()
+                except Exception:
+                    pass
                 mapped = self._PHASE_MAP.get(phase, phase)
                 _notify(self._cb, "phase_complete", {
                     "phase": mapped, "count": 0,
