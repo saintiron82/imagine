@@ -1033,11 +1033,21 @@ function App() {
     }
   };
 
-  // Auto-audit on login: admin이 서버에 로그인하면 자동 정합성 검사
-  // skipAuth=false → 서버 모드 (web 또는 Electron server/client)
+  // Auto-audit + auto-processing on login
+  // admin이 서버에 로그인하면 정합성 검사 + embedded worker 활성화
   useEffect(() => {
     if (isAuthenticated && isAdmin && skipAuth === false) {
       handleAuditIntegrity({ silent: true });
+      // Start embedded worker if auto_processing was enabled in previous session
+      (async () => {
+        try {
+          const { getAutoProcessing, updateAutoProcessing } = await import('./api/admin');
+          const ap = await getAutoProcessing();
+          if (ap.enabled) {
+            await updateAutoProcessing({ enabled: true });
+          }
+        } catch { /* ignore */ }
+      })();
     }
   }, [isAuthenticated, isAdmin]);
 
