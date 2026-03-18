@@ -375,12 +375,6 @@ export function WorkersPanel() {
               <input
                 type="number" min="1" max="20" value={batchSize}
                 onChange={(e) => setBatchSize(parseInt(e.target.value) || 5)}
-                onBlur={async () => {
-                  const v = Math.max(1, Math.min(20, batchSize));
-                  setBatchSize(v);
-                  try { await updateAutoProcessing({ batch_size: v }); } catch (err) { console.error(err); }
-                }}
-                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                 className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
               />
               <span className="text-xs text-gray-500">files</span>
@@ -390,16 +384,24 @@ export function WorkersPanel() {
               <input
                 type="number" min="0" max="300" value={restAfterBatch}
                 onChange={(e) => setRestAfterBatch(parseInt(e.target.value) || 0)}
-                onBlur={async () => {
-                  const v = Math.max(0, Math.min(300, restAfterBatch));
-                  setRestAfterBatch(v);
-                  try { await updateAutoProcessing({ rest_after_batch_s: v }); } catch (err) { console.error(err); }
-                }}
-                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                 className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
               />
               <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
             </div>
+            <button
+              onClick={async () => {
+                const bs = Math.max(1, Math.min(20, batchSize));
+                const rest = Math.max(0, Math.min(300, restAfterBatch));
+                setBatchSize(bs);
+                setRestAfterBatch(rest);
+                try {
+                  await updateAutoProcessing({ batch_size: bs, rest_after_batch_s: rest });
+                } catch (err) { console.error(err); }
+              }}
+              className="px-3 py-1 text-xs font-medium rounded bg-purple-600 text-white hover:bg-purple-500 transition-colors"
+            >
+              적용
+            </button>
           </div>
         )}
       </div>
