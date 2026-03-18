@@ -236,8 +236,10 @@ class ParseAheadPool(BaseAheadPool):
                         target = self._calculate_buffer_target()
                         logger.info(f"[PA-DIAG] target={target}")
 
-                    # Periodic self-repair (~60s): fix invariant violations
-                    if self._diag_counter % 30 == 0:
+                    # Periodic self-repair: fix invariant violations
+                    repair_interval = self._get_config_value("server.parse_ahead.self_repair_interval_s", 600)
+                    repair_ticks = max(1, int(repair_interval / poll_interval_s))
+                    if self._diag_counter % repair_ticks == 0:
                         self._self_repair()
 
                     self._run_pre_parse_buffer()
