@@ -207,6 +207,7 @@ export function WorkersPanel() {
   const [verboseLog, setVerboseLog] = useState(false);
   const [embeddedEnabled, setEmbeddedEnabled] = useState(false);
   const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
+  const [dbStats, setDbStats] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -221,6 +222,10 @@ export function WorkersPanel() {
 
   useEffect(() => {
     load();
+    // Load DB stats for rebuild banner
+    import('../services/bridge').then(({ getDbStats }) => {
+      getDbStats().then(d => setDbStats(d)).catch(() => {});
+    });
     // Load auto_processing config once
     getAutoProcessing().then(data => {
       if (data.enabled != null) setAutoProcessing(data.enabled);
@@ -334,6 +339,27 @@ export function WorkersPanel() {
           <RefreshCw size={14} />
         </button>
       </div>
+
+      {/* Data rebuild banner (moved from SearchPanel) */}
+      {dbStats?.build_status?.needs_rebuild && (
+        <div className="mb-4 px-3 py-2.5 bg-amber-900/25 border border-amber-700 rounded-lg">
+          <div className="text-amber-300 text-sm font-bold">{t('status.rebuild_required_title')}</div>
+          <div className="text-amber-200/90 text-xs mt-1">
+            {t('status.rebuild_required_desc', {
+              db: dbStats.build_status.db_data_build_level ?? 0,
+              current: dbStats.build_status.current_data_build_level ?? 0
+            })}
+          </div>
+          {Array.isArray(dbStats.build_status.reasons) && dbStats.build_status.reasons.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {dbStats.build_status.reasons.slice(0, 3).map((r, i) => (
+                <div key={i} className="text-amber-100 text-[11px]">- {r}</div>
+              ))}
+            </div>
+          )}
+          <div className="text-amber-300 text-[11px] mt-2">{t('status.rebuild_required_action')}</div>
+        </div>
+      )}
 
       {/* Server Auto-Processing (unified: auto_processing + embedded worker) */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">

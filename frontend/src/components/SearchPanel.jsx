@@ -964,6 +964,16 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         const hasImages = queryImages.length > 0;
         if (!hasText && !hasImages) return;
 
+        // Save to search history (text queries only)
+        if (hasText) {
+            try {
+                const hist = JSON.parse(localStorage.getItem('search_history') || '[]');
+                const filtered = hist.filter(h => h !== searchQuery.trim());
+                filtered.unshift(searchQuery.trim());
+                localStorage.setItem('search_history', JSON.stringify(filtered.slice(0, 20)));
+            } catch { /* ignore */ }
+        }
+
         setQuery(searchQuery);
         setQueryFileId(null); // Clear file-based search
         setSearchMode(null); // Clear explicit mode
@@ -1322,29 +1332,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                         </div>
                     )}
 
-                    {rebuildRequired && (
-                        <div className="mt-3 px-3 py-2.5 bg-amber-900/25 border border-amber-700 rounded-lg">
-                            <div className="text-amber-300 text-sm font-bold">
-                                {t('status.rebuild_required_title')}
-                            </div>
-                            <div className="text-amber-200/90 text-xs mt-1">
-                                {t('status.rebuild_required_desc', {
-                                    db: buildStatus.db_data_build_level ?? 0,
-                                    current: buildStatus.current_data_build_level ?? 0
-                                })}
-                            </div>
-                            {Array.isArray(buildStatus.reasons) && buildStatus.reasons.length > 0 && (
-                                <div className="mt-2 space-y-1">
-                                    {buildStatus.reasons.slice(0, 3).map((r, i) => (
-                                        <div key={i} className="text-amber-100 text-[11px]">- {r}</div>
-                                    ))}
-                                </div>
-                            )}
-                            <div className="text-amber-300 text-[11px] mt-2">
-                                {t('status.rebuild_required_action')}
-                            </div>
-                        </div>
-                    )}
+                    {/* Rebuild banner moved to Admin tab */}
 
                     {error && (
                         <div className="mt-3 px-3 py-2 bg-red-900/30 border border-red-700 rounded-lg text-red-400 text-sm">
@@ -1367,6 +1355,44 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onLoadMore={handleLoadMore}
                 onNavigateToFolder={onNavigateToFolder}
             />
+
+            {/* Search History */}
+            {(() => {
+                let hist = [];
+                try { hist = JSON.parse(localStorage.getItem('search_history') || '[]'); } catch {}
+                if (hist.length === 0) return null;
+                return (
+                    <div className="mt-3 px-1">
+                        <div className="flex items-center gap-2 mb-1.5">
+                            <span className="text-[9px] font-mono text-gray-600 uppercase tracking-wider">검색 이력</span>
+                            <button
+                                onClick={() => { localStorage.removeItem('search_history'); setQuery(''); }}
+                                className="text-[8px] text-gray-700 hover:text-gray-400 font-mono"
+                            >전체 삭제</button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                            {hist.map((h, i) => (
+                                <button
+                                    key={i}
+                                    onClick={() => handleSearch(h)}
+                                    className="group px-2 py-0.5 text-[10px] font-mono rounded-full bg-gray-800 text-gray-400 border border-gray-700/40 hover:border-blue-500/40 hover:text-blue-400 transition-colors flex items-center gap-1"
+                                >
+                                    {h}
+                                    <span
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            const updated = hist.filter((_, j) => j !== i);
+                                            localStorage.setItem('search_history', JSON.stringify(updated));
+                                            setQuery(q => q); // force re-render
+                                        }}
+                                        className="text-gray-700 hover:text-red-400 text-[8px]"
+                                    >✕</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Metadata Modal */}
             {metadata && <MetadataModal metadata={metadata} onClose={() => setMetadata(null)} onNavigateToFolder={onNavigateToFolder} />}
