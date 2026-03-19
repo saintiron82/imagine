@@ -90,6 +90,20 @@ class ParseAheadPool(BaseAheadPool):
             cursor = self.db.conn.cursor()
             fixed = 0
 
+            # 0. FTS entries with empty content → rebuild from file data
+            cursor.execute(
+                "SELECT rowid FROM files_fts WHERE meta_strong = '' AND meta_weak = '' LIMIT 100"
+            )
+            empty_fts = [r[0] for r in cursor.fetchall()]
+            if empty_fts:
+                for fid in empty_fts:
+                    try:
+                        self.db._refresh_fts_row(cursor, fid)
+                    except Exception:
+                        pass
+                fixed += len(empty_fts)
+                logger.warning(f"Self-repair: rebuilt {len(empty_fts)} empty FTS entries")
+
             # 1. Invariant: parsed → file_ready=1
             cursor.execute(
                 "UPDATE job_queue SET file_ready = 1 WHERE parse_status = 'parsed' AND file_ready = 0"
@@ -470,6 +484,8 @@ class ParseAheadPool(BaseAheadPool):
                     "UPDATE files SET thumbnail_url = ? WHERE id = ?",
                     (str(server_thumb_path), stored_file_id),
                 )
+                # UPDATE trigger resets FTS to '' — must refresh
+                self.db._refresh_fts_row(cursor, stored_file_id)
                 self.db.conn.commit()
             except Exception as e:
                 logger.warning(f"ParseAhead: thumbnail_url update failed: {e}")
