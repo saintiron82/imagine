@@ -70,7 +70,8 @@ export async function searchImages(options) {
  * Get file detail by ID.
  */
 export async function getFileDetail(fileId) {
-  if (_useLocalBackend) {
+  // Numeric IDs always use HTTP API (IPC only works with file paths)
+  if (_useLocalBackend && typeof fileId === 'string' && !fileId.match(/^\d+$/)) {
     return window.electron.pipeline.readMetadata(fileId);
   }
   return apiClient.get(`/api/v1/files/${fileId}`);
