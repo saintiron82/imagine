@@ -910,6 +910,16 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         }
     }, [initialSearch]);
 
+    // Restore last search on mount (tab switch recovery)
+    useEffect(() => {
+        if (!initialSearch) {
+            const lastQuery = localStorage.getItem('last_search_query');
+            if (lastQuery) {
+                handleSearch(lastQuery);
+            }
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     const handleCardContextMenu = useCallback((e, result) => {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, result });
@@ -971,6 +981,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 const filtered = hist.filter(h => h !== searchQuery.trim());
                 filtered.unshift(searchQuery.trim());
                 localStorage.setItem('search_history', JSON.stringify(filtered.slice(0, 20)));
+                localStorage.setItem('last_search_query', searchQuery.trim());
             } catch { /* ignore */ }
         }
 
