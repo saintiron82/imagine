@@ -469,7 +469,7 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
     return (
         <div
             className="group bg-gray-800 border border-gray-700 rounded-lg overflow-hidden hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-900/10 cursor-pointer h-full flex flex-col transition-[border-color,box-shadow] duration-150"
-            onClick={() => onShowMeta(dbPath)}
+            onClick={() => onShowMeta(result.id || dbPath)}
             onContextMenu={onContextMenu}
         >
             {/* Thumbnail */}
@@ -1110,7 +1110,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             const result = await getFileDetail(filePathOrId);
             const meta = result?.file || result;
             if (meta) setMetadata(meta);
-        } catch { /* ignore */ }
+        } catch (e) {
+            console.error('Failed to load file detail:', filePathOrId, e);
+        }
     }, []);
 
     const hasActiveFilters = Object.values(activeFilters).some(v => v);
