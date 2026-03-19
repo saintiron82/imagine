@@ -143,6 +143,7 @@ class SQLiteDB:
                 self._migrate_files_processing_status()
                 self._migrate_work_requests()
                 self._migrate_members_table()
+                self._migrate_drop_fts_update_trigger()
                 self._migrate_job_queue_unique_file_id()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
@@ -692,6 +693,14 @@ class SQLiteDB:
         except Exception as e:
             logger.warning(f"members migration failed (non-fatal): {e}")
 
+    def _migrate_drop_fts_update_trigger(self):
+        """Remove FTS UPDATE trigger that was resetting FTS to empty strings."""
+        try:
+            self.conn.execute("DROP TRIGGER IF EXISTS files_fts_update")
+            self.conn.commit()
+        except Exception:
+            pass
+
     def _migrate_job_queue_unique_file_id(self):
         """Add partial unique index on job_queue(file_id) for active jobs."""
         try:
@@ -1032,11 +1041,9 @@ class SQLiteDB:
                 VALUES (new.id, '', '');
             END;
 
-            CREATE TRIGGER IF NOT EXISTS files_fts_update AFTER UPDATE ON files BEGIN
-                DELETE FROM files_fts WHERE rowid = old.id;
-                INSERT INTO files_fts(rowid, meta_strong, meta_weak)
-                VALUES (new.id, '', '');
-            END;
+            -- UPDATE trigger removed: FTS is managed by Python (_refresh_fts_row)
+            -- Previous trigger reset FTS to '' on every UPDATE, losing data
+            -- when UPDATE didn't call _refresh_fts_row afterwards.
 
             CREATE TRIGGER IF NOT EXISTS files_fts_delete AFTER DELETE ON files BEGIN
                 DELETE FROM files_fts WHERE rowid = old.id;
