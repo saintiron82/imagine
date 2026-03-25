@@ -376,6 +376,9 @@ export function WorkersPanel() {
                   : 'bg-yellow-900/50 text-yellow-400'
               }`}>
                 {embeddedStatus.running ? t('worker.status_running') : embeddedStatus.status}
+                {embeddedStatus.current_phase && ` · ${embeddedStatus.current_phase.toUpperCase()}`}
+                {embeddedStatus.current_file && ` · ${embeddedStatus.current_file}`}
+                {embeddedStatus.batch_throughput > 0 && ` · ${embeddedStatus.batch_throughput} f/m`}
                 {embeddedStatus.jobs_completed > 0 && ` · ${embeddedStatus.jobs_completed} ${t('worker.jobs_completed')}`}
               </span>
             )}
