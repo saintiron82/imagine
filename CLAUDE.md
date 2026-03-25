@@ -1079,36 +1079,49 @@ _check_phase_skip(parsed_files)  # 파일별로 이미 완료된 Phase 확인
 
 ### 배포 원칙 (MANDATORY)
 
-**이 프로젝트는 2개의 독립된 배포 대상이 있습니다. 빌드와 배포를 혼동하지 마세요.**
+**배포 파이프라인: Tag Push → GitHub Actions → GitHub Releases → Firebase 웹사이트 자동 반영**
 
-| 대상 | 빌드 결과물 | 배포 방법 | 배포 위치 |
-|------|-----------|---------|---------|
-| **웹사이트** (랜딩/릴리즈 페이지) | `website/public/` (정적 HTML) | `firebase deploy --only hosting` | Firebase Hosting (`imagine-b1e9c`) |
-| **데스크탑 앱** (Electron) | `frontend/dist-electron/*.dmg, *.zip` | 수동 업로드 (GitHub Releases 등) | 릴리즈 페이지 링크 |
+```
+git tag v0.1.0.YYYYMMDD_NN → git push origin --tags
+    ↓
+GitHub Actions (.github/workflows/release.yml)
+    ├─ build-win (windows-latest): PyInstaller + Electron → .zip/.exe
+    ├─ build-mac (macos-latest):   PyInstaller + Electron → .dmg/.zip
+    └─ release: 양쪽 아티팩트 수집 → GitHub Release 자동 생성
+    ↓
+Firebase 웹사이트 (website/public/)
+    ├─ index.html: GitHub Releases API → 최신 버전 + 다운로드 링크 표시
+    └─ release.html: GitHub Releases API → 전체 릴리즈 이력 표시
+```
 
-#### 배포 절차
+| 대상 | 빌드 | 배포 | 위치 |
+|------|------|------|------|
+| **데스크탑 앱** (Win+Mac) | GitHub Actions (자동) | GitHub Releases (자동) | `github.com/.../releases` |
+| **웹사이트** (랜딩/릴리즈) | 없음 (정적 HTML) | `firebase deploy --only hosting` | Firebase Hosting (`imagine-b1e9c`) |
+
+#### 릴리즈 절차
 
 ```bash
-# 1. 웹사이트 배포 (Firebase Hosting)
-cd website
-firebase deploy --only hosting
+# 1. 버전 bump (vite.config.js BUILD_ID)
+# 2. 커밋 + 태그
+git tag v0.1.0.YYYYMMDD_NN
+git push origin main --tags
+# 3. GitHub Actions가 자동으로 Win+Mac 빌드 → Release 생성
+# 4. Firebase 웹사이트는 GitHub API를 읽으므로 자동 반영 (재배포 불필요)
+```
 
-# 2. 데스크탑 앱 빌드 (배포는 수동)
-cd frontend
-npm run build                                          # Vite 프로덕션 빌드
-CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:build  # Electron 패키징
+#### 웹사이트만 변경한 경우
 
-# 3. PyInstaller 백엔드 (Electron 앱에 번들)
-cd ..
-.venv/bin/python -m PyInstaller backend_cli.spec --noconfirm
+```bash
+cd website && firebase deploy --only hosting
 ```
 
 #### 규칙
 
-- **"배포해라" = Firebase 웹사이트 배포**. 데스크탑 빌드만으로는 배포가 아님
-- **Firebase 로그인 필요**: `firebase login` 상태에서만 `deploy` 가능
+- **"배포해라" = 태그 push** (데스크탑 앱) 또는 **`firebase deploy`** (웹사이트)
+- **웹사이트의 릴리즈 정보는 GitHub Releases API에서 읽음** — Firestore 미사용
 - **`website/public/`은 Electron 앱과 별개**: React SPA(`frontend/dist/`)를 Firebase에 올리는 것이 아님
-- **버전 bump 후 배포**: CLAUDE.md 버전 규칙에 따라 `vite.config.js` BUILD_ID 업데이트 → 커밋 → 배포
+- **GitHub Actions 워크플로우**: `.github/workflows/release.yml` — Win+Mac 동시 빌드
 
 ### 배포 구조
 

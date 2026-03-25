@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  # ── Windows build (CI only — macOS is built locally) ─────────
+  # ── Windows build ──────────────────────────────────────────
   build-win:
     runs-on: windows-latest
 
@@ -64,18 +64,79 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --publish never
 
-      - name: Upload build artifact
+      - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: Imagine-win
-          path: frontend/dist-electron/*
+          path: |
+            frontend/dist-electron/*.zip
+            frontend/dist-electron/*.exe
           retention-days: 7
 
-  # ── Release → GitHub Releases (files) ────────────────────────
-  # Windows zip uploaded here; macOS DMG uploaded locally later.
-  # Firestore metadata updated by local script (firebase_release.mjs).
+  # ── macOS build ────────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Python backend build (PyInstaller) ──────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install uvicorn fastapi python-jose passlib python-multipart
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Build backend (PyInstaller)
+        run: python -m PyInstaller backend_cli.spec --noconfirm
+
+      - name: Verify backend build
+        run: ls -la dist/backend_cli/backend_cli
+
+      # ── Electron frontend build ─────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (Vite)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Build Electron app (unsigned)
+        working-directory: frontend
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --publish never
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Imagine-mac
+          path: |
+            frontend/dist-electron/*.dmg
+            frontend/dist-electron/*-mac.zip
+          retention-days: 7
+
+  # ── Release → GitHub Releases ──────────────────────────────
   release:
-    needs: build-win
+    needs: [build-win, build-mac]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
 
@@ -90,6 +151,12 @@ jobs:
         with:
           name: Imagine-win
           path: artifacts/win
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Imagine-mac
+          path: artifacts/mac
 
       - name: Extract version info
         id: version
@@ -124,26 +191,33 @@ jobs:
             echo "" >> release_notes.md
           fi
 
-      - name: Find Windows zip
-        id: find-zip
+      - name: Collect release assets
+        id: assets
         shell: bash
         run: |
-          ZIP=$(find artifacts/win -maxdepth 1 -name '*.zip' -type f | head -1)
-          echo "Found: $ZIP"
-          echo "path=$ZIP" >> "$GITHUB_OUTPUT"
+          mkdir -p release_assets
+          # Windows
+          find artifacts/win -name '*.zip' -exec cp {} release_assets/ \;
+          find artifacts/win -name '*.exe' -exec cp {} release_assets/ \;
+          # macOS
+          find artifacts/mac -name '*.dmg' -exec cp {} release_assets/ \;
+          find artifacts/mac -name '*-mac.zip' -exec cp {} release_assets/ \;
+          echo "--- Release assets ---"
+          ls -lh release_assets/
 
-      - name: Create GitHub Release & upload Windows zip
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          WIN_ZIP="${{ steps.find-zip.outputs.path }}"
-
-          ARGS="--title \"Imagine ${TAG}\" --notes-file release_notes.md"
-
-          if [ -n "$WIN_ZIP" ]; then
-            gh release create "$TAG" "$WIN_ZIP" --title "Imagine ${TAG}" --notes-file release_notes.md
+          FILES=$(find release_assets -type f)
+          if [ -n "$FILES" ]; then
+            gh release create "$TAG" release_assets/* \
+              --title "Imagine ${TAG}" \
+              --notes-file release_notes.md
           else
-            gh release create "$TAG" --title "Imagine ${TAG}" --notes-file release_notes.md
+            gh release create "$TAG" \
+              --title "Imagine ${TAG}" \
+              --notes-file release_notes.md
           fi
