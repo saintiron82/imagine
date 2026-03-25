@@ -170,11 +170,25 @@ def stop_worker() -> dict:
 
 
 def get_status() -> dict:
-    """Get embedded worker status."""
+    """Get embedded worker status with live phase/file tracking."""
     running = _worker_thread is not None and _worker_thread.is_alive()
-    return {
+    result = {
         "running": running,
         "status": _status if running else "idle",
         "jobs_completed": _jobs_completed,
         "last_error": _last_error,
+        "current_phase": None,
+        "current_file": None,
+        "phase_counts": None,
+        "batch_throughput": 0.0,
+        "batch_capacity": 0,
     }
+    if running and _worker_daemon is not None:
+        result["current_phase"] = getattr(_worker_daemon, '_current_phase', None)
+        result["current_file"] = getattr(_worker_daemon, '_current_file', None)
+        result["batch_throughput"] = getattr(_worker_daemon, '_batch_throughput', 0.0)
+        result["batch_capacity"] = getattr(_worker_daemon, 'batch_capacity', 0)
+        pc = getattr(_worker_daemon, '_phase_counts', None)
+        if pc:
+            result["phase_counts"] = dict(pc)
+    return result

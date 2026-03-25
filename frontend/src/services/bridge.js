@@ -232,38 +232,3 @@ export function getOriginalDownloadUrl(fileId) {
 
 
 // ── Archive Browse ───────────────────────────────────────────
-
-/**
- * Get archive folders with file counts and phase stats.
- */
-export async function getArchiveFolders() {
-  if (_useLocalBackend) {
-    return window.electron.pipeline.getArchiveFolders();
-  }
-  return apiClient.get('/api/v1/archive/folders');
-}
-
-/**
- * Get files for archive browsing with phase status.
- */
-export async function getArchiveFiles(params) {
-  if (_useLocalBackend) {
-    return window.electron.pipeline.getArchiveFiles(params);
-  }
-  const query = new URLSearchParams();
-  if (params.folder_path) query.set('folder_path', params.folder_path);
-  if (params.image_type) query.set('image_type', params.image_type);
-  if (params.limit) query.set('limit', String(params.limit));
-  if (params.offset) query.set('offset', String(params.offset));
-  return apiClient.get(`/api/v1/archive/files?${query.toString()}`);
-}
-
-/**
- * Get image_type distribution.
- */
-export async function getArchiveImageTypes() {
-  if (_useLocalBackend) {
-    return window.electron.pipeline.getArchiveImageTypes();
-  }
-  return apiClient.get('/api/v1/archive/image-types');
-}

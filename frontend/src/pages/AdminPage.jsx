@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocale } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  cleanupStaleJobs, cleanupQueue, getJobStats,
+  cleanupStaleJobs, cleanupQueue,
   browseFolders, scanFolder,
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
   updateWorkerConfig,
@@ -17,6 +17,7 @@ import {
   getWorkRequests, getWorkRequestDetail, pauseWorkRequest, resumeWorkRequest, cancelWorkRequest,
   runRecoveryScan,
 } from '../api/admin';
+import { getJobStats } from '../api/worker';
 import {
   Users, Key, Activity, FolderSearch, Server,
   Shield, ShieldOff, Trash2, Copy, Plus, Square, Ban, UserCheck,
@@ -376,6 +377,9 @@ export function WorkersPanel() {
                   : 'bg-yellow-900/50 text-yellow-400'
               }`}>
                 {embeddedStatus.running ? t('worker.status_running') : embeddedStatus.status}
+                {embeddedStatus.current_phase && ` · ${embeddedStatus.current_phase.toUpperCase()}`}
+                {embeddedStatus.current_file && ` · ${embeddedStatus.current_file}`}
+                {embeddedStatus.batch_throughput > 0 && ` · ${embeddedStatus.batch_throughput} f/m`}
                 {embeddedStatus.jobs_completed > 0 && ` · ${embeddedStatus.jobs_completed} ${t('worker.jobs_completed')}`}
               </span>
             )}
@@ -399,7 +403,7 @@ export function WorkersPanel() {
         {autoProcessing && (
           <div className="flex items-center gap-6 mt-3 pt-3 border-t border-gray-700/50">
             <div className="flex items-center gap-2">
-              <div className="text-xs text-gray-400">청크 크기</div>
+              <div className="text-xs text-gray-400">{t('label.chunk_size')}</div>
               <input
                 type="number" min="1" max="20" value={batchSize}
                 onChange={(e) => setBatchSize(parseInt(e.target.value) || 5)}
@@ -428,7 +432,7 @@ export function WorkersPanel() {
               }}
               className="px-3 py-1 text-xs font-medium rounded bg-purple-600 text-white hover:bg-purple-500 transition-colors"
             >
-              적용
+              {t('action.apply')}
             </button>
             <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
               <input
