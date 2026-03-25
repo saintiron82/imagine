@@ -403,7 +403,7 @@ export function WorkersPanel() {
         {autoProcessing && (
           <div className="flex items-center gap-6 mt-3 pt-3 border-t border-gray-700/50">
             <div className="flex items-center gap-2">
-              <div className="text-xs text-gray-400">청크 크기</div>
+              <div className="text-xs text-gray-400">{t('label.chunk_size')}</div>
               <input
                 type="number" min="1" max="20" value={batchSize}
                 onChange={(e) => setBatchSize(parseInt(e.target.value) || 5)}
@@ -432,7 +432,7 @@ export function WorkersPanel() {
               }}
               className="px-3 py-1 text-xs font-medium rounded bg-purple-600 text-white hover:bg-purple-500 transition-colors"
             >
-              적용
+              {t('action.apply')}
             </button>
             <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
               <input

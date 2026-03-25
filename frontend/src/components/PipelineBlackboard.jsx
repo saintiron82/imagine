@@ -309,11 +309,25 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
                 <PhasePill label="Thumbnail" active={serverParse} current={parsing > 0} done={parsePending === 0 && parsing === 0 && buffer > 0} />
                 <span className="text-[7px] text-gray-600 font-mono ml-auto">No AI</span>
               </div>
+              {/* Progress bar */}
+              {serverParse && (parsePending > 0 || parsing > 0) && (() => {
+                const total = parsePending + parsing + buffer;
+                const done = buffer;
+                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                return (
+                  <div className="h-1.5 rounded-full bg-gray-800/50 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ease-out ${parsing > 0 ? 'bg-teal-500 animate-pulse' : 'bg-teal-600'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                );
+              })()}
               {/* Stats row */}
               <div className="flex items-center gap-4 text-[9px] font-mono">
-                <span className="text-gray-500">미파싱: <span className="text-gray-400">{parsePending}</span></span>
-                {parsing > 0 && <span className="text-gray-500">→ 파싱중: <span className="text-teal-400 font-bold">{parsing}</span></span>}
-                <span className="text-gray-500">→ 버퍼: <span className="text-orange-400 font-bold">{buffer}</span></span>
+                <span className="text-gray-500">{t('bb.unparsed')}: <span className="text-gray-400">{parsePending}</span></span>
+                {parsing > 0 && <span className="text-gray-500">→ {t('bb.parsing')}: <span className="text-teal-400 font-bold">{parsing}</span></span>}
+                <span className="text-gray-500">→ {t('bb.buffer')}: <span className="text-orange-400 font-bold">{buffer}</span></span>
               </div>
             </div>
           </Stage>
