@@ -788,12 +788,16 @@ def cancel_work_request(
 # ── Helpers ──────────────────────────────────────────────────
 
 def _decode_vector(encoded: Optional[str]) -> Optional[np.ndarray]:
-    """Decode base64-encoded float32 vector."""
+    """Decode base64-encoded float32 vector, rejecting NaN/inf."""
     if not encoded:
         return None
     try:
         raw = base64.b64decode(encoded)
-        return np.frombuffer(raw, dtype=np.float32)
+        vec = np.frombuffer(raw, dtype=np.float32).copy()
+        if not np.all(np.isfinite(vec)):
+            logger.warning(f"Vector contains NaN/inf ({np.sum(~np.isfinite(vec))} bad values), rejected")
+            return None
+        return vec
     except Exception as e:
         logger.warning(f"Failed to decode vector: {e}")
         return None
