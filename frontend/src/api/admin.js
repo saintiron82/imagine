@@ -4,38 +4,10 @@
 
 import { apiClient } from './client';
 
-// ── Invite Codes ─────────────────────────────────────────
-
-export async function createInviteCode({ max_uses = 1, expires_days = 7, note = '' } = {}) {
-  return apiClient.post('/api/v1/admin/invite-codes', { max_uses, expires_days, note });
-}
-
-export async function listInviteCodes() {
-  return apiClient.get('/api/v1/admin/invite-codes');
-}
-
-// ── Users ────────────────────────────────────────────────
-
-export async function listUsers() {
-  return apiClient.get('/api/v1/admin/users');
-}
-
-export async function updateUser(userId, updates) {
-  return apiClient.patch(`/api/v1/admin/users/${userId}`, updates);
-}
-
-export async function deleteUser(userId) {
-  return apiClient.delete(`/api/v1/admin/users/${userId}`);
-}
-
 // ── Job Queue ────────────────────────────────────────────
 
 export async function cleanupStaleJobs() {
   return apiClient.post('/api/v1/admin/jobs/cleanup');
-}
-
-export async function getJobStats() {
-  return apiClient.get('/api/v1/jobs/stats');
 }
 
 export async function listJobs(status = null, limit = 20, offset = 0) {
@@ -86,20 +58,6 @@ export async function scanFolder(folderPath, priority = 0) {
 
 export async function registerPaths(filePaths, priority = 0) {
   return apiClient.post('/api/v1/upload/register-paths', { file_paths: filePaths, priority });
-}
-
-// ── Worker Tokens ────────────────────────────────────────
-
-export async function createWorkerToken({ name, expires_in_days = 30 } = {}) {
-  return apiClient.post('/api/v1/admin/worker-tokens', { name, expires_in_days });
-}
-
-export async function listWorkerTokens() {
-  return apiClient.get('/api/v1/admin/worker-tokens');
-}
-
-export async function revokeWorkerToken(tokenId) {
-  return apiClient.delete(`/api/v1/admin/worker-tokens/${tokenId}`);
 }
 
 // ── Worker Sessions ──────────────────────────────────────
@@ -196,10 +154,6 @@ export async function getWorkRequests(includeCompleted = false) {
 
 export async function getWorkRequestDetail(id) {
   return apiClient.get(`/api/v1/admin/work-requests/${id}`);
-}
-
-export async function reorderWorkRequests(orderedIds) {
-  return apiClient.put('/api/v1/admin/work-requests/order', { ordered_ids: orderedIds });
 }
 
 export async function pauseWorkRequest(id) {

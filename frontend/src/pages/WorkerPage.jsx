@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, CheckCircle2, XCircle, Loader2, Download, Copy, CheckCircle, Monitor, Cpu, Sliders, Zap, CalendarClock } from 'lucide-react';
+import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, Loader2, Download, Copy, CheckCircle, Monitor, Cpu, Sliders, Zap, CalendarClock } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { apiClient, isElectron, getServerUrl, getAccessToken, getRefreshToken } from '../api/client';
 import { getJobStats } from '../api/worker';
@@ -558,7 +558,6 @@ function WorkerPage({ appMode }) {
   const [workerStatus, setWorkerStatus] = useState('idle'); // idle | running | stopping | error
   const [logs, setLogs] = useState([]);
   const [currentJobs, setCurrentJobs] = useState([]);
-  const [jobsCompleted, setJobsCompleted] = useState(0);
   const logEndRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -584,7 +583,6 @@ function WorkerPage({ appMode }) {
       try {
         const data = await apiClient.get('/api/v1/admin/worker/status');
         setWorkerStatus(data.running ? 'running' : 'idle');
-        setJobsCompleted(data.jobs_completed || 0);
         if (data.last_error) {
           setWorkerStatus('error');
         }

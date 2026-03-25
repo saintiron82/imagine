@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocale } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  cleanupStaleJobs, cleanupQueue, getJobStats,
+  cleanupStaleJobs, cleanupQueue,
   browseFolders, scanFolder,
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
   updateWorkerConfig,
@@ -17,6 +17,7 @@ import {
   getWorkRequests, getWorkRequestDetail, pauseWorkRequest, resumeWorkRequest, cancelWorkRequest,
   runRecoveryScan,
 } from '../api/admin';
+import { getJobStats } from '../api/worker';
 import {
   Users, Key, Activity, FolderSearch, Server,
   Shield, ShieldOff, Trash2, Copy, Plus, Square, Ban, UserCheck,
