@@ -1077,6 +1077,39 @@ _check_phase_skip(parsed_files)  # 파일별로 이미 완료된 Phase 확인
 - **세션 추적**: `config.yaml > last_session.folders`에 작업 대상 기록, 완료 시 초기화
 - **앱 재시작 시 Resume Dialog**: 미완료 작업이 있으면 팝업으로 이어하기 제안
 
+### 배포 원칙 (MANDATORY)
+
+**이 프로젝트는 2개의 독립된 배포 대상이 있습니다. 빌드와 배포를 혼동하지 마세요.**
+
+| 대상 | 빌드 결과물 | 배포 방법 | 배포 위치 |
+|------|-----------|---------|---------|
+| **웹사이트** (랜딩/릴리즈 페이지) | `website/public/` (정적 HTML) | `firebase deploy --only hosting` | Firebase Hosting (`imagine-b1e9c`) |
+| **데스크탑 앱** (Electron) | `frontend/dist-electron/*.dmg, *.zip` | 수동 업로드 (GitHub Releases 등) | 릴리즈 페이지 링크 |
+
+#### 배포 절차
+
+```bash
+# 1. 웹사이트 배포 (Firebase Hosting)
+cd website
+firebase deploy --only hosting
+
+# 2. 데스크탑 앱 빌드 (배포는 수동)
+cd frontend
+npm run build                                          # Vite 프로덕션 빌드
+CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:build  # Electron 패키징
+
+# 3. PyInstaller 백엔드 (Electron 앱에 번들)
+cd ..
+.venv/bin/python -m PyInstaller backend_cli.spec --noconfirm
+```
+
+#### 규칙
+
+- **"배포해라" = Firebase 웹사이트 배포**. 데스크탑 빌드만으로는 배포가 아님
+- **Firebase 로그인 필요**: `firebase login` 상태에서만 `deploy` 가능
+- **`website/public/`은 Electron 앱과 별개**: React SPA(`frontend/dist/`)를 Firebase에 올리는 것이 아님
+- **버전 bump 후 배포**: CLAUDE.md 버전 규칙에 따라 `vite.config.js` BUILD_ID 업데이트 → 커밋 → 배포
+
 ### 배포 구조
 
 **A) 로컬 데스크탑 모드 (Electron)**
