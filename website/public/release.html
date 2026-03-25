@@ -81,12 +81,6 @@
   border-color: rgba(56,189,248,0.4);
 }
 .asset-link small { color: #6b7280; }
-.asset-link.disabled {
-  background: rgba(255,255,255,0.04);
-  border-color: rgba(255,255,255,0.08);
-  color: #6b7280; cursor: default;
-  pointer-events: none;
-}
 </style>
 </head>
 <body>
@@ -132,7 +126,7 @@
   </div>
 </footer>
 
-<!-- Firebase SDK -->
+<!-- Firebase SDK (for auth/board, not releases) -->
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
@@ -140,85 +134,69 @@
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 
 <script>
+const GITHUB_REPO = 'saintiron82/imagine';
+
 /* ── Page i18n ───────────────────────────────────────── */
 registerPageI18n({
   en: {
     "release.title": "Releases",
     "release.subtitle": "Version history and changelogs",
     "release.empty": "No releases yet",
-    "release.assets": "Downloads",
-    "release.coming_soon": "Coming Soon"
+    "release.assets": "Downloads"
   },
   ko: {
     "release.title": "\ub9b4\ub9ac\uc988",
     "release.subtitle": "\ubc84\uc804 \uc774\ub825 \ubc0f \ubcc0\uacbd \ub0b4\uc5ed",
     "release.empty": "\uc544\uc9c1 \ub9b4\ub9ac\uc988\uac00 \uc5c6\uc2b5\ub2c8\ub2e4",
-    "release.assets": "\ub2e4\uc6b4\ub85c\ub4dc",
-    "release.coming_soon": "Coming Soon"
+    "release.assets": "\ub2e4\uc6b4\ub85c\ub4dc"
   }
 });
 
-/* ── Load Releases from Firestore ────────────────────── */
+/* ── Load Releases from GitHub Releases API ──────────── */
 async function loadReleases() {
   const container = document.getElementById('release-content');
-  const fsDb = getDb();
-
-  if (!fsDb) {
-    container.innerHTML = '<div class="empty-state"><div class="icon">&#128230;</div><p>' + t('release.empty') + '</p></div>';
-    return;
-  }
 
   try {
-    const snap = await fsDb.collection('releases').orderBy('date', 'desc').get();
+    const resp = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases`);
+    if (!resp.ok) throw new Error(`GitHub API ${resp.status}`);
+    const releases = await resp.json();
 
-    if (snap.empty) {
+    if (!releases.length) {
       container.innerHTML = '<div class="empty-state"><div class="icon">&#128230;</div><p>' + t('release.empty') + '</p></div>';
       return;
     }
 
     let html = '<div class="release-list">';
-    snap.docs.forEach((doc, idx) => {
-      const rel = doc.data();
-      const date = rel.date ? new Date(rel.date).toLocaleDateString() : '';
+    releases.forEach((rel, idx) => {
+      const version = rel.tag_name || rel.name || '';
+      const date = rel.published_at ? new Date(rel.published_at).toLocaleDateString() : '';
       const badge = idx === 0 ? '<span class="release-badge latest">Latest</span>' : '';
 
-      const body = (typeof marked !== 'undefined' && rel.notes)
-        ? marked.parse(rel.notes)
-        : (rel.notes || '').replace(/\n/g, '<br>');
+      const body = (typeof marked !== 'undefined' && rel.body)
+        ? marked.parse(rel.body)
+        : (rel.body || '').replace(/\n/g, '<br>');
 
       html += `
         <div class="release-card">
           <div class="release-card-head">
-            <span class="release-tag">${escHtml(rel.version || '')}</span>
+            <span class="release-tag">${escHtml(version)}</span>
             ${badge}
             <span class="release-date">${date}</span>
           </div>`;
 
-      if (rel.notes) {
+      if (rel.body) {
         html += `<div class="release-body md-content">${body}</div>`;
       }
 
-      // Download assets
-      const assets = rel.assets || {};
-      const platformLabels = [
-        { key: 'windows', label: 'Windows' },
-        { key: 'macos', label: 'macOS' },
-        { key: 'linux', label: 'Linux' }
-      ];
-      const hasAnyAsset = platformLabels.some(p => assets[p.key]);
-
-      if (hasAnyAsset || Object.keys(assets).length > 0) {
+      // Download assets from GitHub release
+      if (rel.assets && rel.assets.length > 0) {
         html += `<div class="release-assets">
           <div class="release-assets-title">${t('release.assets')}</div>
           <div class="asset-list">`;
 
-        platformLabels.forEach(p => {
-          const url = assets[p.key] || '';
-          if (url.length > 0) {
-            html += `<a href="${escAttr(url)}" class="asset-link" target="_blank">&#11015; ${p.label}</a>`;
-          } else {
-            html += `<span class="asset-link disabled">${p.label} — ${t('release.coming_soon')}</span>`;
-          }
+        rel.assets.forEach(asset => {
+          const size = (asset.size / 1048576).toFixed(0);
+          html += `<a href="${escAttr(asset.browser_download_url)}" class="asset-link" target="_blank">&#11015; ${escHtml(asset.name)} <small>${size} MB</small></a>`;
         });
 
         html += '</div></div>';

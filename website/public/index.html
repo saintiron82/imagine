@@ -255,7 +255,8 @@ registerPageI18n({
   }
 });
 
-/* ── Firestore Releases ──────────────────────────────── */
+/* ── GitHub Releases ─────────────────────────────────── */
+const GITHUB_REPO = 'saintiron82/imagine';
 let releaseData = null;
 
 function onLangChange() { fetchRelease(); }
@@ -270,16 +271,21 @@ function fetchRelease() {
     return;
   }
 
-  const fsDb = getDb();
-  if (!fsDb) {
-    infoEl.textContent = strings['release.none'] || 'No releases yet';
-    return;
-  }
-
-  fsDb.collection('releases').orderBy('date', 'desc').limit(1).get()
-    .then(snap => {
-      if (snap.empty) throw new Error('No releases');
-      releaseData = snap.docs[0].data();
+  fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`)
+    .then(resp => { if (!resp.ok) throw new Error(`GitHub API ${resp.status}`); return resp.json(); })
+    .then(rel => {
+      releaseData = {
+        version: rel.tag_name || rel.name || '',
+        date: rel.published_at || '',
+        assets: {}
+      };
+      // Map GitHub assets to platform keys
+      (rel.assets || []).forEach(a => {
+        const n = a.name.toLowerCase();
+        if (n.includes('mac') || n.includes('darwin')) releaseData.assets.macos = a.browser_download_url;
+        else if (n.includes('win')) releaseData.assets.windows = a.browser_download_url;
+        else if (n.includes('linux')) releaseData.assets.linux = a.browser_download_url;
+      });
       renderRelease(releaseData, infoEl, strings);
     })
     .catch(() => {
