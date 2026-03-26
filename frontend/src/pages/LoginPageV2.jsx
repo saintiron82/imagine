@@ -276,21 +276,51 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
 
     setLoading(true);
     try {
-      // Server admin (Electron): connect to localhost directly
       let directUrl = null;
-      if (isServerAdmin && localServerReady) {
+
+      if (isServerAdmin && isElectron) {
+        // Server admin (Electron): ensure server is running, then connect to localhost
         directUrl = `http://localhost:${port}`;
+
+        if (!localServerReady) {
+          // Start server if not running yet
+          setLocalServerStarting(true);
+          try {
+            await window.electron?.server?.start({ port });
+            await new Promise(r => setTimeout(r, 2500));
+            setLocalServerReady(true);
+          } finally {
+            setLocalServerStarting(false);
+          }
+        }
+
         setClientServerUrl(directUrl);
 
-        // Check if server is initialized with matching group name
+        // Check if server is initialized
         const info = await getServerInfo(directUrl);
         if (info.ok && !info.initialized) {
-          // Not initialized — redirect to server_init
-          setNewGroupName(name);
-          setNewServerPassword(serverPassword);
-          setStage('server_init');
-          setLoading(false);
-          return;
+          // Not initialized — auto-initialize with entered group name + password
+          const adminName = firebaseUser?.displayName || firebaseUser?.email?.split('@')[0] || 'admin';
+          await initServer(directUrl, {
+            group_name: name,
+            server_password: serverPassword,
+            admin_username: adminName,
+            admin_password: serverPassword,
+            firebase_uid: firebaseUser?.uid || null,
+            firebase_email: firebaseUser?.email || null,
+          });
+
+          // Register to Firestore for external discovery
+          try {
+            const localIp = await window.electron?.network?.getLocalIp?.();
+            await registerGroup(name, { lan_ip: localIp || '', port });
+          } catch (regErr) {
+            if (regErr.message === 'GROUP_NAME_TAKEN') {
+              setError(t('validation.group_name_taken'));
+              setLoading(false);
+              return;
+            }
+          }
         }
       }
 
@@ -306,7 +336,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     } finally {
       setLoading(false);
     }
-  }, [serverName, serverPassword, isServerAdmin, localServerReady, port, connectToServer, addToHistory, onLoginComplete, t]);
+  }, [serverName, serverPassword, isServerAdmin, localServerReady, port, firebaseUser, connectToServer, addToHistory, onLoginComplete, t]);
 
   // -----------------------------------------------------------------------
   // Create server handler (Electron only)
