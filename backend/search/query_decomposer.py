@@ -192,9 +192,12 @@ class QueryDecomposer:
         (LLM success, LLM parse failure, fallback).
 
         Ensures negation is always detected and cleaned regardless of path.
+        Korean keyword extraction is always applied as a safety net
+        (LLM may fail to decompose Korean queries properly).
         """
         result = self._validate_negation(result, original_query)
         result = self._augment_path_query(result, original_query)
+        result = self._augment_ko_keywords(result, original_query)
         logger.info(f"Query decomposed: '{original_query}' → vector='{result['vector_query']}', "
                     f"negative='{result.get('negative_query', '')}', "
                     f"fts={result['fts_keywords']}, "
@@ -503,6 +506,29 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
 
         # Path query is usually keyword-like
         result["query_type"] = "keyword"
+        return result
+
+    def _augment_ko_keywords(self, result: Dict[str, Any], original_query: str) -> Dict[str, Any]:
+        """Always augment FTS keywords with Korean keyword extraction.
+
+        LLM (especially small 0.6B models) often fails to decompose Korean
+        queries properly, passing them through as-is. This safety net ensures
+        meaningful Korean keywords are extracted regardless of LLM quality.
+        """
+        ko_kw = self._extract_ko_keywords(original_query)
+        if not ko_kw:
+            return result
+
+        existing = set(result.get("fts_keywords", []))
+        for kw in ko_kw:
+            if kw not in existing:
+                result["fts_keywords"].append(kw)
+
+        # CJK query → force keyword type for FTS priority
+        has_hangul = any('\uac00' <= c <= '\ud7af' for c in original_query)
+        if has_hangul:
+            result["query_type"] = "keyword"
+
         return result
 
     def _extract_ko_negation(self, query: str) -> List[str]:
