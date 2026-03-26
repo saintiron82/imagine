@@ -1194,29 +1194,33 @@ class SqliteVectorSearch:
             "pool_size": min(len(merged), rerank_pool),
         }
 
-        # Step 5e: FTS reserved slots — ensure strong FTS matches appear in results.
-        # When query_type is "keyword", FTS top results may be absent from merged
-        # (no overlap with VV/MV candidates). Reserve ~30% of slots for FTS-only hits.
-        if query_type == "keyword" and fts_results and len(merged) > 0:
-            fts_paths = {r["file_path"] for r in fts_results[:top_k]}
-            merged_paths = {r["file_path"] for r in merged[:top_k]}
-            fts_only = [r for r in fts_results if r["file_path"] not in merged_paths]
-            reserve_count = max(1, top_k * 3 // 10)  # 30% of top_k
+        # Step 5e: FTS priority for keyword queries.
+        # When query_type is "keyword", FTS results take full priority —
+        # fill all slots with FTS matches first, remaining slots get VV/MV.
+        if query_type == "keyword" and fts_results:
+            fts_path_set = {r["file_path"] for r in fts_results}
+            # Split merged into FTS-matching and non-FTS
+            fts_in_merged = [r for r in merged if r["file_path"] in fts_path_set]
+            non_fts = [r for r in merged if r["file_path"] not in fts_path_set]
+            # FTS-only results not already in merged
+            merged_path_set = {r["file_path"] for r in merged}
+            fts_only = [r for r in fts_results if r["file_path"] not in merged_path_set]
+            # Normalize FTS scores for display
             if fts_only:
-                # Normalize FTS scores for display
-                fts_ranks = [r.get("fts_rank", 0) for r in fts_only[:reserve_count]]
-                best = min(fts_ranks) if fts_ranks else 0
-                worst = max(fts_ranks) if fts_ranks else 0
+                all_fts_ranks = [r.get("fts_rank", 0) for r in fts_only]
+                best = min(all_fts_ranks)
+                worst = max(all_fts_ranks)
                 span = worst - best
-                for r in fts_only[:reserve_count]:
+                for r in fts_only:
                     r["vector_score"] = None
                     r["text_vec_score"] = None
                     raw = r.get("fts_rank", 0)
                     r["text_score"] = (worst - raw) / span if span else 1.0
-                    r["rrf_score"] = 0  # will be at end of list
-                # Insert FTS reserved at the front (they matched the keyword query)
-                merged = fts_only[:reserve_count] + merged
-                logger.info(f"FTS reserved slots: {min(len(fts_only), reserve_count)} files injected for keyword query")
+                    r["rrf_score"] = 0
+            # FTS first (in-merged + FTS-only), then non-FTS to fill remaining
+            merged = fts_in_merged + fts_only + non_fts
+            fts_count = len(fts_in_merged) + len(fts_only)
+            logger.info(f"FTS keyword priority: {fts_count} FTS files placed first")
 
         # Trim to top_k
         merged = merged[:top_k]
