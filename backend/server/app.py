@@ -20,7 +20,7 @@ os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
 import traceback as _traceback
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -310,13 +310,18 @@ def health():
 # ── Tunnel URL registration (Electron → Firestore) ──────────
 
 @app.put("/api/v1/server/tunnel-url")
-def set_tunnel_url(body: dict, db: SQLiteDB = Depends(get_db_safe)):
+def set_tunnel_url(body: dict):
     """Store Cloudflare Tunnel URL and update Firestore group record.
 
     Called by Electron main process when tunnel starts.
     Only accessible from localhost (Electron → embedded server).
     """
+    from backend.server.deps import get_db
+    from backend.server.firebase_registry import register_group
+    import threading
+
     tunnel_url = body.get("tunnel_url", "")
+    db = get_db()
 
     # Save to system_meta
     cursor = db.conn.cursor()
@@ -330,8 +335,6 @@ def set_tunnel_url(body: dict, db: SQLiteDB = Depends(get_db_safe)):
     cursor.execute("SELECT value FROM system_meta WHERE key = 'group_name'")
     row = cursor.fetchone()
     if row and row[0]:
-        import threading
-        from backend.server.firebase_registry import register_group
         cfg = get_server_config()
         port = cfg.get("port", 8000)
         threading.Thread(

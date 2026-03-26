@@ -287,7 +287,20 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
           setLocalServerStarting(true);
           try {
             await window.electron?.server?.start({ port });
-            await new Promise(r => setTimeout(r, 2500));
+            // Wait for server to be ready (poll health endpoint)
+            let ready = false;
+            for (let i = 0; i < 15; i++) {
+              await new Promise(r => setTimeout(r, 1000));
+              try {
+                const resp = await fetch(`${directUrl}/api/v1/health`, { signal: AbortSignal.timeout(2000) });
+                if (resp.ok) { ready = true; break; }
+              } catch { /* server not ready yet */ }
+            }
+            if (!ready) {
+              setError('Server failed to start within 15 seconds');
+              setLoading(false);
+              return;
+            }
             setLocalServerReady(true);
           } finally {
             setLocalServerStarting(false);
