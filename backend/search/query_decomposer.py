@@ -444,10 +444,35 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
             logger.debug(f"Term translation failed: {e}")
         return []
 
+    # Korean particles/suffixes to strip for FTS keyword extraction
+    _KO_PARTICLES = re.compile(
+        r'(폴더에|폴더|파일|에서|에게|으로|이랑|에게서|부터|까지|한테|보다|처럼|만큼|대로|마다'
+        r'|에|의|를|을|이|가|은|는|과|와|도|로|서|께|랑'
+        r'|있는거|있는것|있는|없는|하는|했던|인거|인것)$'
+    )
+
+    def _extract_ko_keywords(self, query: str) -> list:
+        """Extract meaningful keywords from Korean text by stripping particles."""
+        # Split on spaces and common delimiters
+        tokens = re.split(r'[\s,./\\·]+', query.strip())
+        keywords = []
+        for tok in tokens:
+            if not tok:
+                continue
+            # Strip trailing Korean particles
+            cleaned = self._KO_PARTICLES.sub('', tok)
+            if cleaned and len(cleaned) >= 2:
+                keywords.append(cleaned)
+            elif tok and len(tok) >= 2:
+                keywords.append(tok)
+        return keywords
+
     def _fallback(self, query: str) -> Dict[str, Any]:
         """Fallback when LLM is unavailable - translate query for cross-language search."""
         vector_query = query
-        fts_keywords = [query]
+        # Extract individual keywords (not the whole query as one string)
+        ko_keywords = self._extract_ko_keywords(query)
+        fts_keywords = ko_keywords if ko_keywords else [query]
 
         try:
             from deep_translator import GoogleTranslator
@@ -459,13 +484,12 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
         except Exception as e:
             logger.debug(f"Fallback translation skipped: {e}")
 
-        # Classify query type: short proper nouns (Korean/mixed) are likely
-        # metadata keywords (file/folder names), not visual descriptions.
+        # Classify query type: if any Korean keyword looks like a proper noun
+        # (project/folder name), treat as keyword search.
         query_type = "balanced"
         stripped = query.strip()
         has_cjk = any('\u3000' <= c <= '\u9fff' or '\uac00' <= c <= '\ud7af' for c in stripped)
-        word_count = len(stripped.split())
-        if has_cjk and word_count <= 3:
+        if has_cjk:
             query_type = "keyword"
 
         return {
