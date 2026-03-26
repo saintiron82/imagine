@@ -1,8 +1,11 @@
 """
-Firebase Realtime DB server registration.
+Firestore server group registration.
 
-On server init, register group info (group_name, LAN IP, port) to Firebase
-so workers can discover the server by group name.
+On server init, register group info (group_name, LAN IP, port, tunnel_url)
+to Firestore so external clients can discover the server by group name.
+
+Uses Firestore REST API (no SDK dependency) — same collection as
+frontend/src/api/firebase.js.
 """
 
 import logging
@@ -13,7 +16,15 @@ import json
 
 logger = logging.getLogger(__name__)
 
-FIREBASE_BASE = "https://imagine-b1e9c-default-rtdb.firebaseio.com/groups"
+FIRESTORE_BASE = (
+    "https://firestore.googleapis.com/v1/projects/imagine-b1e9c"
+    "/databases/(default)/documents/groups"
+)
+
+
+def _to_key(group_name: str) -> str:
+    """Normalize group name → Firestore document key (same as frontend toKey)."""
+    return group_name.strip().lower().replace(" ", "_")
 
 
 def _get_lan_ip() -> str:
@@ -42,8 +53,8 @@ def _get_public_ip() -> str:
         return ""
 
 
-def register_group(group_name: str, port: int) -> bool:
-    """Register server group to Firebase Realtime DB (best-effort).
+def register_group(group_name: str, port: int, tunnel_url: str = "") -> bool:
+    """Register server group to Firestore (best-effort).
 
     Returns True if successful, False otherwise.
     Does NOT raise exceptions — server must continue regardless.
@@ -51,35 +62,39 @@ def register_group(group_name: str, port: int) -> bool:
     try:
         from datetime import datetime, timezone
 
-        key = group_name.strip().lower().replace(" ", "_")
-        key = urllib.parse.quote(key, safe="")
-
+        key = _to_key(group_name)
         lan_ip = _get_lan_ip()
         public_ip = _get_public_ip()
 
-        payload = {
-            "group_name": group_name,
-            "lan_ip": lan_ip,
-            "public_ip": public_ip,
-            "port": port,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+        fields = {
+            "group_name": {"stringValue": group_name},
+            "lan_ip": {"stringValue": lan_ip},
+            "public_ip": {"stringValue": public_ip},
+            "port": {"integerValue": str(port)},
+            "tunnel_url": {"stringValue": tunnel_url},
+            "updated_at": {"stringValue": datetime.now(timezone.utc).isoformat()},
         }
 
-        data = json.dumps(payload).encode("utf-8")
-        url = f"{FIREBASE_BASE}/{key}.json"
+        # PATCH to create or update document (same as frontend registerGroup)
+        url = f"{FIRESTORE_BASE}/{key}"
+        data = json.dumps({"fields": fields}).encode("utf-8")
 
         req = urllib.request.Request(
-            url, data=data, method="PUT",
+            url, data=data, method="PATCH",
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             if resp.status == 200:
-                logger.info(f"Registered group '{group_name}' to Firebase (LAN={lan_ip}, Public={public_ip}, port={port})")
+                tunnel_info = f", tunnel={tunnel_url}" if tunnel_url else ""
+                logger.info(
+                    f"Registered group '{group_name}' to Firestore "
+                    f"(LAN={lan_ip}, Public={public_ip}, port={port}{tunnel_info})"
+                )
                 return True
             else:
-                logger.warning(f"Firebase registration returned HTTP {resp.status}")
+                logger.warning(f"Firestore registration returned HTTP {resp.status}")
                 return False
 
     except Exception as e:
-        logger.warning(f"Firebase registration failed (non-critical): {e}")
+        logger.warning(f"Firestore registration failed (non-critical): {e}")
         return False
