@@ -1194,6 +1194,30 @@ class SqliteVectorSearch:
             "pool_size": min(len(merged), rerank_pool),
         }
 
+        # Step 5e: FTS reserved slots — ensure strong FTS matches appear in results.
+        # When query_type is "keyword", FTS top results may be absent from merged
+        # (no overlap with VV/MV candidates). Reserve ~30% of slots for FTS-only hits.
+        if query_type == "keyword" and fts_results and len(merged) > 0:
+            fts_paths = {r["file_path"] for r in fts_results[:top_k]}
+            merged_paths = {r["file_path"] for r in merged[:top_k]}
+            fts_only = [r for r in fts_results if r["file_path"] not in merged_paths]
+            reserve_count = max(1, top_k * 3 // 10)  # 30% of top_k
+            if fts_only:
+                # Normalize FTS scores for display
+                fts_ranks = [r.get("fts_rank", 0) for r in fts_only[:reserve_count]]
+                best = min(fts_ranks) if fts_ranks else 0
+                worst = max(fts_ranks) if fts_ranks else 0
+                span = worst - best
+                for r in fts_only[:reserve_count]:
+                    r["vector_score"] = None
+                    r["text_vec_score"] = None
+                    raw = r.get("fts_rank", 0)
+                    r["text_score"] = (worst - raw) / span if span else 1.0
+                    r["rrf_score"] = 0  # will be at end of list
+                # Insert FTS reserved at the front (they matched the keyword query)
+                merged = fts_only[:reserve_count] + merged
+                logger.info(f"FTS reserved slots: {min(len(fts_only), reserve_count)} files injected for keyword query")
+
         # Trim to top_k
         merged = merged[:top_k]
 
