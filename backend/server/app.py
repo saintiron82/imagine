@@ -307,6 +307,44 @@ def health():
     }
 
 
+# ── Tunnel URL registration (Electron → Firestore) ──────────
+
+@app.put("/api/v1/server/tunnel-url")
+def set_tunnel_url(body: dict, db: SQLiteDB = Depends(get_db_safe)):
+    """Store Cloudflare Tunnel URL and update Firestore group record.
+
+    Called by Electron main process when tunnel starts.
+    Only accessible from localhost (Electron → embedded server).
+    """
+    tunnel_url = body.get("tunnel_url", "")
+
+    # Save to system_meta
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "INSERT OR REPLACE INTO system_meta (key, value) VALUES ('tunnel_url', ?)",
+        (tunnel_url,)
+    )
+    db.conn.commit()
+
+    # Update Firestore (if group_name is configured)
+    cursor.execute("SELECT value FROM system_meta WHERE key = 'group_name'")
+    row = cursor.fetchone()
+    if row and row[0]:
+        import threading
+        from backend.server.firebase_registry import register_group
+        cfg = get_server_config()
+        port = cfg.get("port", 8000)
+        threading.Thread(
+            target=register_group,
+            args=(row[0], port),
+            kwargs={"tunnel_url": tunnel_url},
+            daemon=True,
+        ).start()
+        logger.info(f"Tunnel URL registered: {tunnel_url}")
+
+    return {"success": True, "tunnel_url": tunnel_url}
+
+
 # ── Default admin account ────────────────────────────────────
 
 def _create_default_admin():

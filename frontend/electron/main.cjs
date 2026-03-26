@@ -2975,6 +2975,21 @@ function startTunnel(port) {
                         });
                     }
                 } catch (e) { /* ignore */ }
+                // Register tunnel URL to Firestore via server API
+                if (serverPortCache) {
+                    const http = require('http');
+                    const body = JSON.stringify({ tunnel_url: tunnelUrl });
+                    const req = http.request({
+                        hostname: '127.0.0.1', port: serverPortCache,
+                        path: '/api/v1/server/tunnel-url', method: 'PUT',
+                        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+                    }, (res) => {
+                        console.log(`[Tunnel] Firestore registration: HTTP ${res.statusCode}`);
+                    });
+                    req.on('error', (e) => console.warn('[Tunnel] Firestore registration failed:', e.message));
+                    req.write(body);
+                    req.end();
+                }
             }
         };
 
