@@ -1,7 +1,7 @@
 """
 LLM Query Decomposer - Converts natural language queries to structured search parameters.
 
-Uses Ollama Chat API (text-only, no images) to decompose queries into:
+Uses platform-optimal LLM backend to decompose queries into:
 - vector_query: English text for SigLIP2 vector search (positive only)
 - negative_query: English text describing things to exclude (vector penalty)
 - fts_keywords: Keywords for FTS5 full-text search (Korean + English)
@@ -9,21 +9,19 @@ Uses Ollama Chat API (text-only, no images) to decompose queries into:
 - filters: Structured metadata filters (format, color, etc.)
 - query_type: Query classification for auto-weighted RRF
 
-Handles negation expressions (Korean/English):
-- Korean: ~없어야, ~없는, ~아닌, ~말고, ~빼고, ~제외하고, ~없이
-- English: without, no ~, not ~, except, exclude
+Backend resolution order:
+  macOS (Apple Silicon): mlx-lm → Ollama → fallback
+  Windows/Linux:         Ollama → transformers → fallback
 
-Uses assistant prefix with empty <think> block to suppress Qwen3 thinking,
-reducing response time from ~100s to ~3s.
-
-Falls back gracefully when Ollama is unavailable.
+Falls back gracefully when no LLM backend is available.
 """
 
 import logging
 import json
 import os
+import platform
 import re
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 import requests
 
@@ -32,6 +30,48 @@ logger = logging.getLogger(__name__)
 # Default from .env
 _DEFAULT_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 _DEFAULT_MODEL = os.getenv("VISION_MODEL", "qwen3-vl:8b")
+
+# MLX model for query decomposition (lightweight text-only)
+_MLX_MODEL_ID = "Qwen/Qwen3-0.6B-MLX-4bit"
+
+# ── Singleton LLM backend (shared across QueryDecomposer instances) ──
+_llm_backend: Optional[str] = None  # "mlx" | "ollama" | None
+_mlx_model = None
+_mlx_tokenizer = None
+_llm_initialized = False
+
+
+def _init_llm_backend():
+    """Initialize the best available LLM backend (once)."""
+    global _llm_backend, _mlx_model, _mlx_tokenizer, _llm_initialized
+    if _llm_initialized:
+        return
+    _llm_initialized = True
+
+    # macOS: try mlx-lm first
+    if platform.system() == "Darwin":
+        try:
+            from mlx_lm import load
+            logger.info(f"Loading MLX LLM for query decomposition: {_MLX_MODEL_ID}")
+            _mlx_model, _mlx_tokenizer = load(_MLX_MODEL_ID)
+            _llm_backend = "mlx"
+            logger.info("QueryDecomposer LLM backend: mlx-lm")
+            return
+        except Exception as e:
+            logger.info(f"MLX LLM not available: {e}")
+
+    # All platforms: try Ollama
+    try:
+        resp = requests.get(f"{_DEFAULT_HOST}/api/tags", timeout=3)
+        if resp.status_code == 200:
+            _llm_backend = "ollama"
+            logger.info("QueryDecomposer LLM backend: Ollama")
+            return
+    except Exception:
+        pass
+
+    logger.warning("No LLM backend available for query decomposition — using rule-based fallback")
+    _llm_backend = None
 
 
 class QueryDecomposer:
@@ -45,7 +85,8 @@ class QueryDecomposer:
         self.model = model
         self.host = host
         self.api_url = f"{host}/api/chat"
-        logger.info(f"QueryDecomposer initialized (model: {model}, host: {host})")
+        _init_llm_backend()
+        logger.info(f"QueryDecomposer initialized (backend: {_llm_backend})")
 
     def decompose(self, query: str) -> Dict[str, Any]:
         """
@@ -65,42 +106,85 @@ class QueryDecomposer:
                 "decomposed": bool         # True if LLM was used
             }
         """
-        try:
-            response = requests.post(
-                self.api_url,
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "user", "content": self._build_prompt(query)},
-                        {"role": "assistant", "content": "<think>\n</think>\n{"},
-                    ],
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 256},
-                    "keep_alive": "5m",
-                },
-                timeout=30,
-            )
-
-            if response.status_code != 200:
-                logger.warning(f"Ollama returned status {response.status_code}")
-                return self._finalize(self._fallback(query), query)
-
-            result = response.json()
-            msg = result.get("message", {})
-            raw_text = "{" + msg.get("content", "")
+        raw_text = self._generate_llm(query)
+        if raw_text is not None:
             parsed = self._parse_response(raw_text, query)
             parsed["decomposed"] = True
             return self._finalize(parsed, query)
 
-        except requests.exceptions.ConnectionError:
-            logger.info("Ollama not running, using fallback")
-            return self._finalize(self._fallback(query), query)
-        except requests.exceptions.Timeout:
-            logger.warning("Ollama timeout (>30s), using fallback")
-            return self._finalize(self._fallback(query), query)
-        except Exception as e:
-            logger.warning(f"Query decomposition failed: {e}, using fallback")
-            return self._finalize(self._fallback(query), query)
+        return self._finalize(self._fallback(query), query)
+
+    def _generate_llm(self, query: str) -> Optional[str]:
+        """Generate LLM response using the best available backend.
+
+        Returns:
+            JSON string starting with '{' or None if all backends fail.
+        """
+        prompt = self._build_prompt(query)
+
+        # 1. MLX backend (macOS)
+        if _llm_backend == "mlx" and _mlx_model is not None:
+            try:
+                return self._generate_mlx(prompt)
+            except Exception as e:
+                logger.warning(f"MLX generation failed: {e}")
+
+        # 2. Ollama backend
+        if _llm_backend == "ollama":
+            try:
+                return self._generate_ollama(prompt, query)
+            except Exception as e:
+                logger.warning(f"Ollama generation failed: {e}")
+
+        return None
+
+    def _generate_mlx(self, prompt: str) -> Optional[str]:
+        """Generate using mlx-lm (Apple Silicon native)."""
+        from mlx_lm import generate
+
+        messages = [
+            {"role": "user", "content": prompt},
+        ]
+        formatted = _mlx_tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+            enable_thinking=False,
+        )
+
+        raw = generate(
+            _mlx_model, _mlx_tokenizer, prompt=formatted,
+            max_tokens=256, verbose=False,
+        )
+
+        # Extract JSON from response
+        raw = raw.strip()
+        # Find first '{' to last '}'
+        start = raw.find('{')
+        end = raw.rfind('}')
+        if start >= 0 and end > start:
+            return raw[start:end + 1]
+        return None
+
+    def _generate_ollama(self, prompt: str, query: str) -> Optional[str]:
+        """Generate using Ollama Chat API."""
+        response = requests.post(
+            self.api_url,
+            json={
+                "model": self.model,
+                "messages": [
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": "<think>\n</think>\n{"},
+                ],
+                "stream": False,
+                "options": {"temperature": 0.1, "num_predict": 256},
+                "keep_alive": "5m",
+            },
+            timeout=30,
+        )
+        if response.status_code != 200:
+            return None
+        result = response.json()
+        msg = result.get("message", {})
+        return "{" + msg.get("content", "")
 
     def _finalize(self, result: Dict[str, Any], original_query: str) -> Dict[str, Any]:
         """
