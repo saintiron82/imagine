@@ -65,6 +65,7 @@ def _init_firebase():
         import firebase_admin
         from firebase_admin import credentials
         import os
+        from pathlib import Path
 
         # 1. Service account key file (env var)
         key_path = os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY', '')
@@ -89,7 +90,20 @@ def _init_firebase():
         except Exception:
             pass
 
-        # 3. firebase-tools CLI token
+        # 3. Bundled key (project root or Electron resources)
+        project_root = Path(__file__).resolve().parent.parent.parent
+        for candidate in [
+            project_root / "firebase-service-account.json",
+            project_root / "resources" / "firebase-service-account.json",
+        ]:
+            if candidate.is_file():
+                cred = credentials.Certificate(str(candidate))
+                firebase_admin.initialize_app(cred)
+                logger.info(f"Firebase Admin initialized with bundled key: {candidate}")
+                _available = True
+                return
+
+        # 4. firebase-tools CLI token
         tools_cred = _try_firebase_tools_credential()
         if tools_cred is not None:
             firebase_admin.initialize_app(tools_cred, options={'projectId': PROJECT_ID})
@@ -97,14 +111,17 @@ def _init_firebase():
             _available = True
             return
 
-        # 4. Application Default Credentials
+        # 5. Application Default Credentials
         firebase_admin.initialize_app(options={'projectId': PROJECT_ID})
         logger.info("Firebase Admin initialized with default credentials")
         _available = True
 
     except Exception as e:
         logger.warning(f"Firebase Admin SDK not available: {e}")
-        logger.warning("Firebase token verification disabled — localhost auto-admin still works")
+        logger.warning(
+            "External PC login will fail. Place firebase-service-account.json "
+            "in project root or set FIREBASE_SERVICE_ACCOUNT_KEY env var."
+        )
         _available = False
 
 

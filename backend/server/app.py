@@ -295,12 +295,15 @@ app.include_router(archive_router, prefix="/api/v1")
 
 @app.get("/api/v1/health")
 def health():
-    """Health check endpoint."""
+    """Health check endpoint with Firebase/CORS status for debugging."""
     import socket
+    from backend.server.firebase_auth import is_firebase_available
     return {
         "status": "ok",
         "version": "4.0.0",
         "server_name": socket.gethostname(),
+        "firebase_auth": is_firebase_available(),
+        "cors": "allow_all" if "*" in _cors_origins else "restricted",
     }
 
 
