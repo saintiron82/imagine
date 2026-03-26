@@ -459,12 +459,21 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
         except Exception as e:
             logger.debug(f"Fallback translation skipped: {e}")
 
+        # Classify query type: short proper nouns (Korean/mixed) are likely
+        # metadata keywords (file/folder names), not visual descriptions.
+        query_type = "balanced"
+        stripped = query.strip()
+        has_cjk = any('\u3000' <= c <= '\u9fff' or '\uac00' <= c <= '\ud7af' for c in stripped)
+        word_count = len(stripped.split())
+        if has_cjk and word_count <= 3:
+            query_type = "keyword"
+
         return {
             "vector_query": vector_query,
             "negative_query": "",
             "fts_keywords": fts_keywords,
             "exclude_keywords": [],
             "filters": {},
-            "query_type": "balanced",
+            "query_type": query_type,
             "decomposed": False,
         }
