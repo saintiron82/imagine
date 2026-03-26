@@ -4,6 +4,9 @@ node_modules/
 __pycache__/
 *.pyc
 
+# Firebase service account key (NEVER commit)
+firebase-service-account.json
+
 # Cache
 .cache/
 

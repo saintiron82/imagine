@@ -2641,10 +2641,21 @@ async function startEmbeddedServer(port = 8000) {
         console.warn('[Server] Failed to serialize WebDAV sources:', e.message);
     }
 
+    // Firebase service account key: check bundled resources, then project root
+    let firebaseSaKey = '';
+    const saKeyCandidates = [
+        path.join(process.resourcesPath, 'firebase-service-account.json'),
+        path.join(projectRoot, 'firebase-service-account.json'),
+    ];
+    for (const candidate of saKeyCandidates) {
+        if (fs.existsSync(candidate)) { firebaseSaKey = candidate; break; }
+    }
+
     const serverEnv = {
         ...process.env,
         IMAGINE_USER_SETTINGS_PATH: userSettingsPath,
         ...(webdavSourcesJson ? { IMAGINE_WEBDAV_SOURCES: webdavSourcesJson } : {}),
+        ...(firebaseSaKey ? { FIREBASE_SERVICE_ACCOUNT_KEY: firebaseSaKey } : {}),
     };
 
     const cliPath = getBackendCliPath();
