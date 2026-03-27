@@ -1233,10 +1233,15 @@ class SqliteVectorSearch:
         exclude = unified.get("exclude", {})
         legacy = unified.get("_legacy", {})
 
-        # If scope has folder/type/format, use plan_search (2-stage)
+        # Scope → file_id filter (search within scope only)
+        scope_file_ids = None
         if any(scope.get(k) for k in ("folder", "image_type", "format")):
-            logger.info(f"Triaxis → plan_search redirect (scope={scope})")
-            return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic, _plan=unified)
+            scope_file_ids = self._apply_plan_filter(scope)
+            if scope_file_ids:
+                logger.info(f"Scope filter: {len(scope_file_ids)} files (scope={scope})")
+                diag["scope_filter"] = {"scope": scope, "file_count": len(scope_file_ids)}
+            else:
+                logger.warning(f"Scope filter matched 0 files, searching full DB")
 
         # Extract fields for triaxis (from unified + legacy fallback)
         vector_query = find.get("description", "") or legacy.get("vector_query", query)
@@ -1272,14 +1277,18 @@ class SqliteVectorSearch:
         candidate_k = top_k * candidate_mul
 
         # Step 2: VV vector search (cache embedding for post-merge enrichment)
+        # Step 2: VV vector search
         vector_results = []
         v_query_embedding = None
         t0 = time.perf_counter()
         try:
-            v_query_embedding = self.encode_text(vector_query)
-            vector_results = self.vector_search_by_embedding(
-                v_query_embedding, top_k=candidate_k, threshold=v_threshold
-            )
+            if scope_file_ids:
+                vector_results = self._vv_search_within(vector_query, scope_file_ids, candidate_k, v_threshold)
+            else:
+                v_query_embedding = self.encode_text(vector_query)
+                vector_results = self.vector_search_by_embedding(
+                    v_query_embedding, top_k=candidate_k, threshold=v_threshold
+                )
         except Exception as e:
             logger.warning(f"VV search unavailable: {e}")
             diag["vector_error"] = str(e)
@@ -1297,16 +1306,19 @@ class SqliteVectorSearch:
             ],
         }
 
-        # Step 2b: MV text vector search (cache embedding for post-merge enrichment)
+        # Step 2b: MV text vector search
         text_vec_results = []
         t_query_embedding = None
         t0 = time.perf_counter()
         if self.text_search_enabled:
             try:
-                t_query_embedding = self.text_provider.encode(vector_query, is_query=True)
-                text_vec_results = self._text_vector_search_by_embedding(
-                    t_query_embedding, top_k=candidate_k, threshold=tv_threshold
-                )
+                if scope_file_ids:
+                    text_vec_results = self._mv_search_within(vector_query, scope_file_ids, candidate_k, tv_threshold)
+                else:
+                    t_query_embedding = self.text_provider.encode(vector_query, is_query=True)
+                    text_vec_results = self._text_vector_search_by_embedding(
+                        t_query_embedding, top_k=candidate_k, threshold=tv_threshold
+                    )
             except Exception as e:
                 logger.warning(f"MV search unavailable: {e}")
                 diag["text_vec_error"] = str(e)
@@ -1329,6 +1341,9 @@ class SqliteVectorSearch:
         t0 = time.perf_counter()
         try:
             fts_results = self.fts_search(fts_keywords, top_k=candidate_k, exclude_keywords=exclude_keywords)
+            # Scope filter: keep only files within scope
+            if scope_file_ids:
+                fts_results = [r for r in fts_results if r.get("id") in scope_file_ids]
         except Exception as e:
             logger.warning(f"FTS search unavailable: {e}")
             diag["fts_error"] = str(e)
@@ -1346,12 +1361,9 @@ class SqliteVectorSearch:
             ],
         }
 
-        # Step 3b: Folder pre-filter — scope VV/MV results to folder matches
-        # When folder_filter is set, FTS finds the folder files, then VV/MV
-        # results are filtered to only those files. This enables compound
-        # queries like "세일러문폴더에서 낮씬" (folder scope + content search).
-        logger.warning(f"[DEBUG-v2] folder_filter='{folder_filter}' query_type='{query_type}'")
-        if folder_filter:
+        # Step 3b: Folder pre-filter (legacy — only when scope_file_ids not used)
+        # scope_file_ids already handles this at the search level
+        if folder_filter and not scope_file_ids:
             folder_fts = self.fts_search([folder_filter], top_k=500)
             folder_paths = {r["file_path"] for r in folder_fts}
             if folder_paths:
