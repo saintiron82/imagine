@@ -268,14 +268,22 @@ Negation handling (CRITICAL):
 
 Also classify the query_type:
 - "visual": query focuses on visual style, color, mood, tone, artistic feeling (e.g. "파란 톤", "warm mood illustration")
-- "keyword": query contains specific named objects, scene types, or entities (e.g. "dragon", "castle", "야경")
+- "keyword": query contains ONLY specific names or identifiers with no visual/content intent (e.g. "세일러문", "hero.psd")
 - "semantic": query describes purpose, context, usage, or abstract concept (e.g. "할인 이벤트 배너", "login screen UI")
 - "balanced": mixed or unclear
+
+IMPORTANT — folder_filter:
+If the user scopes the query to a specific folder or project (e.g. "세일러문폴더에서 낮씬", "마캬베리즈무 중에서 실내"),
+extract the folder/project name as "folder_filter" and put the REMAINING search intent in vector_query/fts_keywords.
+Examples:
+  "세일러문폴더 이미지 중에서 낮씬" → folder_filter: "세일러문", vector_query: "daytime outdoor scene", query_type: "visual"
+  "마캬베리즈무에서 어두운 배경" → folder_filter: "마캬베리즈무", vector_query: "dark background", query_type: "visual"
+  "세일러문" (no content query) → folder_filter: "", query_type: "keyword"
 
 User query: "{query}"
 
 Return ONLY valid JSON (no markdown, no explanation):
-{{"vector_query": "positive english description only", "negative_query": "english terms to exclude", "fts_keywords": ["positive", "keywords"], "exclude_keywords": ["negative", "keywords"], "filters": {{}}, "query_type": "visual|keyword|semantic|balanced"}}
+{{"vector_query": "positive english description only", "negative_query": "english terms to exclude", "fts_keywords": ["positive", "keywords"], "exclude_keywords": ["negative", "keywords"], "filters": {{}}, "folder_filter": "", "query_type": "visual|keyword|semantic|balanced"}}
 
 Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name), "image_type", "art_style", "scene_type", "time_of_day", "weather\""""
 
@@ -316,12 +324,17 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                 elif not isinstance(exclude_keywords, list):
                     exclude_keywords = []
 
+                folder_filter = data.get("folder_filter", "")
+                if not isinstance(folder_filter, str):
+                    folder_filter = ""
+
                 return {
                     "vector_query": vector_query if vector_query else original_query,
                     "negative_query": negative_query,
                     "fts_keywords": fts_keywords,
                     "exclude_keywords": exclude_keywords,
                     "filters": filters if isinstance(filters, dict) else {},
+                    "folder_filter": folder_filter.strip(),
                     "query_type": query_type,
                 }
                 # Note: _validate_negation is called by _finalize() in decompose()
@@ -514,6 +527,10 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
         LLM (especially small 0.6B models) often fails to decompose Korean
         queries properly, passing them through as-is. This safety net ensures
         meaningful Korean keywords are extracted regardless of LLM quality.
+
+        Does NOT override query_type when LLM already decomposed successfully —
+        LLM may classify compound queries (e.g. folder filter + content search)
+        as "visual" or "semantic", which is correct for mixed intent.
         """
         ko_kw = self._extract_ko_keywords(original_query)
         if not ko_kw:
@@ -524,10 +541,11 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
             if kw not in existing:
                 result["fts_keywords"].append(kw)
 
-        # CJK query → force keyword type for FTS priority
-        has_hangul = any('\uac00' <= c <= '\ud7af' for c in original_query)
-        if has_hangul:
-            result["query_type"] = "keyword"
+        # Only force keyword type when LLM didn't decompose (fallback path)
+        if not result.get("decomposed", False):
+            has_hangul = any('\uac00' <= c <= '\ud7af' for c in original_query)
+            if has_hangul:
+                result["query_type"] = "keyword"
 
         return result
 
@@ -608,6 +626,7 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
             "fts_keywords": fts_keywords,
             "exclude_keywords": [],
             "filters": {},
+            "folder_filter": "",
             "query_type": query_type,
             "decomposed": False,
         }

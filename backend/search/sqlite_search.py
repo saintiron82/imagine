@@ -949,6 +949,7 @@ class SqliteVectorSearch:
         llm_filters = plan.get("filters", {})
         negative_query = plan.get("negative_query", "")
         exclude_keywords = plan.get("exclude_keywords", [])
+        folder_filter = plan.get("folder_filter", "")
 
         query_type = plan.get("query_type", "balanced")
 
@@ -1050,6 +1051,29 @@ class SqliteVectorSearch:
                 for i, r in enumerate(fts_results[:5])
             ],
         }
+
+        # Step 3b: Folder pre-filter — scope VV/MV results to folder matches
+        # When folder_filter is set, FTS finds the folder files, then VV/MV
+        # results are filtered to only those files. This enables compound
+        # queries like "세일러문폴더에서 낮씬" (folder scope + content search).
+        if folder_filter:
+            folder_fts = self.fts_search([folder_filter], top_k=500)
+            folder_paths = {r["file_path"] for r in folder_fts}
+            if folder_paths:
+                pre_vv = len(vector_results)
+                pre_mv = len(text_vec_results)
+                vector_results = [r for r in vector_results if r.get("file_path") in folder_paths]
+                text_vec_results = [r for r in text_vec_results if r.get("file_path") in folder_paths]
+                logger.info(
+                    f"Folder filter '{folder_filter}': {len(folder_paths)} files, "
+                    f"VV {pre_vv}→{len(vector_results)}, MV {pre_mv}→{len(text_vec_results)}"
+                )
+                diag["folder_filter"] = {
+                    "keyword": folder_filter,
+                    "folder_files": len(folder_paths),
+                    "vv_filtered": len(vector_results),
+                    "mv_filtered": len(text_vec_results),
+                }
 
         # Step 4: 3-axis RRF merge (V + T + F)
         # Build rank lookup before merge for diagnostic
