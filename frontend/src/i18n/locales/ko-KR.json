@@ -62,6 +62,8 @@
   "action.select_all": "전체 선택",
   "action.deselect_all": "전체 해제",
   "action.clear": "초기화",
+  "search.no_history": "검색 이력 없음",
+  "search.recent": "최근 검색",
   "action.clear_results": "결과 지우기",
   "action.load_more": "더 보기",
   "action.show_in_folder": "탐색기에서 보기",

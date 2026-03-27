@@ -62,6 +62,8 @@
   "action.select_all": "Select All",
   "action.deselect_all": "Deselect All",
   "action.clear": "Clear",
+  "search.no_history": "No search history",
+  "search.recent": "Recent Searches",
   "action.clear_results": "Clear results",
   "action.load_more": "Load More (Lower Threshold)",
   "action.show_in_folder": "Show in Explorer",

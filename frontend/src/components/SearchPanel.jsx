@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink, Archive } from 'lucide-react';
 // SettingsModal removed — settings now in dedicated Settings tab
 import ImageSearchInput from './ImageSearchInput';
+import SearchHistorySidebar from './SearchHistorySidebar';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
 import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode } from '../services/bridge';
@@ -844,6 +845,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [imageSearchMode, setImageSearchMode] = useState('and'); // 'and' | 'or'
     const [results, setResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
+    const searchCache = useRef(new Map()); // query → {results, timestamp}
+    const [searchHistory, setSearchHistory] = useState([]); // [{query, resultCount, timestamp}]
     const [error, setError] = useState(null);
     const [showFilters, setShowFilters] = useState(false);
     const [activeFilters, setActiveFilters] = useState({});
@@ -910,15 +913,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         }
     }, [initialSearch]);
 
-    // Restore last search on mount (tab switch recovery)
-    useEffect(() => {
-        if (!initialSearch) {
-            const lastQuery = localStorage.getItem('last_search_query');
-            if (lastQuery) {
-                handleSearch(lastQuery);
-            }
-        }
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // Removed: last_search_query auto-restore (session cache handles this now)
 
     const handleCardContextMenu = useCallback((e, result) => {
         e.preventDefault();
@@ -974,15 +969,17 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         const hasImages = queryImages.length > 0;
         if (!hasText && !hasImages) return;
 
-        // Save to search history (text queries only)
-        if (hasText) {
-            try {
-                const hist = JSON.parse(localStorage.getItem('search_history') || '[]');
-                const filtered = hist.filter(h => h !== searchQuery.trim());
-                filtered.unshift(searchQuery.trim());
-                localStorage.setItem('search_history', JSON.stringify(filtered.slice(0, 20)));
-                localStorage.setItem('last_search_query', searchQuery.trim());
-            } catch { /* ignore */ }
+        // Check session cache first (text-only, no image queries)
+        const cacheKey = hasText && !hasImages ? searchQuery.trim() : null;
+        if (cacheKey && searchCache.current.has(cacheKey)) {
+            const cached = searchCache.current.get(cacheKey);
+            setQuery(searchQuery);
+            setResults(cached.results);
+            setCurrentLimit(20);
+            setNoMoreResults(cached.results.length < 20);
+            setIsSearching(false);
+            setError(null);
+            return;
         }
 
         setQuery(searchQuery);
@@ -1031,6 +1028,21 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 setResults(response.results);
                 setCurrentLimit(20);
                 setNoMoreResults(response.results.length < 20);
+
+                // Cache results (text queries only)
+                if (cacheKey) {
+                    searchCache.current.set(cacheKey, { results: response.results, timestamp: Date.now() });
+                    // Limit cache size
+                    if (searchCache.current.size > 30) {
+                        const oldest = searchCache.current.keys().next().value;
+                        searchCache.current.delete(oldest);
+                    }
+                    // Update history
+                    setSearchHistory(prev => {
+                        const filtered = prev.filter(h => h.query !== cacheKey);
+                        return [{ query: cacheKey, resultCount: response.results.length, timestamp: Date.now() }, ...filtered].slice(0, 30);
+                    });
+                }
             } else {
                 setError(response.error || 'Search failed');
                 setResults([]);
@@ -1142,8 +1154,37 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const buildStatus = dbStats?.build_status || null;
     const rebuildRequired = !!buildStatus?.needs_rebuild;
 
+    const handleHistorySelect = useCallback((q) => {
+        handleSearch(q);
+    }, [handleSearch]);
+
+    const handleHistoryDelete = useCallback((q) => {
+        searchCache.current.delete(q);
+        setSearchHistory(prev => prev.filter(h => h.query !== q));
+    }, []);
+
+    const handleHistoryClearAll = useCallback(() => {
+        searchCache.current.clear();
+        setSearchHistory([]);
+    }, []);
+
     return (
-        <div className="flex flex-col h-full bg-gray-900">
+        <div className="flex h-full bg-gray-900">
+            {/* Sidebar — Search History */}
+            {searchHistory.length > 0 && (
+                <div className="w-48 flex-shrink-0 border-r border-gray-800/50 bg-gray-900/50">
+                    <SearchHistorySidebar
+                        history={searchHistory}
+                        activeQuery={query}
+                        onSelect={handleHistorySelect}
+                        onDelete={handleHistoryDelete}
+                        onClearAll={handleHistoryClearAll}
+                    />
+                </div>
+            )}
+
+            {/* Main content */}
+            <div className="flex flex-col flex-1 min-w-0">
             {/* Search Header Area */}
             <div className={`flex flex-col items-center ${isEmptyState ? 'pt-[20vh]' : 'pt-6'} px-6 pb-4 shrink-0`}>
                 {/* Title (only in empty state) */}
@@ -1367,43 +1408,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onNavigateToFolder={onNavigateToFolder}
             />
 
-            {/* Search History */}
-            {(() => {
-                let hist = [];
-                try { hist = JSON.parse(localStorage.getItem('search_history') || '[]'); } catch {}
-                if (hist.length === 0) return null;
-                return (
-                    <div className="mt-3 px-1">
-                        <div className="flex items-center gap-2 mb-1.5">
-                            <span className="text-[9px] font-mono text-gray-600 uppercase tracking-wider">검색 이력</span>
-                            <button
-                                onClick={() => { localStorage.removeItem('search_history'); setQuery(''); }}
-                                className="text-[8px] text-gray-700 hover:text-gray-400 font-mono"
-                            >전체 삭제</button>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                            {hist.map((h, i) => (
-                                <button
-                                    key={i}
-                                    onClick={() => handleSearch(h)}
-                                    className="group px-2 py-0.5 text-[10px] font-mono rounded-full bg-gray-800 text-gray-400 border border-gray-700/40 hover:border-blue-500/40 hover:text-blue-400 transition-colors flex items-center gap-1"
-                                >
-                                    {h}
-                                    <span
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            const updated = hist.filter((_, j) => j !== i);
-                                            localStorage.setItem('search_history', JSON.stringify(updated));
-                                            setQuery(q => q); // force re-render
-                                        }}
-                                        className="text-gray-700 hover:text-red-400 text-[8px]"
-                                    >✕</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                );
-            })()}
+            {/* Search history moved to sidebar (SearchHistorySidebar) */}
 
             {/* Metadata Modal */}
             {metadata && <MetadataModal metadata={metadata} onClose={() => setMetadata(null)} onNavigateToFolder={onNavigateToFolder} />}
@@ -1448,6 +1453,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             )}
 
             {/* SettingsModal removed — now in Settings tab */}
+            </div>{/* end Main content */}
         </div>
     );
 }
