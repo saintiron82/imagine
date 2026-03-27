@@ -1472,7 +1472,7 @@ class SqliteVectorSearch:
         logger.info(
             f"Triaxis search '{query}': vector={len(vector_results)}, "
             f"fts={len(fts_results)}, merged={len(merged)}, "
-            f"decomposed={plan.get('decomposed', False)}"
+            f"decomposed={unified.get('decomposed', False)}"
         )
 
         # Write diagnostic log
