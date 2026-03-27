@@ -174,15 +174,17 @@ class QueryDecomposer:
         result_file = query_file.name.replace('_query.json', '_result.json')
 
         codex_prompt = (
-            f"Read {query_file.name}. "
-            "Extract folder_filter and search keywords from the Korean/English query. "
-            "If the user scopes to a folder/project (e.g. '세일러문에서', '마캬베리즈무 중에'), "
-            "set folder_filter to that name (cleaned, no particles). "
-            "Put the remaining search intent in vector_query (English). "
-            f"Write result to {result_file} as a single-line JSON: "
-            '{"folder_filter": "", "query_type": "visual|keyword|semantic|balanced", '
-            '"vector_query": "english description", "fts_keywords": ["keywords"], '
-            '"negative_query": "", "exclude_keywords": [], "filters": {}}'
+            f"Read {query_file.name}. Analyze the Korean/English image search query and create a search plan. "
+            "Separate the scope (which folder/project to search in) from the intent (what to find). "
+            "Strip Korean particles (에서,중에,자료,폴더,이미지) from folder names. "
+            f"Write result to {result_file} as a single-line JSON with this exact structure: "
+            '{"pre_filter": {"folder": "folder name or empty string", "image_type": null, "format": null}, '
+            '"search": {"query": "english description of what to find", "mode": "semantic"}, '
+            '"fallback_keywords": ["korean and english keywords"]}'
+            "\nExamples: "
+            "'세일러문 중에서 강이 보이는거' → folder=세일러문, query=river scene with water visible "
+            "'밤 도시 배경' → folder empty, query=night city background "
+            "'마캬베리즈무 실내소품 중에서 어두운거' → folder=마캬베리즈무/실내소품, query=dark interior"
         )
 
         try:
@@ -190,7 +192,7 @@ class QueryDecomposer:
                 ["codex", "exec", "--full-auto", "-s", "danger-full-access", codex_prompt],
                 cwd=str(Path(__file__).resolve().parent.parent.parent),
                 stdin=subprocess.DEVNULL,
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=45,
             )
         except subprocess.TimeoutExpired:
             logger.warning("Codex CLI timed out (30s)")
