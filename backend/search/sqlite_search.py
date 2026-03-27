@@ -948,9 +948,52 @@ class SqliteVectorSearch:
 
         logger.info(f"Plan search: scope matched {len(file_ids)} files (scope={scope})")
 
-        # Stage 2: Vector search within file_id set
+        # Stage 2: VV + MV vector search within file_id set
         search_query = find.get("description", query)
-        results = self._mv_search_within(search_query, file_ids, top_k, threshold)
+
+        # MV: semantic similarity within scope
+        mv_results = self._mv_search_within(search_query, file_ids, top_k * 3, threshold)
+
+        # VV: visual similarity within scope
+        vv_results = self._vv_search_within(search_query, file_ids, top_k * 3, threshold)
+
+        # RRF merge VV + MV (within scope)
+        if mv_results and vv_results:
+            # Simple RRF: combine ranks from both axes
+            path_to_mv_rank = {r["file_path"]: i + 1 for i, r in enumerate(mv_results)}
+            path_to_vv_rank = {r["file_path"]: i + 1 for i, r in enumerate(vv_results)}
+            all_paths = set(path_to_mv_rank) | set(path_to_vv_rank)
+
+            rrf_k = 60
+            scored = []
+            for fp in all_paths:
+                mv_rank = path_to_mv_rank.get(fp, len(mv_results) + 100)
+                vv_rank = path_to_vv_rank.get(fp, len(vv_results) + 100)
+                # MV weight 0.6, VV weight 0.4 (semantic > visual for text queries)
+                score = 0.6 / (mv_rank + rrf_k) + 0.4 / (vv_rank + rrf_k)
+                scored.append((fp, score))
+            scored.sort(key=lambda x: x[1], reverse=True)
+
+            # Build result list from top scored paths
+            mv_map = {r["file_path"]: r for r in mv_results}
+            vv_map = {r["file_path"]: r for r in vv_results}
+            results = []
+            for fp, rrf_score in scored[:top_k]:
+                r = mv_map.get(fp) or vv_map.get(fp)
+                if r:
+                    # Enrich with scores from both axes
+                    if fp in mv_map:
+                        r["text_vec_score"] = mv_map[fp].get("text_vec_score")
+                    if fp in vv_map:
+                        r["vector_score"] = vv_map[fp].get("vector_score")
+                    r["rrf_score"] = rrf_score
+                    results.append(r)
+        elif mv_results:
+            results = mv_results[:top_k]
+        elif vv_results:
+            results = vv_results[:top_k]
+        else:
+            results = []
 
         # Fallback: if not enough results, add FTS matches within scope
         if len(results) < top_k and fallback_kw:
@@ -960,7 +1003,7 @@ class SqliteVectorSearch:
                 if r["id"] in file_ids and r["id"] not in existing_ids:
                     r["vector_score"] = None
                     r["text_vec_score"] = None
-                    r["text_score"] = 0.5  # neutral FTS score
+                    r["text_score"] = 0.5
                     results.append(r)
                     existing_ids.add(r["id"])
                     if len(results) >= top_k:
@@ -1078,6 +1121,67 @@ class SqliteVectorSearch:
                 results.append(result)
 
         logger.info(f"MV search within {len(file_ids)} files: {len(results)} results "
+                     f"(top sim={all_scores[0][1]:.3f})" if all_scores else "")
+        return results
+
+    def _vv_search_within(
+        self, query: str, file_ids: set, top_k: int = 20, threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """VV visual search within a specific file_id set.
+
+        Encodes query text with SigLIP2, loads VV vectors for file_ids,
+        and computes cosine similarity in-memory.
+        """
+        try:
+            q_vec = self.encode_text(query)
+        except Exception as e:
+            logger.warning(f"VV encode failed: {e}")
+            return []
+
+        cursor = self.db.conn.cursor()
+        id_list = list(file_ids)
+
+        all_scores = []
+        for chunk_start in range(0, len(id_list), 500):
+            chunk = id_list[chunk_start:chunk_start + 500]
+            placeholders = ','.join('?' * len(chunk))
+            cursor.execute(f"""
+                SELECT vf.file_id, vf.embedding
+                FROM vec_files vf
+                WHERE vf.file_id IN ({placeholders})
+            """, chunk)
+
+            for row in cursor.fetchall():
+                fid = row[0]
+                raw = row[1]
+                if isinstance(raw, bytes):
+                    emb = np.frombuffer(raw, dtype=np.float32)
+                else:
+                    emb = np.array(json.loads(raw), dtype=np.float32)
+                sim = float(np.dot(q_vec, emb) / (np.linalg.norm(q_vec) * np.linalg.norm(emb) + 1e-8))
+                if sim >= threshold:
+                    all_scores.append((fid, sim))
+
+        all_scores.sort(key=lambda x: x[1], reverse=True)
+        top_ids = all_scores[:top_k]
+
+        if not top_ids:
+            return []
+
+        results = []
+        for fid, sim in top_ids:
+            cursor.execute("SELECT f.* FROM files f WHERE f.id = ?", (fid,))
+            row = cursor.fetchone()
+            if row:
+                result = dict(row)
+                self._parse_json_fields(result)
+                result["similarity"] = sim
+                result["vector_score"] = sim
+                result["text_vec_score"] = None
+                result["text_score"] = None
+                results.append(result)
+
+        logger.info(f"VV search within {len(file_ids)} files: {len(results)} results "
                      f"(top sim={all_scores[0][1]:.3f})" if all_scores else "")
         return results
 
