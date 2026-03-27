@@ -3338,7 +3338,25 @@ app.whenReady().then(async () => {
     try { cleanupOrphanDaemons(); } catch (e) {
         try { fs.appendFileSync(_deskLog, `[ready] cleanupOrphanDaemons error: ${e.message}\n`); } catch {}
     }
-    try { fs.appendFileSync(_deskLog, `[ready] cleanup done, calling createWindow\n`); } catch {}
+    try { fs.appendFileSync(_deskLog, `[ready] cleanup done\n`); } catch {}
+
+    // Ensure Codex CLI is installed (for search query decomposition)
+    try {
+        const { execSync } = require('child_process');
+        execSync('codex --version', { stdio: 'pipe', timeout: 5000 });
+        console.log('[Codex] CLI available');
+    } catch {
+        console.log('[Codex] CLI not found, installing...');
+        try {
+            const { execSync } = require('child_process');
+            execSync('npm install -g @openai/codex', { stdio: 'pipe', timeout: 120000 });
+            console.log('[Codex] CLI installed successfully');
+        } catch (e) {
+            console.warn('[Codex] CLI install failed (will use local MLX fallback):', e.message);
+        }
+    }
+
+    try { fs.appendFileSync(_deskLog, `[ready] codex check done, calling createWindow\n`); } catch {}
 
     // Server is started by the React app via IPC (window.electron.server.start)
     // when user selects "관리" mode on SetupPage. No config.yaml auto-start.
