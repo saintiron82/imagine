@@ -440,14 +440,13 @@ class PhaseRunner:
         if not caption and not tags:
             return None
 
-        # Build facts from available metadata
+        # Build facts from available metadata (image content only, no folder path)
+        # Folder path belongs to FTS (metadata axis), not MV (semantic axis)
         facts = {}
         for key in ("image_type", "scene_type", "art_style"):
             val = mc.get(key)
             if val:
                 facts[key] = val
-        if item.folder_path:
-            facts["path"] = item.folder_path
 
         try:
             from backend.vector.text_embedding import build_document_text
