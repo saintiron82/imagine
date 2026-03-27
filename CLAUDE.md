@@ -972,11 +972,11 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 
 **VV/MV 크로스 티어 호환성 확보 완료.**
 
-| Tier | VRAM | VV 모델 (SigLIP2) | VLM (MC 생성) | MV 모델 (Qwen3-Embedding) |
-|------|------|-------------------|---------------|----------------------|
-| **standard** | ~6GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) |
-| **pro** | 8-16GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-4B` (auto: mlx/transformers) | `Qwen3-Embedding-0.6B` (1024d) |
-| **ultra** | 20GB+ | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-8B` (auto: mlx/ollama/vllm/transformers) | `Qwen3-Embedding-8B` (4096d) |
+| Tier | VRAM | VV 모델 (SigLIP2) | VLM (MC 생성) | MV 모델 (Qwen3-Embedding) | 검색 LLM (쿼리 분해) |
+|------|------|-------------------|---------------|----------------------|----------------------|
+| **standard** | ~6GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-0.8B` (mlx/transformers) |
+| **pro** | 8-16GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-4B` (auto: mlx/transformers) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-4B-OptiQ-4bit` (mlx/transformers) |
+| **ultra** | 20GB+ | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-8B` (auto: mlx/ollama/vllm/transformers) | `Qwen3-Embedding-8B` (4096d) | `Qwen3.5-9B` (mlx/transformers) |
 
 **핵심 설계 결정 (2026-02-20):**
 - **VV 모델 통일**: 모든 Tier에서 동일한 `siglip2-so400m-patch16-naflex` (1152d) 사용. Tier 전환 시 VV 재생성 불필요.
