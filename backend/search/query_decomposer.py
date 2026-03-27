@@ -48,6 +48,13 @@ def _init_llm_backend():
         return
     _llm_initialized = True
 
+    # 0. Codex CLI (best accuracy — GPT-5.3-codex)
+    import shutil
+    if shutil.which("codex"):
+        _llm_backend = "codex"
+        logger.info("QueryDecomposer LLM backend: Codex CLI")
+        return
+
     # macOS: try mlx-lm first
     if platform.system() == "Darwin":
         try:
@@ -125,6 +132,13 @@ class QueryDecomposer:
         """
         prompt = self._build_prompt(query)
 
+        # 0. Codex CLI (best accuracy)
+        if _llm_backend == "codex":
+            try:
+                return self._generate_codex(query)
+            except Exception as e:
+                logger.warning(f"Codex CLI failed: {e}")
+
         # 1. MLX backend (macOS)
         if _llm_backend == "mlx" and _mlx_model is not None:
             try:
@@ -139,6 +153,64 @@ class QueryDecomposer:
             except Exception as e:
                 logger.warning(f"Ollama generation failed: {e}")
 
+        return None
+
+    def _generate_codex(self, query: str) -> Optional[str]:
+        """Generate query decomposition using Codex CLI (GPT-5.3-codex).
+
+        Uses file-based I/O: writes query to temp file, Codex writes result.
+        Falls back to None if Codex fails or times out.
+        """
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        # Write query to temp file
+        query_file = tempfile.NamedTemporaryFile(
+            mode='w', suffix='_query.json', delete=False, dir='/tmp')
+        json.dump({"query": query}, query_file)
+        query_file.close()
+
+        result_file = query_file.name.replace('_query.json', '_result.json')
+
+        codex_prompt = (
+            f"Read {query_file.name}. "
+            "Extract folder_filter and search keywords from the Korean/English query. "
+            "If the user scopes to a folder/project (e.g. '세일러문에서', '마캬베리즈무 중에'), "
+            "set folder_filter to that name (cleaned, no particles). "
+            "Put the remaining search intent in vector_query (English). "
+            f"Write result to {result_file} as a single-line JSON: "
+            '{"folder_filter": "", "query_type": "visual|keyword|semantic|balanced", '
+            '"vector_query": "english description", "fts_keywords": ["keywords"], '
+            '"negative_query": "", "exclude_keywords": [], "filters": {}}'
+        )
+
+        try:
+            subprocess.run(
+                ["codex", "exec", "--full-auto", "-s", "danger-full-access", codex_prompt],
+                cwd=str(Path(__file__).resolve().parent.parent.parent),
+                stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("Codex CLI timed out (30s)")
+            return None
+        finally:
+            try:
+                os.unlink(query_file.name)
+            except OSError:
+                pass
+
+        if os.path.exists(result_file):
+            try:
+                with open(result_file) as f:
+                    content = f.read().strip()
+                os.unlink(result_file)
+                if content.startswith('{'):
+                    logger.info(f"Codex CLI result: {content[:200]}")
+                    return content
+            except Exception as e:
+                logger.warning(f"Codex result read failed: {e}")
         return None
 
     def _generate_mlx(self, prompt: str) -> Optional[str]:
