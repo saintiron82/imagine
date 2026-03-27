@@ -596,9 +596,16 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
 
 // Isolated search input — manages its own typing state so keystrokes
 // never re-render the parent SearchPanel (fixes backspace flicker).
+const AI_MODES = [
+    { id: 'fast', label: 'Fast', color: 'text-green-400 border-green-500/50', desc: 'Local MLX (~2s)' },
+    { id: 'smart', label: 'Smart', color: 'text-blue-400 border-blue-500/50', desc: 'Codex Mini (~5s)' },
+    { id: 'pro', label: 'Pro', color: 'text-purple-400 border-purple-500/50', desc: 'Codex 5.3 (~10s)' },
+];
+
 const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, showFilters, hasActiveFilters, onToggleFilters, onOpenSettings, inputRef, resetSignal }) => {
     const { t } = useLocale();
     const [localQuery, setLocalQuery] = useState('');
+    const [aiMode, setAiMode] = useState(() => localStorage.getItem('search_ai_mode') || 'fast');
 
     // Reset input when parent signals a clear
     useEffect(() => {
@@ -610,15 +617,22 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
         if (inputRef.current) inputRef.current.focus();
     }, []);
 
+    const cycleAiMode = () => {
+        const idx = AI_MODES.findIndex(m => m.id === aiMode);
+        const next = AI_MODES[(idx + 1) % AI_MODES.length].id;
+        setAiMode(next);
+        localStorage.setItem('search_ai_mode', next);
+    };
+
     const handleKeyPress = (e) => {
         if (e.key === 'Enter' && (localQuery.trim() || hasImages)) {
-            onSearch(localQuery);
+            onSearch(localQuery, { aiMode });
         }
     };
 
     const handleSearchClick = () => {
         if (localQuery.trim() || hasImages) {
-            onSearch(localQuery);
+            onSearch(localQuery, { aiMode });
         }
     };
 
@@ -660,6 +674,19 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
                     <Search size={18} />
                 )}
             </button>
+            {/* AI Mode Toggle */}
+            {(() => {
+                const mode = AI_MODES.find(m => m.id === aiMode) || AI_MODES[0];
+                return (
+                    <button
+                        onClick={cycleAiMode}
+                        className={`px-3 py-3 rounded-lg border text-[11px] font-bold transition-colors ${mode.color} bg-gray-800 hover:bg-gray-700`}
+                        title={mode.desc}
+                    >
+                        {mode.label}
+                    </button>
+                );
+            })()}
             {/* Filter Toggle */}
             <button
                 onClick={onToggleFilters}
@@ -950,7 +977,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const searchStateRef = useRef();
     searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
 
-    const handleSearch = useCallback(async (searchQuery, { useCache = false } = {}) => {
+    const handleSearch = useCallback(async (searchQuery, { useCache = false, aiMode = 'fast' } = {}) => {
         const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
         const hasText = searchQuery.trim().length > 0;
         const hasImages = queryImages.length > 0;
@@ -1011,9 +1038,13 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 searchOptions.mode = 'triaxis';
             }
 
+            // Pass AI mode to backend for query decomposition
+            searchOptions.ai_mode = aiMode;
+
             const response = await searchImages(searchOptions);
 
             if (response.success) {
+                console.log('[Search] backend version:', response._v || 'OLD', 'results:', response.count);
                 setResults(response.results);
                 setCurrentLimit(20);
                 setNoMoreResults(response.results.length < 20);
