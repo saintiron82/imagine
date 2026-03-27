@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 _DEFAULT_MODEL = os.getenv("VISION_MODEL", "qwen3-vl:8b")
 
-# MLX model for query decomposition (lightweight text-only)
-_MLX_MODEL_ID = "Qwen/Qwen3-0.6B-MLX-4bit"
+# MLX model for query decomposition (text-only, Korean-capable)
+_MLX_MODEL_ID = "mlx-community/Qwen3.5-4B-OptiQ-4bit"
 
 # ── Singleton LLM backend (shared across QueryDecomposer instances) ──
 _llm_backend: Optional[str] = None  # "mlx" | "ollama" | None
