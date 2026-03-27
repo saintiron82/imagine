@@ -527,83 +527,67 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                 )}
             </div>
 
-            {/* Info */}
-            <div className="p-3 flex-1 min-h-0 overflow-hidden flex flex-col">
+            {/* Info — compact 2-line layout */}
+            <div className="px-2 py-1.5 overflow-hidden">
+                {/* Line 1: filename + folder + action buttons */}
                 <div className="flex items-center gap-1">
-                    <div className="text-sm font-medium text-white truncate flex-1">{fileName}</div>
+                    <div className="text-[11px] font-medium text-white truncate flex-1">{fileName}</div>
                     {isElectron && (
                         <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                                 onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(localPath); }}
-                                className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                                className="p-0.5 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
                                 title={t('action.show_in_folder')}
                             >
-                                <FolderOpen size={14} />
+                                <FolderOpen size={12} />
                             </button>
                             <button
                                 onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(localPath); }}
-                                className="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                                className="p-0.5 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
                                 title={t('action.open_file')}
                             >
-                                <ExternalLink size={14} />
+                                <ExternalLink size={12} />
                             </button>
                         </div>
                     )}
                 </div>
-                {result.folder_path && (
-                    <div
-                        className={`text-[10px] text-gray-500 truncate mt-0.5 ${onNavigateToFolder ? 'hover:text-blue-400 cursor-pointer' : ''}`}
-                        title={localPath || dbPath}
-                        onClick={onNavigateToFolder ? (e) => {
-                            e.stopPropagation();
-                            // Derive absolute folder path from file path
-                            const filePath = localPath || dbPath;
-                            const folderPath = filePath.replace(/[/\\][^/\\]+$/, '');
-                            onNavigateToFolder(folderPath);
-                        } : undefined}
-                    >
-                        {result.folder_path}
-                    </div>
-                )}
+                {/* Line 2: folder path + caption (single truncated line) */}
+                <div className="text-[9px] text-gray-500 truncate mt-0.5" title={result.mc_caption || ''}>
+                    {result.folder_path && (
+                        <span
+                            className={onNavigateToFolder ? 'hover:text-blue-400 cursor-pointer' : ''}
+                            onClick={onNavigateToFolder ? (e) => {
+                                e.stopPropagation();
+                                const filePath = localPath || dbPath;
+                                const folderPath = filePath.replace(/[/\\][^/\\]+$/, '');
+                                onNavigateToFolder(folderPath);
+                            } : undefined}
+                        >
+                            {result.folder_path}
+                        </span>
+                    )}
+                    {result.folder_path && result.mc_caption && <span className="mx-1 text-gray-700">|</span>}
+                    {result.mc_caption && <span className="text-gray-500">{result.mc_caption}</span>}
+                </div>
 
-                {result.mc_caption && (
-                    <div className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
-                        {result.mc_caption}
-                    </div>
-                )}
-
-                {result.ai_tags && result.ai_tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                        {result.ai_tags.slice(0, 3).map((tag, i) => (
-                            <span
-                                key={i}
-                                className="px-1.5 py-0.5 bg-blue-900/30 text-blue-400 text-[10px] rounded"
-                            >
-                                {tag}
-                            </span>
-                        ))}
-                        {result.ai_tags.length > 3 && (
-                            <span className="text-[10px] text-gray-500">+{result.ai_tags.length - 3}</span>
-                        )}
-                    </div>
-                )}
-
-                <div className="flex items-center gap-2 mt-auto pt-2 text-[10px] text-gray-500">
-                    <span className="uppercase font-medium">{result.format || ext.replace('.', '')}</span>
+                {/* Line 3: tags + file info (inline) */}
+                <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
+                    {result.ai_tags && result.ai_tags.slice(0, 3).map((tag, i) => (
+                        <span key={i} className="px-1 py-0 bg-blue-900/30 text-blue-400 text-[8px] rounded shrink-0">{tag}</span>
+                    ))}
+                    {result.ai_tags && result.ai_tags.length > 3 && (
+                        <span className="text-[8px] text-gray-600 shrink-0">+{result.ai_tags.length - 3}</span>
+                    )}
+                    <span className="text-[8px] text-gray-600 ml-auto shrink-0 uppercase">{result.format || ext.replace('.', '')}</span>
                     {result.width && result.height && (
-                        <span>{result.width}x{result.height}</span>
+                        <span className="text-[8px] text-gray-600 shrink-0">{result.width}x{result.height}</span>
                     )}
                     {result.layer_count > 0 && (
-                        <span>{result.layer_count}L</span>
+                        <span className="text-[8px] text-gray-600 shrink-0">{result.layer_count}L</span>
                     )}
-                    <div className="flex items-center gap-1 ml-auto">
-                        {result.user_rating > 0 && (
-                            <span className="text-yellow-400">{'\u2605'.repeat(result.user_rating)}</span>
-                        )}
-                        {result.user_category && (
-                            <span className="bg-gray-700 text-gray-300 px-1 rounded">{result.user_category}</span>
-                        )}
-                    </div>
+                    {result.user_rating > 0 && (
+                        <span className="text-yellow-400 text-[8px] shrink-0">{'\u2605'.repeat(result.user_rating)}</span>
+                    )}
                 </div>
             </div>
         </div>
@@ -709,7 +693,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
     const { columnCount, cardWidth, rowHeight } = useResponsiveColumns(scrollRef, {
         breakpoints: [2, 500, 3, 768, 4, 1024, 5, 1280, 6],
         gap: SEARCH_GAP,
-        cardAspectTotal: 1.65, // taller cards (image + caption + tags + info)
+        cardAspectTotal: 1.45, // compact cards (image + 2-line info)
     });
 
     const rowCount = Math.ceil(results.length / columnCount);
