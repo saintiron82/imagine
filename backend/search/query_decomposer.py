@@ -107,11 +107,14 @@ class QueryDecomposer:
             }
         """
         raw_text = self._generate_llm(query)
+        logger.warning(f"[DECOMP] query='{query}' llm_raw={repr(raw_text[:200]) if raw_text else 'None'} backend={_llm_backend}")
         if raw_text is not None:
             parsed = self._parse_response(raw_text, query)
+            logger.warning(f"[DECOMP] parsed folder_filter='{parsed.get('folder_filter','')}' type='{parsed.get('query_type','')}'")
             parsed["decomposed"] = True
             return self._finalize(parsed, query)
 
+        logger.warning(f"[DECOMP] LLM failed, using fallback")
         return self._finalize(self._fallback(query), query)
 
     def _generate_llm(self, query: str) -> Optional[str]:
@@ -152,7 +155,7 @@ class QueryDecomposer:
 
         raw = generate(
             _mlx_model, _mlx_tokenizer, prompt=formatted,
-            max_tokens=256, verbose=False,
+            max_tokens=512, verbose=False,
         )
 
         # Extract JSON from response
@@ -198,6 +201,12 @@ class QueryDecomposer:
         result = self._validate_negation(result, original_query)
         result = self._augment_path_query(result, original_query)
         result = self._augment_ko_keywords(result, original_query)
+        # Clean folder_filter: strip Korean particles/suffixes
+        ff = result.get("folder_filter", "")
+        if ff:
+            cleaned = self._KO_PARTICLES.sub('', ff.strip())
+            if cleaned and len(cleaned) >= 2:
+                result["folder_filter"] = cleaned
         logger.info(f"Query decomposed: '{original_query}' → vector='{result['vector_query']}', "
                     f"negative='{result.get('negative_query', '')}', "
                     f"fts={result['fts_keywords']}, "
@@ -282,8 +291,8 @@ Examples:
 
 User query: "{query}"
 
-Return ONLY valid JSON (no markdown, no explanation):
-{{"vector_query": "positive english description only", "negative_query": "english terms to exclude", "fts_keywords": ["positive", "keywords"], "exclude_keywords": ["negative", "keywords"], "filters": {{}}, "folder_filter": "", "query_type": "visual|keyword|semantic|balanced"}}
+Return ONLY valid JSON on a single line (no newlines, no markdown):
+{{"folder_filter": "", "query_type": "visual|keyword|semantic|balanced", "vector_query": "positive english description only", "fts_keywords": ["positive", "keywords"], "negative_query": "", "exclude_keywords": [], "filters": {{}}}}
 
 Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name), "image_type", "art_style", "scene_type", "time_of_day", "weather\""""
 
@@ -574,9 +583,9 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
 
     # Korean particles/suffixes to strip for FTS keyword extraction
     _KO_PARTICLES = re.compile(
-        r'(폴더에|폴더|파일|에서|에게|으로|이랑|에게서|부터|까지|한테|보다|처럼|만큼|대로|마다'
+        r'(자료중에|자료|폴더에|폴더|파일|이미지|중에서|중에|에서|에게|으로|이랑|에게서|부터|까지|한테|보다|처럼|만큼|대로|마다'
         r'|에|의|를|을|이|가|은|는|과|와|도|로|서|께|랑'
-        r'|있는거|있는것|있는|없는|하는|했던|인거|인것)$'
+        r'|있는거|있는것|있는|없는|하는|했던|인거|인것|그려진거|보이는|보이는거)$'
     )
 
     def _extract_ko_keywords(self, query: str) -> list:
