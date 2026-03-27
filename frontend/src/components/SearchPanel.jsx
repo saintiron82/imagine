@@ -950,15 +950,15 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const searchStateRef = useRef();
     searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
 
-    const handleSearch = useCallback(async (searchQuery) => {
+    const handleSearch = useCallback(async (searchQuery, { useCache = false } = {}) => {
         const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
         const hasText = searchQuery.trim().length > 0;
         const hasImages = queryImages.length > 0;
         if (!hasText && !hasImages) return;
 
-        // Check session cache first (text-only, no image queries)
+        // Check session cache (only when explicitly requested, e.g. sidebar click)
         const cacheKey = hasText && !hasImages ? searchQuery.trim() : null;
-        if (cacheKey && searchCache.current.has(cacheKey)) {
+        if (useCache && cacheKey && searchCache.current.has(cacheKey)) {
             const cached = searchCache.current.get(cacheKey);
             setQuery(searchQuery);
             setResults(cached.results);
@@ -968,6 +968,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             setError(null);
             return;
         }
+        // Clear old cache for this query (force fresh results)
+        if (cacheKey) searchCache.current.delete(cacheKey);
 
         setQuery(searchQuery);
         setQueryFileId(null); // Clear file-based search
@@ -1144,7 +1146,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const rebuildRequired = !!buildStatus?.needs_rebuild;
 
     const handleHistorySelect = useCallback((q) => {
-        handleSearch(q);
+        handleSearch(q, { useCache: true });
     }, [handleSearch]);
 
     const handleHistoryDelete = useCallback((q) => {
