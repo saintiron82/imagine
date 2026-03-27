@@ -281,13 +281,36 @@ class QueryDecomposer:
             cleaned = self._KO_PARTICLES.sub('', ff.strip())
             if cleaned and len(cleaned) >= 2:
                 result["folder_filter"] = cleaned
-        logger.info(f"Query decomposed: '{original_query}' → vector='{result['vector_query']}', "
-                    f"negative='{result.get('negative_query', '')}', "
-                    f"fts={result['fts_keywords']}, "
-                    f"exclude={result.get('exclude_keywords', [])}, "
-                    f"filters={result['filters']}, "
-                    f"query_type={result['query_type']}")
-        return result
+        # Convert to unified search schema: {scope, find, exclude}
+        # This is the single output format for all backends.
+        pre_filter = result.get("pre_filter", {})
+        folder = pre_filter.get("folder", "") if pre_filter else result.get("folder_filter", "")
+        filters = result.get("filters", {})
+
+        unified = {
+            "scope": {
+                "folder": folder,
+                "image_type": filters.get("image_type") or (pre_filter.get("image_type") if pre_filter else None),
+                "format": filters.get("format") or (pre_filter.get("format") if pre_filter else None),
+            },
+            "find": {
+                "description": result.get("search", {}).get("query", "") if result.get("search") else result.get("vector_query", ""),
+                "keywords": result.get("fallback_keywords", []) if result.get("fallback_keywords") else result.get("fts_keywords", []),
+            },
+            "exclude": {
+                "description": result.get("negative_query", ""),
+                "keywords": result.get("exclude_keywords", []),
+            },
+            "decomposed": result.get("decomposed", False),
+            # Keep legacy fields for backward compatibility during transition
+            "_legacy": result,
+        }
+
+        logger.info(
+            f"Query decomposed: '{original_query}' → "
+            f"scope={unified['scope']}, find='{unified['find']['description'][:60]}', "
+            f"exclude='{unified['exclude']['description'][:30]}'")
+        return unified
 
     def _build_prompt(self, query: str) -> str:
         return f"""You are a search query decomposer for an image asset database.
@@ -411,7 +434,21 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                 if not isinstance(folder_filter, str):
                     folder_filter = ""
 
-                return {
+                # Codex may return pre_filter/search format instead of legacy
+                pre_filter = data.get("pre_filter")
+                search_intent = data.get("search")
+                if pre_filter and isinstance(pre_filter, dict):
+                    # Use pre_filter.folder if folder_filter is empty
+                    pf_folder = pre_filter.get("folder", "")
+                    if pf_folder and not folder_filter:
+                        folder_filter = pf_folder
+                if search_intent and isinstance(search_intent, dict):
+                    sq = search_intent.get("query", "")
+                    if sq and (not vector_query or vector_query == original_query):
+                        vector_query = sq
+                fallback_kw = data.get("fallback_keywords")
+
+                result = {
                     "vector_query": vector_query if vector_query else original_query,
                     "negative_query": negative_query,
                     "fts_keywords": fts_keywords,
@@ -420,6 +457,14 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                     "folder_filter": folder_filter.strip(),
                     "query_type": query_type,
                 }
+                # Pass through Codex plan fields if present
+                if pre_filter:
+                    result["pre_filter"] = pre_filter
+                if search_intent:
+                    result["search"] = search_intent
+                if fallback_kw:
+                    result["fallback_keywords"] = fallback_kw
+                return result
                 # Note: _validate_negation is called by _finalize() in decompose()
 
         except (json.JSONDecodeError, ValueError) as e:
