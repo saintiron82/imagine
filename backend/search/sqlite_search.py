@@ -1251,6 +1251,14 @@ class SqliteVectorSearch:
         exclude_keywords = exclude.get("keywords", [])
         folder_filter = scope.get("folder", "")
 
+        # Remove scope keywords from FTS — scope is a filter, not a search term
+        if scope_file_ids and folder_filter:
+            fts_keywords = [kw for kw in fts_keywords
+                           if folder_filter.lower() not in kw.lower()
+                           and kw.lower() not in folder_filter.lower()]
+            if not fts_keywords:
+                fts_keywords = [vector_query] if vector_query else [query]
+
         query_type = legacy.get("query_type", "balanced")
 
         diag["decomposition"] = {
