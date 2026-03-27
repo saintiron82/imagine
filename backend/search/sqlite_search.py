@@ -901,6 +901,180 @@ class SqliteVectorSearch:
         finally:
             cursor.close()
 
+    # ------------------------------------------------------------------
+    # Plan-based search: Codex generates search plan, engine executes it
+    # ------------------------------------------------------------------
+
+    def plan_search(
+        self,
+        query: str,
+        top_k: int = 20,
+        threshold: float = 0.0,
+        return_diagnostic: bool = False,
+        _plan: dict = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        2-stage search: Codex generates a search plan, engine executes it.
+
+        Stage 1: QueryDecomposer (Codex CLI) → search plan with pre_filter + search intent
+        Stage 2: pre_filter → SQL WHERE → file_id set → vector search within that set
+
+        Falls back to triaxis_search if Codex fails or no pre_filter.
+        """
+        t_start = time.perf_counter()
+
+        # Use provided plan or decompose
+        plan = _plan
+        if not plan:
+            decomposer = QueryDecomposer()
+            plan = decomposer.decompose(query)
+
+        pre_filter = plan.get("pre_filter", {})
+        search_intent = plan.get("search", {})
+        fallback_kw = plan.get("fallback_keywords", [])
+
+        # If no pre_filter, fall back to standard triaxis
+        if not pre_filter or not any(pre_filter.get(k) for k in ("folder", "image_type", "format")):
+            logger.info(f"Plan search: no pre_filter, falling back to triaxis")
+            return self.triaxis_search(query, None, top_k, threshold, return_diagnostic=return_diagnostic)
+
+        # Stage 1: Apply pre_filter → get file_id set
+        file_ids = self._apply_plan_filter(pre_filter)
+        if not file_ids:
+            logger.warning(f"Plan search: pre_filter matched 0 files, falling back to triaxis")
+            return self.triaxis_search(query, None, top_k, threshold, return_diagnostic=return_diagnostic)
+
+        logger.info(f"Plan search: pre_filter matched {len(file_ids)} files")
+
+        # Stage 2: Vector search within file_id set
+        search_query = search_intent.get("query", query)
+        results = self._mv_search_within(search_query, file_ids, top_k, threshold)
+
+        # Fallback: if not enough results, add FTS matches within scope
+        if len(results) < top_k and fallback_kw:
+            existing_ids = {r["id"] for r in results}
+            fts_fill = self.fts_search(fallback_kw, top_k * 2)
+            for r in fts_fill:
+                if r["id"] in file_ids and r["id"] not in existing_ids:
+                    r["vector_score"] = None
+                    r["text_vec_score"] = None
+                    r["text_score"] = 0.5  # neutral FTS score
+                    results.append(r)
+                    existing_ids.add(r["id"])
+                    if len(results) >= top_k:
+                        break
+
+        results = results[:top_k]
+
+        elapsed = time.perf_counter() - t_start
+        logger.info(f"Plan search '{query}': {len(results)} results in {elapsed:.1f}s "
+                     f"(pre_filter={len(file_ids)} files)")
+
+        if return_diagnostic:
+            diag = {
+                "mode": "plan",
+                "pre_filter": pre_filter,
+                "search_query": search_query,
+                "pre_filter_count": len(file_ids),
+                "result_count": len(results),
+                "total_ms": round(elapsed * 1000, 1),
+            }
+            return results, diag
+        return results
+
+    def _apply_plan_filter(self, pre_filter: dict) -> set:
+        """Apply pre_filter to get file_id set from DB."""
+        cursor = self.db.conn.cursor()
+        conditions = ["preview_only = 0"]
+        params = []
+
+        folder = pre_filter.get("folder", "")
+        if folder:
+            conditions.append("(folder_path LIKE ? OR file_path LIKE ?)")
+            params.extend([f"%{folder}%", f"%{folder}%"])
+
+        img_type = pre_filter.get("image_type")
+        if img_type:
+            conditions.append("image_type = ?")
+            params.append(img_type)
+
+        fmt = pre_filter.get("format")
+        if fmt:
+            conditions.append("UPPER(format) = ?")
+            params.append(fmt.upper())
+
+        where = " AND ".join(conditions)
+        cursor.execute(f"SELECT id FROM files WHERE {where}", params)
+        return {row[0] for row in cursor.fetchall()}
+
+    def _mv_search_within(
+        self, query: str, file_ids: set, top_k: int = 20, threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """MV vector search within a specific file_id set.
+
+        Loads vectors for the file_id set and computes cosine similarity
+        in-memory (sqlite-vec doesn't support WHERE + ORDER BY distance).
+        """
+        if not self.text_search_enabled:
+            return []
+
+        try:
+            q_vec = self.text_provider.encode(query, is_query=True)
+        except Exception as e:
+            logger.warning(f"MV encode failed: {e}")
+            return []
+
+        # Load vectors for file_ids
+        cursor = self.db.conn.cursor()
+        id_list = list(file_ids)
+
+        # Batch query (SQLite has a limit of ~999 params, chunk if needed)
+        all_scores = []
+        for chunk_start in range(0, len(id_list), 500):
+            chunk = id_list[chunk_start:chunk_start + 500]
+            placeholders = ','.join('?' * len(chunk))
+            cursor.execute(f"""
+                SELECT vt.file_id, vt.embedding
+                FROM vec_text vt
+                WHERE vt.file_id IN ({placeholders})
+            """, chunk)
+
+            for row in cursor.fetchall():
+                fid = row[0]
+                emb = np.array(json.loads(row[1]), dtype=np.float32)
+                # Cosine similarity
+                sim = float(np.dot(q_vec, emb) / (np.linalg.norm(q_vec) * np.linalg.norm(emb) + 1e-8))
+                if sim >= threshold:
+                    all_scores.append((fid, sim))
+
+        # Sort by similarity descending
+        all_scores.sort(key=lambda x: x[1], reverse=True)
+        top_ids = all_scores[:top_k]
+
+        if not top_ids:
+            return []
+
+        # Fetch full file metadata for top results
+        results = []
+        for fid, sim in top_ids:
+            id_placeholder = '?'
+            cursor.execute(f"""
+                SELECT f.* FROM files f WHERE f.id = {id_placeholder}
+            """, (fid,))
+            row = cursor.fetchone()
+            if row:
+                result = dict(row)
+                self._parse_json_fields(result)
+                result["text_similarity"] = sim
+                result["text_vec_score"] = sim
+                result["vector_score"] = None
+                result["text_score"] = None
+                results.append(result)
+
+        logger.info(f"MV search within {len(file_ids)} files: {len(results)} results "
+                     f"(top sim={all_scores[0][1]:.3f})" if all_scores else "")
+        return results
+
     def triaxis_search(
         self,
         query: str,
@@ -943,6 +1117,12 @@ class SqliteVectorSearch:
         decomposer = QueryDecomposer()
         plan = decomposer.decompose(query)
         diag["decomposition_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        # If Codex returned a search plan with pre_filter, use plan_search
+        pre_filter = plan.get("pre_filter")
+        if pre_filter and any(pre_filter.get(k) for k in ("folder", "image_type", "format")):
+            logger.info(f"Triaxis → plan_search redirect (pre_filter={pre_filter})")
+            return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic, _plan=plan)
 
         vector_query = plan["vector_query"]
         fts_keywords = plan["fts_keywords"]
@@ -1056,6 +1236,7 @@ class SqliteVectorSearch:
         # When folder_filter is set, FTS finds the folder files, then VV/MV
         # results are filtered to only those files. This enables compound
         # queries like "세일러문폴더에서 낮씬" (folder scope + content search).
+        logger.warning(f"[DEBUG-v2] folder_filter='{folder_filter}' query_type='{query_type}'")
         if folder_filter:
             folder_fts = self.fts_search([folder_filter], top_k=500)
             folder_paths = {r["file_path"] for r in folder_fts}
@@ -2443,5 +2624,7 @@ class SqliteVectorSearch:
             return self.fts_search([query], top_k)
         elif mode == "triaxis":
             return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic)
+        elif mode == "plan":
+            return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic)
         else:
-            raise ValueError(f"Invalid mode: {mode}. Use 'vector', 'hybrid', 'metadata', 'fts', 'triaxis', or 'structure'")
+            raise ValueError(f"Invalid mode: {mode}. Use 'vector', 'hybrid', 'metadata', 'fts', 'triaxis', 'plan', or 'structure'")
