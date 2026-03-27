@@ -929,25 +929,27 @@ class SqliteVectorSearch:
             decomposer = QueryDecomposer()
             plan = decomposer.decompose(query)
 
-        pre_filter = plan.get("pre_filter", {})
-        search_intent = plan.get("search", {})
-        fallback_kw = plan.get("fallback_keywords", [])
+        # Read unified schema
+        scope = plan.get("scope", {})
+        find = plan.get("find", {})
+        exclude = plan.get("exclude", {})
+        fallback_kw = find.get("keywords", [])
 
-        # If no pre_filter, fall back to standard triaxis
-        if not pre_filter or not any(pre_filter.get(k) for k in ("folder", "image_type", "format")):
-            logger.info(f"Plan search: no pre_filter, falling back to triaxis")
+        # If no scope, fall back to standard triaxis
+        if not scope or not any(scope.get(k) for k in ("folder", "image_type", "format")):
+            logger.info(f"Plan search: no scope, falling back to triaxis")
             return self.triaxis_search(query, None, top_k, threshold, return_diagnostic=return_diagnostic)
 
-        # Stage 1: Apply pre_filter → get file_id set
-        file_ids = self._apply_plan_filter(pre_filter)
+        # Stage 1: Apply scope → get file_id set
+        file_ids = self._apply_plan_filter(scope)
         if not file_ids:
-            logger.warning(f"Plan search: pre_filter matched 0 files, falling back to triaxis")
+            logger.warning(f"Plan search: scope matched 0 files, falling back to triaxis")
             return self.triaxis_search(query, None, top_k, threshold, return_diagnostic=return_diagnostic)
 
-        logger.info(f"Plan search: pre_filter matched {len(file_ids)} files")
+        logger.info(f"Plan search: scope matched {len(file_ids)} files (scope={scope})")
 
         # Stage 2: Vector search within file_id set
-        search_query = search_intent.get("query", query)
+        search_query = find.get("description", query)
         results = self._mv_search_within(search_query, file_ids, top_k, threshold)
 
         # Fallback: if not enough results, add FTS matches within scope
@@ -1041,7 +1043,11 @@ class SqliteVectorSearch:
 
             for row in cursor.fetchall():
                 fid = row[0]
-                emb = np.array(json.loads(row[1]), dtype=np.float32)
+                raw = row[1]
+                if isinstance(raw, bytes):
+                    emb = np.frombuffer(raw, dtype=np.float32)
+                else:
+                    emb = np.array(json.loads(raw), dtype=np.float32)
                 # Cosine similarity
                 sim = float(np.dot(q_vec, emb) / (np.linalg.norm(q_vec) * np.linalg.norm(emb) + 1e-8))
                 if sim >= threshold:
@@ -1112,34 +1118,38 @@ class SqliteVectorSearch:
             "user_filters": filters,
         }
 
-        # Step 1: Decompose query
+        # Step 1: Decompose query → unified schema {scope, find, exclude}
         t0 = time.perf_counter()
         decomposer = QueryDecomposer()
-        plan = decomposer.decompose(query)
+        unified = decomposer.decompose(query)
         diag["decomposition_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
-        # If Codex returned a search plan with pre_filter, use plan_search
-        pre_filter = plan.get("pre_filter")
-        if pre_filter and any(pre_filter.get(k) for k in ("folder", "image_type", "format")):
-            logger.info(f"Triaxis → plan_search redirect (pre_filter={pre_filter})")
-            return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic, _plan=plan)
+        scope = unified.get("scope", {})
+        find = unified.get("find", {})
+        exclude = unified.get("exclude", {})
+        legacy = unified.get("_legacy", {})
 
-        vector_query = plan["vector_query"]
-        fts_keywords = plan["fts_keywords"]
-        llm_filters = plan.get("filters", {})
-        negative_query = plan.get("negative_query", "")
-        exclude_keywords = plan.get("exclude_keywords", [])
-        folder_filter = plan.get("folder_filter", "")
+        # If scope has folder/type/format, use plan_search (2-stage)
+        if any(scope.get(k) for k in ("folder", "image_type", "format")):
+            logger.info(f"Triaxis → plan_search redirect (scope={scope})")
+            return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic, _plan=unified)
 
-        query_type = plan.get("query_type", "balanced")
+        # Extract fields for triaxis (from unified + legacy fallback)
+        vector_query = find.get("description", "") or legacy.get("vector_query", query)
+        fts_keywords = find.get("keywords", []) or legacy.get("fts_keywords", [query])
+        llm_filters = legacy.get("filters", {})
+        negative_query = exclude.get("description", "")
+        exclude_keywords = exclude.get("keywords", [])
+        folder_filter = scope.get("folder", "")
+
+        query_type = legacy.get("query_type", "balanced")
 
         diag["decomposition"] = {
-            "decomposed": plan.get("decomposed", False),
-            "vector_query": vector_query,
-            "fts_keywords": fts_keywords,
-            "llm_filters": llm_filters,
-            "negative_query": negative_query,
-            "exclude_keywords": exclude_keywords,
+            "decomposed": unified.get("decomposed", False),
+            "scope": scope,
+            "find_description": find.get("description", ""),
+            "find_keywords": find.get("keywords", []),
+            "exclude": exclude,
             "query_type": query_type,
         }
 
