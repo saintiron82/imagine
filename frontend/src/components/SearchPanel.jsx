@@ -846,7 +846,10 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [results, setResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
     const searchCache = useRef(new Map()); // query → {results, timestamp}
-    const [searchHistory, setSearchHistory] = useState([]); // [{query, resultCount, timestamp}]
+    const [searchHistory, setSearchHistory] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('search_history_v2') || '[]'); }
+        catch { return []; }
+    });
     const [error, setError] = useState(null);
     const [showFilters, setShowFilters] = useState(false);
     const [activeFilters, setActiveFilters] = useState({});
@@ -1037,10 +1040,12 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                         const oldest = searchCache.current.keys().next().value;
                         searchCache.current.delete(oldest);
                     }
-                    // Update history
+                    // Update history (persisted to localStorage)
                     setSearchHistory(prev => {
                         const filtered = prev.filter(h => h.query !== cacheKey);
-                        return [{ query: cacheKey, resultCount: response.results.length, timestamp: Date.now() }, ...filtered].slice(0, 30);
+                        const next = [{ query: cacheKey, resultCount: response.results.length, timestamp: Date.now() }, ...filtered].slice(0, 30);
+                        try { localStorage.setItem('search_history_v2', JSON.stringify(next)); } catch {}
+                        return next;
                     });
                 }
             } else {
@@ -1160,12 +1165,17 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     const handleHistoryDelete = useCallback((q) => {
         searchCache.current.delete(q);
-        setSearchHistory(prev => prev.filter(h => h.query !== q));
+        setSearchHistory(prev => {
+            const next = prev.filter(h => h.query !== q);
+            try { localStorage.setItem('search_history_v2', JSON.stringify(next)); } catch {}
+            return next;
+        });
     }, []);
 
     const handleHistoryClearAll = useCallback(() => {
         searchCache.current.clear();
         setSearchHistory([]);
+        try { localStorage.removeItem('search_history_v2'); } catch {}
     }, []);
 
     return (
