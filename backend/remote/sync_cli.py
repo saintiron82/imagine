@@ -278,14 +278,33 @@ def cmd_browse(config: dict):
 
     cached = []
     uncached = []
-    for f in files:
+    for idx, f in enumerate(files):
         canonical = f"webdav://{source_id}{f['path']}"
         if db is not None:
             try:
+                # 1. Exact path match
                 row = db.conn.execute(
                     "SELECT thumbnail_url FROM files WHERE file_path = ? AND thumbnail_url IS NOT NULL",
                     (canonical,)
                 ).fetchone()
+
+                # 2. Fallback: match by original filename at end of path
+                #    DB may have different path prefix (e.g. /발송작품/ vs /발송4/발송작품/)
+                if not row:
+                    # Use the WebDAV relative path tail (folder + filename)
+                    path_tail = f['path']  # e.g. /발송작품/작품/세일러문/#30/1/226.psd
+                    row = db.conn.execute(
+                        "SELECT thumbnail_url FROM files WHERE file_path LIKE ? AND thumbnail_url IS NOT NULL LIMIT 1",
+                        (f"%{path_tail}",)
+                    ).fetchone()
+
+                # 3. Last resort: filename + file_size
+                if not row and f.get('size'):
+                    row = db.conn.execute(
+                        "SELECT thumbnail_url FROM files WHERE file_path LIKE ? AND file_size = ? AND thumbnail_url IS NOT NULL LIMIT 1",
+                        (f"%/{f['name']}", f['size'])
+                    ).fetchone()
+
                 if row and row[0] and Path(row[0]).exists():
                     cached.append({"path": canonical, "name": f['name'],
                                    "extension": f['extension'], "thumb_path": row[0]})
