@@ -10,7 +10,7 @@ export default defineConfig({
     strictPort: true,
   },
   define: {
-    __APP_VERSION__: JSON.stringify(process.env.npm_package_version || '0.6.0'),
-    __BUILD_ID__: JSON.stringify('20260325_01'),
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version || '0.1.1'),
+    __BUILD_ID__: JSON.stringify('20260327_01'),
   },
 })
