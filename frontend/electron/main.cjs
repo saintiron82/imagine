@@ -1143,6 +1143,8 @@ ipcMain.handle('search-vector', async (_, searchOptions) => {
             threshold: searchOptions.threshold ?? 0.0,
             filters: searchOptions.filters || null,
             query_file_id: searchOptions.queryFileId || null,
+            use_codex: searchOptions.use_codex ?? true,
+            effort: searchOptions.effort || 'low',
         };
     }
 

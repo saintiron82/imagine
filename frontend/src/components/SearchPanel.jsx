@@ -10,7 +10,7 @@ import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUser
 import { isElectron, getServerUrl } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-const FETCH_LIMIT = 200;   // Backend returns up to this many results in one call
+const FETCH_LIMIT = 100;   // Backend returns up to this many results in one call
 const DISPLAY_PAGE = 20;   // Show this many per "page" in the UI
 
 /** Client-side refine filter — matches query against result text fields. */

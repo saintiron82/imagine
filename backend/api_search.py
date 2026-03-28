@@ -151,22 +151,22 @@ def format_result(result: dict) -> dict:
     resolved_path = _resolve_local_path(result)
     path_exists = bool(resolved_path and Path(resolved_path).exists())
 
+    # Lightweight result for search grid — no heavy metadata/layer_tree.
+    # Full metadata is loaded on demand via getFileDetail().
     formatted = {
-        "id": result.get("id"),            # File ID (used for web-mode thumbnail/detail URLs)
-        "path": resolved_path or db_path,  # Backward-compatible field used by UI
-        "db_path": db_path,                # Original DB path (stable key for metadata)
-        "resolved_path": resolved_path,    # Local resolved path (may equal db_path)
+        "id": result.get("id"),
+        "path": resolved_path or db_path,
+        "db_path": db_path,
+        "resolved_path": resolved_path,
         "path_exists": path_exists,
         "path_mapped": bool(db_path and resolved_path and db_path != resolved_path),
         "folder_path": result.get("folder_path", ""),
         "relative_path": result.get("relative_path", ""),
         "storage_root": result.get("storage_root", ""),
-        "vector_score": result.get("vector_score", result.get("similarity")),     # VV: SigLIP visual
-        "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),  # MV: Qwen3 text vector
-        "text_score": result.get("text_score"),          # FTS: FTS5 keyword
-        "structure_score": result.get("structure_score", result.get("structural_similarity")),  # X: DINOv2 structure
+        "vector_score": result.get("vector_score", result.get("similarity")),
+        "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),
+        "text_score": result.get("text_score"),
         "combined_score": result.get("rrf_score", result.get("similarity", 0)),
-        "metadata": metadata,
         "thumbnail_path": _resolve_thumbnail_path(result),
         "format": result.get("format", ""),
         "width": result.get("width", 0),
@@ -174,21 +174,12 @@ def format_result(result: dict) -> dict:
         "layer_count": metadata.get("layer_count", 0),
         "mc_caption": result.get("mc_caption", ""),
         "ai_tags": result.get("ai_tags", []),
-        "semantic_tags": metadata.get("semantic_tags", ""),
         "user_note": result.get("user_note", ""),
         "user_tags": result.get("user_tags", []),
         "user_category": result.get("user_category", ""),
         "user_rating": result.get("user_rating", 0),
         "image_type": result.get("image_type"),
         "art_style": result.get("art_style"),
-        "color_palette": result.get("color_palette"),
-        "scene_type": result.get("scene_type"),
-        "time_of_day": result.get("time_of_day"),
-        "weather": result.get("weather"),
-        "character_type": result.get("character_type"),
-        "item_type": result.get("item_type"),
-        "ui_type": result.get("ui_type"),
-        "structural_similarity": result.get("structural_similarity"),
     }
 
     return formatted
