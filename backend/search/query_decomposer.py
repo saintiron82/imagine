@@ -133,20 +133,26 @@ class QueryDecomposer:
             result, ts = cached
             if (time.time() - ts) < self._CACHE_TTL_SEC:
                 logger.info(f"[DECOMP] cache hit for '{query}' (use_codex={self.use_codex})")
-                return copy.deepcopy(result)
+                out = copy.deepcopy(result)
+                out["_decomp_backend"] = "cache"
+                return out
             else:
                 del QueryDecomposer._decompose_cache[cache_key]
 
         raw_text = self._generate_llm(query)
-        logger.warning(f"[DECOMP] query='{query}' llm_raw={repr(raw_text[:200]) if raw_text else 'None'} backend={_llm_backend}")
+        # Determine which backend was actually used
+        effective_backend = _llm_backend if (self.use_codex or _llm_backend != "codex") else "mlx"
+        logger.warning(f"[DECOMP] query='{query}' llm_raw={repr(raw_text[:200]) if raw_text else 'None'} backend={effective_backend} (use_codex={self.use_codex})")
         if raw_text is not None:
             parsed = self._parse_response(raw_text, query)
             logger.warning(f"[DECOMP] parsed folder_filter='{parsed.get('folder_filter','')}' type='{parsed.get('query_type','')}'")
             parsed["decomposed"] = True
             result = self._finalize(parsed, query)
+            result["_decomp_backend"] = effective_backend
         else:
             logger.warning(f"[DECOMP] LLM failed, using fallback")
             result = self._finalize(self._fallback(query), query)
+            result["_decomp_backend"] = "fallback"
 
         # Store in cache (evict oldest if full)
         if len(QueryDecomposer._decompose_cache) >= self._CACHE_MAX_SIZE:

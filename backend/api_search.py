@@ -222,6 +222,7 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
                 "file_count": scope_filter.get("file_count"),
                 "find_description": decomp.get("find_description"),
                 "query_type": decomp.get("query_type"),
+                "decomp_backend": diag.get("decomp_backend"),
                 "decomposition_ms": diag.get("decomposition_ms"),
                 "scope_filter_ms": diag.get("scope_filter_ms"),
                 "vector_ms": diag.get("vector_ms"),

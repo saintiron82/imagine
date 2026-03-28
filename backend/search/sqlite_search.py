@@ -1228,6 +1228,7 @@ class SqliteVectorSearch:
         decomposer = QueryDecomposer(use_codex=use_codex)
         unified = decomposer.decompose(query)
         diag["decomposition_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        diag["decomp_backend"] = unified.pop("_decomp_backend", "unknown")
 
         scope = unified.get("scope", {})
         find = unified.get("find", {})

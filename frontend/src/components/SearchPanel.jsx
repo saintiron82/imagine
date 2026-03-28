@@ -1189,7 +1189,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     `[Search] ✅ ${response.count} results in ${elapsed}ms total\n` +
                     `  IPC round-trip:  ${ipcMs ?? '?'}ms\n` +
                     `  Backend total:   ${s.total_ms ?? '?'}ms\n` +
-                    `  ├─ decomp:      ${s.decomposition_ms ?? '?'}ms\n` +
+                    `  ├─ decomp:      ${s.decomposition_ms ?? '?'}ms [${s.decomp_backend ?? '?'}]\n` +
                     `  ├─ scope filter:${s.scope_filter_ms ?? '?'}ms\n` +
                     `  ├─ VV search:   ${s.vector_ms ?? '?'}ms\n` +
                     `  ├─ MV search:   ${s.text_vec_ms ?? '?'}ms\n` +
