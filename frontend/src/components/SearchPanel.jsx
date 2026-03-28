@@ -6,10 +6,23 @@ import ImageSearchInput from './ImageSearchInput';
 import SearchHistorySidebar from './SearchHistorySidebar';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
-import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode } from '../services/bridge';
+import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode, getActiveDomainConfig } from '../services/bridge';
 import { isElectron, getServerUrl } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+
+// Fallback filter options (used when domain config unavailable)
+const FALLBACK_IMAGE_TYPES = ['character', 'background', 'ui_element', 'item', 'icon', 'texture', 'effect', 'logo', 'photo', 'illustration'];
+const FALLBACK_ART_STYLES = ['realistic', 'anime', 'pixel', 'painterly', 'cartoon', '3d_render', 'flat_design', 'sketch'];
+
+// Filter label mapping for chips display
+const FILTER_LABELS = {
+    format: 'filter.format',
+    user_category: 'filter.category',
+    image_type: 'filter.type_label',
+    art_style: 'filter.style_label',
+    min_rating: 'filter.rating_label',
+};
 
 // Category options (value keys for DB storage, labels via i18n)
 const CATEGORY_OPTIONS = [
@@ -713,7 +726,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -757,11 +770,54 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                 </div>
             )}
 
+            {/* Scope bar — AI-extracted search scope */}
+            {hasResults && searchScope && (
+                <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-amber-900/20 border border-amber-700/30 rounded-lg text-[11px]">
+                    <FolderOpen size={12} className="text-amber-400 flex-shrink-0" />
+                    {searchScope.folder && (
+                        <span className="text-amber-300 font-medium">{searchScope.folder}</span>
+                    )}
+                    {searchScope.image_type && (
+                        <span className="text-amber-300/70">· {searchScope.image_type}</span>
+                    )}
+                    {searchScope.file_count != null && (
+                        <span className="text-gray-500">({t('scope.files_count', { count: searchScope.file_count })})</span>
+                    )}
+                    <span className="text-gray-500">{t('scope.searching_in')}</span>
+                    <button
+                        onClick={onClearScope}
+                        className="text-amber-500 hover:text-amber-300 ml-auto text-[10px]"
+                    >
+                        {t('scope.clear')}
+                    </button>
+                </div>
+            )}
+
             {hasResults && (
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-medium text-gray-400">
-                        {t('status.results_found', { count: results.length })}
-                    </h3>
+                <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm font-medium text-gray-400">
+                            {t('status.results_found', { count: results.length })}
+                        </h3>
+                        {/* Active filter chips — always visible */}
+                        {activeFilters && Object.entries(activeFilters).map(([key, value]) => {
+                            if (!value) return null;
+                            const label = FILTER_LABELS[key];
+                            const display = key === 'min_rating' ? `${'★'.repeat(value)}` : value;
+                            return (
+                                <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/30 border border-blue-700/40 rounded-full text-[10px] text-blue-300">
+                                    <span className="text-blue-400/60 uppercase">{label ? t(label) : key}:</span>
+                                    <span>{display}</span>
+                                    <button
+                                        onClick={() => onRemoveFilter(key)}
+                                        className="text-blue-500/60 hover:text-blue-300 ml-0.5"
+                                    >
+                                        <X size={10} />
+                                    </button>
+                                </span>
+                            );
+                        })}
+                    </div>
                     <button onClick={onClear} className="text-xs text-gray-500 hover:text-gray-300">
                         {t('action.clear_results')}
                     </button>
@@ -865,6 +921,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [showFilters, setShowFilters] = useState(false);
     const [activeFilters, setActiveFilters] = useState({});
     const [threshold, setThreshold] = useState(0);
+    const [searchScope, setSearchScope] = useState(null); // {folder, image_type, format, file_count, ...}
+    const [domainConfig, setDomainConfig] = useState(null); // active domain image_types/art_styles
     const [contextMenu, setContextMenu] = useState(null); // { x, y, result }
     const [metadata, setMetadata] = useState(null);
     // showSettings removed — settings now in dedicated tab
@@ -881,6 +939,13 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             .then(stats => { if (stats.success !== false) setDbStats(stats); })
             .catch(() => { });
     }, [reloadSignal]);
+
+    // Load active domain config for dynamic filter options
+    useEffect(() => {
+        getActiveDomainConfig()
+            .then(data => { if (data?.domain) setDomainConfig(data.domain); })
+            .catch(() => {});
+    }, []);
 
     // Handle initial search trigger (e.g. from FileGrid context menu)
     useEffect(() => {
@@ -1049,6 +1114,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 setCurrentLimit(20);
                 setNoMoreResults(response.results.length < 20);
 
+                // Update scope from backend decomposition
+                const scope = response.scope || null;
+                const hasScope = scope && (scope.folder || scope.image_type || scope.format);
+                setSearchScope(hasScope ? scope : null);
+
                 // Cache results (text queries only)
                 if (cacheKey) {
                     searchCache.current.set(cacheKey, { results: response.results, timestamp: Date.now() });
@@ -1057,10 +1127,16 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                         const oldest = searchCache.current.keys().next().value;
                         searchCache.current.delete(oldest);
                     }
-                    // Update history (persisted to localStorage)
+                    // Update history with filters (persisted to localStorage)
                     setSearchHistory(prev => {
                         const filtered = prev.filter(h => h.query !== cacheKey);
-                        const next = [{ query: cacheKey, resultCount: response.results.length, timestamp: Date.now() }, ...filtered].slice(0, 30);
+                        const next = [{
+                            query: cacheKey,
+                            resultCount: response.results.length,
+                            timestamp: Date.now(),
+                            filters: { ...activeFilters },
+                            threshold,
+                        }, ...filtered].slice(0, 30);
                         try { localStorage.setItem('search_history_v2', JSON.stringify(next)); } catch {}
                         return next;
                     });
@@ -1176,8 +1252,15 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const buildStatus = dbStats?.build_status || null;
     const rebuildRequired = !!buildStatus?.needs_rebuild;
 
-    const handleHistorySelect = useCallback((q) => {
-        handleSearch(q, { useCache: true });
+    const handleHistorySelect = useCallback((item) => {
+        // Support both old format (string) and new format (object with filters)
+        if (typeof item === 'string') {
+            handleSearch(item, { useCache: true });
+            return;
+        }
+        if (item.filters) setActiveFilters(item.filters);
+        if (item.threshold != null) setThreshold(item.threshold);
+        handleSearch(item.query, { useCache: true });
     }, [handleSearch]);
 
     const handleHistoryDelete = useCallback((q) => {
@@ -1322,45 +1405,33 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                                 </select>
                             </div>
 
-                            {/* Image Type Filter (v3 P0) */}
+                            {/* Image Type Filter (dynamic from domain YAML) */}
                             <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] text-gray-500 uppercase">TYPE</span>
+                                <span className="text-[10px] text-gray-500 uppercase">{t('filter.type_label')}</span>
                                 <select
                                     value={activeFilters.image_type || ''}
                                     onChange={(e) => setActiveFilters({ ...activeFilters, image_type: e.target.value || undefined })}
                                     className="bg-gray-700 text-white text-xs px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                                 >
                                     <option value="">{t('filter.all')}</option>
-                                    <option value="character">Character</option>
-                                    <option value="background">Background</option>
-                                    <option value="ui_element">UI</option>
-                                    <option value="item">Item</option>
-                                    <option value="icon">Icon</option>
-                                    <option value="texture">Texture</option>
-                                    <option value="effect">Effect</option>
-                                    <option value="logo">Logo</option>
-                                    <option value="photo">Photo</option>
-                                    <option value="illustration">Illustration</option>
+                                    {(domainConfig?.image_types?.map(t => t.id) || FALLBACK_IMAGE_TYPES).map(type => (
+                                        <option key={type} value={type}>{type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+                                    ))}
                                 </select>
                             </div>
 
-                            {/* Art Style Filter (v3 P0) */}
+                            {/* Art Style Filter (dynamic from domain YAML) */}
                             <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] text-gray-500 uppercase">STYLE</span>
+                                <span className="text-[10px] text-gray-500 uppercase">{t('filter.style_label')}</span>
                                 <select
                                     value={activeFilters.art_style || ''}
                                     onChange={(e) => setActiveFilters({ ...activeFilters, art_style: e.target.value || undefined })}
                                     className="bg-gray-700 text-white text-xs px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                                 >
                                     <option value="">{t('filter.all')}</option>
-                                    <option value="realistic">Realistic</option>
-                                    <option value="anime">Anime</option>
-                                    <option value="pixel">Pixel</option>
-                                    <option value="painterly">Painterly</option>
-                                    <option value="cartoon">Cartoon</option>
-                                    <option value="3d_render">3D Render</option>
-                                    <option value="flat_design">Flat Design</option>
-                                    <option value="sketch">Sketch</option>
+                                    {(domainConfig?.common_hints?.art_style || FALLBACK_ART_STYLES).map(style => (
+                                        <option key={style} value={style}>{style.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+                                    ))}
                                 </select>
                             </div>
 
@@ -1433,6 +1504,10 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 isLoadingMore={isLoadingMore}
                 onLoadMore={handleLoadMore}
                 onNavigateToFolder={onNavigateToFolder}
+                activeFilters={activeFilters}
+                onRemoveFilter={(key) => setActiveFilters(prev => ({ ...prev, [key]: undefined }))}
+                searchScope={searchScope}
+                onClearScope={() => { setSearchScope(null); handleSearch(query, { useCache: false }); }}
             />
 
             {/* Search history moved to sidebar (SearchHistorySidebar) */}

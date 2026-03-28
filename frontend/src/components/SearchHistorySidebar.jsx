@@ -1,11 +1,11 @@
-import { Clock, X, Trash2, Search } from 'lucide-react';
+import { Clock, X, Trash2, Search, SlidersHorizontal } from 'lucide-react';
 import { useLocale } from '../i18n';
 
 /**
  * SearchHistorySidebar — session-only search history with cached results.
  *
  * Displays recent search queries in a sidebar list. Clicking an item
- * restores cached results instantly (no API re-call).
+ * restores cached results and filters instantly.
  * History and cache are session-only (cleared on app restart).
  */
 export default function SearchHistorySidebar({ history, activeQuery, onSelect, onDelete, onClearAll }) {
@@ -41,11 +41,12 @@ export default function SearchHistorySidebar({ history, activeQuery, onSelect, o
         {history.map((item, i) => {
           const isActive = item.query === activeQuery;
           const timeStr = new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const filterCount = item.filters ? Object.values(item.filters).filter(v => v).length : 0;
 
           return (
             <button
               key={`${item.query}-${item.timestamp}`}
-              onClick={() => onSelect(item.query)}
+              onClick={() => onSelect(item)}
               className={`w-full text-left px-3 py-2 border-b border-gray-800/30 transition-colors group
                 ${isActive
                   ? 'bg-blue-900/20 border-l-2 border-l-blue-500'
@@ -67,6 +68,12 @@ export default function SearchHistorySidebar({ history, activeQuery, onSelect, o
               <div className="flex items-center gap-2 mt-0.5 ml-[18px]">
                 <span className="text-[9px] text-gray-600 font-mono">{item.resultCount} results</span>
                 <span className="text-[9px] text-gray-700 font-mono">{timeStr}</span>
+                {filterCount > 0 && (
+                  <span className="inline-flex items-center gap-0.5 text-[8px] text-blue-400/70 bg-blue-900/20 px-1 py-px rounded">
+                    <SlidersHorizontal size={7} />
+                    {t('filter.active_count', { count: filterCount })}
+                  </span>
+                )}
               </div>
             </button>
           );

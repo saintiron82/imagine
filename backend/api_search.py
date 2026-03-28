@@ -198,16 +198,17 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
     """Search SQLite and return JSON results."""
     try:
         searcher = _get_searcher()
+        # Always request diagnostic to extract scope info for frontend
         result_data = searcher.search(
             query, mode=mode, filters=filters, top_k=limit,
-            threshold=threshold, return_diagnostic=diagnostic,
+            threshold=threshold, return_diagnostic=True,
             query_image=query_image,
             query_images=query_images,
             image_search_mode=image_search_mode,
             query_file_id=query_file_id,
         )
 
-        if diagnostic and isinstance(result_data, tuple):
+        if isinstance(result_data, tuple):
             results, diag = result_data
         else:
             results = result_data
@@ -216,7 +217,21 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
         formatted = [format_result(r) for r in results]
         response = {"success": True, "results": formatted, "count": len(formatted)}
 
-        if diag is not None:
+        # Always include lightweight scope info for frontend display
+        if diag:
+            decomp = diag.get("decomposition", {})
+            scope_filter = diag.get("scope_filter", {})
+            response["scope"] = {
+                "folder": decomp.get("scope", {}).get("folder"),
+                "image_type": decomp.get("scope", {}).get("image_type"),
+                "format": decomp.get("scope", {}).get("format"),
+                "file_count": scope_filter.get("file_count"),
+                "find_description": decomp.get("find_description"),
+                "query_type": decomp.get("query_type"),
+            }
+
+        # Full diagnostic only when explicitly requested
+        if diagnostic and diag is not None:
             response["diagnostic"] = diag
 
         return response
