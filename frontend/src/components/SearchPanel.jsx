@@ -1137,6 +1137,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setIsSearching(true);
         setError(null);
 
+        const t0 = performance.now();
         try {
             const filters = {};
             if (activeFilters.format) filters.format = activeFilters.format;
@@ -1176,10 +1177,15 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             searchOptions.effort = effort;
             lastSearchConfigRef.current = { useCodex, effort };
 
+            console.log(`[Search] ⏱ request sent at +${(performance.now() - t0).toFixed(0)}ms`, { query: searchQuery, useCodex, effort, limit: FETCH_LIMIT });
             const response = await searchImages(searchOptions);
+            const elapsed = (performance.now() - t0).toFixed(0);
 
             if (response.success) {
-                console.log('[Search] backend version:', response._v || 'OLD', 'results:', response.count);
+                const scopeMs = response.scope?.total_ms;
+                const decompMs = response.scope?.decomposition_ms;
+                const ipcMs = response.elapsed_ms;
+                console.log(`[Search] ✅ ${response.count} results in ${elapsed}ms total | IPC: ${ipcMs ?? '?'}ms | backend: ${scopeMs ?? '?'}ms | decomp: ${decompMs ?? '?'}ms`);
                 allResultsRef.current = response.results;
                 setResults(response.results.slice(0, DISPLAY_PAGE));
                 setCurrentLimit(DISPLAY_PAGE);

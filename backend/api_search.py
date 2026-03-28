@@ -229,6 +229,8 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
                 "file_count": scope_filter.get("file_count"),
                 "find_description": decomp.get("find_description"),
                 "query_type": decomp.get("query_type"),
+                "decomposition_ms": diag.get("decomposition_ms"),
+                "total_ms": diag.get("total_ms"),
             }
 
         # Full diagnostic only when explicitly requested
