@@ -1182,10 +1182,18 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             const elapsed = (performance.now() - t0).toFixed(0);
 
             if (response.success) {
-                const scopeMs = response.scope?.total_ms;
-                const decompMs = response.scope?.decomposition_ms;
+                const s = response.scope || {};
                 const ipcMs = response.elapsed_ms;
-                console.log(`[Search] ✅ ${response.count} results in ${elapsed}ms total | IPC: ${ipcMs ?? '?'}ms | backend: ${scopeMs ?? '?'}ms | decomp: ${decompMs ?? '?'}ms`);
+                console.log(
+                    `[Search] ✅ ${response.count} results in ${elapsed}ms total\n` +
+                    `  IPC round-trip: ${ipcMs ?? '?'}ms\n` +
+                    `  Backend total:  ${s.total_ms ?? '?'}ms\n` +
+                    `  ├─ decomp:     ${s.decomposition_ms ?? '?'}ms\n` +
+                    `  ├─ VV search:  ${s.vector_ms ?? '?'}ms\n` +
+                    `  ├─ MV search:  ${s.text_vec_ms ?? '?'}ms\n` +
+                    `  └─ FTS search: ${s.fts_ms ?? '?'}ms\n` +
+                    `  Overhead (total - IPC): ${elapsed - (ipcMs ?? 0)}ms`
+                );
                 allResultsRef.current = response.results;
                 setResults(response.results.slice(0, DISPLAY_PAGE));
                 setCurrentLimit(DISPLAY_PAGE);

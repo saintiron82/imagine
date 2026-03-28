@@ -230,6 +230,9 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
                 "find_description": decomp.get("find_description"),
                 "query_type": decomp.get("query_type"),
                 "decomposition_ms": diag.get("decomposition_ms"),
+                "vector_ms": diag.get("vector_ms"),
+                "text_vec_ms": diag.get("text_vec_ms"),
+                "fts_ms": diag.get("fts_ms"),
                 "total_ms": diag.get("total_ms"),
             }
 
