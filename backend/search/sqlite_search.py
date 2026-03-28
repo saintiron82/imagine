@@ -1239,12 +1239,12 @@ class SqliteVectorSearch:
         t0 = time.perf_counter()
         if any(scope.get(k) for k in ("folder", "image_type", "format")):
             scope_file_ids = self._apply_plan_filter(scope)
-        diag["scope_filter_ms"] = round((time.perf_counter() - t0) * 1000, 1)
             if scope_file_ids:
                 logger.info(f"Scope filter: {len(scope_file_ids)} files (scope={scope})")
                 diag["scope_filter"] = {"scope": scope, "file_count": len(scope_file_ids)}
             else:
                 logger.warning(f"Scope filter matched 0 files, searching full DB")
+        diag["scope_filter_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
         # Extract fields for triaxis (from unified + legacy fallback)
         vector_query = find.get("description", "") or legacy.get("vector_query", query)
