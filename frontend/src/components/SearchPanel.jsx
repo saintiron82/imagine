@@ -1040,6 +1040,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     // Ref to capture latest state for stable callbacks
     const searchStateRef = useRef();
+    const lastAiModeRef = useRef('fast'); // Track last used AI mode for Load More
     searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
 
     const handleSearch = useCallback(async (searchQuery, { useCache = false, aiMode = 'fast' } = {}) => {
@@ -1105,6 +1106,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
             // Pass AI mode to backend for query decomposition
             searchOptions.ai_mode = aiMode;
+            lastAiModeRef.current = aiMode;
 
             const response = await searchImages(searchOptions);
 
@@ -1199,6 +1201,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     searchOptions.mode = 'triaxis';
                 }
             }
+
+            // Use same AI mode as initial search for consistent decomposition
+            searchOptions.ai_mode = lastAiModeRef.current;
 
             const response = await searchImages(searchOptions);
 
