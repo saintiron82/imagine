@@ -1187,14 +1187,20 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 const fmtMs = response.format_ms;
                 console.log(
                     `[Search] ✅ ${response.count} results in ${elapsed}ms total\n` +
-                    `  IPC round-trip: ${ipcMs ?? '?'}ms\n` +
-                    `  Backend total:  ${s.total_ms ?? '?'}ms\n` +
-                    `  ├─ decomp:     ${s.decomposition_ms ?? '?'}ms\n` +
-                    `  ├─ VV search:  ${s.vector_ms ?? '?'}ms\n` +
-                    `  ├─ MV search:  ${s.text_vec_ms ?? '?'}ms\n` +
-                    `  └─ FTS search: ${s.fts_ms ?? '?'}ms\n` +
-                    `  format_result: ${fmtMs ?? '?'}ms (path resolve + serialize)\n` +
-                    `  Overhead (total - IPC): ${elapsed - (ipcMs ?? 0)}ms`
+                    `  IPC round-trip:  ${ipcMs ?? '?'}ms\n` +
+                    `  Backend total:   ${s.total_ms ?? '?'}ms\n` +
+                    `  ├─ decomp:      ${s.decomposition_ms ?? '?'}ms\n` +
+                    `  ├─ scope filter:${s.scope_filter_ms ?? '?'}ms\n` +
+                    `  ├─ VV search:   ${s.vector_ms ?? '?'}ms\n` +
+                    `  ├─ MV search:   ${s.text_vec_ms ?? '?'}ms\n` +
+                    `  ├─ FTS search:  ${s.fts_ms ?? '?'}ms\n` +
+                    `  ├─ RRF merge:   ${s.rrf_merge_ms ?? '?'}ms\n` +
+                    `  ├─ neg filter:  ${s.negative_filter_ms ?? '?'}ms\n` +
+                    `  ├─ usr filter:  ${s.user_filter_ms ?? '?'}ms\n` +
+                    `  ├─ rerank:      ${s.rerank_ms ?? '?'}ms\n` +
+                    `  └─ enrich:      ${s.enrich_ms ?? '?'}ms\n` +
+                    `  format_result:   ${fmtMs ?? '?'}ms\n` +
+                    `  Frontend overhead: ${elapsed - (ipcMs ?? 0)}ms`
                 );
                 allResultsRef.current = response.results;
                 setResults(response.results.slice(0, DISPLAY_PAGE));

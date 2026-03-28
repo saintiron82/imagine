@@ -439,7 +439,10 @@ function spawnSearchDaemon() {
                 }
                 // Normal search response
                 if (pendingRequests.length > 0) {
-                    const { resolve: res } = pendingRequests.shift();
+                    const { resolve: res, t0 } = pendingRequests.shift();
+                    const jsonKB = (line.length / 1024).toFixed(0);
+                    const ipcMs = t0 ? Date.now() - t0 : '?';
+                    console.log(`[SearchDaemon] response: ${jsonKB}KB JSON, IPC total: ${ipcMs}ms (python elapsed: ${parsed.elapsed_ms || '?'}ms)`);
                     res(parsed);
                     resetIdleTimer();
                 }
@@ -477,7 +480,8 @@ function sendSearchRequest(data) {
         if (!searchDaemon) {
             spawnSearchDaemon();
         }
-        pendingRequests.push({ resolve, data });
+        const t0 = Date.now();
+        pendingRequests.push({ resolve, data, t0 });
         if (searchReady && searchDaemon) {
             searchDaemon.stdin.write(JSON.stringify(data) + '\n');
         }

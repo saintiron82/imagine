@@ -1236,8 +1236,10 @@ class SqliteVectorSearch:
 
         # Scope → file_id filter (search within scope only)
         scope_file_ids = None
+        t0 = time.perf_counter()
         if any(scope.get(k) for k in ("folder", "image_type", "format")):
             scope_file_ids = self._apply_plan_filter(scope)
+        diag["scope_filter_ms"] = round((time.perf_counter() - t0) * 1000, 1)
             if scope_file_ids:
                 logger.info(f"Scope filter: {len(scope_file_ids)} files (scope={scope})")
                 diag["scope_filter"] = {"scope": scope, "file_count": len(scope_file_ids)}
@@ -1392,6 +1394,7 @@ class SqliteVectorSearch:
                 }
 
         # Step 4: 3-axis RRF merge (V + T + F)
+        t0 = time.perf_counter()
         # Build rank lookup before merge for diagnostic
         vector_rank_map = {
             r["file_path"]: i + 1 for i, r in enumerate(vector_results)
@@ -1471,7 +1474,10 @@ class SqliteVectorSearch:
             ],
         }
 
+        diag["rrf_merge_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
         # Step 5a: Apply negative filter (demote results matching exclusion terms)
+        t0 = time.perf_counter()
         # Encode negative_query as VV embedding for visual penalty
         neg_v_embedding = None
         if negative_query:
@@ -1483,8 +1489,10 @@ class SqliteVectorSearch:
         pre_neg_count = len(merged)
         if negative_query:
             merged = self._apply_negative_filter(merged, negative_query, neg_v_embedding)
+        diag["negative_filter_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
         # Step 5b: Apply LLM filters (lenient -- don't exclude results missing the field)
+        t0 = time.perf_counter()
         pre_filter_count = len(merged)
         llm_removed = 0
         if llm_filters:
@@ -1497,6 +1505,7 @@ class SqliteVectorSearch:
         if user_filters:
             merged = self._apply_user_filters(merged, user_filters, strict=True)
             user_removed = pre_user_count - len(merged)
+        diag["user_filter_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
         diag["filter_applied"] = bool(user_filters) or bool(llm_filters)
         diag["filter_removed"] = llm_removed + user_removed
@@ -1504,6 +1513,7 @@ class SqliteVectorSearch:
         diag["negative_v_axis"] = neg_v_embedding is not None
 
         # Step 5d: quality rerank on filtered candidate pool
+        t0 = time.perf_counter()
         rerank_enabled = bool(_search_cfg.get("search.rerank.enabled", True))
         rerank_pool = int(_search_cfg.get("search.rerank.pool_size", max(top_k * 3, 80)))
         rerank_pool = max(top_k, rerank_pool)
@@ -1528,6 +1538,7 @@ class SqliteVectorSearch:
             )
             rerank_used = True
 
+        diag["rerank_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         diag["rerank"] = {
             "enabled": rerank_enabled,
             "used": rerank_used,
@@ -1566,6 +1577,7 @@ class SqliteVectorSearch:
         merged = merged[:top_k]
 
         # Step 6: Enrich missing per-axis scores via direct DB lookup
+        t0 = time.perf_counter()
         # Files in final results may lack V/S scores if they weren't in that axis's
         # candidate pool. Compute their actual similarity for complete badge display.
         v_missing_before = sum(1 for r in merged if r.get("vector_score") is None)
@@ -1573,6 +1585,7 @@ class SqliteVectorSearch:
         self._enrich_axis_scores(merged, v_query_embedding, t_query_embedding, fts_keywords)
         v_missing_after = sum(1 for r in merged if r.get("vector_score") is None)
         s_missing_after = sum(1 for r in merged if r.get("text_vec_score") is None)
+        diag["enrich_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         diag["enrichment"] = {
             "v_missing_before": v_missing_before,
             "v_enriched": v_missing_before - v_missing_after,

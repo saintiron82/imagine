@@ -223,9 +223,15 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
                 "find_description": decomp.get("find_description"),
                 "query_type": decomp.get("query_type"),
                 "decomposition_ms": diag.get("decomposition_ms"),
+                "scope_filter_ms": diag.get("scope_filter_ms"),
                 "vector_ms": diag.get("vector_ms"),
                 "text_vec_ms": diag.get("text_vec_ms"),
                 "fts_ms": diag.get("fts_ms"),
+                "rrf_merge_ms": diag.get("rrf_merge_ms"),
+                "negative_filter_ms": diag.get("negative_filter_ms"),
+                "user_filter_ms": diag.get("user_filter_ms"),
+                "rerank_ms": diag.get("rerank_ms"),
+                "enrich_ms": diag.get("enrich_ms"),
                 "total_ms": diag.get("total_ms"),
             }
 
@@ -288,7 +294,14 @@ def _handle_request(data: dict) -> dict:
 
 def _write_response(response: dict):
     """Write a single JSON response line to stdout."""
-    sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+    t0 = time.time()
+    json_str = json.dumps(response, ensure_ascii=False)
+    json_ms = round((time.time() - t0) * 1000, 1)
+    json_bytes = len(json_str.encode('utf-8'))
+    # Inject serialization timing (after JSON is built, so append manually)
+    if json_bytes > 1000:
+        logger.warning(f"[TIMING] JSON serialize: {json_ms}ms, {json_bytes} bytes ({json_bytes/1024:.0f}KB)")
+    sys.stdout.write(json_str + "\n")
     sys.stdout.flush()
 
 
