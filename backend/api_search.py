@@ -215,8 +215,10 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
             results = result_data
             diag = None
 
+        t_fmt = time.time()
         formatted = [format_result(r) for r in results]
-        response = {"success": True, "results": formatted, "count": len(formatted)}
+        fmt_ms = round((time.time() - t_fmt) * 1000, 1)
+        response = {"success": True, "results": formatted, "count": len(formatted), "format_ms": fmt_ms}
 
         # Always include lightweight scope info for frontend display
         if diag:

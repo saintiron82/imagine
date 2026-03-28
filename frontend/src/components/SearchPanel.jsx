@@ -1184,6 +1184,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             if (response.success) {
                 const s = response.scope || {};
                 const ipcMs = response.elapsed_ms;
+                const fmtMs = response.format_ms;
                 console.log(
                     `[Search] ✅ ${response.count} results in ${elapsed}ms total\n` +
                     `  IPC round-trip: ${ipcMs ?? '?'}ms\n` +
@@ -1192,6 +1193,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     `  ├─ VV search:  ${s.vector_ms ?? '?'}ms\n` +
                     `  ├─ MV search:  ${s.text_vec_ms ?? '?'}ms\n` +
                     `  └─ FTS search: ${s.fts_ms ?? '?'}ms\n` +
+                    `  format_result: ${fmtMs ?? '?'}ms (path resolve + serialize)\n` +
                     `  Overhead (total - IPC): ${elapsed - (ipcMs ?? 0)}ms`
                 );
                 allResultsRef.current = response.results;
