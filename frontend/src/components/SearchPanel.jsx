@@ -13,6 +13,25 @@ const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 const FETCH_LIMIT = 200;   // Backend returns up to this many results in one call
 const DISPLAY_PAGE = 20;   // Show this many per "page" in the UI
 
+/** Client-side refine filter — matches query against result text fields. */
+function _refineFilter(results, query) {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return results;
+    return results.filter(r => {
+        const haystack = [
+            r.mc_caption || '',
+            (r.ai_tags || []).join(' '),
+            r.path || '',
+            r.image_type || '',
+            r.art_style || '',
+            r.folder_path || '',
+            (r.user_tags || []).join(' '),
+            r.user_note || '',
+        ].join(' ').toLowerCase();
+        return terms.every(t => haystack.includes(t));
+    });
+}
+
 // Fallback filter options (used when domain config unavailable)
 const FALLBACK_IMAGE_TYPES = ['character', 'background', 'ui_element', 'item', 'icon', 'texture', 'effect', 'logo', 'photo', 'illustration'];
 const FALLBACK_ART_STYLES = ['realistic', 'anime', 'pixel', 'painterly', 'cartoon', '3d_render', 'flat_design', 'sketch'];
@@ -747,7 +766,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineQuery, onRefineChange, totalCount }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -811,6 +830,30 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                     >
                         {t('scope.clear')}
                     </button>
+                </div>
+            )}
+
+            {/* Refine within results */}
+            {hasResults && (
+                <div className="flex items-center gap-2 mb-2">
+                    <div className="relative flex-1 max-w-xs">
+                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                        <input
+                            type="text"
+                            value={refineQuery}
+                            onChange={(e) => onRefineChange(e.target.value)}
+                            placeholder={t('search.refine_placeholder')}
+                            className="w-full pl-8 pr-8 py-1.5 bg-gray-800/60 border border-gray-700/50 rounded-lg text-white text-[11px] placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+                        />
+                        {refineQuery && (
+                            <button onClick={() => onRefineChange('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                                <X size={12} />
+                            </button>
+                        )}
+                    </div>
+                    {refineQuery && (
+                        <span className="text-[10px] text-gray-500">{results.length}/{totalCount}</span>
+                    )}
                 </div>
             )}
 
@@ -945,6 +988,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [threshold, setThreshold] = useState(0);
     const [searchScope, setSearchScope] = useState(null); // {folder, image_type, format, file_count, ...}
     const [domainConfig, setDomainConfig] = useState(null); // active domain image_types/art_styles
+    const [refineQuery, setRefineQuery] = useState(''); // Refine within results
     const [contextMenu, setContextMenu] = useState(null); // { x, y, result }
     const [metadata, setMetadata] = useState(null);
     // showSettings removed — settings now in dedicated tab
@@ -1184,9 +1228,25 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         const { currentLimit } = searchStateRef.current;
         const all = allResultsRef.current;
         const nextLimit = currentLimit + DISPLAY_PAGE;
-        setResults(all.slice(0, nextLimit));
+        const filtered = refineQuery ? _refineFilter(all, refineQuery) : all;
+        setResults(filtered.slice(0, nextLimit));
         setCurrentLimit(nextLimit);
-        setNoMoreResults(nextLimit >= all.length);
+        setNoMoreResults(nextLimit >= filtered.length);
+    }, [refineQuery]);
+
+    // Refine within results — client-side text matching on mc_caption, ai_tags, file name
+    const handleRefineChange = useCallback((q) => {
+        setRefineQuery(q);
+        const all = allResultsRef.current;
+        if (!q.trim()) {
+            const limit = searchStateRef.current.currentLimit || DISPLAY_PAGE;
+            setResults(all.slice(0, limit));
+            setNoMoreResults(limit >= all.length);
+            return;
+        }
+        const filtered = _refineFilter(all, q);
+        setResults(filtered);
+        setNoMoreResults(true); // Show all matches
     }, []);
 
     const clearSearch = useCallback(() => {
@@ -1194,6 +1254,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         allResultsRef.current = [];
         setQuery('');
         setQueryImages([]);
+        setRefineQuery('');
         setError(null);
         setCurrentLimit(DISPLAY_PAGE);
         setNoMoreResults(false);
@@ -1480,6 +1541,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onRemoveFilter={(key) => setActiveFilters(prev => ({ ...prev, [key]: undefined }))}
                 searchScope={searchScope}
                 onClearScope={() => { setSearchScope(null); handleSearch(query, { useCache: false }); }}
+                refineQuery={refineQuery}
+                onRefineChange={handleRefineChange}
+                totalCount={allResultsRef.current.length}
             />
 
             {/* Search history moved to sidebar (SearchHistorySidebar) */}

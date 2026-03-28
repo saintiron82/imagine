@@ -160,6 +160,7 @@
   "scope.clear": "Clear scope",
   "scope.search_all": "Search all",
   "scope.files_count": "{count} files",
+  "search.refine_placeholder": "Refine within results...",
   "search.codex_on": "Codex ON — Cloud AI decomposition",
   "search.codex_off": "Codex OFF — Local LLM decomposition",
   "search.effort": "Analysis effort level",
