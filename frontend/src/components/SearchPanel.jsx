@@ -10,6 +10,8 @@ import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUser
 import { isElectron, getServerUrl } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+const FETCH_LIMIT = 200;   // Backend returns up to this many results in one call
+const DISPLAY_PAGE = 20;   // Show this many per "page" in the UI
 
 // Fallback filter options (used when domain config unavailable)
 const FALLBACK_IMAGE_TYPES = ['character', 'background', 'ui_element', 'item', 'icon', 'texture', 'effect', 'logo', 'photo', 'illustration'];
@@ -929,7 +931,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [searchMode, setSearchMode] = useState(null); // 'structure', 'vector', or null (inferred)
     const [queryImages, setQueryImages] = useState([]); // base64 string array
     const [imageSearchMode, setImageSearchMode] = useState('and'); // 'and' | 'or'
-    const [results, setResults] = useState([]);
+    const [results, setResults] = useState([]); // Currently displayed slice
+    const allResultsRef = useRef([]); // Full results from backend (up to FETCH_LIMIT)
     const [isSearching, setIsSearching] = useState(false);
     const searchCache = useRef(new Map()); // query → {results, timestamp}
     const [searchHistory, setSearchHistory] = useState(() => {
@@ -1073,9 +1076,10 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         if (useCache && cacheKey && searchCache.current.has(cacheKey)) {
             const cached = searchCache.current.get(cacheKey);
             setQuery(searchQuery);
-            setResults(cached.results);
-            setCurrentLimit(20);
-            setNoMoreResults(cached.results.length < 20);
+            allResultsRef.current = cached.allResults || cached.results;
+            setResults(allResultsRef.current.slice(0, DISPLAY_PAGE));
+            setCurrentLimit(DISPLAY_PAGE);
+            setNoMoreResults(allResultsRef.current.length <= DISPLAY_PAGE);
             setIsSearching(false);
             setError(null);
             return;
@@ -1098,7 +1102,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             if (activeFilters.art_style) filters.art_style = activeFilters.art_style;
 
             const searchOptions = {
-                limit: 20,
+                limit: FETCH_LIMIT,
                 threshold,
                 filters: Object.keys(filters).length > 0 ? filters : null,
             };
@@ -1132,9 +1136,10 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
             if (response.success) {
                 console.log('[Search] backend version:', response._v || 'OLD', 'results:', response.count);
-                setResults(response.results);
-                setCurrentLimit(20);
-                setNoMoreResults(response.results.length < 20);
+                allResultsRef.current = response.results;
+                setResults(response.results.slice(0, DISPLAY_PAGE));
+                setCurrentLimit(DISPLAY_PAGE);
+                setNoMoreResults(response.results.length <= DISPLAY_PAGE);
 
                 // Update scope from backend decomposition
                 const scope = response.scope || null;
@@ -1143,7 +1148,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
                 // Cache results (text queries only)
                 if (cacheKey) {
-                    searchCache.current.set(cacheKey, { results: response.results, timestamp: Date.now() });
+                    searchCache.current.set(cacheKey, { results: response.results, allResults: response.results, timestamp: Date.now() });
                     // Limit cache size
                     if (searchCache.current.size > 30) {
                         const oldest = searchCache.current.keys().next().value;
@@ -1175,82 +1180,22 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         }
     }, []);
 
-    const handleLoadMore = useCallback(async () => {
-        const { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore } = searchStateRef.current;
-        const hasText = query.trim().length > 0;
-        const hasImages = queryImages.length > 0;
-        const hasFile = queryFileId !== null;
-
-        if (!hasText && !hasImages && !hasFile) return;
-        if (isLoadingMore) return;
-
-        setIsLoadingMore(true);
-        const nextLimit = currentLimit + 20;
-
-        try {
-            const filters = {};
-            if (activeFilters.format) filters.format = activeFilters.format;
-            if (activeFilters.user_category) filters.user_category = activeFilters.user_category;
-            if (activeFilters.min_rating) filters.min_rating = activeFilters.min_rating;
-            if (activeFilters.image_type) filters.image_type = activeFilters.image_type;
-            if (activeFilters.art_style) filters.art_style = activeFilters.art_style;
-
-            const searchOptions = {
-                limit: nextLimit,
-                threshold: nextLimit > 40 ? 0 : threshold,
-                filters: Object.keys(filters).length > 0 ? filters : null,
-            };
-
-            if (hasFile) {
-                searchOptions.queryFileId = queryFileId;
-                searchOptions.mode = searchMode || 'structure';
-            } else {
-                if (hasText) searchOptions.query = query;
-                if (hasImages) {
-                    if (queryImages.length === 1) {
-                        searchOptions.queryImage = queryImages[0];
-                    } else {
-                        searchOptions.queryImages = queryImages;
-                        searchOptions.imageSearchMode = imageSearchMode;
-                    }
-                }
-
-                if (hasImages && !hasText) {
-                    searchOptions.mode = 'vector';
-                } else {
-                    searchOptions.mode = 'triaxis';
-                }
-            }
-
-            // Use same search config as initial search for consistent decomposition
-            const cfg = lastSearchConfigRef.current;
-            searchOptions.use_codex = cfg.useCodex;
-            searchOptions.effort = cfg.effort;
-
-            const response = await searchImages(searchOptions);
-
-            if (response.success) {
-                setCurrentLimit(nextLimit);
-                if (response.results.length <= results.length) {
-                    setNoMoreResults(true);
-                } else {
-                    setResults(response.results);
-                    setNoMoreResults(response.results.length < nextLimit);
-                }
-            }
-        } catch (err) {
-            console.error('Load more failed:', err);
-        } finally {
-            setIsLoadingMore(false);
-        }
+    const handleLoadMore = useCallback(() => {
+        const { currentLimit } = searchStateRef.current;
+        const all = allResultsRef.current;
+        const nextLimit = currentLimit + DISPLAY_PAGE;
+        setResults(all.slice(0, nextLimit));
+        setCurrentLimit(nextLimit);
+        setNoMoreResults(nextLimit >= all.length);
     }, []);
 
     const clearSearch = useCallback(() => {
         setResults([]);
+        allResultsRef.current = [];
         setQuery('');
         setQueryImages([]);
         setError(null);
-        setCurrentLimit(20);
+        setCurrentLimit(DISPLAY_PAGE);
         setNoMoreResults(false);
         setResetSignal(c => c + 1);
     }, []);
