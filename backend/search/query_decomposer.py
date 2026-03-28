@@ -21,6 +21,7 @@ import json
 import os
 import platform
 import re
+import time
 from typing import Dict, Any, List, Tuple, Optional
 
 import requests
@@ -98,9 +99,17 @@ class QueryDecomposer:
         effective = _llm_backend if (use_codex or _llm_backend != "codex") else "mlx/ollama/fallback"
         logger.info(f"QueryDecomposer initialized (backend: {_llm_backend}, use_codex: {use_codex}, effective: {effective})")
 
+    # ── LRU cache for decomposition results ──────────────────────
+    # Key: (query, use_codex) → Value: (result_dict, timestamp)
+    # Avoids re-running LLM on "Load More" or filter-change re-searches.
+    _decompose_cache: Dict[tuple, tuple] = {}
+    _CACHE_MAX_SIZE = 50
+    _CACHE_TTL_SEC = 300  # 5 minutes
+
     def decompose(self, query: str) -> Dict[str, Any]:
         """
         Decompose a natural language query into structured search parameters.
+        Results are cached by (query, use_codex) for 5 minutes.
 
         Args:
             query: User's natural language search query
@@ -116,16 +125,36 @@ class QueryDecomposer:
                 "decomposed": bool         # True if LLM was used
             }
         """
+        import copy
+
+        cache_key = (query.strip(), self.use_codex)
+        cached = QueryDecomposer._decompose_cache.get(cache_key)
+        if cached is not None:
+            result, ts = cached
+            if (time.time() - ts) < self._CACHE_TTL_SEC:
+                logger.info(f"[DECOMP] cache hit for '{query}' (use_codex={self.use_codex})")
+                return copy.deepcopy(result)
+            else:
+                del QueryDecomposer._decompose_cache[cache_key]
+
         raw_text = self._generate_llm(query)
         logger.warning(f"[DECOMP] query='{query}' llm_raw={repr(raw_text[:200]) if raw_text else 'None'} backend={_llm_backend}")
         if raw_text is not None:
             parsed = self._parse_response(raw_text, query)
             logger.warning(f"[DECOMP] parsed folder_filter='{parsed.get('folder_filter','')}' type='{parsed.get('query_type','')}'")
             parsed["decomposed"] = True
-            return self._finalize(parsed, query)
+            result = self._finalize(parsed, query)
+        else:
+            logger.warning(f"[DECOMP] LLM failed, using fallback")
+            result = self._finalize(self._fallback(query), query)
 
-        logger.warning(f"[DECOMP] LLM failed, using fallback")
-        return self._finalize(self._fallback(query), query)
+        # Store in cache (evict oldest if full)
+        if len(QueryDecomposer._decompose_cache) >= self._CACHE_MAX_SIZE:
+            oldest_key = next(iter(QueryDecomposer._decompose_cache))
+            del QueryDecomposer._decompose_cache[oldest_key]
+        QueryDecomposer._decompose_cache[cache_key] = (copy.deepcopy(result), time.time())
+
+        return result
 
     def _generate_llm(self, query: str) -> Optional[str]:
         """Generate LLM response using the best available backend.
