@@ -1192,6 +1192,7 @@ class SqliteVectorSearch:
         top_k: int = 20,
         threshold: float = 0.0,
         return_diagnostic: bool = False,
+        use_codex: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         3-axis search: Vector + FTS5 + User Filters with RRF merge.
@@ -1224,7 +1225,7 @@ class SqliteVectorSearch:
 
         # Step 1: Decompose query → unified schema {scope, find, exclude}
         t0 = time.perf_counter()
-        decomposer = QueryDecomposer()
+        decomposer = QueryDecomposer(use_codex=use_codex)
         unified = decomposer.decompose(query)
         diag["decomposition_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
@@ -2670,6 +2671,7 @@ class SqliteVectorSearch:
         query_images: Optional[List[str]] = None,
         image_search_mode: str = "and",
         query_file_id: Optional[int] = None,
+        use_codex: bool = True,
     ):
         """
         Unified search interface (compatibility with VectorSearcher).
@@ -2757,7 +2759,7 @@ class SqliteVectorSearch:
         elif mode == "fts":
             return self.fts_search([query], top_k)
         elif mode == "triaxis":
-            return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic)
+            return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic, use_codex=use_codex)
         elif mode == "plan":
             return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic)
         else:

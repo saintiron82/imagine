@@ -609,16 +609,17 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
 
 // Isolated search input — manages its own typing state so keystrokes
 // never re-render the parent SearchPanel (fixes backspace flicker).
-const AI_MODES = [
-    { id: 'fast', label: 'Fast', color: 'text-green-400 border-green-500/50', desc: 'Local MLX (~2s)' },
-    { id: 'smart', label: 'Smart', color: 'text-blue-400 border-blue-500/50', desc: 'Codex Mini (~5s)' },
-    { id: 'pro', label: 'Pro', color: 'text-purple-400 border-purple-500/50', desc: 'Codex 5.3 (~10s)' },
+const EFFORT_LEVELS = [
+    { id: 'low', label: 'Low', color: 'text-green-400 border-green-500/50' },
+    { id: 'medium', label: 'Med', color: 'text-blue-400 border-blue-500/50' },
+    { id: 'high', label: 'High', color: 'text-purple-400 border-purple-500/50' },
 ];
 
 const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, showFilters, hasActiveFilters, onToggleFilters, onOpenSettings, inputRef, resetSignal }) => {
     const { t } = useLocale();
     const [localQuery, setLocalQuery] = useState('');
-    const [aiMode, setAiMode] = useState(() => localStorage.getItem('search_ai_mode') || 'fast');
+    const [useCodex, setUseCodex] = useState(() => localStorage.getItem('search_use_codex') !== 'false');
+    const [effort, setEffort] = useState(() => localStorage.getItem('search_effort') || 'low');
 
     // Reset input when parent signals a clear
     useEffect(() => {
@@ -630,22 +631,28 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
         if (inputRef.current) inputRef.current.focus();
     }, []);
 
-    const cycleAiMode = () => {
-        const idx = AI_MODES.findIndex(m => m.id === aiMode);
-        const next = AI_MODES[(idx + 1) % AI_MODES.length].id;
-        setAiMode(next);
-        localStorage.setItem('search_ai_mode', next);
+    const toggleCodex = () => {
+        const next = !useCodex;
+        setUseCodex(next);
+        localStorage.setItem('search_use_codex', String(next));
+    };
+
+    const cycleEffort = () => {
+        const idx = EFFORT_LEVELS.findIndex(l => l.id === effort);
+        const next = EFFORT_LEVELS[(idx + 1) % EFFORT_LEVELS.length].id;
+        setEffort(next);
+        localStorage.setItem('search_effort', next);
     };
 
     const handleKeyPress = (e) => {
         if (e.key === 'Enter' && (localQuery.trim() || hasImages)) {
-            onSearch(localQuery, { aiMode });
+            onSearch(localQuery, { useCodex, effort });
         }
     };
 
     const handleSearchClick = () => {
         if (localQuery.trim() || hasImages) {
-            onSearch(localQuery, { aiMode });
+            onSearch(localQuery, { useCodex, effort });
         }
     };
 
@@ -687,16 +694,28 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
                     <Search size={18} />
                 )}
             </button>
-            {/* AI Mode Toggle */}
+            {/* Codex Toggle */}
+            <button
+                onClick={toggleCodex}
+                className={`px-2.5 py-3 rounded-lg border text-[10px] font-bold transition-colors ${
+                    useCodex
+                        ? 'text-emerald-400 border-emerald-500/50 bg-emerald-900/20 hover:bg-emerald-900/30'
+                        : 'text-gray-500 border-gray-600 bg-gray-800 hover:bg-gray-700'
+                }`}
+                title={useCodex ? t('search.codex_on') : t('search.codex_off')}
+            >
+                Codex
+            </button>
+            {/* Effort Level Toggle */}
             {(() => {
-                const mode = AI_MODES.find(m => m.id === aiMode) || AI_MODES[0];
+                const level = EFFORT_LEVELS.find(l => l.id === effort) || EFFORT_LEVELS[0];
                 return (
                     <button
-                        onClick={cycleAiMode}
-                        className={`px-3 py-3 rounded-lg border text-[11px] font-bold transition-colors ${mode.color} bg-gray-800 hover:bg-gray-700`}
-                        title={mode.desc}
+                        onClick={cycleEffort}
+                        className={`px-2.5 py-3 rounded-lg border text-[10px] font-bold transition-colors ${level.color} bg-gray-800 hover:bg-gray-700`}
+                        title={t('search.effort')}
                     >
-                        {mode.label}
+                        {level.label}
                     </button>
                 );
             })()}
@@ -1040,10 +1059,10 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     // Ref to capture latest state for stable callbacks
     const searchStateRef = useRef();
-    const lastAiModeRef = useRef('fast'); // Track last used AI mode for Load More
+    const lastSearchConfigRef = useRef({ useCodex: true, effort: 'low' }); // Track last search config for Load More
     searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
 
-    const handleSearch = useCallback(async (searchQuery, { useCache = false, aiMode = 'fast' } = {}) => {
+    const handleSearch = useCallback(async (searchQuery, { useCache = false, useCodex = true, effort = 'low' } = {}) => {
         const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
         const hasText = searchQuery.trim().length > 0;
         const hasImages = queryImages.length > 0;
@@ -1105,8 +1124,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             }
 
             // Pass AI mode to backend for query decomposition
-            searchOptions.ai_mode = aiMode;
-            lastAiModeRef.current = aiMode;
+            searchOptions.use_codex = useCodex;
+            searchOptions.effort = effort;
+            lastSearchConfigRef.current = { useCodex, effort };
 
             const response = await searchImages(searchOptions);
 
@@ -1202,8 +1222,10 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 }
             }
 
-            // Use same AI mode as initial search for consistent decomposition
-            searchOptions.ai_mode = lastAiModeRef.current;
+            // Use same search config as initial search for consistent decomposition
+            const cfg = lastSearchConfigRef.current;
+            searchOptions.use_codex = cfg.useCodex;
+            searchOptions.effort = cfg.effort;
 
             const response = await searchImages(searchOptions);
 

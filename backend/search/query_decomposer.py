@@ -88,12 +88,15 @@ class QueryDecomposer:
         self,
         model: str = _DEFAULT_MODEL,
         host: str = _DEFAULT_HOST,
+        use_codex: bool = True,
     ):
         self.model = model
         self.host = host
         self.api_url = f"{host}/api/chat"
+        self.use_codex = use_codex
         _init_llm_backend()
-        logger.info(f"QueryDecomposer initialized (backend: {_llm_backend})")
+        effective = _llm_backend if (use_codex or _llm_backend != "codex") else "mlx/ollama/fallback"
+        logger.info(f"QueryDecomposer initialized (backend: {_llm_backend}, use_codex: {use_codex}, effective: {effective})")
 
     def decompose(self, query: str) -> Dict[str, Any]:
         """
@@ -132,28 +135,56 @@ class QueryDecomposer:
         """
         prompt = self._build_prompt(query)
 
-        # 0. Codex CLI (best accuracy)
-        if _llm_backend == "codex":
+        # 0. Codex CLI (best accuracy) — skip if user disabled Codex
+        if _llm_backend == "codex" and self.use_codex:
             try:
                 return self._generate_codex(query)
             except Exception as e:
                 logger.warning(f"Codex CLI failed: {e}")
 
-        # 1. MLX backend (macOS)
-        if _llm_backend == "mlx" and _mlx_model is not None:
-            try:
-                return self._generate_mlx(prompt)
-            except Exception as e:
-                logger.warning(f"MLX generation failed: {e}")
+        # When Codex is primary but disabled, try local backends as fallback
+        try_local = (_llm_backend == "codex" and not self.use_codex) or _llm_backend in ("mlx", "ollama", None)
 
-        # 2. Ollama backend
-        if _llm_backend == "ollama":
+        if try_local:
+            # 1. MLX backend (macOS)
+            if _mlx_model is not None:
+                try:
+                    return self._generate_mlx(prompt)
+                except Exception as e:
+                    logger.warning(f"MLX generation failed: {e}")
+            elif _llm_backend == "codex" and not self.use_codex:
+                # MLX not loaded yet — try lazy init
+                self._lazy_init_local_llm()
+                if _mlx_model is not None:
+                    try:
+                        return self._generate_mlx(prompt)
+                    except Exception as e:
+                        logger.warning(f"MLX generation failed: {e}")
+
+            # 2. Ollama backend
             try:
-                return self._generate_ollama(prompt, query)
+                import requests
+                resp = requests.get(f"{self.host}/api/tags", timeout=3)
+                if resp.status_code == 200:
+                    return self._generate_ollama(prompt, query)
             except Exception as e:
                 logger.warning(f"Ollama generation failed: {e}")
 
         return None
+
+    @staticmethod
+    def _lazy_init_local_llm():
+        """Lazy-init local LLM backends when Codex is disabled at runtime."""
+        global _mlx_model, _mlx_tokenizer
+        if _mlx_model is not None:
+            return
+        if platform.system() == "Darwin":
+            try:
+                from mlx_lm import load
+                logger.info(f"Lazy-loading MLX LLM: {_MLX_MODEL_ID}")
+                _mlx_model, _mlx_tokenizer = load(_MLX_MODEL_ID)
+            except Exception as e:
+                logger.info(f"MLX LLM not available: {e}")
 
     def _generate_codex(self, query: str) -> Optional[str]:
         """Generate query decomposition using Codex CLI (GPT-5.3-codex).
