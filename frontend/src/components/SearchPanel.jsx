@@ -792,7 +792,8 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
         if (scrollRef.current) scrollRef.current.scrollTop = 0;
     }, [results.length > 0 && results[0]?.path]);
 
-    if (!hasResults && !isSearching) return <div className="flex-1" />;
+    const hasAnyResults = hasResults || (totalCount > 0);
+    if (!hasAnyResults && !isSearching) return <div className="flex-1" />;
 
     return (
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6 relative">
@@ -807,7 +808,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
             )}
 
             {/* Scope bar — AI-extracted search scope */}
-            {hasResults && searchScope && (
+            {hasAnyResults && searchScope && (
                 <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-amber-900/20 border border-amber-700/30 rounded-lg text-[11px]">
                     <FolderOpen size={12} className="text-amber-400 flex-shrink-0" />
                     {searchScope.folder && (
@@ -830,7 +831,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
             )}
 
             {/* Refine within results */}
-            {hasResults && (
+            {hasAnyResults && (
                 <div className="flex items-center gap-2 mb-2">
                     <div className="relative flex-1 max-w-xs">
                         <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
@@ -853,7 +854,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                 </div>
             )}
 
-            {hasResults && (
+            {hasAnyResults && (
                 <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-sm font-medium text-gray-400">
