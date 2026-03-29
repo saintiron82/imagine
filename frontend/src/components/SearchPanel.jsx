@@ -524,38 +524,34 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                     </div>
                 )}
 
-                {/* Triaxis score badges (VV=Visual blue, MV=Semantic purple, MC=Metadata green) */}
-                <div className="absolute top-2 right-2 flex gap-1">
-                    {result.vector_score != null && (
-                        <span className="bg-blue-900/80 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            {t('badge.vv')} {(result.vector_score * 100).toFixed(0)}
+                {/* Top: Combined RRF score (left) + axis scores (right) */}
+                <div className="absolute top-2 left-2 right-2 flex items-start justify-between">
+                    {result.combined_score > 0 ? (
+                        <span className="bg-yellow-900/80 text-yellow-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            ★ {(result.combined_score / 0.01639 * 100).toFixed(0)}%
                         </span>
-                    )}
-                    {result.structure_score != null && (
-                        <span className="bg-orange-900/80 text-orange-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            {t('badge.sv')} {(result.structure_score * 100).toFixed(0)}
-                        </span>
-                    )}
-                    {result.text_vec_score != null && (
-                        <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            {t('badge.mv')} {(result.text_vec_score * 100).toFixed(0)}
-                        </span>
-                    )}
-                    {result.text_score != null && (
-                        <span className="bg-green-900/80 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            {t('badge.mc')} {(result.text_score * 100).toFixed(0)}
-                        </span>
-                    )}
+                    ) : <span />}
+                    <div className="flex gap-1">
+                        {result.vector_score != null && (
+                            <span className="bg-blue-900/80 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                {t('badge.vv')} {(result.vector_score * 100).toFixed(0)}
+                            </span>
+                        )}
+                        {result.text_vec_score != null && (
+                            <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                {t('badge.mv')} {(result.text_vec_score * 100).toFixed(0)}
+                            </span>
+                        )}
+                        {result.text_score != null && (
+                            <span className="bg-green-900/80 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                {t('badge.mc')} {(result.text_score * 100).toFixed(0)}
+                            </span>
+                        )}
+                    </div>
                 </div>
-                {/* Combined RRF score (bottom-left, normalized to ~100%) */}
-                {result.combined_score > 0 && (
-                    <span className="absolute bottom-2 left-2 bg-yellow-900/80 text-yellow-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                        ★ {(result.combined_score / 0.01639 * 100).toFixed(0)}%
-                    </span>
-                )}
-                {/* v3 P0: image_type badge */}
+                {/* Bottom: image_type badge */}
                 {result.image_type && (
-                    <span className="absolute top-2 left-2 bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
+                    <span className="absolute bottom-2 left-2 bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
                         {result.image_type}
                     </span>
                 )}
