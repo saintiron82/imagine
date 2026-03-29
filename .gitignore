@@ -55,6 +55,12 @@ _test_*.json
 # Claude Code local settings
 .claude/settings.local.json
 
+# Windows build artifacts
+dist-win/
+
+# Firebase cache
+website/.firebase/
+
 # Calibration results (local)
 calibration_results/
 
