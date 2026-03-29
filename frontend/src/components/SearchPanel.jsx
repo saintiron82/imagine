@@ -1066,6 +1066,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [imageSearchMode, setImageSearchMode] = useState('and'); // 'and' | 'or'
     const [results, setResults] = useState([]); // Currently displayed slice
     const allResultsRef = useRef([]); // Full results from backend (up to FETCH_LIMIT)
+    // Cache per-term search results: Map<"query|scopeKey" → results[]>
+    const termCacheRef = useRef(new Map());
     const [isSearching, setIsSearching] = useState(false);
     const searchCache = useRef(new Map()); // query → {results, timestamp}
     const [searchHistory, setSearchHistory] = useState(() => {
@@ -1242,25 +1244,29 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
             let response;
             if (hasTerms && !hasImages) {
-                // Execute term chain: AND=intersection, OR=union (each searched independently in levelScope)
+                // Execute term chain with per-term caching
+                const scopeKey = 'main'; // distinguishes main vs refine levels
                 let currentResult = null;
-                let levelScope = null; // null = full DB
                 for (const term of effectiveTerms) {
-                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: levelScope });
-                    if (!resp.success) continue;
+                    const cacheKey = `${scopeKey}|${term.query}`;
+                    let termResults = termCacheRef.current.get(cacheKey);
+                    if (!termResults) {
+                        const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: null });
+                        if (!resp.success) continue;
+                        termResults = resp.results;
+                        termCacheRef.current.set(cacheKey, termResults);
+                    }
                     if (!currentResult) {
-                        currentResult = resp.results;
+                        currentResult = termResults;
                     } else if (term.op === 'or') {
-                        // OR: union (keep highest score per id)
                         const merged = new Map();
                         for (const r of currentResult) merged.set(r.id, r);
-                        for (const r of resp.results) {
+                        for (const r of termResults) {
                             if (!merged.has(r.id) || (r.combined_score || 0) > (merged.get(r.id).combined_score || 0)) merged.set(r.id, r);
                         }
                         currentResult = Array.from(merged.values());
                     } else {
-                        // AND: intersection (keep only ids present in both)
-                        const newIds = new Set(resp.results.map(r => r.id));
+                        const newIds = new Set(termResults.map(r => r.id));
                         currentResult = currentResult.filter(r => newIds.has(r.id));
                     }
                 }
@@ -1354,23 +1360,29 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             const cfg = lastSearchConfigRef.current;
             const baseOpts = { limit: FETCH_LIMIT, mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort };
 
-            // Execute horizontal chain: AND=intersection, OR=union
-            let levelScope = fileIds;
+            // Execute horizontal chain with caching: AND=intersection, OR=union
+            const scopeKey = `refine_${refineStack.length}`;
             let currentResult = null;
             for (const term of effectiveTerms) {
-                const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: levelScope });
-                if (!resp.success) continue;
+                const cacheKey = `${scopeKey}|${term.query}`;
+                let termResults = termCacheRef.current.get(cacheKey);
+                if (!termResults) {
+                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: fileIds });
+                    if (!resp.success) continue;
+                    termResults = resp.results;
+                    termCacheRef.current.set(cacheKey, termResults);
+                }
                 if (!currentResult) {
-                    currentResult = resp.results;
+                    currentResult = termResults;
                 } else if (term.op === 'or') {
                     const merged = new Map();
                     for (const r of currentResult) merged.set(r.id, r);
-                    for (const r of resp.results) {
+                    for (const r of termResults) {
                         if (!merged.has(r.id) || (r.combined_score || 0) > (merged.get(r.id).combined_score || 0)) merged.set(r.id, r);
                     }
                     currentResult = Array.from(merged.values());
                 } else {
-                    const newIds = new Set(resp.results.map(r => r.id));
+                    const newIds = new Set(termResults.map(r => r.id));
                     currentResult = currentResult.filter(r => newIds.has(r.id));
                 }
             }
@@ -1380,7 +1392,6 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 setResults(sorted);
                 setCurrentLimit(sorted.length);
                 setNoMoreResults(true);
-                // Push to vertical stack
                 setRefineStack(prev => [...prev, { terms: [...effectiveTerms], resultIds: fileIds }]);
                 setRefineCommitted([]);
                 setRefineInput('');
@@ -1416,20 +1427,27 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
         setIsSearching(true);
         try {
-            // Re-execute the chain of the last kept level: AND=intersection, OR=union
+            // Re-execute the chain with cache
+            const scopeKey = `refine_${index - 1}`;
             let currentResult = null;
             for (const term of prevLevel.terms) {
-                const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: prevLevel.resultIds });
-                if (!resp.success) continue;
+                const cacheKey = `${scopeKey}|${term.query}`;
+                let termResults = termCacheRef.current.get(cacheKey);
+                if (!termResults) {
+                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: prevLevel.resultIds });
+                    if (!resp.success) continue;
+                    termResults = resp.results;
+                    termCacheRef.current.set(cacheKey, termResults);
+                }
                 if (!currentResult) {
-                    currentResult = resp.results;
+                    currentResult = termResults;
                 } else if (term.op === 'or') {
                     const merged = new Map();
                     for (const r of currentResult) merged.set(r.id, r);
-                    for (const r of resp.results) { if (!merged.has(r.id)) merged.set(r.id, r); }
+                    for (const r of termResults) { if (!merged.has(r.id)) merged.set(r.id, r); }
                     currentResult = Array.from(merged.values());
                 } else {
-                    const newIds = new Set(resp.results.map(r => r.id));
+                    const newIds = new Set(termResults.map(r => r.id));
                     currentResult = currentResult.filter(r => newIds.has(r.id));
                 }
             }
@@ -1449,6 +1467,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const clearSearch = useCallback(() => {
         setResults([]);
         allResultsRef.current = [];
+        termCacheRef.current.clear();
         setQuery('');
         setQueryImages([]);
         setRefineStack([]);
