@@ -1202,7 +1202,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     `  format_result:   ${fmtMs ?? '?'}ms\n` +
                     `  Frontend overhead: ${elapsed - (ipcMs ?? 0)}ms`
                 );
-                allResultsRef.current = response.results;
+                // Sort by combined_score descending so display order matches ★ badge
+                allResultsRef.current = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
                 setResults(response.results.slice(0, DISPLAY_PAGE));
                 setCurrentLimit(DISPLAY_PAGE);
                 setNoMoreResults(response.results.length <= DISPLAY_PAGE);
