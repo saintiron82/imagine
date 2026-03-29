@@ -744,7 +744,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineQuery, onRefineChange, onRefineCommit, totalCount }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -812,28 +812,42 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                 </div>
             )}
 
-            {/* Refine within results */}
+            {/* Refine stack — committed levels + new input */}
             {hasAnyResults && (
-                <div className="flex items-center gap-2 mb-2">
-                    <div className="relative flex-1 max-w-xs">
-                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
-                        <input
-                            type="text"
-                            value={refineQuery}
-                            onChange={(e) => onRefineChange(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onRefineCommit(); } }}
-                            placeholder={t('search.refine_placeholder')}
-                            className="w-full pl-8 pr-8 py-1.5 bg-gray-800/60 border border-gray-700/50 rounded-lg text-white text-[11px] placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-                        />
-                        {refineQuery && (
-                            <button onClick={() => onRefineChange('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                                <X size={12} />
-                            </button>
-                        )}
+                <div className="flex flex-col gap-1.5 mb-2">
+                    {/* Committed refine levels */}
+                    {refineStack.map((level, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-600 w-4 text-right shrink-0">+{i + 1}</span>
+                            <div className="flex-1 max-w-xs px-3 py-1 bg-cyan-900/20 border border-cyan-700/30 rounded-lg text-[11px] text-cyan-300 flex items-center justify-between">
+                                <span className="truncate">{level.query}</span>
+                                <button onClick={() => onRefineRemove(i)} className="text-cyan-500/60 hover:text-cyan-300 ml-2 shrink-0">
+                                    <X size={11} />
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                    {/* New refine input */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-gray-600 w-4 text-right shrink-0">+{refineStack.length + 1}</span>
+                        <div className="relative flex-1 max-w-xs">
+                            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                            <input
+                                type="text"
+                                value={refineInput}
+                                onChange={(e) => onRefineInputChange(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onRefineCommit(); } }}
+                                placeholder={t('search.refine_placeholder')}
+                                className="w-full pl-8 pr-8 py-1.5 bg-gray-800/60 border border-gray-700/50 rounded-lg text-white text-[11px] placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+                            />
+                            {refineInput && (
+                                <button onClick={() => onRefineInputChange('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                                    <X size={12} />
+                                </button>
+                            )}
+                        </div>
+                        {refineInput && <span className="text-[10px] text-gray-500">Enter↵</span>}
                     </div>
-                    {refineQuery && (
-                        <span className="text-[10px] text-gray-500">Enter↵</span>
-                    )}
                 </div>
             )}
 
@@ -968,7 +982,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [threshold, setThreshold] = useState(0);
     const [searchScope, setSearchScope] = useState(null); // {folder, image_type, format, file_count, ...}
     const [domainConfig, setDomainConfig] = useState(null); // active domain image_types/art_styles
-    const [refineQuery, setRefineQuery] = useState(''); // Refine within results
+    // Refine stack: [{query, resultIds}] — each level narrows within previous
+    const [refineStack, setRefineStack] = useState([]); // committed refine levels
+    const [refineInput, setRefineInput] = useState(''); // current typing input
     const [contextMenu, setContextMenu] = useState(null); // { x, y, result }
     const [metadata, setMetadata] = useState(null);
     // showSettings removed — settings now in dedicated tab
@@ -1236,28 +1252,23 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setNoMoreResults(nextLimit >= all.length);
     }, []);
 
-    // Refine within results — typing only stores query, Enter triggers backend search
-    const handleRefineChange = useCallback((q) => {
-        setRefineQuery(q);
-        if (!q.trim()) {
-            // X button or cleared → restore original results
-            const all = allResultsRef.current;
-            const limit = searchStateRef.current.currentLimit || DISPLAY_PAGE;
-            setResults(all.slice(0, limit));
-            setNoMoreResults(limit >= all.length);
-        }
+    // Refine stack: typing stores input, Enter commits as new stack level
+    const handleRefineInputChange = useCallback((q) => {
+        setRefineInput(q);
     }, []);
 
     const handleRefineCommit = useCallback(async () => {
-        if (!refineQuery.trim()) return;
-        const fileIds = allResultsRef.current.map(r => r.id).filter(Boolean);
+        if (!refineInput.trim()) return;
+        // Use current displayed results' file IDs as scope
+        const currentResults = searchStateRef.current.results;
+        const fileIds = currentResults.map(r => r.id).filter(Boolean);
         if (!fileIds.length) return;
 
         setIsSearching(true);
         try {
             const cfg = lastSearchConfigRef.current;
             const response = await searchImages({
-                query: refineQuery,
+                query: refineInput,
                 file_ids: fileIds,
                 limit: FETCH_LIMIT,
                 mode: 'triaxis',
@@ -1269,21 +1280,66 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 setResults(sorted);
                 setCurrentLimit(sorted.length);
                 setNoMoreResults(true);
-                // allResultsRef stays unchanged — X restores original
+                // Push to stack with current result IDs (for restoring on delete)
+                setRefineStack(prev => [...prev, { query: refineInput, resultIds: fileIds }]);
+                setRefineInput('');
             }
         } catch (err) {
             console.error('[Refine] search failed:', err);
         } finally {
             setIsSearching(false);
         }
-    }, [refineQuery]);
+    }, [refineInput]);
+
+    // Remove a refine level and all levels below it, re-search from that point
+    const handleRefineRemove = useCallback(async (index) => {
+        if (index === 0) {
+            // Remove all refine levels → restore original results
+            setRefineStack([]);
+            setRefineInput('');
+            const all = allResultsRef.current;
+            setResults(all.slice(0, DISPLAY_PAGE));
+            setCurrentLimit(DISPLAY_PAGE);
+            setNoMoreResults(DISPLAY_PAGE >= all.length);
+            return;
+        }
+        // Keep levels 0..index-1, re-search level index-1's scope
+        const kept = refineStack.slice(0, index);
+        setRefineStack(kept);
+        setRefineInput('');
+        // Replay from the kept level's scope
+        const prevLevel = kept[kept.length - 1];
+        const cfg = lastSearchConfigRef.current;
+        setIsSearching(true);
+        try {
+            const response = await searchImages({
+                query: prevLevel.query,
+                file_ids: prevLevel.resultIds,
+                limit: FETCH_LIMIT,
+                mode: 'triaxis',
+                use_codex: cfg.useCodex,
+                effort: cfg.effort,
+            });
+            if (response.success) {
+                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                setResults(sorted);
+                setCurrentLimit(sorted.length);
+                setNoMoreResults(true);
+            }
+        } catch (err) {
+            console.error('[Refine] re-search failed:', err);
+        } finally {
+            setIsSearching(false);
+        }
+    }, [refineStack]);
 
     const clearSearch = useCallback(() => {
         setResults([]);
         allResultsRef.current = [];
         setQuery('');
         setQueryImages([]);
-        setRefineQuery('');
+        setRefineStack([]);
+        setRefineInput('');
         setError(null);
         setCurrentLimit(DISPLAY_PAGE);
         setNoMoreResults(false);
@@ -1570,9 +1626,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onRemoveFilter={(key) => setActiveFilters(prev => ({ ...prev, [key]: undefined }))}
                 searchScope={searchScope}
                 onClearScope={() => { setSearchScope(null); handleSearch(query, { useCache: false }); }}
-                refineQuery={refineQuery}
-                onRefineChange={handleRefineChange}
+                refineStack={refineStack}
+                refineInput={refineInput}
+                onRefineInputChange={handleRefineInputChange}
                 onRefineCommit={handleRefineCommit}
+                onRefineRemove={handleRefineRemove}
                 totalCount={allResultsRef.current.length}
             />
 
