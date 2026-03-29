@@ -619,6 +619,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
     const [localQuery, setLocalQuery] = useState('');
     const [useCodex, setUseCodex] = useState(() => localStorage.getItem('search_use_codex') !== 'false');
     const [effort, setEffort] = useState(() => localStorage.getItem('search_effort') || 'low');
+    const [queryMode, setQueryMode] = useState(() => localStorage.getItem('search_query_mode') || 'and');
 
     // Reset input when parent signals a clear
     useEffect(() => {
@@ -636,6 +637,12 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
         localStorage.setItem('search_use_codex', String(next));
     };
 
+    const toggleQueryMode = () => {
+        const next = queryMode === 'and' ? 'or' : 'and';
+        setQueryMode(next);
+        localStorage.setItem('search_query_mode', next);
+    };
+
     const cycleEffort = () => {
         const idx = EFFORT_LEVELS.findIndex(l => l.id === effort);
         const next = EFFORT_LEVELS[(idx + 1) % EFFORT_LEVELS.length].id;
@@ -645,13 +652,13 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 
     const handleKeyPress = (e) => {
         if (e.key === 'Enter' && (localQuery.trim() || hasImages)) {
-            onSearch(localQuery, { useCodex, effort });
+            onSearch(localQuery, { useCodex, effort, queryMode });
         }
     };
 
     const handleSearchClick = () => {
         if (localQuery.trim() || hasImages) {
-            onSearch(localQuery, { useCodex, effort });
+            onSearch(localQuery, { useCodex, effort, queryMode });
         }
     };
 
@@ -692,6 +699,18 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
                 ) : (
                     <Search size={18} />
                 )}
+            </button>
+            {/* AND/OR Toggle */}
+            <button
+                onClick={toggleQueryMode}
+                className={`px-2.5 py-3 rounded-lg border text-[10px] font-bold transition-colors ${
+                    queryMode === 'or'
+                        ? 'text-orange-400 border-orange-500/50 bg-orange-900/20 hover:bg-orange-900/30'
+                        : 'text-cyan-400 border-cyan-500/50 bg-gray-800 hover:bg-gray-700'
+                }`}
+                title={queryMode === 'or' ? 'OR: union of comma queries' : 'AND: intersect comma queries'}
+            >
+                {queryMode === 'or' ? 'OR' : 'AND'}
             </button>
             {/* Codex Toggle */}
             <button
@@ -1120,7 +1139,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const lastSearchConfigRef = useRef({ useCodex: true, effort: 'low' }); // Track last search config for Load More
     searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
 
-    const handleSearch = useCallback(async (searchQuery, { useCache = false, useCodex = true, effort = 'low' } = {}) => {
+    const handleSearch = useCallback(async (searchQuery, { useCache = false, useCodex = true, effort = 'low', queryMode = 'and' } = {}) => {
         const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
         const hasText = searchQuery.trim().length > 0;
         const hasImages = queryImages.length > 0;
@@ -1188,8 +1207,42 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             searchOptions.effort = effort;
             lastSearchConfigRef.current = { useCodex, effort };
 
-            console.log(`[Search] ⏱ request sent at +${(performance.now() - t0).toFixed(0)}ms`, { query: searchQuery, useCodex, effort, limit: FETCH_LIMIT });
-            const response = await searchImages(searchOptions);
+            // Multi-query support: comma-separated sub-queries with AND/OR
+            const subQueries = hasText ? searchQuery.split(',').map(s => s.trim()).filter(Boolean) : [];
+            const isMultiQuery = subQueries.length > 1;
+
+            console.log(`[Search] ⏱ request sent at +${(performance.now() - t0).toFixed(0)}ms`, { query: searchQuery, queryMode, subQueries: subQueries.length, useCodex, effort, limit: FETCH_LIMIT });
+
+            let response;
+            if (isMultiQuery && queryMode === 'or') {
+                // OR: parallel search, union results
+                const responses = await Promise.all(subQueries.map(q => searchImages({ ...searchOptions, query: q })));
+                const merged = new Map();
+                for (const resp of responses) {
+                    if (!resp.success) continue;
+                    for (const r of resp.results) {
+                        const existing = merged.get(r.id);
+                        if (!existing || (r.combined_score || 0) > (existing.combined_score || 0)) {
+                            merged.set(r.id, r);
+                        }
+                    }
+                }
+                response = { success: true, results: Array.from(merged.values()), count: merged.size, scope: responses.find(r => r.scope)?.scope, elapsed_ms: responses.reduce((a, r) => Math.max(a, r.elapsed_ms || 0), 0), format_ms: 0 };
+            } else if (isMultiQuery && queryMode === 'and') {
+                // AND: sequential narrowing
+                let ids = null;
+                let lastResponse = null;
+                for (const q of subQueries) {
+                    const opts = { ...searchOptions, query: q };
+                    if (ids) opts.file_ids = ids;
+                    lastResponse = await searchImages(opts);
+                    if (!lastResponse.success || !lastResponse.results.length) break;
+                    ids = lastResponse.results.map(r => r.id).filter(Boolean);
+                }
+                response = lastResponse || { success: false, results: [] };
+            } else {
+                response = await searchImages(searchOptions);
+            }
             const elapsed = (performance.now() - t0).toFixed(0);
 
             if (response.success) {
