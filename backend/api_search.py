@@ -257,8 +257,17 @@ def _handle_request(data: dict) -> dict:
     if cmd == "warmup":
         t0 = time.time()
         searcher = _get_searcher()
-        # Trigger model loading via a dummy search
-        searcher.search("warmup", mode="triaxis", top_k=1)
+        # Load VV (SigLIP2) and MV (Qwen3-Embedding) models without running a full search.
+        # Avoids Codex CLI call (~20s) that was wasted on a dummy query.
+        try:
+            searcher.encode_text("warmup")  # Load SigLIP2 text encoder
+        except Exception:
+            pass
+        try:
+            if searcher.text_search_enabled and searcher.text_provider:
+                searcher.text_provider.encode("warmup", is_query=True)  # Load Qwen3-Embedding
+        except Exception:
+            pass
         return {"status": "ready", "warmup_ms": int((time.time() - t0) * 1000)}
 
     if cmd == "quit":
