@@ -763,7 +763,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, refineMode, onRefineInputChange, onRefineModeToggle, onRefineCommit, onRefineRemove, totalCount }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -837,16 +837,10 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                     {/* Committed refine levels */}
                     {refineStack.map((level, i) => (
                         <div key={i} className="flex items-center gap-2">
-                            <span className={`text-[9px] w-6 text-right shrink-0 font-bold ${level.mode === 'or' ? 'text-orange-400' : 'text-cyan-400'}`}>
-                                {level.mode === 'or' ? 'OR' : 'AND'}
-                            </span>
-                            <div className={`flex-1 max-w-xs px-3 py-1 rounded-lg text-[11px] flex items-center justify-between ${
-                                level.mode === 'or'
-                                    ? 'bg-orange-900/20 border border-orange-700/30 text-orange-300'
-                                    : 'bg-cyan-900/20 border border-cyan-700/30 text-cyan-300'
-                            }`}>
+                            <span className="text-[9px] text-gray-600 shrink-0">{t('scope.searching_in')}</span>
+                            <div className="flex-1 max-w-xs px-3 py-1 bg-cyan-900/20 border border-cyan-700/30 rounded-lg text-[11px] text-cyan-300 flex items-center justify-between">
                                 <span className="truncate">{level.query}</span>
-                                <button onClick={() => onRefineRemove(i)} className="opacity-60 hover:opacity-100 ml-2 shrink-0">
+                                <button onClick={() => onRefineRemove(i)} className="text-cyan-500/60 hover:text-cyan-300 ml-2 shrink-0">
                                     <X size={11} />
                                 </button>
                             </div>
@@ -854,15 +848,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                     ))}
                     {/* New refine input */}
                     <div className="flex items-center gap-2">
-                        <button
-                            onClick={onRefineModeToggle}
-                            className={`text-[9px] w-6 text-right shrink-0 font-bold cursor-pointer transition-colors ${
-                                refineMode === 'or' ? 'text-orange-400 hover:text-orange-300' : 'text-cyan-400 hover:text-cyan-300'
-                            }`}
-                            title={refineMode === 'or' ? 'OR: union of sub-queries' : 'AND: intersection of sub-queries'}
-                        >
-                            {refineMode === 'or' ? 'OR' : 'AND'}
-                        </button>
+                        <span className="text-[9px] text-gray-600 shrink-0">{t('scope.searching_in')}</span>
                         <div className="relative flex-1 max-w-xs">
                             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
                             <input
@@ -1015,10 +1001,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [threshold, setThreshold] = useState(0);
     const [searchScope, setSearchScope] = useState(null); // {folder, image_type, format, file_count, ...}
     const [domainConfig, setDomainConfig] = useState(null); // active domain image_types/art_styles
-    // Refine stack: [{query, mode, resultIds}] — each level narrows within previous
+    // Refine stack: [{query, resultIds}] — each level narrows within previous
     const [refineStack, setRefineStack] = useState([]); // committed refine levels
     const [refineInput, setRefineInput] = useState(''); // current typing input
-    const [refineMode, setRefineMode] = useState('and'); // 'and' | 'or' for current input
     const [contextMenu, setContextMenu] = useState(null); // { x, y, result }
     const [metadata, setMetadata] = useState(null);
     // showSettings removed — settings now in dedicated tab
@@ -1331,63 +1316,31 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         const fileIds = currentResults.map(r => r.id).filter(Boolean);
         if (!fileIds.length) return;
 
-        // Split comma-separated sub-queries
-        const subQueries = refineInput.split(',').map(s => s.trim()).filter(Boolean);
-        if (!subQueries.length) return;
-
         setIsSearching(true);
         try {
             const cfg = lastSearchConfigRef.current;
-            const searchOpts = (q, ids) => ({
-                query: q, file_ids: ids, limit: FETCH_LIMIT,
-                mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort,
+            const response = await searchImages({
+                query: refineInput,
+                file_ids: fileIds,
+                limit: FETCH_LIMIT,
+                mode: 'triaxis',
+                use_codex: cfg.useCodex,
+                effort: cfg.effort,
             });
-
-            let finalResults;
-            if (subQueries.length === 1) {
-                // Single query — simple search within scope
-                const response = await searchImages(searchOpts(subQueries[0], fileIds));
-                finalResults = response.success ? response.results : [];
-            } else if (refineMode === 'or') {
-                // OR: union of all sub-query results (parallel)
-                const responses = await Promise.all(subQueries.map(q => searchImages(searchOpts(q, fileIds))));
-                const merged = new Map();
-                for (const resp of responses) {
-                    if (!resp.success) continue;
-                    for (const r of resp.results) {
-                        const existing = merged.get(r.id);
-                        if (!existing || (r.combined_score || 0) > (existing.combined_score || 0)) {
-                            merged.set(r.id, r);
-                        }
-                    }
-                }
-                finalResults = Array.from(merged.values());
-            } else {
-                // AND: sequential narrowing — each sub-query searches within previous results
-                let ids = fileIds;
-                let results = [];
-                for (const q of subQueries) {
-                    const response = await searchImages(searchOpts(q, ids));
-                    if (!response.success || !response.results.length) { results = []; break; }
-                    results = response.results;
-                    ids = results.map(r => r.id).filter(Boolean);
-                }
-                finalResults = results;
+            if (response.success) {
+                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                setResults(sorted);
+                setCurrentLimit(sorted.length);
+                setNoMoreResults(true);
+                setRefineStack(prev => [...prev, { query: refineInput, resultIds: fileIds }]);
+                setRefineInput('');
             }
-
-            const sorted = finalResults.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
-            setResults(sorted);
-            setCurrentLimit(sorted.length);
-            setNoMoreResults(true);
-            setRefineStack(prev => [...prev, { query: refineInput, mode: refineMode, resultIds: fileIds }]);
-            setRefineInput('');
-            setRefineMode('and');
         } catch (err) {
             console.error('[Refine] search failed:', err);
         } finally {
             setIsSearching(false);
         }
-    }, [refineInput, refineMode]);
+    }, [refineInput]);
 
     // Remove a refine level and all levels below it, re-search from that point
     const handleRefineRemove = useCallback(async (index) => {
@@ -1438,7 +1391,6 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setQueryImages([]);
         setRefineStack([]);
         setRefineInput('');
-        setRefineMode('and');
         setError(null);
         setCurrentLimit(DISPLAY_PAGE);
         setNoMoreResults(false);
@@ -1727,9 +1679,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onClearScope={() => { setSearchScope(null); handleSearch(query, { useCache: false }); }}
                 refineStack={refineStack}
                 refineInput={refineInput}
-                refineMode={refineMode}
                 onRefineInputChange={handleRefineInputChange}
-                onRefineModeToggle={() => setRefineMode(m => m === 'and' ? 'or' : 'and')}
                 onRefineCommit={handleRefineCommit}
                 onRefineRemove={handleRefineRemove}
                 totalCount={allResultsRef.current.length}
