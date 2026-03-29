@@ -580,12 +580,13 @@ def list_all_jobs(
     status: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
+    archived: bool = False,
     _user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """List all jobs with optional status filter and pagination."""
     queue = _get_queue(db)
-    result = queue.list_jobs(status=status, limit=min(limit, 100), offset=offset)
+    result = queue.list_jobs(status=status, limit=min(limit, 100), offset=offset, archived=archived)
     return {"success": True, **result}
 
 
@@ -650,10 +651,61 @@ def clear_completed_jobs(
     _admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """Delete all completed jobs (admin only)."""
+    """Archive all completed jobs (admin only)."""
     queue = _get_queue(db)
     count = queue.clear_completed_jobs()
-    return {"success": True, "deleted": count}
+    return {"success": True, "archived": count}
+
+
+@router.post("/api/v1/admin/jobs/archive")
+def archive_jobs(
+    body: dict,
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Archive specific jobs or all jobs with a given status (admin only).
+
+    Body: {"job_ids": [1,2,3]} or {"status": "completed"}
+    """
+    queue = _get_queue(db)
+    if "job_ids" in body:
+        count = queue.archive_jobs(body["job_ids"])
+    elif "status" in body and body["status"] == "completed":
+        count = queue.archive_completed_jobs()
+    else:
+        raise HTTPException(status_code=400, detail="Provide job_ids or status")
+    return {"success": True, "archived": count}
+
+
+@router.get("/api/v1/admin/history/sessions")
+def list_history_sessions(
+    limit: int = 50,
+    offset: int = 0,
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """List work request sessions for history view."""
+    queue = _get_queue(db)
+    result = queue.list_history_sessions(limit=min(limit, 100), offset=offset)
+    return {"success": True, **result}
+
+
+@router.get("/api/v1/admin/history/sessions/{wr_id}/jobs")
+def list_history_jobs(
+    wr_id: int,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """List job history for a specific work request session."""
+    queue = _get_queue(db)
+    result = queue.list_history_jobs(
+        work_request_id=wr_id, status_filter=status,
+        limit=min(limit, 100), offset=offset
+    )
+    return {"success": True, **result}
 
 
 @router.delete("/api/v1/admin/jobs/permanently-failed")

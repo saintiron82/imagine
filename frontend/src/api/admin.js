@@ -34,6 +34,14 @@ export async function clearCompletedJobs() {
   return apiClient.delete('/api/v1/admin/jobs/clear-completed');
 }
 
+export async function archiveJobs(jobIds) {
+  return apiClient.post('/api/v1/admin/jobs/archive', { job_ids: jobIds });
+}
+
+export async function archiveCompletedJobs() {
+  return apiClient.post('/api/v1/admin/jobs/archive', { status: 'completed' });
+}
+
 export async function auditIntegrity() {
   return apiClient.post('/api/v1/admin/jobs/audit-integrity');
 }
@@ -170,5 +178,17 @@ export async function cancelWorkRequest(id) {
 
 export async function runRecoveryScan() {
   return apiClient.post('/api/v1/admin/recovery/scan');
+}
+
+// ── History ─────────────────────────────────────────────
+
+export async function listHistorySessions(limit = 50, offset = 0) {
+  return apiClient.get(`/api/v1/admin/history/sessions?limit=${limit}&offset=${offset}`);
+}
+
+export async function listHistoryJobs(wrId, status = null, limit = 50, offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status) params.set('status', status);
+  return apiClient.get(`/api/v1/admin/history/sessions/${wrId}/jobs?${params.toString()}`);
 }
 

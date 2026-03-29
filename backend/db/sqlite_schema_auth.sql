@@ -136,7 +136,10 @@ CREATE TABLE IF NOT EXISTS job_queue (
 
     -- Timestamps
     created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now')),
+
+    -- Soft delete for history (NULL = active in queue, NOT NULL = archived)
+    archived_at TEXT DEFAULT NULL
 );
 
 -- ═══════════════════════════════════════════════════════════════
@@ -161,6 +164,8 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
     ON job_queue(parse_status, priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed
     ON job_queue(mc_completed_at);
+CREATE INDEX IF NOT EXISTS idx_job_queue_archived
+    ON job_queue(archived_at);
 
 -- Prevent duplicate active jobs for the same file
 CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_file_id_active
