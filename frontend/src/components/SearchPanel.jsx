@@ -6,10 +6,26 @@ import ImageSearchInput from './ImageSearchInput';
 import SearchHistorySidebar from './SearchHistorySidebar';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
-import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode } from '../services/bridge';
+import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode, getActiveDomainConfig } from '../services/bridge';
 import { isElectron, getServerUrl } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+const FETCH_LIMIT = 100;   // Backend returns up to this many results in one call
+const DISPLAY_PAGE = 20;   // Show this many per "page" in the UI
+
+
+// Fallback filter options (used when domain config unavailable)
+const FALLBACK_IMAGE_TYPES = ['character', 'background', 'ui_element', 'item', 'icon', 'texture', 'effect', 'logo', 'photo', 'illustration'];
+const FALLBACK_ART_STYLES = ['realistic', 'anime', 'pixel', 'painterly', 'cartoon', '3d_render', 'flat_design', 'sketch'];
+
+// Filter label mapping for chips display
+const FILTER_LABELS = {
+    format: 'filter.format',
+    user_category: 'filter.category',
+    image_type: 'filter.type_label',
+    art_style: 'filter.style_label',
+    min_rating: 'filter.rating_label',
+};
 
 // Category options (value keys for DB storage, labels via i18n)
 const CATEGORY_OPTIONS = [
@@ -490,38 +506,34 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                     </div>
                 )}
 
-                {/* Triaxis score badges (VV=Visual blue, MV=Semantic purple, MC=Metadata green) */}
-                <div className="absolute top-2 right-2 flex gap-1">
-                    {result.vector_score != null && (
-                        <span className="bg-blue-900/80 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            {t('badge.vv')} {(result.vector_score * 100).toFixed(0)}
+                {/* Top: Combined RRF score (left) + axis scores (right) */}
+                <div className="absolute top-2 left-2 right-2 flex items-start justify-between">
+                    {result.combined_score > 0 ? (
+                        <span className="bg-yellow-900/80 text-yellow-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            ★ {(result.combined_score / 0.01639 * 100).toFixed(0)}%
                         </span>
-                    )}
-                    {result.structure_score != null && (
-                        <span className="bg-orange-900/80 text-orange-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            {t('badge.sv')} {(result.structure_score * 100).toFixed(0)}
-                        </span>
-                    )}
-                    {result.text_vec_score != null && (
-                        <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            {t('badge.mv')} {(result.text_vec_score * 100).toFixed(0)}
-                        </span>
-                    )}
-                    {result.text_score != null && (
-                        <span className="bg-green-900/80 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            {t('badge.mc')} {(result.text_score * 100).toFixed(0)}
-                        </span>
-                    )}
+                    ) : <span />}
+                    <div className="flex gap-1">
+                        {result.vector_score != null && (
+                            <span className="bg-blue-900/80 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                {t('badge.vv')} {(result.vector_score * 100).toFixed(0)}
+                            </span>
+                        )}
+                        {result.text_vec_score != null && (
+                            <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                {t('badge.mv')} {(result.text_vec_score * 100).toFixed(0)}
+                            </span>
+                        )}
+                        {result.text_score != null && (
+                            <span className="bg-green-900/80 text-green-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                {t('badge.mc')} {(result.text_score * 100).toFixed(0)}
+                            </span>
+                        )}
+                    </div>
                 </div>
-                {/* Combined RRF score (bottom-left, normalized to ~100%) */}
-                {result.combined_score > 0 && (
-                    <span className="absolute bottom-2 left-2 bg-yellow-900/80 text-yellow-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                        ★ {(result.combined_score / 0.01639 * 100).toFixed(0)}%
-                    </span>
-                )}
-                {/* v3 P0: image_type badge */}
+                {/* Bottom: image_type badge */}
                 {result.image_type && (
-                    <span className="absolute top-2 left-2 bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
+                    <span className="absolute bottom-2 left-2 bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
                         {result.image_type}
                     </span>
                 )}
@@ -596,50 +608,33 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
 
 // Isolated search input — manages its own typing state so keystrokes
 // never re-render the parent SearchPanel (fixes backspace flicker).
-const AI_MODES = [
-    { id: 'fast', label: 'Fast', color: 'text-green-400 border-green-500/50', desc: 'Local MLX (~2s)' },
-    { id: 'smart', label: 'Smart', color: 'text-blue-400 border-blue-500/50', desc: 'Codex Mini (~5s)' },
-    { id: 'pro', label: 'Pro', color: 'text-purple-400 border-purple-500/50', desc: 'Codex 5.3 (~10s)' },
+const EFFORT_LEVELS = [
+    { id: 'low', label: 'Low', color: 'text-green-400 border-green-500/50' },
+    { id: 'medium', label: 'Med', color: 'text-blue-400 border-blue-500/50' },
+    { id: 'high', label: 'High', color: 'text-purple-400 border-purple-500/50' },
 ];
 
 const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, showFilters, hasActiveFilters, onToggleFilters, onOpenSettings, inputRef, resetSignal }) => {
     const { t } = useLocale();
     const [localQuery, setLocalQuery] = useState('');
-    const [aiMode, setAiMode] = useState(() => localStorage.getItem('search_ai_mode') || 'fast');
+    const [useCodex, setUseCodex] = useState(() => localStorage.getItem('search_use_codex') !== 'false');
+    const [effort, setEffort] = useState(() => localStorage.getItem('search_effort') || 'low');
 
-    // Reset input when parent signals a clear
-    useEffect(() => {
-        if (resetSignal > 0) setLocalQuery('');
-    }, [resetSignal]);
+    useEffect(() => { if (resetSignal > 0) setLocalQuery(''); }, [resetSignal]);
+    useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
 
-    // Auto-focus on mount
-    useEffect(() => {
-        if (inputRef.current) inputRef.current.focus();
-    }, []);
-
-    const cycleAiMode = () => {
-        const idx = AI_MODES.findIndex(m => m.id === aiMode);
-        const next = AI_MODES[(idx + 1) % AI_MODES.length].id;
-        setAiMode(next);
-        localStorage.setItem('search_ai_mode', next);
-    };
+    const toggleCodex = () => { const next = !useCodex; setUseCodex(next); localStorage.setItem('search_use_codex', String(next)); };
+    const cycleEffort = () => { const idx = EFFORT_LEVELS.findIndex(l => l.id === effort); const next = EFFORT_LEVELS[(idx + 1) % EFFORT_LEVELS.length].id; setEffort(next); localStorage.setItem('search_effort', next); };
 
     const handleKeyPress = (e) => {
         if (e.key === 'Enter' && (localQuery.trim() || hasImages)) {
-            onSearch(localQuery, { aiMode });
+            onSearch(localQuery, { useCodex, effort });
         }
     };
-
     const handleSearchClick = () => {
-        if (localQuery.trim() || hasImages) {
-            onSearch(localQuery, { aiMode });
-        }
+        if (localQuery.trim() || hasImages) onSearch(localQuery, { useCodex, effort });
     };
-
-    const handleClear = () => {
-        setLocalQuery('');
-        onClear();
-    };
+    const handleClear = () => { setLocalQuery(''); onClear(); };
 
     return (
         <div className="flex items-center space-x-2">
@@ -655,10 +650,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
                     className="w-full pl-10 pr-10 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 text-base"
                 />
                 {(localQuery || hasImages) && (
-                    <button
-                        onClick={handleClear}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-                    >
+                    <button onClick={handleClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
                         <X size={16} />
                     </button>
                 )}
@@ -666,24 +658,32 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
             <button
                 onClick={handleSearchClick}
                 disabled={(!localQuery.trim() && !hasImages) || isSearching}
-                className="px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg flex items-center space-x-2 transition-colors"
+                className="px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors shrink-0"
             >
-                {isSearching ? (
-                    <Loader2 size={18} className="animate-spin" />
-                ) : (
-                    <Search size={18} />
-                )}
+                {isSearching ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
             </button>
-            {/* AI Mode Toggle */}
+            {/* Codex Toggle */}
+            <button
+                onClick={toggleCodex}
+                className={`px-2.5 py-3 rounded-lg border text-[10px] font-bold transition-colors ${
+                    useCodex
+                        ? 'text-emerald-400 border-emerald-500/50 bg-emerald-900/20 hover:bg-emerald-900/30'
+                        : 'text-gray-500 border-gray-600 bg-gray-800 hover:bg-gray-700'
+                }`}
+                title={useCodex ? t('search.codex_on') : t('search.codex_off')}
+            >
+                Codex
+            </button>
+            {/* Effort Level Toggle */}
             {(() => {
-                const mode = AI_MODES.find(m => m.id === aiMode) || AI_MODES[0];
+                const level = EFFORT_LEVELS.find(l => l.id === effort) || EFFORT_LEVELS[0];
                 return (
                     <button
-                        onClick={cycleAiMode}
-                        className={`px-3 py-3 rounded-lg border text-[11px] font-bold transition-colors ${mode.color} bg-gray-800 hover:bg-gray-700`}
-                        title={mode.desc}
+                        onClick={cycleEffort}
+                        className={`px-2.5 py-3 rounded-lg border text-[10px] font-bold transition-colors ${level.color} bg-gray-800 hover:bg-gray-700`}
+                        title={t('search.effort')}
                     >
-                        {mode.label}
+                        {level.label}
                     </button>
                 );
             })()}
@@ -713,7 +713,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -743,7 +743,8 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
         if (scrollRef.current) scrollRef.current.scrollTop = 0;
     }, [results.length > 0 && results[0]?.path]);
 
-    if (!hasResults && !isSearching) return <div className="flex-1" />;
+    const hasAnyResults = hasResults || (totalCount > 0);
+    if (!hasAnyResults && !isSearching) return <div className="flex-1" />;
 
     return (
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6 relative">
@@ -757,11 +758,89 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                 </div>
             )}
 
-            {hasResults && (
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-medium text-gray-400">
-                        {t('status.results_found', { count: results.length })}
-                    </h3>
+            {/* Scope bar — AI-extracted search scope */}
+            {hasAnyResults && searchScope && (
+                <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-amber-900/20 border border-amber-700/30 rounded-lg text-[11px]">
+                    <FolderOpen size={12} className="text-amber-400 flex-shrink-0" />
+                    {searchScope.folder && (
+                        <span className="text-amber-300 font-medium">{searchScope.folder}</span>
+                    )}
+                    {searchScope.image_type && (
+                        <span className="text-amber-300/70">· {searchScope.image_type}</span>
+                    )}
+                    {searchScope.file_count != null && (
+                        <span className="text-gray-500">({t('scope.files_count', { count: searchScope.file_count })})</span>
+                    )}
+                    <span className="text-gray-500">{t('scope.searching_in')}</span>
+                    <button
+                        onClick={onClearScope}
+                        className="text-amber-500 hover:text-amber-300 ml-auto text-[10px]"
+                    >
+                        {t('scope.clear')}
+                    </button>
+                </div>
+            )}
+
+            {/* Refine stack — committed levels (read-only chips) + new input chain */}
+            {hasAnyResults && (
+                <div className="flex flex-col gap-1.5 mb-2">
+                    {/* Committed refine levels */}
+                    {refineStack.map((level, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-500 shrink-0">{t('scope.searching_in')}</span>
+                            <div className="flex-1 max-w-xs px-3 py-1 bg-cyan-900/20 border border-cyan-700/30 rounded-lg text-[11px] text-cyan-300 flex items-center justify-between">
+                                <span className="truncate">{level.query}</span>
+                                <button onClick={() => onRefineRemove(i)} className="text-cyan-500/60 hover:text-cyan-300 ml-2 shrink-0">
+                                    <X size={11} />
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                    {/* New refine input */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-gray-500 shrink-0">{t('scope.searching_in')}</span>
+                        <div className="relative flex-1 max-w-xs">
+                            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
+                            <input type="text" value={refineInput}
+                                onChange={(e) => onRefineInputChange(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onRefineCommit(); } }}
+                                placeholder={t('search.refine_placeholder')}
+                                className="w-full pl-7 pr-8 py-1.5 bg-gray-800/60 border border-gray-700/50 rounded-lg text-white text-[11px] placeholder-gray-600 focus:outline-none focus:border-blue-500/50" />
+                            {refineInput && (
+                                <button onClick={() => onRefineInputChange('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                                    <X size={12} /></button>
+                            )}
+                        </div>
+                        {refineInput && <span className="text-[10px] text-gray-500">Enter↵</span>}
+                    </div>
+                </div>
+            )}
+
+            {hasAnyResults && (
+                <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm font-medium text-gray-400">
+                            {t('status.results_found', { count: results.length })}
+                        </h3>
+                        {/* Active filter chips — always visible */}
+                        {activeFilters && Object.entries(activeFilters).map(([key, value]) => {
+                            if (!value) return null;
+                            const label = FILTER_LABELS[key];
+                            const display = key === 'min_rating' ? `${'★'.repeat(value)}` : value;
+                            return (
+                                <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/30 border border-blue-700/40 rounded-full text-[10px] text-blue-300">
+                                    <span className="text-blue-400/60 uppercase">{label ? t(label) : key}:</span>
+                                    <span>{display}</span>
+                                    <button
+                                        onClick={() => onRemoveFilter(key)}
+                                        className="text-blue-500/60 hover:text-blue-300 ml-0.5"
+                                    >
+                                        <X size={10} />
+                                    </button>
+                                </span>
+                            );
+                        })}
+                    </div>
                     <button onClick={onClear} className="text-xs text-gray-500 hover:text-gray-300">
                         {t('action.clear_results')}
                     </button>
@@ -854,7 +933,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [searchMode, setSearchMode] = useState(null); // 'structure', 'vector', or null (inferred)
     const [queryImages, setQueryImages] = useState([]); // base64 string array
     const [imageSearchMode, setImageSearchMode] = useState('and'); // 'and' | 'or'
-    const [results, setResults] = useState([]);
+    const [results, setResults] = useState([]); // Currently displayed slice
+    const allResultsRef = useRef([]); // Full results from backend (up to FETCH_LIMIT)
     const [isSearching, setIsSearching] = useState(false);
     const searchCache = useRef(new Map()); // query → {results, timestamp}
     const [searchHistory, setSearchHistory] = useState(() => {
@@ -865,6 +945,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [showFilters, setShowFilters] = useState(false);
     const [activeFilters, setActiveFilters] = useState({});
     const [threshold, setThreshold] = useState(0);
+    const [searchScope, setSearchScope] = useState(null); // {folder, image_type, format, file_count, ...}
+    const [domainConfig, setDomainConfig] = useState(null); // active domain image_types/art_styles
+    // Refine stack: [{query, resultIds}] — each level is a single query within previous results
+    const [refineStack, setRefineStack] = useState([]);
+    const [refineInput, setRefineInput] = useState('');
     const [contextMenu, setContextMenu] = useState(null); // { x, y, result }
     const [metadata, setMetadata] = useState(null);
     // showSettings removed — settings now in dedicated tab
@@ -881,6 +966,13 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             .then(stats => { if (stats.success !== false) setDbStats(stats); })
             .catch(() => { });
     }, [reloadSignal]);
+
+    // Load active domain config for dynamic filter options
+    useEffect(() => {
+        getActiveDomainConfig()
+            .then(data => { if (data?.domain) setDomainConfig(data.domain); })
+            .catch(() => {});
+    }, []);
 
     // Handle initial search trigger (e.g. from FileGrid context menu)
     useEffect(() => {
@@ -975,35 +1067,28 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     // Ref to capture latest state for stable callbacks
     const searchStateRef = useRef();
+    const lastSearchConfigRef = useRef({ useCodex: true, effort: 'low' }); // Track last search config for Load More
     searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
 
-    const handleSearch = useCallback(async (searchQuery, { useCache = false, aiMode = 'fast' } = {}) => {
+    const handleSearch = useCallback(async (searchQuery, { useCache = false, useCodex = true, effort = 'low' } = {}) => {
         const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
-        const hasText = searchQuery.trim().length > 0;
+        const hasText = searchQuery && searchQuery.trim().length > 0;
         const hasImages = queryImages.length > 0;
         if (!hasText && !hasImages) return;
 
-        // Check session cache (only when explicitly requested, e.g. sidebar click)
-        const cacheKey = hasText && !hasImages ? searchQuery.trim() : null;
-        if (useCache && cacheKey && searchCache.current.has(cacheKey)) {
-            const cached = searchCache.current.get(cacheKey);
-            setQuery(searchQuery);
-            setResults(cached.results);
-            setCurrentLimit(20);
-            setNoMoreResults(cached.results.length < 20);
-            setIsSearching(false);
-            setError(null);
-            return;
-        }
-        // Clear old cache for this query (force fresh results)
-        if (cacheKey) searchCache.current.delete(cacheKey);
-
-        setQuery(searchQuery);
-        setQueryFileId(null); // Clear file-based search
-        setSearchMode(null); // Clear explicit mode
+        setQuery(searchQuery || '');
+        setQueryFileId(null);
+        setSearchMode(null);
         setIsSearching(true);
         setError(null);
+        setRefineStack([]);
+        setRefineCommitted([]);
+        setRefineInput('');
+        setRefineNextOp('and');
 
+        lastSearchConfigRef.current = { useCodex, effort };
+
+        const t0 = performance.now();
         try {
             const filters = {};
             if (activeFilters.format) filters.format = activeFilters.format;
@@ -1012,55 +1097,55 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             if (activeFilters.image_type) filters.image_type = activeFilters.image_type;
             if (activeFilters.art_style) filters.art_style = activeFilters.art_style;
 
-            const searchOptions = {
-                limit: 20,
-                threshold,
+            const baseOpts = {
+                limit: FETCH_LIMIT, threshold, mode: 'triaxis',
                 filters: Object.keys(filters).length > 0 ? filters : null,
+                use_codex: useCodex, effort,
             };
 
-            // Text
-            if (hasText) searchOptions.query = searchQuery;
-
-            // Images
-            if (hasImages) {
-                if (queryImages.length === 1) {
-                    searchOptions.queryImage = queryImages[0];
-                } else {
-                    searchOptions.queryImages = queryImages;
-                    searchOptions.imageSearchMode = imageSearchMode;
-                }
-            }
-
-            // Mode auto-determination
-            if (hasImages && !hasText) {
-                searchOptions.mode = 'vector';
+            let response;
+            if (hasText && !hasImages) {
+                response = await searchImages({ ...baseOpts, query: searchQuery });
+            } else if (hasImages && !hasText) {
+                const opts = { ...baseOpts, mode: 'vector' };
+                if (queryImages.length === 1) opts.queryImage = queryImages[0];
+                else { opts.queryImages = queryImages; opts.imageSearchMode = imageSearchMode; }
+                response = await searchImages(opts);
             } else {
-                searchOptions.mode = 'triaxis';
+                const opts = { ...baseOpts, query: searchQuery };
+                if (queryImages.length === 1) opts.queryImage = queryImages[0];
+                else { opts.queryImages = queryImages; opts.imageSearchMode = imageSearchMode; }
+                response = await searchImages(opts);
             }
 
-            // Pass AI mode to backend for query decomposition
-            searchOptions.ai_mode = aiMode;
-
-            const response = await searchImages(searchOptions);
+            const elapsed = (performance.now() - t0).toFixed(0);
+            console.log(`[Search] ✅ ${response.results?.length || 0} results in ${elapsed}ms`);
 
             if (response.success) {
-                console.log('[Search] backend version:', response._v || 'OLD', 'results:', response.count);
-                setResults(response.results);
-                setCurrentLimit(20);
-                setNoMoreResults(response.results.length < 20);
+                // Sort by combined_score descending so display order matches ★ badge
+                allResultsRef.current = (response.results || []).sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                setResults(response.results.slice(0, DISPLAY_PAGE));
+                setCurrentLimit(DISPLAY_PAGE);
+                setNoMoreResults(response.results.length <= DISPLAY_PAGE);
 
-                // Cache results (text queries only)
+                // Update scope from backend decomposition
+                const scope = response.scope || null;
+                const hasScope = scope && (scope.folder || scope.image_type || scope.format);
+                setSearchScope(hasScope ? scope : null);
+
+                // Update history
+                const cacheKey = searchQuery?.trim();
                 if (cacheKey) {
-                    searchCache.current.set(cacheKey, { results: response.results, timestamp: Date.now() });
-                    // Limit cache size
-                    if (searchCache.current.size > 30) {
-                        const oldest = searchCache.current.keys().next().value;
-                        searchCache.current.delete(oldest);
-                    }
-                    // Update history (persisted to localStorage)
                     setSearchHistory(prev => {
                         const filtered = prev.filter(h => h.query !== cacheKey);
-                        const next = [{ query: cacheKey, resultCount: response.results.length, timestamp: Date.now() }, ...filtered].slice(0, 30);
+                        const { activeFilters, threshold } = searchStateRef.current;
+                        const next = [{
+                            query: cacheKey,
+                            resultCount: allResultsRef.current.length,
+                            timestamp: Date.now(),
+                            filters: { ...activeFilters },
+                            threshold,
+                        }, ...filtered].slice(0, 30);
                         try { localStorage.setItem('search_history_v2', JSON.stringify(next)); } catch {}
                         return next;
                     });
@@ -1077,77 +1162,85 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         }
     }, []);
 
-    const handleLoadMore = useCallback(async () => {
-        const { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore } = searchStateRef.current;
-        const hasText = query.trim().length > 0;
-        const hasImages = queryImages.length > 0;
-        const hasFile = queryFileId !== null;
+    const handleLoadMore = useCallback(() => {
+        const { currentLimit } = searchStateRef.current;
+        const all = allResultsRef.current;
+        const nextLimit = currentLimit + DISPLAY_PAGE;
+        setResults(all.slice(0, nextLimit));
+        setCurrentLimit(nextLimit);
+        setNoMoreResults(nextLimit >= all.length);
+    }, []);
 
-        if (!hasText && !hasImages && !hasFile) return;
-        if (isLoadingMore) return;
+    const handleRefineCommit = useCallback(async () => {
+        if (!refineInput.trim()) return;
+        const currentResults = searchStateRef.current.results;
+        const fileIds = currentResults.map(r => r.id).filter(Boolean);
+        if (!fileIds.length) return;
 
-        setIsLoadingMore(true);
-        const nextLimit = currentLimit + 20;
-
+        setIsSearching(true);
         try {
-            const filters = {};
-            if (activeFilters.format) filters.format = activeFilters.format;
-            if (activeFilters.user_category) filters.user_category = activeFilters.user_category;
-            if (activeFilters.min_rating) filters.min_rating = activeFilters.min_rating;
-            if (activeFilters.image_type) filters.image_type = activeFilters.image_type;
-            if (activeFilters.art_style) filters.art_style = activeFilters.art_style;
-
-            const searchOptions = {
-                limit: nextLimit,
-                threshold: nextLimit > 40 ? 0 : threshold,
-                filters: Object.keys(filters).length > 0 ? filters : null,
-            };
-
-            if (hasFile) {
-                searchOptions.queryFileId = queryFileId;
-                searchOptions.mode = searchMode || 'structure';
-            } else {
-                if (hasText) searchOptions.query = query;
-                if (hasImages) {
-                    if (queryImages.length === 1) {
-                        searchOptions.queryImage = queryImages[0];
-                    } else {
-                        searchOptions.queryImages = queryImages;
-                        searchOptions.imageSearchMode = imageSearchMode;
-                    }
-                }
-
-                if (hasImages && !hasText) {
-                    searchOptions.mode = 'vector';
-                } else {
-                    searchOptions.mode = 'triaxis';
-                }
-            }
-
-            const response = await searchImages(searchOptions);
-
+            const cfg = lastSearchConfigRef.current;
+            const response = await searchImages({
+                query: refineInput, file_ids: fileIds, limit: FETCH_LIMIT,
+                mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort,
+            });
             if (response.success) {
-                setCurrentLimit(nextLimit);
-                if (response.results.length <= results.length) {
-                    setNoMoreResults(true);
-                } else {
-                    setResults(response.results);
-                    setNoMoreResults(response.results.length < nextLimit);
-                }
+                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                setResults(sorted);
+                setCurrentLimit(sorted.length);
+                setNoMoreResults(true);
+                setRefineStack(prev => [...prev, { query: refineInput, resultIds: fileIds }]);
+                setRefineInput('');
             }
         } catch (err) {
-            console.error('Load more failed:', err);
+            console.error('[Refine] search failed:', err);
         } finally {
-            setIsLoadingMore(false);
+            setIsSearching(false);
         }
-    }, []);
+    }, [refineInput]);
+
+    const handleRefineRemove = useCallback(async (index) => {
+        setRefineInput('');
+        if (index === 0) {
+            setRefineStack([]);
+            const all = allResultsRef.current;
+            setResults(all.slice(0, DISPLAY_PAGE));
+            setCurrentLimit(DISPLAY_PAGE);
+            setNoMoreResults(DISPLAY_PAGE >= all.length);
+            return;
+        }
+        const kept = refineStack.slice(0, index);
+        setRefineStack(kept);
+        const prevLevel = kept[kept.length - 1];
+        const cfg = lastSearchConfigRef.current;
+        setIsSearching(true);
+        try {
+            const response = await searchImages({
+                query: prevLevel.query, file_ids: prevLevel.resultIds, limit: FETCH_LIMIT,
+                mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort,
+            });
+            if (response.success) {
+                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                setResults(sorted);
+                setCurrentLimit(sorted.length);
+                setNoMoreResults(true);
+            }
+        } catch (err) {
+            console.error('[Refine] re-search failed:', err);
+        } finally {
+            setIsSearching(false);
+        }
+    }, [refineStack]);
 
     const clearSearch = useCallback(() => {
         setResults([]);
+        allResultsRef.current = [];
         setQuery('');
         setQueryImages([]);
+        setRefineStack([]);
+        setRefineInput('');
         setError(null);
-        setCurrentLimit(20);
+        setCurrentLimit(DISPLAY_PAGE);
         setNoMoreResults(false);
         setResetSignal(c => c + 1);
     }, []);
@@ -1176,8 +1269,15 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const buildStatus = dbStats?.build_status || null;
     const rebuildRequired = !!buildStatus?.needs_rebuild;
 
-    const handleHistorySelect = useCallback((q) => {
-        handleSearch(q, { useCache: true });
+    const handleHistorySelect = useCallback((item) => {
+        // Support both old format (string) and new format (object with filters)
+        if (typeof item === 'string') {
+            handleSearch(item, { useCache: true });
+            return;
+        }
+        if (item.filters) setActiveFilters(item.filters);
+        if (item.threshold != null) setThreshold(item.threshold);
+        handleSearch(item.query, { useCache: true });
     }, [handleSearch]);
 
     const handleHistoryDelete = useCallback((q) => {
@@ -1322,45 +1422,33 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                                 </select>
                             </div>
 
-                            {/* Image Type Filter (v3 P0) */}
+                            {/* Image Type Filter (dynamic from domain YAML) */}
                             <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] text-gray-500 uppercase">TYPE</span>
+                                <span className="text-[10px] text-gray-500 uppercase">{t('filter.type_label')}</span>
                                 <select
                                     value={activeFilters.image_type || ''}
                                     onChange={(e) => setActiveFilters({ ...activeFilters, image_type: e.target.value || undefined })}
                                     className="bg-gray-700 text-white text-xs px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                                 >
                                     <option value="">{t('filter.all')}</option>
-                                    <option value="character">Character</option>
-                                    <option value="background">Background</option>
-                                    <option value="ui_element">UI</option>
-                                    <option value="item">Item</option>
-                                    <option value="icon">Icon</option>
-                                    <option value="texture">Texture</option>
-                                    <option value="effect">Effect</option>
-                                    <option value="logo">Logo</option>
-                                    <option value="photo">Photo</option>
-                                    <option value="illustration">Illustration</option>
+                                    {(domainConfig?.image_types?.map(t => t.id) || FALLBACK_IMAGE_TYPES).map(type => (
+                                        <option key={type} value={type}>{type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+                                    ))}
                                 </select>
                             </div>
 
-                            {/* Art Style Filter (v3 P0) */}
+                            {/* Art Style Filter (dynamic from domain YAML) */}
                             <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] text-gray-500 uppercase">STYLE</span>
+                                <span className="text-[10px] text-gray-500 uppercase">{t('filter.style_label')}</span>
                                 <select
                                     value={activeFilters.art_style || ''}
                                     onChange={(e) => setActiveFilters({ ...activeFilters, art_style: e.target.value || undefined })}
                                     className="bg-gray-700 text-white text-xs px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                                 >
                                     <option value="">{t('filter.all')}</option>
-                                    <option value="realistic">Realistic</option>
-                                    <option value="anime">Anime</option>
-                                    <option value="pixel">Pixel</option>
-                                    <option value="painterly">Painterly</option>
-                                    <option value="cartoon">Cartoon</option>
-                                    <option value="3d_render">3D Render</option>
-                                    <option value="flat_design">Flat Design</option>
-                                    <option value="sketch">Sketch</option>
+                                    {(domainConfig?.common_hints?.art_style || FALLBACK_ART_STYLES).map(style => (
+                                        <option key={style} value={style}>{style.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+                                    ))}
                                 </select>
                             </div>
 
@@ -1433,6 +1521,16 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 isLoadingMore={isLoadingMore}
                 onLoadMore={handleLoadMore}
                 onNavigateToFolder={onNavigateToFolder}
+                activeFilters={activeFilters}
+                onRemoveFilter={(key) => setActiveFilters(prev => ({ ...prev, [key]: undefined }))}
+                searchScope={searchScope}
+                onClearScope={() => { setSearchScope(null); handleSearch(query, { useCache: false }); }}
+                refineStack={refineStack}
+                refineInput={refineInput}
+                onRefineInputChange={setRefineInput}
+                onRefineCommit={handleRefineCommit}
+                onRefineRemove={handleRefineRemove}
+                totalCount={allResultsRef.current.length}
             />
 
             {/* Search history moved to sidebar (SearchHistorySidebar) */}

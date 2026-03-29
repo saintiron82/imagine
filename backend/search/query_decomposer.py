@@ -21,6 +21,7 @@ import json
 import os
 import platform
 import re
+import time
 from typing import Dict, Any, List, Tuple, Optional
 
 import requests
@@ -88,16 +89,27 @@ class QueryDecomposer:
         self,
         model: str = _DEFAULT_MODEL,
         host: str = _DEFAULT_HOST,
+        use_codex: bool = True,
     ):
         self.model = model
         self.host = host
         self.api_url = f"{host}/api/chat"
+        self.use_codex = use_codex
         _init_llm_backend()
-        logger.info(f"QueryDecomposer initialized (backend: {_llm_backend})")
+        effective = _llm_backend if (use_codex or _llm_backend != "codex") else "mlx/ollama/fallback"
+        logger.info(f"QueryDecomposer initialized (backend: {_llm_backend}, use_codex: {use_codex}, effective: {effective})")
+
+    # ── LRU cache for decomposition results ──────────────────────
+    # Key: (query, use_codex) → Value: (result_dict, timestamp)
+    # Avoids re-running LLM on "Load More" or filter-change re-searches.
+    _decompose_cache: Dict[tuple, tuple] = {}
+    _CACHE_MAX_SIZE = 50
+    _CACHE_TTL_SEC = 300  # 5 minutes
 
     def decompose(self, query: str) -> Dict[str, Any]:
         """
         Decompose a natural language query into structured search parameters.
+        Results are cached by (query, use_codex) for 5 minutes.
 
         Args:
             query: User's natural language search query
@@ -113,16 +125,42 @@ class QueryDecomposer:
                 "decomposed": bool         # True if LLM was used
             }
         """
+        import copy
+
+        cache_key = (query.strip(), self.use_codex)
+        cached = QueryDecomposer._decompose_cache.get(cache_key)
+        if cached is not None:
+            result, ts = cached
+            if (time.time() - ts) < self._CACHE_TTL_SEC:
+                logger.info(f"[DECOMP] cache hit for '{query}' (use_codex={self.use_codex})")
+                out = copy.deepcopy(result)
+                out["_decomp_backend"] = "cache"
+                return out
+            else:
+                del QueryDecomposer._decompose_cache[cache_key]
+
         raw_text = self._generate_llm(query)
-        logger.warning(f"[DECOMP] query='{query}' llm_raw={repr(raw_text[:200]) if raw_text else 'None'} backend={_llm_backend}")
+        # Determine which backend was actually used
+        effective_backend = _llm_backend if (self.use_codex or _llm_backend != "codex") else "mlx"
+        logger.warning(f"[DECOMP] query='{query}' llm_raw={repr(raw_text[:200]) if raw_text else 'None'} backend={effective_backend} (use_codex={self.use_codex})")
         if raw_text is not None:
             parsed = self._parse_response(raw_text, query)
             logger.warning(f"[DECOMP] parsed folder_filter='{parsed.get('folder_filter','')}' type='{parsed.get('query_type','')}'")
             parsed["decomposed"] = True
-            return self._finalize(parsed, query)
+            result = self._finalize(parsed, query)
+            result["_decomp_backend"] = effective_backend
+        else:
+            logger.warning(f"[DECOMP] LLM failed, using fallback")
+            result = self._finalize(self._fallback(query), query)
+            result["_decomp_backend"] = "fallback"
 
-        logger.warning(f"[DECOMP] LLM failed, using fallback")
-        return self._finalize(self._fallback(query), query)
+        # Store in cache (evict oldest if full)
+        if len(QueryDecomposer._decompose_cache) >= self._CACHE_MAX_SIZE:
+            oldest_key = next(iter(QueryDecomposer._decompose_cache))
+            del QueryDecomposer._decompose_cache[oldest_key]
+        QueryDecomposer._decompose_cache[cache_key] = (copy.deepcopy(result), time.time())
+
+        return result
 
     def _generate_llm(self, query: str) -> Optional[str]:
         """Generate LLM response using the best available backend.
@@ -132,28 +170,56 @@ class QueryDecomposer:
         """
         prompt = self._build_prompt(query)
 
-        # 0. Codex CLI (best accuracy)
-        if _llm_backend == "codex":
+        # 0. Codex CLI (best accuracy) — skip if user disabled Codex
+        if _llm_backend == "codex" and self.use_codex:
             try:
                 return self._generate_codex(query)
             except Exception as e:
                 logger.warning(f"Codex CLI failed: {e}")
 
-        # 1. MLX backend (macOS)
-        if _llm_backend == "mlx" and _mlx_model is not None:
-            try:
-                return self._generate_mlx(prompt)
-            except Exception as e:
-                logger.warning(f"MLX generation failed: {e}")
+        # When Codex is primary but disabled, try local backends as fallback
+        try_local = (_llm_backend == "codex" and not self.use_codex) or _llm_backend in ("mlx", "ollama", None)
 
-        # 2. Ollama backend
-        if _llm_backend == "ollama":
+        if try_local:
+            # 1. MLX backend (macOS)
+            if _mlx_model is not None:
+                try:
+                    return self._generate_mlx(prompt)
+                except Exception as e:
+                    logger.warning(f"MLX generation failed: {e}")
+            elif _llm_backend == "codex" and not self.use_codex:
+                # MLX not loaded yet — try lazy init
+                self._lazy_init_local_llm()
+                if _mlx_model is not None:
+                    try:
+                        return self._generate_mlx(prompt)
+                    except Exception as e:
+                        logger.warning(f"MLX generation failed: {e}")
+
+            # 2. Ollama backend
             try:
-                return self._generate_ollama(prompt, query)
+                import requests
+                resp = requests.get(f"{self.host}/api/tags", timeout=3)
+                if resp.status_code == 200:
+                    return self._generate_ollama(prompt, query)
             except Exception as e:
                 logger.warning(f"Ollama generation failed: {e}")
 
         return None
+
+    @staticmethod
+    def _lazy_init_local_llm():
+        """Lazy-init local LLM backends when Codex is disabled at runtime."""
+        global _mlx_model, _mlx_tokenizer
+        if _mlx_model is not None:
+            return
+        if platform.system() == "Darwin":
+            try:
+                from mlx_lm import load
+                logger.info(f"Lazy-loading MLX LLM: {_MLX_MODEL_ID}")
+                _mlx_model, _mlx_tokenizer = load(_MLX_MODEL_ID)
+            except Exception as e:
+                logger.info(f"MLX LLM not available: {e}")
 
     def _generate_codex(self, query: str) -> Optional[str]:
         """Generate query decomposition using Codex CLI (GPT-5.3-codex).

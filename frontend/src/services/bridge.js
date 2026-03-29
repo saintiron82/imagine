@@ -51,6 +51,9 @@ export async function searchImages(options) {
   if (options.queryImages) body.query_images = options.queryImages;
   if (options.imageSearchMode) body.image_search_mode = options.imageSearchMode;
   if (options.queryFileId != null) body.query_file_id = options.queryFileId;
+  if (options.use_codex != null) body.use_codex = options.use_codex;
+  if (options.effort) body.effort = options.effort;
+  if (options.file_ids) body.file_ids = options.file_ids;
 
   // Map mode to endpoint
   const modeMap = {
