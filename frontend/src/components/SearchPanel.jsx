@@ -762,7 +762,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineQuery, onRefineChange, totalCount }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineQuery, onRefineChange, onRefineCommit, totalCount }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -839,6 +839,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                             type="text"
                             value={refineQuery}
                             onChange={(e) => onRefineChange(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') onRefineCommit(); }}
                             placeholder={t('search.refine_placeholder')}
                             className="w-full pl-8 pr-8 py-1.5 bg-gray-800/60 border border-gray-700/50 rounded-lg text-white text-[11px] placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
                         />
@@ -848,9 +849,10 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                             </button>
                         )}
                     </div>
-                    {refineQuery && (
-                        <span className="text-[10px] text-gray-500">{results.length}/{totalCount}</span>
-                    )}
+                    {refineQuery && (() => {
+                        const matchCount = _refineFilter(results, refineQuery).length;
+                        return <span className="text-[10px] text-gray-500">{matchCount}/{totalCount} <span className="text-gray-600">Enter↵</span></span>;
+                    })()}
                 </div>
             )}
 
@@ -1254,7 +1256,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setNoMoreResults(nextLimit >= filtered.length);
     }, [refineQuery]);
 
-    // Refine within results — client-side text matching on mc_caption, ai_tags, file name
+    // Refine within results — reorder while typing, filter on Enter
     const handleRefineChange = useCallback((q) => {
         setRefineQuery(q);
         const all = allResultsRef.current;
@@ -1264,10 +1266,25 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             setNoMoreResults(limit >= all.length);
             return;
         }
-        const filtered = _refineFilter(all, q);
-        setResults(filtered);
-        setNoMoreResults(true); // Show all matches
+        // Reorder: matching items first, then non-matching
+        const matches = _refineFilter(all, q);
+        const matchSet = new Set(matches.map(r => r.id || r.path));
+        const nonMatches = all.filter(r => !matchSet.has(r.id || r.path));
+        setResults([...matches, ...nonMatches]);
+        setNoMoreResults(true);
     }, []);
+
+    const handleRefineCommit = useCallback(() => {
+        const all = allResultsRef.current;
+        const q = refineQuery;
+        if (!q.trim()) return;
+        // Keep only matching items
+        const filtered = _refineFilter(all, q);
+        allResultsRef.current = filtered;
+        setResults(filtered);
+        setCurrentLimit(filtered.length);
+        setNoMoreResults(true);
+    }, [refineQuery]);
 
     const clearSearch = useCallback(() => {
         setResults([]);
@@ -1563,6 +1580,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onClearScope={() => { setSearchScope(null); handleSearch(query, { useCache: false }); }}
                 refineQuery={refineQuery}
                 onRefineChange={handleRefineChange}
+                onRefineCommit={handleRefineCommit}
                 totalCount={allResultsRef.current.length}
             />
 
