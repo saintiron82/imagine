@@ -1193,6 +1193,7 @@ class SqliteVectorSearch:
         threshold: float = 0.0,
         return_diagnostic: bool = False,
         use_codex: bool = True,
+        file_ids: Optional[set] = None,
     ) -> List[Dict[str, Any]]:
         """
         3-axis search: Vector + FTS5 + User Filters with RRF merge.
@@ -1236,9 +1237,9 @@ class SqliteVectorSearch:
         legacy = unified.get("_legacy", {})
 
         # Scope → file_id filter (search within scope only)
-        scope_file_ids = None
+        scope_file_ids = file_ids  # Direct file_ids from refine search
         t0 = time.perf_counter()
-        if any(scope.get(k) for k in ("folder", "image_type", "format")):
+        if not scope_file_ids and any(scope.get(k) for k in ("folder", "image_type", "format")):
             scope_file_ids = self._apply_plan_filter(scope)
             if scope_file_ids:
                 logger.info(f"Scope filter: {len(scope_file_ids)} files (scope={scope})")
@@ -2686,6 +2687,7 @@ class SqliteVectorSearch:
         image_search_mode: str = "and",
         query_file_id: Optional[int] = None,
         use_codex: bool = True,
+        file_ids: Optional[set] = None,
     ):
         """
         Unified search interface (compatibility with VectorSearcher).
@@ -2773,7 +2775,7 @@ class SqliteVectorSearch:
         elif mode == "fts":
             return self.fts_search([query], top_k)
         elif mode == "triaxis":
-            return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic, use_codex=use_codex)
+            return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic, use_codex=use_codex, file_ids=file_ids)
         elif mode == "plan":
             return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic)
         else:

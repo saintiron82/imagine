@@ -1149,6 +1149,7 @@ ipcMain.handle('search-vector', async (_, searchOptions) => {
             query_file_id: searchOptions.queryFileId || null,
             use_codex: searchOptions.use_codex ?? true,
             effort: searchOptions.effort || 'low',
+            file_ids: searchOptions.file_ids || null,
         };
     }
 

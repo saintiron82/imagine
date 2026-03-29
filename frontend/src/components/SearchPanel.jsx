@@ -13,24 +13,6 @@ const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 const FETCH_LIMIT = 100;   // Backend returns up to this many results in one call
 const DISPLAY_PAGE = 20;   // Show this many per "page" in the UI
 
-/** Client-side refine filter — matches query against result text fields. */
-function _refineFilter(results, query) {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-    if (!terms.length) return results;
-    return results.filter(r => {
-        const haystack = [
-            r.mc_caption || '',
-            (r.ai_tags || []).join(' '),
-            r.path || '',
-            r.image_type || '',
-            r.art_style || '',
-            r.folder_path || '',
-            (r.user_tags || []).join(' '),
-            r.user_note || '',
-        ].join(' ').toLowerCase();
-        return terms.every(t => haystack.includes(t));
-    });
-}
 
 // Fallback filter options (used when domain config unavailable)
 const FALLBACK_IMAGE_TYPES = ['character', 'background', 'ui_element', 'item', 'icon', 'texture', 'effect', 'logo', 'photo', 'illustration'];
@@ -839,7 +821,7 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                             type="text"
                             value={refineQuery}
                             onChange={(e) => onRefineChange(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') onRefineCommit(); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onRefineCommit(); } }}
                             placeholder={t('search.refine_placeholder')}
                             className="w-full pl-8 pr-8 py-1.5 bg-gray-800/60 border border-gray-700/50 rounded-lg text-white text-[11px] placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
                         />
@@ -849,10 +831,9 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                             </button>
                         )}
                     </div>
-                    {refineQuery && (() => {
-                        const matchCount = _refineFilter(results, refineQuery).length;
-                        return <span className="text-[10px] text-gray-500">{matchCount}/{totalCount} <span className="text-gray-600">Enter↵</span></span>;
-                    })()}
+                    {refineQuery && (
+                        <span className="text-[10px] text-gray-500">Enter↵</span>
+                    )}
                 </div>
             )}
 
@@ -1250,40 +1231,51 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         const { currentLimit } = searchStateRef.current;
         const all = allResultsRef.current;
         const nextLimit = currentLimit + DISPLAY_PAGE;
-        const filtered = refineQuery ? _refineFilter(all, refineQuery) : all;
-        setResults(filtered.slice(0, nextLimit));
+        setResults(all.slice(0, nextLimit));
         setCurrentLimit(nextLimit);
-        setNoMoreResults(nextLimit >= filtered.length);
-    }, [refineQuery]);
+        setNoMoreResults(nextLimit >= all.length);
+    }, []);
 
-    // Refine within results — reorder while typing, filter on Enter
+    // Refine within results — typing only stores query, Enter triggers backend search
     const handleRefineChange = useCallback((q) => {
         setRefineQuery(q);
-        const all = allResultsRef.current;
         if (!q.trim()) {
+            // X button or cleared → restore original results
+            const all = allResultsRef.current;
             const limit = searchStateRef.current.currentLimit || DISPLAY_PAGE;
             setResults(all.slice(0, limit));
             setNoMoreResults(limit >= all.length);
-            return;
         }
-        // Reorder: matching items first, then non-matching
-        const matches = _refineFilter(all, q);
-        const matchSet = new Set(matches.map(r => r.id || r.path));
-        const nonMatches = all.filter(r => !matchSet.has(r.id || r.path));
-        setResults([...matches, ...nonMatches]);
-        setNoMoreResults(true);
     }, []);
 
-    const handleRefineCommit = useCallback(() => {
-        const all = allResultsRef.current;
-        const q = refineQuery;
-        if (!q.trim()) return;
-        // Keep only matching items
-        const filtered = _refineFilter(all, q);
-        allResultsRef.current = filtered;
-        setResults(filtered);
-        setCurrentLimit(filtered.length);
-        setNoMoreResults(true);
+    const handleRefineCommit = useCallback(async () => {
+        if (!refineQuery.trim()) return;
+        const fileIds = allResultsRef.current.map(r => r.id).filter(Boolean);
+        if (!fileIds.length) return;
+
+        setIsSearching(true);
+        try {
+            const cfg = lastSearchConfigRef.current;
+            const response = await searchImages({
+                query: refineQuery,
+                file_ids: fileIds,
+                limit: FETCH_LIMIT,
+                mode: 'triaxis',
+                use_codex: cfg.useCodex,
+                effort: cfg.effort,
+            });
+            if (response.success) {
+                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                setResults(sorted);
+                setCurrentLimit(sorted.length);
+                setNoMoreResults(true);
+                // allResultsRef stays unchanged — X restores original
+            }
+        } catch (err) {
+            console.error('[Refine] search failed:', err);
+        } finally {
+            setIsSearching(false);
+        }
     }, [refineQuery]);
 
     const clearSearch = useCallback(() => {

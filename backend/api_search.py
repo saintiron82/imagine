@@ -185,7 +185,7 @@ def format_result(result: dict) -> dict:
     return formatted
 
 
-def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None, query_images: list = None, image_search_mode: str = "and", query_file_id: int = None, use_codex: bool = True):
+def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None, query_images: list = None, image_search_mode: str = "and", query_file_id: int = None, use_codex: bool = True, file_ids: list = None):
     """Search SQLite and return JSON results."""
     try:
         searcher = _get_searcher()
@@ -198,6 +198,7 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
             image_search_mode=image_search_mode,
             query_file_id=query_file_id,
             use_codex=use_codex,
+            file_ids=set(file_ids) if file_ids else None,
         )
 
         if isinstance(result_data, tuple):
@@ -299,6 +300,7 @@ def _handle_request(data: dict) -> dict:
         image_search_mode=data.get("image_search_mode", "and"),
         query_file_id=data.get("query_file_id"),
         use_codex=data.get("use_codex", True),
+        file_ids=data.get("file_ids"),
     )
 
 
