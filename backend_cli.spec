@@ -27,6 +27,27 @@ if sys.platform == 'win32':
 elif sys.platform == 'darwin':
     platform_excludes += ['vllm']
 
+# ── Heavy transitive dependencies NOT used by our code ──
+# These are pulled in by mlx-vlm, sentence-transformers, firebase-admin
+# but never imported directly in backend/*.py
+heavyweight_excludes = [
+    # mlx-vlm → datasets → pyarrow + pandas (~314MB)
+    'pyarrow', 'pandas', 'datasets',
+    # mlx-vlm → opencv (~119MB)
+    'cv2', 'opencv',
+    # sentence-transformers → scipy + sklearn (~147MB)
+    'scipy', 'sklearn', 'scikit-learn', 'sentence_transformers',
+    # firebase-admin → google-cloud-* → grpc (~55MB)
+    'grpc', 'grpcio', 'grpc_status',
+    'google.cloud.firestore', 'google.cloud.firestore_v1',
+    'google.cloud.storage',
+    'google.api_core.operations_v1',
+    # Other unused heavy deps
+    'matplotlib', 'IPython', 'notebook', 'jupyter',
+    'sympy', 'networkx',
+]
+platform_excludes += heavyweight_excludes
+
 # Collect data files (skip missing files for CI builds)
 datas = [
     ('backend/vision/domains', 'backend/vision/domains'),
