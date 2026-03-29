@@ -808,7 +808,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
+const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineCommitted, refineInput, refineNextOp, onRefineAddTerm, onRefineRemoveTerm, onRefineToggleOp, onRefineInputChange, onRefineToggleNextOp, onRefineExecute, onRefineRemove, totalCount }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -881,36 +881,68 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                 <div className="flex flex-col gap-1.5 mb-2">
                     {/* Committed refine levels */}
                     {refineStack.map((level, i) => (
-                        <div key={i} className="flex items-center gap-2">
+                        <div key={i} className="flex items-center gap-1.5">
                             <span className="text-[9px] text-gray-500 shrink-0">{t('scope.searching_in')}</span>
-                            <div className="flex-1 max-w-xs px-3 py-1 bg-cyan-900/20 border border-cyan-700/30 rounded-lg text-[11px] text-cyan-300 flex items-center justify-between">
-                                <span className="truncate">{level.query}</span>
-                                <button onClick={() => onRefineRemove(i)} className="text-cyan-500/60 hover:text-cyan-300 ml-2 shrink-0">
-                                    <X size={11} />
-                                </button>
-                            </div>
+                            {level.terms.map((term, j) => (
+                                <React.Fragment key={j}>
+                                    {term.op && (
+                                        <span className={`text-[10px] font-bold px-1 ${term.op === 'or' ? 'text-orange-400' : 'text-cyan-400'}`}>
+                                            {term.op === 'or' ? 'OR' : 'AND'}
+                                        </span>
+                                    )}
+                                    <span className="text-[11px] text-cyan-300 px-2 py-0.5 bg-cyan-900/20 border border-cyan-700/30 rounded">{term.query}</span>
+                                </React.Fragment>
+                            ))}
+                            <button onClick={() => onRefineRemove(i)} className="text-gray-600 hover:text-red-400 shrink-0">
+                                <X size={11} />
+                            </button>
                         </div>
                     ))}
-                    {/* New refine input */}
-                    <div className="flex items-center gap-2">
+                    {/* New refine level — horizontal chain input */}
+                    <div className="flex items-center gap-1.5">
                         <span className="text-[9px] text-gray-500 shrink-0">{t('scope.searching_in')}</span>
-                        <div className="relative flex-1 max-w-xs">
-                            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
-                            <input
-                                type="text"
-                                value={refineInput}
+                        {/* Committed terms at this level */}
+                        {refineCommitted.map((term, i) => (
+                            <React.Fragment key={i}>
+                                {term.op && (
+                                    <button onClick={() => onRefineToggleOp(i)}
+                                        className={`px-1.5 py-1 rounded text-[10px] font-bold cursor-pointer shrink-0 ${
+                                            term.op === 'or' ? 'text-orange-400 bg-orange-900/30' : 'text-cyan-400 bg-cyan-900/30'
+                                        }`}>{term.op === 'or' ? 'OR' : 'AND'}</button>
+                                )}
+                                <div className="relative shrink-0">
+                                    <input type="text" value={term.query} readOnly
+                                        className="pl-2 pr-6 py-1 bg-gray-700 border border-gray-600 rounded text-white text-[11px] cursor-default"
+                                        style={{ width: `${Math.max(term.query.length * 8 + 30, 50)}px` }} />
+                                    <button onClick={() => onRefineRemoveTerm(i)} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                                        <X size={10} /></button>
+                                </div>
+                            </React.Fragment>
+                        ))}
+                        {refineCommitted.length > 0 && (
+                            <button onClick={onRefineToggleNextOp}
+                                className={`px-1.5 py-1 rounded text-[10px] font-bold cursor-pointer shrink-0 ${
+                                    refineNextOp === 'or' ? 'text-orange-400 bg-orange-900/30' : 'text-cyan-400 bg-cyan-900/30'
+                                }`}>{refineNextOp === 'or' ? 'OR' : 'AND'}</button>
+                        )}
+                        <div className="relative flex-1 min-w-[100px] max-w-xs">
+                            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
+                            <input type="text" value={refineInput}
                                 onChange={(e) => onRefineInputChange(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onRefineCommit(); } }}
-                                placeholder={t('search.refine_placeholder')}
-                                className="w-full pl-8 pr-8 py-1.5 bg-gray-800/60 border border-gray-700/50 rounded-lg text-white text-[11px] placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-                            />
-                            {refineInput && (
-                                <button onClick={() => onRefineInputChange('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                                    <X size={12} />
-                                </button>
-                            )}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && refineInput.trim()) {
+                                        e.preventDefault(); e.stopPropagation();
+                                        onRefineAddTerm(refineInput.trim());
+                                    } else if (e.key === 'Enter' && !refineInput.trim() && refineCommitted.length > 0) {
+                                        e.preventDefault(); e.stopPropagation();
+                                        onRefineExecute();
+                                    } else if (e.key === 'Backspace' && !refineInput && refineCommitted.length > 0) {
+                                        onRefineRemoveTerm(refineCommitted.length - 1);
+                                    }
+                                }}
+                                placeholder={refineCommitted.length > 0 ? t('search.add_term') : t('search.refine_placeholder')}
+                                className="w-full pl-7 pr-2 py-1 bg-gray-800/60 border border-gray-700/50 rounded text-white text-[11px] placeholder-gray-600 focus:outline-none focus:border-blue-500/50" />
                         </div>
-                        {refineInput && <span className="text-[10px] text-gray-500">Enter↵</span>}
                     </div>
                 </div>
             )}
@@ -1046,9 +1078,12 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [threshold, setThreshold] = useState(0);
     const [searchScope, setSearchScope] = useState(null); // {folder, image_type, format, file_count, ...}
     const [domainConfig, setDomainConfig] = useState(null); // active domain image_types/art_styles
-    // Refine stack: [{query, resultIds}] — each level narrows within previous
+    // Refine stack: [{terms: [{query, op}], resultIds}] — each level is a horizontal chain
     const [refineStack, setRefineStack] = useState([]);
-    const [refineInput, setRefineInput] = useState('');
+    // Current refine level (horizontal chain in progress)
+    const [refineCommitted, setRefineCommitted] = useState([]); // confirmed terms at current level
+    const [refineInput, setRefineInput] = useState('');          // typing text
+    const [refineNextOp, setRefineNextOp] = useState('and');
     const [contextMenu, setContextMenu] = useState(null); // { x, y, result }
     const [metadata, setMetadata] = useState(null);
     // showSettings removed — settings now in dedicated tab
@@ -1184,7 +1219,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setIsSearching(true);
         setError(null);
         setRefineStack([]);
+        setRefineCommitted([]);
         setRefineInput('');
+        setRefineNextOp('and');
 
         lastSearchConfigRef.current = { useCodex, effort };
 
@@ -1293,8 +1330,21 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setNoMoreResults(nextLimit >= all.length);
     }, []);
 
-    const handleRefineCommit = useCallback(async () => {
-        if (!refineInput.trim()) return;
+    // Add term to current refine level's horizontal chain
+    const handleRefineAddTerm = useCallback((query) => {
+        const newTerms = [...refineCommitted, { query, op: refineCommitted.length > 0 ? refineNextOp : null }];
+        setRefineCommitted(newTerms);
+        setRefineInput('');
+        setRefineNextOp('and');
+        // Auto-execute the chain
+        handleRefineExecute(newTerms);
+    }, [refineCommitted, refineNextOp]);
+
+    // Execute the current refine level chain (commit as vertical level)
+    const handleRefineExecute = useCallback(async (terms) => {
+        const effectiveTerms = terms || refineCommitted;
+        if (!effectiveTerms.length) return;
+
         const currentResults = searchStateRef.current.results;
         const fileIds = currentResults.map(r => r.id).filter(Boolean);
         if (!fileIds.length) return;
@@ -1302,32 +1352,55 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setIsSearching(true);
         try {
             const cfg = lastSearchConfigRef.current;
-            const response = await searchImages({
-                query: refineInput,
-                file_ids: fileIds,
-                limit: FETCH_LIMIT,
-                mode: 'triaxis',
-                use_codex: cfg.useCodex,
-                effort: cfg.effort,
-            });
-            if (response.success) {
-                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+            const baseOpts = { limit: FETCH_LIMIT, mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort };
+
+            // Execute horizontal chain: left→right
+            let levelScope = fileIds;
+            let currentResult = null;
+            for (const term of effectiveTerms) {
+                if (term.op === 'or') {
+                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: levelScope });
+                    if (resp.success && currentResult) {
+                        const merged = new Map();
+                        for (const r of currentResult) merged.set(r.id, r);
+                        for (const r of resp.results) {
+                            if (!merged.has(r.id) || (r.combined_score || 0) > (merged.get(r.id).combined_score || 0)) merged.set(r.id, r);
+                        }
+                        currentResult = Array.from(merged.values());
+                    } else if (resp.success) {
+                        currentResult = resp.results;
+                    }
+                } else {
+                    const scope = currentResult ? currentResult.map(r => r.id).filter(Boolean) : levelScope;
+                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: scope });
+                    currentResult = resp.success ? resp.results : [];
+                }
+            }
+
+            if (currentResult) {
+                const sorted = currentResult.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
                 setResults(sorted);
                 setCurrentLimit(sorted.length);
                 setNoMoreResults(true);
-                setRefineStack(prev => [...prev, { query: refineInput, resultIds: fileIds }]);
+                // Push to vertical stack
+                setRefineStack(prev => [...prev, { terms: [...effectiveTerms], resultIds: fileIds }]);
+                setRefineCommitted([]);
                 setRefineInput('');
+                setRefineNextOp('and');
             }
         } catch (err) {
             console.error('[Refine] search failed:', err);
         } finally {
             setIsSearching(false);
         }
-    }, [refineInput]);
+    }, [refineCommitted]);
 
     // Remove a refine level and all levels below it, re-search from that point
     const handleRefineRemove = useCallback(async (index) => {
+        setRefineCommitted([]);
         setRefineInput('');
+        setRefineNextOp('and');
+
         if (index === 0) {
             setRefineStack([]);
             const all = allResultsRef.current;
@@ -1336,20 +1409,34 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             setNoMoreResults(DISPLAY_PAGE >= all.length);
             return;
         }
+        // Keep levels up to index-1, re-execute last kept level
         const kept = refineStack.slice(0, index);
         setRefineStack(kept);
         const prevLevel = kept[kept.length - 1];
         const cfg = lastSearchConfigRef.current;
+        const baseOpts = { limit: FETCH_LIMIT, mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort };
+
         setIsSearching(true);
         try {
-            const response = await searchImages({
-                query: prevLevel.query,
-                file_ids: prevLevel.resultIds,
-                limit: FETCH_LIMIT, mode: 'triaxis',
-                use_codex: cfg.useCodex, effort: cfg.effort,
-            });
-            if (response.success) {
-                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+            // Re-execute the chain of the last kept level
+            let currentResult = null;
+            for (const term of prevLevel.terms) {
+                if (term.op === 'or') {
+                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: prevLevel.resultIds });
+                    if (resp.success && currentResult) {
+                        const merged = new Map();
+                        for (const r of currentResult) merged.set(r.id, r);
+                        for (const r of resp.results) { if (!merged.has(r.id)) merged.set(r.id, r); }
+                        currentResult = Array.from(merged.values());
+                    } else if (resp.success) { currentResult = resp.results; }
+                } else {
+                    const scope = currentResult ? currentResult.map(r => r.id).filter(Boolean) : prevLevel.resultIds;
+                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: scope });
+                    currentResult = resp.success ? resp.results : [];
+                }
+            }
+            if (currentResult) {
+                const sorted = currentResult.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
                 setResults(sorted);
                 setCurrentLimit(sorted.length);
                 setNoMoreResults(true);
@@ -1367,7 +1454,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setQuery('');
         setQueryImages([]);
         setRefineStack([]);
+        setRefineCommitted([]);
         setRefineInput('');
+        setRefineNextOp('and');
         setError(null);
         setCurrentLimit(DISPLAY_PAGE);
         setNoMoreResults(false);
@@ -1655,9 +1744,15 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 searchScope={searchScope}
                 onClearScope={() => { setSearchScope(null); handleSearch(query, { useCache: false }); }}
                 refineStack={refineStack}
+                refineCommitted={refineCommitted}
                 refineInput={refineInput}
+                refineNextOp={refineNextOp}
+                onRefineAddTerm={handleRefineAddTerm}
+                onRefineRemoveTerm={(i) => setRefineCommitted(prev => prev.slice(0, i))}
+                onRefineToggleOp={(i) => setRefineCommitted(prev => { const n = [...prev]; n[i] = { ...n[i], op: n[i].op === 'and' ? 'or' : 'and' }; return n; })}
                 onRefineInputChange={setRefineInput}
-                onRefineCommit={handleRefineCommit}
+                onRefineToggleNextOp={() => setRefineNextOp(o => o === 'and' ? 'or' : 'and')}
+                onRefineExecute={() => handleRefineExecute(refineCommitted)}
                 onRefineRemove={handleRefineRemove}
                 totalCount={allResultsRef.current.length}
             />
