@@ -809,7 +809,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         </div>
 
         {/* Version */}
-        <p className="text-center text-[10px] text-zinc-700 mt-2">v0.6.4</p>
+        <p className="text-center text-[10px] text-zinc-700 mt-2">v0.1.1</p>
       </div>
     </div>
   );
