@@ -616,12 +616,15 @@ const EFFORT_LEVELS = [
 
 const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, showFilters, hasActiveFilters, onToggleFilters, onOpenSettings, inputRef, resetSignal }) => {
     const { t } = useLocale();
+    // committed: [{query, op}] — op is 'and'|'or' (null for first)
+    const [committed, setCommitted] = useState([]);
     const [localQuery, setLocalQuery] = useState('');
+    const [nextOp, setNextOp] = useState('and');
     const [useCodex, setUseCodex] = useState(() => localStorage.getItem('search_use_codex') !== 'false');
     const [effort, setEffort] = useState(() => localStorage.getItem('search_effort') || 'low');
 
     useEffect(() => {
-        if (resetSignal > 0) setLocalQuery('');
+        if (resetSignal > 0) { setCommitted([]); setLocalQuery(''); setNextOp('and'); }
     }, [resetSignal]);
 
     useEffect(() => {
@@ -631,43 +634,126 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
     const toggleCodex = () => { const next = !useCodex; setUseCodex(next); localStorage.setItem('search_use_codex', String(next)); };
     const cycleEffort = () => { const idx = EFFORT_LEVELS.findIndex(l => l.id === effort); const next = EFFORT_LEVELS[(idx + 1) % EFFORT_LEVELS.length].id; setEffort(next); localStorage.setItem('search_effort', next); };
 
-    const handleKeyPress = (e) => {
-        if (e.key === 'Enter' && (localQuery.trim() || hasImages)) {
-            onSearch(localQuery, { useCodex, effort });
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter' && localQuery.trim()) {
+            e.preventDefault();
+            // Commit this term and trigger search
+            const newCommitted = [...committed, { query: localQuery.trim(), op: committed.length > 0 ? nextOp : null }];
+            setCommitted(newCommitted);
+            setLocalQuery('');
+            setNextOp('and');
+            onSearch(null, { useCodex, effort, committed: newCommitted });
+        } else if (e.key === 'Backspace' && !localQuery && committed.length > 0) {
+            // Remove last committed term
+            const newCommitted = committed.slice(0, -1);
+            setCommitted(newCommitted);
+            if (newCommitted.length > 0) {
+                onSearch(null, { useCodex, effort, committed: newCommitted });
+            } else {
+                onClear();
+            }
         }
     };
 
     const handleSearchClick = () => {
-        if (localQuery.trim() || hasImages) {
-            onSearch(localQuery, { useCodex, effort });
+        if (localQuery.trim()) {
+            const newCommitted = [...committed, { query: localQuery.trim(), op: committed.length > 0 ? nextOp : null }];
+            setCommitted(newCommitted);
+            setLocalQuery('');
+            setNextOp('and');
+            onSearch(null, { useCodex, effort, committed: newCommitted });
+        } else if (committed.length > 0 || hasImages) {
+            onSearch(null, { useCodex, effort, committed });
         }
     };
 
-    const handleClear = () => { setLocalQuery(''); onClear(); };
+    const handleRemoveTerm = (index) => {
+        const newCommitted = committed.slice(0, index);
+        setCommitted(newCommitted);
+        if (newCommitted.length > 0) {
+            onSearch(null, { useCodex, effort, committed: newCommitted });
+        } else {
+            onClear();
+        }
+    };
+
+    const handleToggleOp = (index) => {
+        const newCommitted = [...committed];
+        newCommitted[index] = { ...newCommitted[index], op: newCommitted[index].op === 'and' ? 'or' : 'and' };
+        setCommitted(newCommitted);
+        onSearch(null, { useCodex, effort, committed: newCommitted });
+    };
+
+    const handleClear = () => { setCommitted([]); setLocalQuery(''); setNextOp('and'); onClear(); };
 
     return (
         <div className="flex items-center space-x-2">
-            <div className="flex-1 relative">
-                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-                <input
-                    ref={inputRef}
-                    type="text"
-                    value={localQuery}
-                    onChange={(e) => setLocalQuery(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    placeholder={t('placeholder.search')}
-                    className="w-full pl-10 pr-10 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 text-base"
-                />
-                {(localQuery || hasImages) && (
-                    <button onClick={handleClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                        <X size={16} />
+            <div className="flex items-center gap-1.5 flex-1 flex-wrap">
+                {/* Committed terms — each is a readonly field with X */}
+                {committed.map((term, i) => (
+                    <React.Fragment key={i}>
+                        {term.op && (
+                            <button
+                                onClick={() => handleToggleOp(i)}
+                                className={`px-2 py-2 rounded text-[11px] font-bold cursor-pointer transition-colors shrink-0 ${
+                                    term.op === 'or'
+                                        ? 'text-orange-400 bg-orange-900/30 hover:bg-orange-900/50'
+                                        : 'text-cyan-400 bg-cyan-900/30 hover:bg-cyan-900/50'
+                                }`}
+                            >
+                                {term.op === 'or' ? 'OR' : 'AND'}
+                            </button>
+                        )}
+                        <div className="relative shrink-0">
+                            <input
+                                type="text"
+                                value={term.query}
+                                readOnly
+                                className="pl-3 pr-7 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm w-auto min-w-[60px] cursor-default"
+                                style={{ width: `${Math.max(term.query.length * 10 + 40, 60)}px` }}
+                            />
+                            <button onClick={() => handleRemoveTerm(i)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                                <X size={14} />
+                            </button>
+                        </div>
+                    </React.Fragment>
+                ))}
+                {/* AND/OR before next input (when there are committed terms) */}
+                {committed.length > 0 && (
+                    <button
+                        onClick={() => setNextOp(o => o === 'and' ? 'or' : 'and')}
+                        className={`px-2 py-2 rounded text-[11px] font-bold cursor-pointer transition-colors shrink-0 ${
+                            nextOp === 'or'
+                                ? 'text-orange-400 bg-orange-900/30 hover:bg-orange-900/50'
+                                : 'text-cyan-400 bg-cyan-900/30 hover:bg-cyan-900/50'
+                        }`}
+                    >
+                        {nextOp === 'or' ? 'OR' : 'AND'}
                     </button>
                 )}
+                {/* Current text input */}
+                <div className="flex-1 relative min-w-[120px]">
+                    <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={localQuery}
+                        onChange={(e) => setLocalQuery(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder={committed.length > 0 ? t('search.add_term') : t('placeholder.search')}
+                        className="w-full pl-10 pr-10 py-2.5 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 text-sm"
+                    />
+                    {localQuery && (
+                        <button onClick={() => setLocalQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                            <X size={14} />
+                        </button>
+                    )}
+                </div>
             </div>
             <button
                 onClick={handleSearchClick}
-                disabled={(!localQuery.trim() && !hasImages) || isSearching}
-                className="px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg flex items-center space-x-2 transition-colors"
+                disabled={(committed.length === 0 && !localQuery.trim() && !hasImages) || isSearching}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors shrink-0"
             >
                 {isSearching ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
             </button>
@@ -1083,13 +1169,16 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const lastSearchConfigRef = useRef({ useCodex: true, effort: 'low' }); // Track last search config for Load More
     searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
 
-    const handleSearch = useCallback(async (searchQuery, { useCache = false, useCodex = true, effort = 'low' } = {}) => {
+    const handleSearch = useCallback(async (searchQuery, { useCache = false, useCodex = true, effort = 'low', committed: terms } = {}) => {
         const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
-        const hasText = searchQuery && searchQuery.trim().length > 0;
+        // Support string query (legacy/history) or committed terms array
+        const effectiveTerms = terms || (searchQuery ? [{ query: searchQuery, op: null }] : []);
+        const hasTerms = effectiveTerms.length > 0;
         const hasImages = queryImages.length > 0;
-        if (!hasText && !hasImages) return;
+        if (!hasTerms && !hasImages) return;
 
-        setQuery(searchQuery || '');
+        const queryStr = effectiveTerms.map(t => t.query).join(` ${t => t.op || '+'} `);
+        setQuery(effectiveTerms.map(t => t.query).join(' + '));
         setQueryFileId(null);
         setSearchMode(null);
         setIsSearching(true);
@@ -1108,22 +1197,51 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             if (activeFilters.image_type) filters.image_type = activeFilters.image_type;
             if (activeFilters.art_style) filters.art_style = activeFilters.art_style;
 
-            const searchOptions = {
+            const baseOpts = {
                 limit: FETCH_LIMIT, threshold, mode: 'triaxis',
                 filters: Object.keys(filters).length > 0 ? filters : null,
                 use_codex: useCodex, effort,
             };
 
-            if (hasText) searchOptions.query = searchQuery;
-            if (hasImages) {
-                if (queryImages.length === 1) searchOptions.queryImage = queryImages[0];
-                else { searchOptions.queryImages = queryImages; searchOptions.imageSearchMode = imageSearchMode; }
+            let response;
+            if (hasTerms && !hasImages) {
+                // Execute term chain: left→right, AND narrows, OR widens
+                let currentResult = null;
+                let levelScope = null; // null = full DB
+                for (const term of effectiveTerms) {
+                    if (term.op === 'or') {
+                        const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: levelScope });
+                        if (resp.success && currentResult) {
+                            const merged = new Map();
+                            for (const r of currentResult) merged.set(r.id, r);
+                            for (const r of resp.results) {
+                                if (!merged.has(r.id) || (r.combined_score || 0) > (merged.get(r.id).combined_score || 0)) merged.set(r.id, r);
+                            }
+                            currentResult = Array.from(merged.values());
+                        } else if (resp.success) {
+                            currentResult = resp.results;
+                        }
+                    } else {
+                        const scope = currentResult ? currentResult.map(r => r.id).filter(Boolean) : levelScope;
+                        const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: scope });
+                        currentResult = resp.success ? resp.results : [];
+                    }
+                }
+                response = { success: true, results: currentResult || [] };
+            } else if (hasImages && !hasTerms) {
+                const opts = { ...baseOpts, mode: 'vector' };
+                if (queryImages.length === 1) opts.queryImage = queryImages[0];
+                else { opts.queryImages = queryImages; opts.imageSearchMode = imageSearchMode; }
+                response = await searchImages(opts);
+            } else {
+                const opts = { ...baseOpts, query: effectiveTerms[0]?.query };
+                if (queryImages.length === 1) opts.queryImage = queryImages[0];
+                else { opts.queryImages = queryImages; opts.imageSearchMode = imageSearchMode; }
+                response = await searchImages(opts);
             }
-            if (hasImages && !hasText) searchOptions.mode = 'vector';
 
-            const response = await searchImages(searchOptions);
             const elapsed = (performance.now() - t0).toFixed(0);
-            console.log(`[Search] ✅ ${response.results?.length || 0} results in ${elapsed}ms`);
+            console.log(`[Search] ✅ ${response.results?.length || 0} results in ${elapsed}ms (${effectiveTerms.length} terms)`);
 
             if (response.success) {
                 // Sort by combined_score descending so display order matches ★ badge
@@ -1138,7 +1256,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 setSearchScope(hasScope ? scope : null);
 
                 // Update history
-                const cacheKey = searchQuery?.trim();
+                const cacheKey = effectiveTerms.map(t => t.query).join(' + ');
                 if (cacheKey) {
                     setSearchHistory(prev => {
                         const filtered = prev.filter(h => h.query !== cacheKey);

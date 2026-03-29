@@ -160,6 +160,7 @@
   "scope.clear": "Clear scope",
   "scope.search_all": "Search all",
   "scope.files_count": "{count} files",
+  "search.add_term": "Add search term...",
   "search.refine_placeholder": "Refine within results...",
   "search.refine_placeholder_multi": "Refine (comma = multi-query)...",
   "search.codex_on": "Codex ON — Cloud AI decomposition",
