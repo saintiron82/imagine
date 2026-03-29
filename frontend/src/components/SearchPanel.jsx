@@ -1242,26 +1242,26 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
             let response;
             if (hasTerms && !hasImages) {
-                // Execute term chain: left→right, AND narrows, OR widens
+                // Execute term chain: AND=intersection, OR=union (each searched independently in levelScope)
                 let currentResult = null;
                 let levelScope = null; // null = full DB
                 for (const term of effectiveTerms) {
-                    if (term.op === 'or') {
-                        const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: levelScope });
-                        if (resp.success && currentResult) {
-                            const merged = new Map();
-                            for (const r of currentResult) merged.set(r.id, r);
-                            for (const r of resp.results) {
-                                if (!merged.has(r.id) || (r.combined_score || 0) > (merged.get(r.id).combined_score || 0)) merged.set(r.id, r);
-                            }
-                            currentResult = Array.from(merged.values());
-                        } else if (resp.success) {
-                            currentResult = resp.results;
+                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: levelScope });
+                    if (!resp.success) continue;
+                    if (!currentResult) {
+                        currentResult = resp.results;
+                    } else if (term.op === 'or') {
+                        // OR: union (keep highest score per id)
+                        const merged = new Map();
+                        for (const r of currentResult) merged.set(r.id, r);
+                        for (const r of resp.results) {
+                            if (!merged.has(r.id) || (r.combined_score || 0) > (merged.get(r.id).combined_score || 0)) merged.set(r.id, r);
                         }
+                        currentResult = Array.from(merged.values());
                     } else {
-                        const scope = currentResult ? currentResult.map(r => r.id).filter(Boolean) : levelScope;
-                        const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: scope });
-                        currentResult = resp.success ? resp.results : [];
+                        // AND: intersection (keep only ids present in both)
+                        const newIds = new Set(resp.results.map(r => r.id));
+                        currentResult = currentResult.filter(r => newIds.has(r.id));
                     }
                 }
                 response = { success: true, results: currentResult || [] };
@@ -1354,26 +1354,24 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             const cfg = lastSearchConfigRef.current;
             const baseOpts = { limit: FETCH_LIMIT, mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort };
 
-            // Execute horizontal chain: left→right
+            // Execute horizontal chain: AND=intersection, OR=union
             let levelScope = fileIds;
             let currentResult = null;
             for (const term of effectiveTerms) {
-                if (term.op === 'or') {
-                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: levelScope });
-                    if (resp.success && currentResult) {
-                        const merged = new Map();
-                        for (const r of currentResult) merged.set(r.id, r);
-                        for (const r of resp.results) {
-                            if (!merged.has(r.id) || (r.combined_score || 0) > (merged.get(r.id).combined_score || 0)) merged.set(r.id, r);
-                        }
-                        currentResult = Array.from(merged.values());
-                    } else if (resp.success) {
-                        currentResult = resp.results;
+                const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: levelScope });
+                if (!resp.success) continue;
+                if (!currentResult) {
+                    currentResult = resp.results;
+                } else if (term.op === 'or') {
+                    const merged = new Map();
+                    for (const r of currentResult) merged.set(r.id, r);
+                    for (const r of resp.results) {
+                        if (!merged.has(r.id) || (r.combined_score || 0) > (merged.get(r.id).combined_score || 0)) merged.set(r.id, r);
                     }
+                    currentResult = Array.from(merged.values());
                 } else {
-                    const scope = currentResult ? currentResult.map(r => r.id).filter(Boolean) : levelScope;
-                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: scope });
-                    currentResult = resp.success ? resp.results : [];
+                    const newIds = new Set(resp.results.map(r => r.id));
+                    currentResult = currentResult.filter(r => newIds.has(r.id));
                 }
             }
 
@@ -1418,21 +1416,21 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
         setIsSearching(true);
         try {
-            // Re-execute the chain of the last kept level
+            // Re-execute the chain of the last kept level: AND=intersection, OR=union
             let currentResult = null;
             for (const term of prevLevel.terms) {
-                if (term.op === 'or') {
-                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: prevLevel.resultIds });
-                    if (resp.success && currentResult) {
-                        const merged = new Map();
-                        for (const r of currentResult) merged.set(r.id, r);
-                        for (const r of resp.results) { if (!merged.has(r.id)) merged.set(r.id, r); }
-                        currentResult = Array.from(merged.values());
-                    } else if (resp.success) { currentResult = resp.results; }
+                const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: prevLevel.resultIds });
+                if (!resp.success) continue;
+                if (!currentResult) {
+                    currentResult = resp.results;
+                } else if (term.op === 'or') {
+                    const merged = new Map();
+                    for (const r of currentResult) merged.set(r.id, r);
+                    for (const r of resp.results) { if (!merged.has(r.id)) merged.set(r.id, r); }
+                    currentResult = Array.from(merged.values());
                 } else {
-                    const scope = currentResult ? currentResult.map(r => r.id).filter(Boolean) : prevLevel.resultIds;
-                    const resp = await searchImages({ ...baseOpts, query: term.query, file_ids: scope });
-                    currentResult = resp.success ? resp.results : [];
+                    const newIds = new Set(resp.results.map(r => r.id));
+                    currentResult = currentResult.filter(r => newIds.has(r.id));
                 }
             }
             if (currentResult) {
