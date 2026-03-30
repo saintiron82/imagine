@@ -264,10 +264,11 @@ def worker_connect(
                    WHERE id = ?""",
                 (auto_mode, json.dumps(req.resources), session_id)
             )
+            vram_gb = req.resources.get('gpu_memory_total_gb') or 0
+            gpu_type = req.resources.get('gpu_type') or 'none'
             logger.info(
                 f"Worker {req.worker_name} auto-detected mode: {auto_mode} "
-                f"(VRAM={req.resources.get('gpu_memory_total_gb', 0):.1f}GB, "
-                f"GPU={req.resources.get('gpu_type', 'none')})"
+                f"(VRAM={vram_gb:.1f}GB, GPU={gpu_type})"
             )
 
     db.conn.commit()
