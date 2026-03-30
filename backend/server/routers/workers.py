@@ -572,89 +572,53 @@ def admin_list_workers(
     )
     rows = cursor.fetchall()
 
-    # Per-worker throughput: mode-aware timestamp selection
-    # mc_only: use mc_completed_at (worker MC speed, not EmbedAhead MV speed)
-    # full:    use completed_at (full pipeline completion)
-    processing_mode = _get_global_processing_mode()
+    # Per-worker throughput: count any phase completion in last 5min/1min
+    # Uses mc_completed_at (MC phase) as primary — most common worker activity.
+    # Falls back to completed_at for VV/MV phases.
+    cursor.execute(
+        """SELECT worker_session_id, COUNT(*) FROM job_queue
+           WHERE worker_session_id IS NOT NULL
+             AND (
+               (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-5 minutes'))
+               OR (completed_at IS NOT NULL AND datetime(completed_at) > datetime('now', '-5 minutes'))
+             )
+           GROUP BY worker_session_id"""
+    )
+    session_recent_5m = dict(cursor.fetchall())
 
-    if processing_mode == "mc_only":
-        cursor.execute(
-            """SELECT worker_session_id, COUNT(*) FROM job_queue
-               WHERE mc_completed_at IS NOT NULL
-                 AND datetime(mc_completed_at) > datetime('now', '-5 minutes')
-                 AND worker_session_id IS NOT NULL
-               GROUP BY worker_session_id"""
-        )
-        session_recent_5m = dict(cursor.fetchall())
+    cursor.execute(
+        """SELECT worker_session_id, COUNT(*) FROM job_queue
+           WHERE worker_session_id IS NOT NULL
+             AND (
+               (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-1 minute'))
+               OR (completed_at IS NOT NULL AND datetime(completed_at) > datetime('now', '-1 minute'))
+             )
+           GROUP BY worker_session_id"""
+    )
+    session_recent_1m = dict(cursor.fetchall())
 
-        cursor.execute(
-            """SELECT worker_session_id, COUNT(*) FROM job_queue
-               WHERE mc_completed_at IS NOT NULL
-                 AND datetime(mc_completed_at) > datetime('now', '-1 minute')
-                 AND worker_session_id IS NOT NULL
-               GROUP BY worker_session_id"""
-        )
-        session_recent_1m = dict(cursor.fetchall())
+    # Fallback: per-user throughput for jobs without worker_session_id
+    cursor.execute(
+        """SELECT assigned_to, COUNT(*) FROM job_queue
+           WHERE worker_session_id IS NULL
+             AND (
+               (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-5 minutes'))
+               OR (completed_at IS NOT NULL AND datetime(completed_at) > datetime('now', '-5 minutes'))
+             )
+           GROUP BY assigned_to"""
+    )
+    user_recent_5m = dict(cursor.fetchall())
 
-        # Fallback: per-user throughput for jobs without worker_session_id
-        cursor.execute(
-            """SELECT assigned_to, COUNT(*) FROM job_queue
-               WHERE mc_completed_at IS NOT NULL
-                 AND datetime(mc_completed_at) > datetime('now', '-5 minutes')
-                 AND worker_session_id IS NULL
-               GROUP BY assigned_to"""
-        )
-        user_recent_5m = dict(cursor.fetchall())
-
-        cursor.execute(
-            """SELECT assigned_to, COUNT(*) FROM job_queue
-               WHERE mc_completed_at IS NOT NULL
-                 AND datetime(mc_completed_at) > datetime('now', '-1 minute')
-                 AND worker_session_id IS NULL
-               GROUP BY assigned_to"""
-        )
-        user_recent_1m = dict(cursor.fetchall())
-    else:
-        cursor.execute(
-            """SELECT worker_session_id, COUNT(*) FROM job_queue
-               WHERE status = 'completed'
-                 AND completed_at IS NOT NULL
-                 AND datetime(completed_at) > datetime('now', '-5 minutes')
-                 AND worker_session_id IS NOT NULL
-               GROUP BY worker_session_id"""
-        )
-        session_recent_5m = dict(cursor.fetchall())
-
-        cursor.execute(
-            """SELECT worker_session_id, COUNT(*) FROM job_queue
-               WHERE status = 'completed'
-                 AND completed_at IS NOT NULL
-                 AND datetime(completed_at) > datetime('now', '-1 minute')
-                 AND worker_session_id IS NOT NULL
-               GROUP BY worker_session_id"""
-        )
-        session_recent_1m = dict(cursor.fetchall())
-
-        # Fallback: per-user throughput for jobs without worker_session_id
-        cursor.execute(
-            """SELECT assigned_to, COUNT(*) FROM job_queue
-               WHERE status = 'completed'
-                 AND completed_at IS NOT NULL
-                 AND datetime(completed_at) > datetime('now', '-5 minutes')
-                 AND worker_session_id IS NULL
-               GROUP BY assigned_to"""
-        )
-        user_recent_5m = dict(cursor.fetchall())
-
-        cursor.execute(
-            """SELECT assigned_to, COUNT(*) FROM job_queue
-               WHERE status = 'completed'
-                 AND completed_at IS NOT NULL
-                 AND datetime(completed_at) > datetime('now', '-1 minute')
-                 AND worker_session_id IS NULL
-               GROUP BY assigned_to"""
-        )
-        user_recent_1m = dict(cursor.fetchall())
+    cursor.execute(
+        """SELECT assigned_to, COUNT(*) FROM job_queue
+           WHERE worker_session_id IS NULL
+             AND (
+               (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-1 minute'))
+               OR (completed_at IS NOT NULL AND datetime(completed_at) > datetime('now', '-1 minute'))
+             )
+           GROUP BY assigned_to"""
+    )
+    user_recent_1m = dict(cursor.fetchall())
 
     workers = []
     for row in rows:
