@@ -121,9 +121,12 @@ function App() {
     window.electron?.license?.get().catch(() => {});
   }, []);
 
-  // Electron: auto-start local server on mount (V1 only — V2 handles its own startup)
+  // Electron server mode: auto-start local server only when appMode is 'server'
   useEffect(() => {
     if (!isElectron) return;
+    // Client mode: do NOT auto-start local server
+    if (appMode && appMode !== 'server') return;
+    if (!appMode) return; // No mode yet (login page) — wait for handleLoginComplete
 
     const startLocalServer = async () => {
       const port = serverPort || 8000;
