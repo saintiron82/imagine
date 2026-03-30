@@ -226,9 +226,8 @@ class JobQueueManager:
             phase_job_count = 0
             is_embedded = False
 
-        # External workers: only count remote files for parse (local = server's job)
-        effective_parse = phase_stats.get("parse_pending", 0) if is_embedded \
-            else phase_stats.get("parse_pending_remote", 0)
+        # Parse is server-only (embedded). External workers never do parse.
+        effective_parse = phase_stats.get("parse_pending", 0) if is_embedded else 0
 
         # Map mode names to stats keys
         mode_to_stat = {
@@ -248,13 +247,16 @@ class JobQueueManager:
         if assigned_mode and current_pending > 0 and phase_job_count < self._MIN_PHASE_BATCH:
             return assigned_mode
 
-        # Find most backed-up phase (external workers use remote-only parse count)
+        # Find most backed-up phase
+        # Parse is server-only (server has local/NAS access, workers don't)
         candidates = [
-            ("parse_thumb", effective_parse),
             ("mc", phase_stats.get("mc_pending", 0)),
             ("vv", phase_stats.get("vv_pending", 0)),
             ("mv", phase_stats.get("mv_pending", 0)),
         ]
+        # Only embedded worker can do parse (has local disk + NAS access)
+        if is_embedded:
+            candidates.append(("parse_thumb", effective_parse))
         candidates.sort(key=lambda x: x[1], reverse=True)
         best_mode, best_count = candidates[0]
 
@@ -440,30 +442,11 @@ class JobQueueManager:
                FROM job_queue jq
                LEFT JOIN work_requests wr ON jq.work_request_id = wr.id"""
 
-        # parse_thumb workers claim unparsed jobs (file_ready=1 but not yet parsed)
-        # External workers: only remote files (local files = server's ParseAheadPool)
+        # parse_thumb: server-only (embedded worker). External workers never parse.
+        # Server has local disk + NAS mount; downloading via worker is too slow.
         if processing_mode == "parse_thumb":
-            # Check if this is an external worker (not embedded)
-            cursor.execute(
-                "SELECT worker_name FROM worker_sessions WHERE id = ?",
-                (worker_session_id,) if worker_session_id else (None,)
-            )
-            wn = cursor.fetchone()
-            is_embedded = wn and wn[0] == '__builtin__'
-
-            if is_embedded:
-                # Embedded: claim any unparsed file (local or remote, file_ready=1)
-                remote_filter = ""
-                ready_filter = "AND jq.file_ready = 1"
-            else:
-                # External: claim remote files only, even if not yet downloaded (file_ready=0 OK)
-                remote_filter = "AND (jq.file_path LIKE 'webdav://%' OR jq.file_path LIKE 'http://%' OR jq.file_path LIKE 'https://%')"
-                ready_filter = ""  # Worker will download the file itself
-
-            _BASE_WHERE = f"""jq.status = 'pending'
+            _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
                      AND (jq.parse_status IS NULL OR jq.parse_status = 'pending')
-                     {ready_filter}
-                     {remote_filter}
                      {_WR_FILTER}"""
             phase_filter = ""  # No phase filter — these jobs haven't been parsed yet
 
@@ -1222,18 +1205,11 @@ class JobQueueManager:
 
         # Parse pending: file ready but not yet parsed
         cursor.execute("""
-            SELECT
-                COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE file_path LIKE 'webdav://%'
-                                    OR file_path LIKE 'http://%'
-                                    OR file_path LIKE 'https://%') AS remote_only
-            FROM job_queue
+            SELECT COUNT(*) FROM job_queue
             WHERE status = 'pending' AND file_ready = 1
               AND (parse_status IS NULL OR parse_status = 'pending')
         """)
-        pr = cursor.fetchone()
-        parse_pending = pr[0] or 0
-        parse_pending_remote = pr[1] or 0
+        parse_pending = cursor.fetchone()[0] or 0
 
         # MC/VV/MV pending: parsed but AI phases incomplete
         cursor.execute("""
@@ -1252,7 +1228,6 @@ class JobQueueManager:
         row = cursor.fetchone()
         return {
             "parse_pending": parse_pending,
-            "parse_pending_remote": parse_pending_remote,
             "mc_pending": row[0] or 0,
             "vv_pending": row[1] or 0,
             "mv_pending": row[2] or 0,
