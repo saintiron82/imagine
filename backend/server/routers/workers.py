@@ -124,14 +124,10 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
         except Exception:
             pass
 
-    # Embedded worker control:
-    # - External full workers connected → stop embedded (workers handle everything)
+    # Embedded worker stays running regardless of external workers.
+    # External workers ADD capacity (1+1=2x), not replace embedded.
     from backend.server.embedded_worker import get_status as _ew_get_status
     ew_running = _ew_get_status().get("running", False)
-
-    if has_workers and all(m == "full" for m in worker_modes) and ew_running:
-        _stop_embedded_worker()
-        logger.info("Embedded worker stopped (full external workers connected)")
 
     logger.debug(f"Pool recalculated: mode=parse_only, workers={len(worker_modes)}, ew={ew_running}")
 
