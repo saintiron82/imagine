@@ -1270,6 +1270,30 @@ class JobQueueManager:
         else:
             throughput = 0.0
 
+        # Phase-level throughput: count phase completions in last 5 minutes
+        # Uses phase_completed timestamps from job_queue (not job_completions)
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') = 1
+                                     AND mc_completed_at IS NOT NULL
+                                     AND datetime(mc_completed_at) > datetime('now', '-5 minutes')) AS mc_5m,
+                    COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') = 1
+                                     AND completed_at IS NOT NULL
+                                     AND datetime(completed_at) > datetime('now', '-5 minutes')) AS vv_5m
+                FROM job_queue WHERE archived_at IS NULL
+            """)
+            pt = cursor.fetchone()
+            mc_throughput = round((pt[0] or 0) / 5.0, 1)
+            vv_throughput = round((pt[1] or 0) / 5.0, 1)
+        except Exception:
+            mc_throughput = 0
+            vv_throughput = 0
+
+        # If no pipeline-complete throughput, use MC throughput as primary indicator
+        if throughput == 0 and mc_throughput > 0:
+            throughput = mc_throughput
+
         # Phase-level progress counts — deferred to file-centric block below
         phase_stats = {}
 
@@ -1421,6 +1445,8 @@ class JobQueueManager:
             "db_completed": complete_files, # files-based: total DB inventory (for reference)
             "db_failed": failed_files,      # files-based: total DB failures
             "throughput": throughput,
+            "mc_throughput": mc_throughput,
+            "vv_throughput": vv_throughput,
             "recent_1min": recent_1min,
             "recent_5min": recent_5min,
             "eta_seconds": eta_seconds,

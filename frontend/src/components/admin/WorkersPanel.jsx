@@ -423,66 +423,86 @@ export default function WorkersPanel() {
             </div>
           </div>
 
-          {/* Phase pipeline flow */}
-          {queueStats && (
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
-              <div className="flex items-center gap-1 mb-2">
-                <span className="text-xs text-gray-400 font-medium">Pipeline</span>
-                <span className="text-[10px] text-gray-600">
-                  ({queueStats.pending + queueStats.assigned + (queueStats.processing || 0)} active)
-                </span>
+          {/* Pipeline overview: progress + speed + ETA + phase flow */}
+          {queueStats && (() => {
+            const s = queueStats;
+            const total = s.total || 1;
+            const done = s.completed || 0;
+            const failed = s.failed || 0;
+            const pct = total > 0 ? ((done / total) * 100).toFixed(1) : 0;
+            const speed = s.throughput || 0;
+            const eta = s.eta_seconds;
+            const etaStr = eta ? (eta >= 3600 ? `${Math.floor(eta/3600)}h ${Math.floor((eta%3600)/60)}m` : `${Math.floor(eta/60)}m`) : '-';
+
+            // Find bottleneck: phase with most pending
+            const phases = [
+              { name: 'Download', pending: s.download_waiting || 0, color: 'yellow' },
+              { name: 'Parse', pending: s.parse_pending || 0, color: 'sky' },
+              { name: 'MC', pending: s.mc_pending || 0, color: 'purple', speed: s.mc_throughput },
+              { name: 'VV', pending: s.vv_pending || 0, color: 'blue', speed: s.vv_throughput },
+              { name: 'MV', pending: s.mv_pending || 0, color: 'green' },
+            ];
+            const bottleneck = phases.reduce((a, b) => a.pending > b.pending ? a : b);
+
+            return (
+              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+                {/* Row 1: Progress bar + speed + ETA */}
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm text-white font-medium">{done} / {total}</span>
+                      <span className="text-sm text-gray-400">{pct}%</span>
+                    </div>
+                    <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                        style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className={`text-lg font-bold font-mono ${speed > 0 ? 'text-emerald-400' : 'text-gray-500'}`}>
+                      {speed > 0 ? speed.toFixed(1) : '-'} <span className="text-xs font-normal text-gray-500">/min</span>
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      ETA <span className={`font-mono ${eta ? 'text-white' : 'text-gray-500'}`}>{etaStr}</span>
+                    </div>
+                  </div>
+                  {failed > 0 && (
+                    <div className="text-right shrink-0">
+                      <div className="text-lg font-bold font-mono text-red-400">{failed}</div>
+                      <div className="text-xs text-red-400/60">fail</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Row 2: Phase flow with pending counts + speeds */}
+                <div className="flex items-center">
+                  {phases.map((p, i) => (
+                    <div key={p.name} className="flex items-center flex-1">
+                      <div className={`flex-1 text-center px-1 py-1.5 rounded ${p === bottleneck && p.pending > 0 ? `bg-${p.color}-900/30 border border-${p.color}-700/50` : ''}`}>
+                        <div className={`text-[10px] ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-600'} mb-0.5`}>
+                          {p.name}
+                        </div>
+                        <div className={`text-base font-bold font-mono ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-600'}`}>
+                          {p.pending}
+                        </div>
+                        {p.speed > 0 && (
+                          <div className="text-[9px] text-gray-500 font-mono">{p.speed}/m</div>
+                        )}
+                      </div>
+                      {i < phases.length - 1 && <span className="text-gray-700 mx-0.5">→</span>}
+                    </div>
+                  ))}
+                  <div className="flex items-center flex-1">
+                    <span className="text-gray-700 mx-0.5">→</span>
+                    <div className="flex-1 text-center">
+                      <div className="text-[10px] text-gray-500 mb-0.5">Done</div>
+                      <div className="text-base font-bold font-mono text-emerald-400">{done}</div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                {/* Download */}
-                <div className="flex-1 text-center">
-                  <div className="text-[10px] text-gray-500 mb-1">Download</div>
-                  <div className={`text-lg font-bold font-mono ${(queueStats.download_waiting || 0) > 0 ? 'text-yellow-400' : 'text-gray-600'}`}>
-                    {queueStats.download_waiting || 0}
-                  </div>
-                </div>
-                <span className="text-gray-600">→</span>
-                {/* Parse */}
-                <div className="flex-1 text-center">
-                  <div className="text-[10px] text-sky-400 mb-1">Parse</div>
-                  <div className={`text-lg font-bold font-mono ${(queueStats.parse_pending || 0) > 0 ? 'text-sky-400' : 'text-gray-600'}`}>
-                    {queueStats.parse_pending || 0}
-                  </div>
-                </div>
-                <span className="text-gray-600">→</span>
-                {/* MC */}
-                <div className="flex-1 text-center">
-                  <div className="text-[10px] text-purple-400 mb-1">MC</div>
-                  <div className={`text-lg font-bold font-mono ${(queueStats.mc_pending || 0) > 0 ? 'text-purple-400' : 'text-gray-600'}`}>
-                    {queueStats.mc_pending || 0}
-                  </div>
-                </div>
-                <span className="text-gray-600">→</span>
-                {/* VV */}
-                <div className="flex-1 text-center">
-                  <div className="text-[10px] text-blue-400 mb-1">VV</div>
-                  <div className={`text-lg font-bold font-mono ${(queueStats.vv_pending || 0) > 0 ? 'text-blue-400' : 'text-gray-600'}`}>
-                    {queueStats.vv_pending || 0}
-                  </div>
-                </div>
-                <span className="text-gray-600">→</span>
-                {/* MV */}
-                <div className="flex-1 text-center">
-                  <div className="text-[10px] text-green-400 mb-1">MV</div>
-                  <div className={`text-lg font-bold font-mono ${(queueStats.mv_pending || 0) > 0 ? 'text-green-400' : 'text-gray-600'}`}>
-                    {queueStats.mv_pending || 0}
-                  </div>
-                </div>
-                <span className="text-gray-600">→</span>
-                {/* Done */}
-                <div className="flex-1 text-center">
-                  <div className="text-[10px] text-gray-500 mb-1">Done</div>
-                  <div className="text-lg font-bold font-mono text-emerald-400">
-                    {queueStats.completed || 0}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -493,7 +513,7 @@ export default function WorkersPanel() {
               <th className="text-left px-4 py-3">{t('admin.worker_name')}</th>
               <th className="text-left px-4 py-3">{t('auth.username')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_state')}</th>
-              <th className="text-left px-4 py-3">{t('admin.worker_mode')}</th>
+              <th className="text-left px-4 py-3">Phase</th>
               <th className="text-left px-4 py-3">{t('admin.worker_capacity')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_speed')}</th>
               <th className="text-left px-4 py-3">{t('admin.worker_resources')}</th>
