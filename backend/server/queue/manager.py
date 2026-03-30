@@ -249,17 +249,28 @@ class JobQueueManager:
             return assigned_mode
 
         # Find most backed-up phase
-        # Parse is server-only (server has local/NAS access, workers don't)
         candidates = [
             ("mc", phase_stats.get("mc_pending", 0)),
-            ("vv", phase_stats.get("vv_pending", 0)),
-            ("mv", phase_stats.get("mv_pending", 0)),
+            ("vv", phase_stats.get("embed_pending", 0)),
+            ("mv", phase_stats.get("embed_pending", 0)),
         ]
-        # Only embedded worker can do parse (has local disk + NAS access)
+        # Only embedded worker can do parse
         if is_embedded:
             candidates.append(("parse_thumb", effective_parse))
+
+            # Embedded = fallback: deprioritize phases that external workers are handling
+            external_modes = self._get_external_worker_modes(cursor)
+            if external_modes:
+                candidates = [
+                    (mode, pending * (0.1 if mode in external_modes else 1.0))
+                    for mode, pending in candidates
+                ]
+
         candidates.sort(key=lambda x: x[1], reverse=True)
         best_mode, best_count = candidates[0]
+        # Restore actual pending count for threshold checks
+        best_count = int(best_count) if best_count == int(best_count) else phase_stats.get(
+            mode_to_stat.get(best_mode, ""), 0)
 
         # After min batch: switch only if another phase is significantly more backed up
         if assigned_mode and current_pending > 0 and phase_job_count >= self._MIN_PHASE_BATCH:
@@ -282,6 +293,15 @@ class JobQueueManager:
             return best_mode
 
         return "full"
+
+    def _get_external_worker_modes(self, cursor) -> set:
+        """Get set of modes that online external workers are currently assigned to."""
+        cursor.execute(
+            "SELECT assigned_mode FROM worker_sessions "
+            "WHERE status = 'online' AND worker_name != '__builtin__' "
+            "AND assigned_mode IS NOT NULL"
+        )
+        return {r[0] for r in cursor.fetchall()}
 
     def _update_assigned_mode(self, cursor, session_id: int, new_mode: str):
         """Update worker's assigned mode and reset phase job counter."""
