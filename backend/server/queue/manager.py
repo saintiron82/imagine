@@ -197,174 +197,92 @@ class JobQueueManager:
         """
         return get_processing_mode()
 
-    _MIN_PHASE_BATCH = 50  # Minimum jobs before allowing phase switch
+    # Time cost per file (seconds) — MC dominates, so GPU stays on MC
+    _PHASE_TIME = {"parse_thumb": 1, "mc": 50, "vv": 2, "mv": 0.5}
 
     def _decide_worker_mode(self, worker_session_id: int) -> str:
-        """Dynamically decide optimal mode for a worker based on queue state.
+        """Time-weighted pressure scheduling (Algorithm E).
 
-        Principles:
-        1. Keep current model loaded until min batch (50) reached OR queue empty
-        2. After min batch, switch only if another phase is more backed up
-        3. Local files are always parsed by server — external workers only parse remote files
-        4. Track assigned_mode + phase_job_count in worker_sessions
+        pressure = (pending / (workers_on_phase + 1)) * time_per_file
+
+        MC (50s/file) naturally dominates until queue nearly empty.
+        GPU workers stay on MC; CPU workers do MV. Minimal model switching.
         """
         cursor = self.db.conn.cursor()
-        phase_stats = self.get_phase_stats()
+        stats = self.get_phase_stats()
 
-        # Get worker's current assigned mode, job count, and whether it's embedded
-        try:
-            cursor.execute(
-                "SELECT assigned_mode, phase_job_count, worker_name FROM worker_sessions WHERE id = ?",
-                (worker_session_id,)
-            )
-            row = cursor.fetchone()
-            assigned_mode = row[0] if row else None
-            phase_job_count = row[1] or 0 if row else 0
-            is_embedded = (row[2] == '__builtin__') if row else False
-        except Exception:
-            assigned_mode = None
-            phase_job_count = 0
-            is_embedded = False
+        # Worker info
+        cursor.execute(
+            "SELECT assigned_mode, worker_name, resources_json FROM worker_sessions WHERE id = ?",
+            (worker_session_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return "full"
+        assigned_mode, worker_name, res_json = row[0], row[1], row[2]
+        is_embedded = worker_name == '__builtin__'
+        has_gpu = False
+        throttle = "normal"
+        if res_json:
+            try:
+                res = json.loads(res_json)
+                has_gpu = bool(res.get("gpu_type"))
+                throttle = res.get("throttle_level", "normal")
+            except Exception:
+                pass
 
-        # Parse is server-only (embedded). External workers never do parse.
-        effective_parse = phase_stats.get("parse_pending", 0) if is_embedded else 0
+        # Thermal throttling: GPU too hot → idle
+        if throttle in ("danger", "critical"):
+            return "idle"
 
-        # Map mode names to stats keys
-        mode_to_stat = {
-            "mc": "mc_pending", "vv": "embed_pending",
-            "mv": "embed_pending", "embed_only": "embed_pending",
-            "parse_thumb": "parse_pending",
-        }
-
-        # Current mode still has work?
-        current_pending = 0
-        if assigned_mode and assigned_mode in mode_to_stat:
-            if assigned_mode == "parse_thumb":
-                current_pending = effective_parse
-            else:
-                current_pending = phase_stats.get(mode_to_stat[assigned_mode], 0)
-
-        # Keep current mode if: still has work AND hasn't hit min batch
-        if assigned_mode and current_pending > 0 and phase_job_count < self._MIN_PHASE_BATCH:
-            return assigned_mode
-
-        # Build candidates based on worker GPU capability
-        my_vram = self._get_worker_vram(cursor, worker_session_id)
-        my_gpu = self._get_worker_gpu_type(cursor, worker_session_id)
-        has_gpu = bool(my_gpu)
-
-        candidates = []
-        # MC requires GPU — skip for CPU-only workers
+        # Build capable phases + pending counts
+        buffers = {}
         if has_gpu:
-            candidates.append(("mc", phase_stats.get("mc_pending", 0)))
-        # VV (SigLIP2) needs GPU but much less VRAM
-        if has_gpu:
-            candidates.append(("vv", phase_stats.get("embed_pending", 0)))
-        # MV (text embedding) works on CPU
-        candidates.append(("mv", phase_stats.get("embed_pending", 0)))
-
-        # Only embedded worker can do parse
+            buffers["mc"] = stats.get("mc_pending", 0)
+            buffers["vv"] = stats.get("embed_pending", 0)
+        buffers["mv"] = stats.get("embed_pending", 0)
         if is_embedded:
-            candidates.append(("parse_thumb", effective_parse))
+            buffers["parse_thumb"] = stats.get("parse_pending", 0)
 
-        # Worker distribution: count how many workers are on each phase
+        # Worker distribution
         cursor.execute(
             "SELECT assigned_mode, COUNT(*) FROM worker_sessions "
             "WHERE status = 'online' AND assigned_mode IS NOT NULL "
             "GROUP BY assigned_mode"
         )
-        worker_counts = dict(cursor.fetchall())
+        workers_on = dict(cursor.fetchall())
 
-        # Adjust candidates: divide pending by (workers_on_phase + 1) to balance
-        candidates = [
-            (mode, pending / (worker_counts.get(mode, 0) + 1))
-            for mode, pending in candidates
-        ]
+        # Time-weighted pressure
+        pressure = {}
+        for phase, pending in buffers.items():
+            w = self._PHASE_TIME.get(phase, 1)
+            n = workers_on.get(phase, 0)
+            pressure[phase] = (pending / (n + 1)) * w
 
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        best_mode = candidates[0][0] if candidates else "full"
-        best_count = phase_stats.get(mode_to_stat.get(best_mode, ""), 0)
+        if not pressure:
+            return "full"
 
-        # After min batch: switch only if another phase is significantly more backed up
-        if assigned_mode and current_pending > 0 and phase_job_count >= self._MIN_PHASE_BATCH:
-            if best_count > current_pending * 1.5:
-                # Other phase is 50%+ more backed up → switch
-                self._update_assigned_mode(cursor, worker_session_id, best_mode)
-                logger.info(f"Worker {worker_session_id}: switch {assigned_mode}→{best_mode} "
-                           f"after {phase_job_count} jobs (backlog: {best_mode}={best_count} vs {assigned_mode}={current_pending})")
-                return best_mode
-            # Current phase still reasonable → keep
-            return assigned_mode
+        best = max(pressure, key=pressure.get)
 
-        # Current phase empty OR no mode assigned → pick best
-        if best_count > 0:
-            if best_mode != assigned_mode:
-                self._update_assigned_mode(cursor, worker_session_id, best_mode)
+        # Current mode stability: only switch if best is 2x current pressure
+        if assigned_mode and assigned_mode in pressure and pressure[assigned_mode] > 0:
+            if pressure[best] <= pressure[assigned_mode] * 2:
+                return assigned_mode  # keep current (avoid model switch)
+
+        # Switch to best
+        if pressure[best] > 0:
+            if best != assigned_mode:
+                cursor.execute(
+                    "UPDATE worker_sessions SET assigned_mode = ?, phase_job_count = 0 WHERE id = ?",
+                    (best, worker_session_id)
+                )
+                self.db.conn.commit()
                 if assigned_mode:
-                    logger.info(f"Worker {worker_session_id}: switch {assigned_mode}→{best_mode} "
-                               f"(queue empty, backlog: {best_count})")
-            return best_mode
+                    logger.info(f"Worker {worker_session_id}: {assigned_mode}→{best} "
+                               f"(pressure: {pressure.get(best, 0):.0f} vs {pressure.get(assigned_mode, 0):.0f})")
+            return best
 
-        return "full"
-
-    def _get_external_worker_modes(self, cursor) -> set:
-        """Get set of modes that online external workers are currently assigned to."""
-        cursor.execute(
-            "SELECT assigned_mode FROM worker_sessions "
-            "WHERE status = 'online' AND worker_name != '__builtin__' "
-            "AND assigned_mode IS NOT NULL"
-        )
-        return {r[0] for r in cursor.fetchall()}
-
-    def _get_worker_gpu_type(self, cursor, session_id: int) -> str:
-        """Get worker's GPU type (cuda/mps/None)."""
-        try:
-            cursor.execute("SELECT resources_json FROM worker_sessions WHERE id = ?", (session_id,))
-            row = cursor.fetchone()
-            if row and row[0]:
-                import json as _json
-                return _json.loads(row[0]).get("gpu_type") or ""
-        except Exception:
-            pass
-        return ""
-
-    def _get_worker_vram(self, cursor, session_id: int) -> float:
-        """Get worker's GPU VRAM in GB."""
-        try:
-            cursor.execute("SELECT resources_json FROM worker_sessions WHERE id = ?", (session_id,))
-            row = cursor.fetchone()
-            if row and row[0]:
-                import json as _json
-                return _json.loads(row[0]).get("gpu_memory_total_gb") or 0
-        except Exception:
-            pass
-        return 0
-
-    def _get_max_external_vram(self, cursor) -> float:
-        """Get highest VRAM among online external workers."""
-        try:
-            cursor.execute(
-                "SELECT resources_json FROM worker_sessions "
-                "WHERE status = 'online' AND worker_name != '__builtin__'"
-            )
-            max_vram = 0
-            for row in cursor.fetchall():
-                if row[0]:
-                    import json as _json
-                    v = _json.loads(row[0]).get("gpu_memory_total_gb") or 0
-                    if v > max_vram:
-                        max_vram = v
-            return max_vram
-        except Exception:
-            return 0
-
-    def _update_assigned_mode(self, cursor, session_id: int, new_mode: str):
-        """Update worker's assigned mode and reset phase job counter."""
-        cursor.execute(
-            "UPDATE worker_sessions SET assigned_mode = ?, phase_job_count = 0 WHERE id = ?",
-            (new_mode, session_id)
-        )
-        self.db.conn.commit()
+        return "idle"
 
     def _batch_check_existing_data(self, file_ids: List[int]) -> Dict[int, dict]:
         """Check actual DB data existence for a batch of files.
