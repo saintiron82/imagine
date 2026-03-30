@@ -51,17 +51,19 @@ def determine_worker_mode(resources: Dict[str, Any], server_tier: str) -> str:
     tiers = cfg.get("ai_mode.tiers", {})
     tier_cfg = tiers.get(server_tier, {})
     vram_min_mb = tier_cfg.get("vram_min", 0)  # standard=없음(0), pro=8192, ultra=20480
+    # 5% margin: allow workers slightly below threshold to still do MC
+    vram_threshold = int(vram_min_mb * 0.95)
 
-    if worker_vram_mb >= vram_min_mb:
+    if worker_vram_mb >= vram_threshold:
         logger.info(
-            f"Worker VRAM {worker_vram_mb} MB ≥ {server_tier} tier min {vram_min_mb} MB"
-            f" → mc mode (VLM capable)"
+            f"Worker VRAM {worker_vram_mb} MB ≥ {vram_threshold} MB "
+            f"(tier {server_tier} min {vram_min_mb}, 5% margin) → mc mode"
         )
         return "mc"
 
     logger.info(
-        f"Worker VRAM {worker_vram_mb} MB < {server_tier} tier min {vram_min_mb} MB"
-        f" → vv mode (SigLIP2 only)"
+        f"Worker VRAM {worker_vram_mb} MB < {vram_threshold} MB "
+        f"(tier {server_tier} min {vram_min_mb}) → vv mode"
     )
     return "vv"
 
