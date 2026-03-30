@@ -197,6 +197,57 @@ class JobQueueManager:
         """
         return get_processing_mode()
 
+    def _decide_worker_mode(self, worker_session_id: int) -> str:
+        """Dynamically decide optimal mode for a worker based on queue state.
+
+        Principles:
+        1. Keep current model loaded (minimize switching) — if current phase still has work, stay
+        2. When current phase is empty, switch to most backed-up phase
+        3. Server (embedded) handles parse/download first; external workers focus on MC
+        """
+        cursor = self.db.conn.cursor()
+        phase_stats = self.get_phase_stats()
+
+        # Get worker's current phase from last heartbeat
+        cursor.execute(
+            "SELECT current_phase FROM worker_sessions WHERE id = ?",
+            (worker_session_id,)
+        )
+        row = cursor.fetchone()
+        current_phase = row[0] if row else None
+
+        # Map phase names to stats keys
+        phase_map = {
+            "mc": "mc_pending", "vision": "mc_pending",
+            "vv": "vv_pending", "embed_vv": "vv_pending",
+            "mv": "mv_pending", "embed_mv": "mv_pending",
+            "parse": "parse_pending", "parse_thumb": "parse_pending",
+        }
+
+        # If current phase still has work → keep it (no model switch)
+        if current_phase:
+            stats_key = phase_map.get(current_phase)
+            if stats_key and phase_stats.get(stats_key, 0) > 0:
+                mode = current_phase if current_phase in ("mc", "vv", "mv", "parse_thumb") else "mc"
+                logger.debug(f"Worker {worker_session_id}: keep {mode} ({phase_stats.get(stats_key)} pending)")
+                return mode
+
+        # Current phase empty → switch to most backed-up phase
+        candidates = [
+            ("parse_thumb", phase_stats.get("parse_pending", 0)),
+            ("mc", phase_stats.get("mc_pending", 0)),
+            ("vv", phase_stats.get("vv_pending", 0)),
+            ("mv", phase_stats.get("mv_pending", 0)),
+        ]
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        best_mode, best_count = candidates[0]
+
+        if best_count > 0:
+            logger.debug(f"Worker {worker_session_id}: switch to {best_mode} ({best_count} pending)")
+            return best_mode
+
+        return "full"  # Nothing pending, use full mode
+
     def _batch_check_existing_data(self, file_ids: List[int]) -> Dict[int, dict]:
         """Check actual DB data existence for a batch of files.
 
@@ -314,6 +365,9 @@ class JobQueueManager:
                 mode_override = session_row[1]
                 if mode_override:
                     processing_mode = mode_override
+                else:
+                    # No admin override → server decides dynamically
+                    processing_mode = self._decide_worker_mode(worker_session_id)
 
                 # Resource-aware throttling
                 if session_row[0]:

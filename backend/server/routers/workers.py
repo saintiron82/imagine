@@ -287,14 +287,17 @@ def worker_connect(
 
     global_mode = _get_global_processing_mode()
     if global_mode == "mc_only":
-        # mc_only: all workers do V(MC) only, regardless of capability
         processing_mode = "mc_only"
-    elif global_mode == "parse_only":
-        # parse_only: all workers do full pipeline (V+VV+MV)
-        processing_mode = "full"
+    elif ov and ov[0]:
+        processing_mode = ov[0]  # Admin manual override
     else:
-        # auto: use auto-detected capability (full/embed_only)
-        processing_mode = (ov[0] if ov and ov[0] else None) or "full"
+        # Dynamic mode: server decides based on queue state
+        from backend.server.queue.manager import JobQueueManager
+        try:
+            _qm = JobQueueManager(db)
+            processing_mode = _qm._decide_worker_mode(session_id)
+        except Exception:
+            processing_mode = "full"
 
     logger.info(f"Worker connected: {req.worker_name} (session={session_id}, user={user['username']}, mode={processing_mode})")
     return {
@@ -412,10 +415,16 @@ def worker_heartbeat(
 
     if global_mode == "mc_only":
         processing_mode = "mc_only"
-    elif global_mode == "parse_only":
-        processing_mode = "full"
+    elif mode_override:
+        processing_mode = mode_override  # Admin manual override
     else:
-        processing_mode = mode_override or "full"
+        # Dynamic mode: server decides based on queue state + worker's current phase
+        from backend.server.queue.manager import JobQueueManager
+        try:
+            _qm = JobQueueManager(db)
+            processing_mode = _qm._decide_worker_mode(req.session_id)
+        except Exception:
+            processing_mode = "full"
     # For embedded worker: read live batch_size from config (Admin UI changes)
     cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
     wn_row = cursor.fetchone()
