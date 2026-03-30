@@ -96,6 +96,33 @@ export default function FactoryPage({
             <RefreshCw size={12} />
           </button>
         </div>
+
+        {/* Phase breakdown */}
+        {(stats?.parse_pending > 0 || stats?.mc_pending > 0 || stats?.vv_pending > 0 || stats?.mv_pending > 0) && (
+          <div className="flex items-center gap-3 mt-1.5 text-[11px]">
+            <span className="text-gray-500">{t('factory.phase_breakdown')}:</span>
+            {stats.parse_pending > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-sky-900/40 text-sky-400 font-medium">
+                Parse {stats.parse_pending}
+              </span>
+            )}
+            {stats.mc_pending > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-400 font-medium">
+                MC {stats.mc_pending}
+              </span>
+            )}
+            {stats.vv_pending > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 font-medium">
+                VV {stats.vv_pending}
+              </span>
+            )}
+            {stats.mv_pending > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 font-medium">
+                MV {stats.mv_pending}
+              </span>
+            )}
+          </div>
+        )}
       </div>}
 
       {/* Sub-tabs */}
