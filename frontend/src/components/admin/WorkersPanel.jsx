@@ -161,7 +161,7 @@ export default function WorkersPanel() {
     try {
       const data = await listWorkerSessions();
       const all = data.workers || [];
-      setWorkers(all);
+      setWorkers(all.filter(w => w.status === 'online'));
     } catch (e) {
       console.error('Failed to load workers:', e);
     }
@@ -435,7 +435,7 @@ export default function WorkersPanel() {
           </thead>
           <tbody>
             {workers.map((w) => (
-              <tr key={w.id} className={`border-b border-gray-700/50 hover:bg-gray-700/30 ${w.status !== 'online' ? 'opacity-40' : ''}`}>
+              <tr key={w.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                 <td className="px-4 py-3 font-medium">
                   <div className="flex items-center gap-1.5">
                     {w.worker_name === '__builtin__' ? (
