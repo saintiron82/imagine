@@ -93,33 +93,52 @@ export function AuthProvider({ children }) {
   const connectToServer = useCallback(async (serverName, serverPassword, directUrl) => {
     setError('');
     try {
-      let serverUrl = directUrl;
-
-      // If no direct URL provided, look up via Firebase RTDB
-      if (!serverUrl) {
+      // Build candidate URL list
+      let urls;
+      if (directUrl) {
+        urls = [directUrl];
+      } else {
         const info = await lookupGroup(serverName);
         if (!info) throw new Error('Server not found');
-        serverUrl = info.url;
+        urls = info.urls || [info.url];
       }
-
-      setServerUrl(serverUrl);
 
       // Get Firebase ID token for Layer 1 identity
       const idToken = await getIdToken();
       if (!idToken) throw new Error('Firebase not authenticated');
 
-      // POST /auth/connect — Layer 2 authentication
-      await firebaseConnect(idToken, serverPassword);
-      const me = await getMe();
-      setUser(me.user || me);
-      setConnectedServer({ name: serverName, url: serverUrl });
+      // Try each URL until one responds
+      let lastErr = null;
+      for (const candidateUrl of urls) {
+        try {
+          // Quick health check (3s timeout)
+          const hResp = await fetch(`${candidateUrl}/api/v1/health`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(3000),
+          });
+          if (!hResp.ok) continue;
 
-      // Remember for auto-reconnect
-      localStorage.setItem('imagine-last-server', serverName);
-      localStorage.setItem('imagine-last-server-url', serverUrl);
-      sessionStorage.setItem('imagine-last-server-pw', serverPassword);
+          // Health OK → authenticate
+          setServerUrl(candidateUrl);
+          await firebaseConnect(idToken, serverPassword);
+          const me = await getMe();
+          setUser(me.user || me);
+          setConnectedServer({ name: serverName, url: candidateUrl });
 
-      return true;
+          // Remember for auto-reconnect
+          localStorage.setItem('imagine-last-server', serverName);
+          localStorage.setItem('imagine-last-server-url', candidateUrl);
+          sessionStorage.setItem('imagine-last-server-pw', serverPassword);
+
+          return true;
+        } catch (e) {
+          lastErr = e;
+          // Try next URL
+        }
+      }
+
+      // All URLs failed
+      throw lastErr || new Error('Server unreachable');
     } catch (e) {
       const detail = e.detail || e.message || 'Connection failed';
       setError(detail);

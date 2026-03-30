@@ -13,7 +13,7 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.server.deps import require_admin
+from backend.server.deps import require_admin, get_current_user
 from backend.vision.domain_loader import list_available_domains, load_domain
 from backend.utils.config import get_config
 
@@ -64,13 +64,13 @@ class CreateDomainRequest(BaseModel):
 # ── Endpoints ────────────────────────────────────────────────
 
 @router.get("/domains", response_model=List[DomainSummary])
-def get_domains(admin: dict = Depends(require_admin)):
+def get_domains(user: dict = Depends(get_current_user)):
     """List all available domain presets."""
     return list_available_domains()
 
 
 @router.get("/domains/{domain_id}", response_model=DomainDetail)
-def get_domain_detail(domain_id: str, admin: dict = Depends(require_admin)):
+def get_domain_detail(domain_id: str, user: dict = Depends(get_current_user)):
     """Get full details of a specific domain preset."""
     try:
         profile = load_domain(domain_id)
@@ -90,7 +90,7 @@ def get_domain_detail(domain_id: str, admin: dict = Depends(require_admin)):
 
 
 @router.get("/active", response_model=ActiveDomainResponse)
-def get_active(admin: dict = Depends(require_admin)):
+def get_active(user: dict = Depends(get_current_user)):
     """Get the currently active domain."""
     cfg = get_config()
     active_id = cfg.get("classification.active_domain")

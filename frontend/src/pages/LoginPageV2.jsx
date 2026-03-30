@@ -210,7 +210,7 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
     try {
       await signInWithGoogle();
     } catch (err) {
-      if (err.code !== 'auth/popup-closed-by-user') {
+      if (err.code !== 'auth/popup-closed-by-user' && err.message !== 'AUTH_WINDOW_CLOSED') {
         setError(err.message || t('auth.login_failed'));
       }
     } finally {

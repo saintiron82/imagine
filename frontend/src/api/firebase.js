@@ -49,18 +49,16 @@ export async function lookupGroup(groupName) {
 
         if (!port && !tunnel_url) return null;
 
-        // Tunnel URL (internet) → public IP → LAN IP (local network)
-        let url;
-        if (tunnel_url) {
-            url = tunnel_url;
-        } else if (public_ip) {
-            url = `http://${public_ip}:${port}`;
-        } else {
-            url = `http://${lan_ip || 'localhost'}:${port}`;
-        }
+        // Build candidate URLs in priority order: tunnel → public → LAN
+        const urls = [];
+        if (tunnel_url) urls.push(tunnel_url);
+        if (public_ip) urls.push(`http://${public_ip}:${port}`);
+        if (lan_ip) urls.push(`http://${lan_ip}:${port}`);
+        if (urls.length === 0) urls.push(`http://localhost:${port}`);
 
         return {
-            url,
+            url: urls[0],
+            urls,
             groupName: str(f, 'group_name') || groupName,
             tunnel_url,
             lan_ip,

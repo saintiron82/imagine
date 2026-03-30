@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('electron', {
     app: {
         quit: () => ipcRenderer.send('app-quit'),
     },
+    auth: {
+        googleOAuth: () => ipcRenderer.invoke('google-oauth'),
+    },
     fs: {
         // Get Home Directory
         getHomeDir: () => os.homedir(),

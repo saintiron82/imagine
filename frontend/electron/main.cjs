@@ -595,6 +595,155 @@ function initAutoUpdater() {
 
 // ── IPC Handlers (global scope — registered once) ────────────────
 
+// Google OAuth via BrowserWindow (bypasses signInWithPopup unauthorized-domain in Electron)
+//
+// Uses a persistent session so Google remembers accounts across app restarts.
+// 2-step flow:
+//   1. Load Firebase auth handler (hidden) → intercept redirect to capture Google client_id
+//   2. Open visible Google OAuth with that client_id (response_type=id_token)
+//   3. Capture id_token from redirect back → resolve to renderer
+ipcMain.handle('google-oauth', async () => {
+    const { session: electronSession } = require('electron');
+    const crypto = require('crypto');
+    const AUTH_DOMAIN = 'imagine-b1e9c.firebaseapp.com';
+    const API_KEY = 'AIzaSyDgpwrJbQ8MYkP3NFAOrp-K8R3e8kaWpCc';
+
+    // ── Step 1: Discover Google OAuth client_id from Firebase ──
+    const clientId = await new Promise((resolve, reject) => {
+        const hiddenWin = new BrowserWindow({
+            width: 0, height: 0, show: false,
+            webPreferences: { nodeIntegration: false, contextIsolation: true },
+        });
+
+        let found = false;
+        const timeout = setTimeout(() => {
+            if (!found) { found = true; hiddenWin.close(); reject(new Error('CLIENT_ID_TIMEOUT')); }
+        }, 10000);
+
+        hiddenWin.webContents.on('will-redirect', (event, url) => {
+            if (found) return;
+            if (url.includes('accounts.google.com') && url.includes('client_id=')) {
+                event.preventDefault();
+                found = true;
+                clearTimeout(timeout);
+                try {
+                    resolve(new URL(url).searchParams.get('client_id'));
+                } catch (e) {
+                    reject(e);
+                }
+                hiddenWin.close();
+            }
+        });
+
+        hiddenWin.webContents.on('will-navigate', (event, url) => {
+            if (found) return;
+            if (url.includes('accounts.google.com') && url.includes('client_id=')) {
+                event.preventDefault();
+                found = true;
+                clearTimeout(timeout);
+                try {
+                    resolve(new URL(url).searchParams.get('client_id'));
+                } catch (e) {
+                    reject(e);
+                }
+                hiddenWin.close();
+            }
+        });
+
+        const startUrl = `https://${AUTH_DOMAIN}/__/auth/handler?` +
+            `apiKey=${API_KEY}&authType=signInViaPopup&providerId=google.com` +
+            `&scopes=profile%20email&eventId=${Date.now()}`;
+        hiddenWin.loadURL(startUrl);
+    });
+
+    writeLog('INFO', 'Google OAuth client_id discovered:', clientId?.substring(0, 20) + '...');
+
+    // ── Step 2: Open visible Google OAuth window ──
+    // persist: partition → Google remembers logged-in accounts across sessions
+    const authSession = electronSession.fromPartition('persist:google-auth');
+
+    return new Promise((resolve, reject) => {
+        const authWindow = new BrowserWindow({
+            width: 460,
+            height: 700,
+            autoHideMenuBar: true,
+            title: 'Google Sign-In',
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                session: authSession,
+            },
+        });
+
+        let settled = false;
+        const finish = (idToken) => {
+            if (settled) return;
+            settled = true;
+            resolve({ idToken });
+            try { authWindow.close(); } catch {}
+        };
+
+        // Extract id_token from URL (hash fragment or query)
+        const checkUrl = (url) => {
+            if (settled || !url) return;
+            try {
+                const u = new URL(url);
+                // Hash fragment: #id_token=xxx&...
+                if (u.hash && u.hash.includes('id_token=')) {
+                    const params = new URLSearchParams(u.hash.substring(1));
+                    const t = params.get('id_token');
+                    if (t) { finish(t); return; }
+                }
+                // Query param fallback
+                const qt = u.searchParams.get('id_token');
+                if (qt) finish(qt);
+            } catch {}
+        };
+
+        // Fallback: inject JS to read location.hash (in case navigation events lose the fragment)
+        const tryReadHash = async () => {
+            if (settled) return;
+            try {
+                const hash = await authWindow.webContents.executeJavaScript('location.hash');
+                if (hash && hash.includes('id_token=')) {
+                    const params = new URLSearchParams(hash.substring(1));
+                    const t = params.get('id_token');
+                    if (t) finish(t);
+                }
+            } catch {}
+        };
+
+        authWindow.webContents.on('will-redirect', (_, url) => checkUrl(url));
+        authWindow.webContents.on('will-navigate', (_, url) => checkUrl(url));
+        authWindow.webContents.on('did-navigate', (_, url) => checkUrl(url));
+        authWindow.webContents.on('did-navigate-in-page', (_, url) => checkUrl(url));
+        authWindow.webContents.on('did-finish-load', () => {
+            checkUrl(authWindow.webContents.getURL());
+            // Retry via JS injection (hash fragments may not appear in nav events)
+            setTimeout(tryReadHash, 300);
+            setTimeout(tryReadHash, 1000);
+            setTimeout(tryReadHash, 3000);
+        });
+
+        authWindow.on('closed', () => {
+            if (!settled) { settled = true; reject(new Error('AUTH_WINDOW_CLOSED')); }
+        });
+
+        // Build Google OAuth URL (implicit flow → id_token in hash)
+        const nonce = crypto.randomBytes(16).toString('hex');
+        const redirectUri = `https://${AUTH_DOMAIN}/__/auth/handler`;
+        const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+            `client_id=${encodeURIComponent(clientId)}` +
+            `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+            `&response_type=id_token` +
+            `&scope=openid%20email%20profile` +
+            `&nonce=${nonce}` +
+            `&prompt=select_account`;
+
+        authWindow.loadURL(oauthUrl);
+    });
+});
+
 // Auto Update IPC
 ipcMain.handle('updater-check', async () => {
     if (isDev || !autoUpdater) return { available: false, reason: 'dev-mode' };

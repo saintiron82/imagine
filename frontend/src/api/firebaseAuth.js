@@ -6,6 +6,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithCredential,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged as firebaseOnAuthStateChanged,
@@ -14,6 +15,7 @@ import {
 import { auth } from './firebaseApp';
 
 const googleProvider = new GoogleAuthProvider();
+const isElectron = !!window.electron;
 
 /**
  * Create a new Firebase account.
@@ -31,10 +33,17 @@ export async function signUp(email, password, displayName) {
 }
 
 /**
- * Sign in with Google (popup).
+ * Sign in with Google.
+ * In Electron: opens a BrowserWindow via IPC to avoid unauthorized-domain errors.
+ * In browser: uses Firebase signInWithPopup.
  * @returns {Promise<import('firebase/auth').UserCredential>}
  */
 export async function signInWithGoogle() {
+  if (isElectron && window.electron?.auth?.googleOAuth) {
+    const { idToken } = await window.electron.auth.googleOAuth();
+    const credential = GoogleAuthProvider.credential(idToken);
+    return signInWithCredential(auth, credential);
+  }
   return signInWithPopup(auth, googleProvider);
 }
 

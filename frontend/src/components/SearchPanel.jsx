@@ -1082,9 +1082,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setIsSearching(true);
         setError(null);
         setRefineStack([]);
-        setRefineCommitted([]);
         setRefineInput('');
-        setRefineNextOp('and');
 
         lastSearchConfigRef.current = { useCodex, effort };
 
