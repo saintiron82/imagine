@@ -13,7 +13,7 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.server.deps import require_admin
+from backend.server.deps import require_admin, get_current_user
 from backend.vision.domain_loader import list_available_domains, load_domain
 from backend.utils.config import get_config
 
@@ -90,7 +90,7 @@ def get_domain_detail(domain_id: str, admin: dict = Depends(require_admin)):
 
 
 @router.get("/active", response_model=ActiveDomainResponse)
-def get_active(admin: dict = Depends(require_admin)):
+def get_active(user: dict = Depends(get_current_user)):
     """Get the currently active domain."""
     cfg = get_config()
     active_id = cfg.get("classification.active_domain")
