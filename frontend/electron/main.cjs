@@ -437,6 +437,12 @@ function spawnSearchDaemon() {
                     }
                     continue;
                 }
+                // Search progress event — forward to renderer
+                if (parsed.event === 'search_progress') {
+                    const win = BrowserWindow.getAllWindows()[0];
+                    if (win) win.webContents.send('search-progress', parsed.stage);
+                    continue;
+                }
                 // Normal search response
                 if (pendingRequests.length > 0) {
                     const { resolve: res, t0 } = pendingRequests.shift();

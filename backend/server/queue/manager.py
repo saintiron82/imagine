@@ -618,8 +618,11 @@ class JobQueueManager:
         # Update work request/subtask counters
         self._update_wr_counters(cursor, wr_id, ws_id, 'completed')
 
-        # DELETE the completed job
-        cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
+        # Keep completed job in queue for history (user archives manually)
+        cursor.execute(
+            "UPDATE job_queue SET completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
+            (job_id,)
+        )
         self.db.conn.commit()
         return True
 
@@ -896,8 +899,11 @@ class JobQueueManager:
                 )
                 # Update work request/subtask counters
                 self._update_wr_counters(cursor, wr_id, ws_id, 'failed')
-                # DELETE the job
-                cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
+                # Keep failed job in queue for history (user archives manually)
+                cursor.execute(
+                    "UPDATE job_queue SET completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
+                    (job_id,)
+                )
             else:
                 logger.warning(
                     f"Job {job_id} partially complete (missing: {missing}). "
@@ -962,8 +968,11 @@ class JobQueueManager:
             # Update work request/subtask counters
             self._update_wr_counters(cursor, wr_id, ws_id, 'failed')
 
-            # DELETE the job from queue
-            cursor.execute("DELETE FROM job_queue WHERE id = ?", (job_id,))
+            # Keep failed job in queue for history (user archives manually)
+            cursor.execute(
+                "UPDATE job_queue SET completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
+                (job_id,)
+            )
         else:
             cursor.execute(
                 """UPDATE job_queue
@@ -1046,6 +1055,7 @@ class JobQueueManager:
                 status,
                 COUNT(*) as count
             FROM job_queue
+            WHERE archived_at IS NULL
             GROUP BY status
         """)
         status_counts = dict(cursor.fetchall())
@@ -1234,35 +1244,43 @@ class JobQueueManager:
             "embedded_worker": _get_embedded_worker_status(),
         }
 
-    def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
-        """List all jobs with optional status filter and pagination."""
+    def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0,
+                  archived: bool = False) -> Dict[str, Any]:
+        """List jobs with optional status filter and pagination.
+
+        Args:
+            archived: If False (default), show only active queue (archived_at IS NULL).
+                      If True, show only archived jobs.
+        """
         cursor = self.db.conn.cursor()
+        archive_cond = "archived_at IS NOT NULL" if archived else "archived_at IS NULL"
 
         # Total count
         if status:
-            cursor.execute("SELECT COUNT(*) FROM job_queue WHERE status = ?", (status,))
+            cursor.execute(
+                f"SELECT COUNT(*) FROM job_queue WHERE status = ? AND {archive_cond}",
+                (status,)
+            )
         else:
-            cursor.execute("SELECT COUNT(*) FROM job_queue")
+            cursor.execute(f"SELECT COUNT(*) FROM job_queue WHERE {archive_cond}")
         total = cursor.fetchone()[0]
 
         # Fetch page
+        cols = """id, file_path, status, phase_completed, priority,
+                  error_message, retry_count, created_at, started_at, completed_at,
+                  work_request_id, worker_session_id"""
         if status:
             cursor.execute(
-                """SELECT id, file_path, status, phase_completed, priority,
-                          error_message, retry_count, created_at, started_at, completed_at
-                   FROM job_queue
-                   WHERE status = ?
-                   ORDER BY created_at DESC
-                   LIMIT ? OFFSET ?""",
+                f"""SELECT {cols} FROM job_queue
+                    WHERE status = ? AND {archive_cond}
+                    ORDER BY created_at DESC LIMIT ? OFFSET ?""",
                 (status, limit, offset)
             )
         else:
             cursor.execute(
-                """SELECT id, file_path, status, phase_completed, priority,
-                          error_message, retry_count, created_at, started_at, completed_at
-                   FROM job_queue
-                   ORDER BY created_at DESC
-                   LIMIT ? OFFSET ?""",
+                f"""SELECT {cols} FROM job_queue
+                    WHERE {archive_cond}
+                    ORDER BY created_at DESC LIMIT ? OFFSET ?""",
                 (limit, offset)
             )
         jobs = [
@@ -1277,9 +1295,130 @@ class JobQueueManager:
                 "created_at": row[7],
                 "started_at": row[8],
                 "completed_at": row[9],
+                "work_request_id": row[10],
+                "worker_session_id": row[11],
             }
             for row in cursor.fetchall()
         ]
+        return {"jobs": jobs, "total": total}
+
+    # ── Archive / History methods ────────────────────────────────
+
+    def archive_jobs(self, job_ids: List[int]) -> int:
+        """Archive specific jobs (soft delete from active queue)."""
+        if not job_ids:
+            return 0
+        cursor = self.db.conn.cursor()
+        placeholders = ",".join("?" for _ in job_ids)
+        cursor.execute(
+            f"UPDATE job_queue SET archived_at = datetime('now') "
+            f"WHERE id IN ({placeholders}) AND archived_at IS NULL "
+            f"AND status IN ('completed', 'failed', 'cancelled')",
+            job_ids
+        )
+        self.db.conn.commit()
+        return cursor.rowcount
+
+    def archive_completed_jobs(self) -> int:
+        """Archive all completed jobs."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "UPDATE job_queue SET archived_at = datetime('now') "
+            "WHERE status = 'completed' AND archived_at IS NULL"
+        )
+        self.db.conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.info(f"Archived {count} completed jobs")
+        return count
+
+    def list_history_sessions(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """List work_requests as history sessions with aggregated stats."""
+        cursor = self.db.conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM work_requests")
+        total = cursor.fetchone()[0]
+
+        cursor.execute(
+            """SELECT wr.id, wr.name, wr.source_path, wr.status,
+                      wr.total_files, wr.completed_count, wr.failed_count,
+                      wr.created_at, wr.started_at, wr.completed_at
+               FROM work_requests wr
+               ORDER BY wr.created_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset)
+        )
+        sessions = []
+        for row in cursor.fetchall():
+            sessions.append({
+                "id": row[0],
+                "name": row[1],
+                "source_path": row[2],
+                "status": row[3],
+                "total_files": row[4],
+                "completed_count": row[5],
+                "failed_count": row[6],
+                "created_at": row[7],
+                "started_at": row[8],
+                "completed_at": row[9],
+            })
+        return {"sessions": sessions, "total": total}
+
+    def list_history_jobs(self, work_request_id: Optional[int] = None,
+                          status_filter: Optional[str] = None,
+                          limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """List job history for a specific work_request (includes archived)."""
+        cursor = self.db.conn.cursor()
+        conditions = []
+        params = []
+
+        if work_request_id is not None:
+            conditions.append("jq.work_request_id = ?")
+            params.append(work_request_id)
+        else:
+            conditions.append("jq.work_request_id IS NULL")
+
+        if status_filter:
+            conditions.append("jq.status = ?")
+            params.append(status_filter)
+
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+        cursor.execute(
+            f"SELECT COUNT(*) FROM job_queue jq {where}", params
+        )
+        total = cursor.fetchone()[0]
+
+        cursor.execute(
+            f"""SELECT jq.id, jq.file_path, jq.status, jq.phase_completed,
+                       jq.error_message, jq.error_code, jq.retry_count,
+                       jq.created_at, jq.started_at, jq.completed_at,
+                       jq.worker_session_id, jq.archived_at,
+                       ws.worker_name
+                FROM job_queue jq
+                LEFT JOIN worker_sessions ws ON ws.id = jq.worker_session_id
+                {where}
+                ORDER BY jq.created_at DESC
+                LIMIT ? OFFSET ?""",
+            params + [limit, offset]
+        )
+        jobs = []
+        for row in cursor.fetchall():
+            jobs.append({
+                "job_id": row[0],
+                "file_path": row[1],
+                "status": row[2],
+                "phase_completed": json.loads(row[3] or "{}"),
+                "error_message": row[4],
+                "error_code": row[5],
+                "retry_count": row[6],
+                "created_at": row[7],
+                "started_at": row[8],
+                "completed_at": row[9],
+                "worker_session_id": row[10],
+                "archived_at": row[11],
+                "worker_name": row[12],
+            })
         return {"jobs": jobs, "total": total}
 
     def cancel_job(self, job_id: int) -> bool:
@@ -1804,17 +1943,16 @@ class JobQueueManager:
         }
 
     def clear_completed_jobs(self) -> int:
-        """Delete any remaining completed jobs (legacy cleanup).
-
-        In the new design, completed jobs are deleted immediately.
-        This method handles any legacy completed jobs still in queue.
-        """
+        """Archive completed jobs (soft delete — moves them to history only)."""
         cursor = self.db.conn.cursor()
-        cursor.execute("DELETE FROM job_queue WHERE status = 'completed'")
+        cursor.execute(
+            "UPDATE job_queue SET archived_at = datetime('now') "
+            "WHERE status = 'completed' AND archived_at IS NULL"
+        )
         self.db.conn.commit()
         count = cursor.rowcount
         if count > 0:
-            logger.info(f"Cleared {count} legacy completed jobs")
+            logger.info(f"Archived {count} completed jobs")
         return count
 
     def cleanup_queue(self) -> Dict[str, int]:
@@ -1834,11 +1972,8 @@ class JobQueueManager:
         removed_dangling = 0
         removed_complete = 0
 
-        # 1. Legacy completed/failed jobs (should not exist anymore)
-        cursor.execute(
-            "DELETE FROM job_queue WHERE status IN ('completed', 'failed', 'cancelled')"
-        )
-        removed_legacy = cursor.rowcount
+        # 1. Completed/failed/cancelled jobs are now kept for history — skip legacy cleanup
+        removed_legacy = 0
 
         # 2. Duplicate pending jobs (keep only latest per file_id)
         cursor.execute("""
@@ -1930,15 +2065,16 @@ class JobQueueManager:
         file_ids = [r[0] for r in cursor.fetchall()]
 
         if not file_ids:
-            # Also cleanup any legacy failed jobs still in queue
+            # Archive any non-archived failed/cancelled jobs
             cursor.execute(
-                "DELETE FROM job_queue WHERE status IN ('failed', 'cancelled')"
+                "UPDATE job_queue SET archived_at = datetime('now') "
+                "WHERE status IN ('failed', 'cancelled') AND archived_at IS NULL"
             )
-            legacy_cleaned = cursor.rowcount
+            archived = cursor.rowcount
             self.db.conn.commit()
-            if legacy_cleaned > 0:
-                logger.info(f"Cleaned {legacy_cleaned} legacy failed/cancelled jobs from queue")
-            return {"dismissed_jobs": legacy_cleaned, "cleaned_files": 0}
+            if archived > 0:
+                logger.info(f"Archived {archived} failed/cancelled jobs")
+            return {"dismissed_jobs": archived, "cleaned_files": 0}
 
         # Clean up file records and their data
         cleaned_files = 0
@@ -1966,7 +2102,11 @@ class JobQueueManager:
             cursor.execute("DELETE FROM vec_files WHERE file_id = ?", (fid,))
             cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (fid,))
             cursor.execute("DELETE FROM files_fts WHERE rowid = ?", (fid,))
-            cursor.execute("DELETE FROM job_queue WHERE file_id = ?", (fid,))
+            # Archive job history instead of deleting
+            cursor.execute(
+                "UPDATE job_queue SET archived_at = datetime('now') "
+                "WHERE file_id = ? AND archived_at IS NULL", (fid,)
+            )
             cursor.execute("DELETE FROM files WHERE id = ?", (fid,))
             cleaned_files += 1
 

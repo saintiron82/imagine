@@ -1194,6 +1194,7 @@ class SqliteVectorSearch:
         return_diagnostic: bool = False,
         use_codex: bool = True,
         file_ids: Optional[set] = None,
+        progress_callback: Optional[callable] = None,
     ) -> List[Dict[str, Any]]:
         """
         3-axis search: Vector + FTS5 + User Filters with RRF merge.
@@ -1224,7 +1225,11 @@ class SqliteVectorSearch:
             "user_filters": filters,
         }
 
+        # Progress callback helper
+        _progress = progress_callback or (lambda stage: None)
+
         # Step 1: Decompose query → unified schema {scope, find, exclude}
+        _progress("decompose")
         t0 = time.perf_counter()
         decomposer = QueryDecomposer(use_codex=use_codex)
         unified = decomposer.decompose(query)
@@ -1290,6 +1295,7 @@ class SqliteVectorSearch:
         candidate_k = top_k * candidate_mul
 
         # Step 2: VV vector search (cache embedding for post-merge enrichment)
+        _progress("visual")
         # Step 2: VV vector search
         vector_results = []
         v_query_embedding = None
@@ -1319,6 +1325,7 @@ class SqliteVectorSearch:
             ],
         }
 
+        _progress("semantic")
         # Step 2b: MV text vector search
         text_vec_results = []
         t_query_embedding = None
@@ -1349,6 +1356,7 @@ class SqliteVectorSearch:
             ],
         }
 
+        _progress("keyword")
         # Step 3: FTS FTS5 search
         fts_results = []
         t0 = time.perf_counter()
@@ -1395,6 +1403,7 @@ class SqliteVectorSearch:
                     "mv_filtered": len(text_vec_results),
                 }
 
+        _progress("ranking")
         # Step 4: 3-axis RRF merge (V + T + F)
         t0 = time.perf_counter()
         # Build rank lookup before merge for diagnostic
@@ -2688,6 +2697,7 @@ class SqliteVectorSearch:
         query_file_id: Optional[int] = None,
         use_codex: bool = True,
         file_ids: Optional[set] = None,
+        progress_callback: Optional[callable] = None,
     ):
         """
         Unified search interface (compatibility with VectorSearcher).
@@ -2775,7 +2785,7 @@ class SqliteVectorSearch:
         elif mode == "fts":
             return self.fts_search([query], top_k)
         elif mode == "triaxis":
-            return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic, use_codex=use_codex, file_ids=file_ids)
+            return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic, use_codex=use_codex, file_ids=file_ids, progress_callback=progress_callback)
         elif mode == "plan":
             return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic)
         else:

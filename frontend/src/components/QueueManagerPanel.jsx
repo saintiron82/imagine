@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, RotateCcw, Trash2, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
+import { X, RotateCcw, Trash2, Archive, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
-import { listJobs, cancelJob, retryFailedJobs, forceRetryFailedJobs, clearCompletedJobs } from '../api/admin';
+import { listJobs, cancelJob, retryFailedJobs, forceRetryFailedJobs, clearCompletedJobs, archiveJobs } from '../api/admin';
 
 const PAGE_SIZE = 20;
 
@@ -127,6 +127,14 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
     } catch { /* ignore */ }
   };
 
+  const handleArchive = async (jobId) => {
+    try {
+      await archiveJobs([jobId]);
+      fetchJobs();
+      onRefresh?.();
+    } catch { /* ignore */ }
+  };
+
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const from = total > 0 ? page * PAGE_SIZE + 1 : 0;
   const to = Math.min((page + 1) * PAGE_SIZE, total);
@@ -186,8 +194,8 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
               onClick={handleClearCompleted}
               className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-gray-700/50 text-gray-400 hover:bg-gray-600/50 hover:text-gray-300 transition-colors"
             >
-              <Trash2 size={10} />
-              {t('queue.action_clear_completed')}
+              <Archive size={10} />
+              {t('queue.action_archive_completed')}
             </button>
           )}
         </div>
@@ -251,6 +259,15 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
                           title={t('queue.action_retry')}
                         >
                           <RotateCcw size={12} />
+                        </button>
+                      )}
+                      {(job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') && (
+                        <button
+                          onClick={() => handleArchive(job.job_id)}
+                          className="p-0.5 rounded hover:bg-gray-600/40 text-gray-500 hover:text-gray-300 transition-colors"
+                          title={t('queue.action_archive')}
+                        >
+                          <Archive size={12} />
                         </button>
                       )}
                     </div>

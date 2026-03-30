@@ -136,7 +136,10 @@ CREATE TABLE IF NOT EXISTS job_queue (
 
     -- Timestamps
     created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now')),
+
+    -- Soft delete for history (NULL = active in queue, NOT NULL = archived)
+    archived_at TEXT DEFAULT NULL
 );
 
 -- ═══════════════════════════════════════════════════════════════
@@ -161,6 +164,8 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
     ON job_queue(parse_status, priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed
     ON job_queue(mc_completed_at);
+CREATE INDEX IF NOT EXISTS idx_job_queue_archived
+    ON job_queue(archived_at);
 
 -- Prevent duplicate active jobs for the same file
 CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_file_id_active
@@ -227,3 +232,22 @@ CREATE TABLE IF NOT EXISTS work_subtasks (
 
 CREATE INDEX IF NOT EXISTS idx_work_subtasks_wr ON work_subtasks(work_request_id);
 CREATE INDEX IF NOT EXISTS idx_job_queue_work_request ON job_queue(work_request_id);
+
+-- ═══════════════════════════════════════════════════════════════
+-- Search Logs
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS search_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'triaxis',       -- triaxis/vector/text_vector/fts
+    result_count INTEGER DEFAULT 0,
+    elapsed_ms INTEGER DEFAULT 0,
+    username TEXT,
+    ip_address TEXT,
+    filters TEXT,                                -- JSON
+    threshold REAL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_search_logs_created ON search_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_search_logs_user ON search_logs(username);

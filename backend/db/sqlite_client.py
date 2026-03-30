@@ -145,6 +145,8 @@ class SQLiteDB:
                 self._migrate_members_table()
                 self._migrate_drop_fts_update_trigger()
                 self._migrate_job_queue_unique_file_id()
+                self._migrate_job_queue_archived_at()
+                self._migrate_search_logs()
             else:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
@@ -711,6 +713,57 @@ class SQLiteDB:
             self.conn.commit()
         except Exception:
             pass  # Index may already exist
+
+    def _migrate_job_queue_archived_at(self):
+        """Add archived_at column for job history soft delete."""
+        if not self._table_exists('job_queue'):
+            return
+        try:
+            self.conn.execute("SELECT archived_at FROM job_queue LIMIT 1")
+        except Exception:
+            logger.info("Migrating: adding archived_at to job_queue...")
+            self.conn.execute(
+                "ALTER TABLE job_queue ADD COLUMN archived_at TEXT DEFAULT NULL"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_queue_archived "
+                "ON job_queue(archived_at)"
+            )
+            self.conn.commit()
+            logger.info("archived_at column added to job_queue")
+
+    def _migrate_search_logs(self):
+        """Create search_logs table for search request tracking."""
+        if self._table_exists('search_logs'):
+            return
+        try:
+            logger.info("Migrating: creating search_logs table...")
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS search_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT NOT NULL,
+                    mode TEXT NOT NULL DEFAULT 'triaxis',
+                    result_count INTEGER DEFAULT 0,
+                    elapsed_ms INTEGER DEFAULT 0,
+                    username TEXT,
+                    ip_address TEXT,
+                    filters TEXT,
+                    threshold REAL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_search_logs_created "
+                "ON search_logs(created_at)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_search_logs_user "
+                "ON search_logs(username)"
+            )
+            self.conn.commit()
+            logger.info("search_logs table created")
+        except Exception as e:
+            logger.warning(f"search_logs migration failed: {e}")
 
     def _get_system_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Fetch a value from system_meta."""
