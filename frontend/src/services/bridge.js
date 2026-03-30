@@ -11,7 +11,7 @@ import { apiClient, isElectron, getServerUrl, getAccessToken } from '../api/clie
 // ── Mode management ──────────────────────────────────────────
 // Electron server mode → IPC (local Python backend)
 // Electron client mode / Web → HTTP API (remote server)
-let _useLocalBackend = isElectron; // safe default: existing behavior
+let _useLocalBackend = false; // Only true when explicitly set to 'server' mode
 
 /**
  * Set whether bridge functions should use local IPC backend.
