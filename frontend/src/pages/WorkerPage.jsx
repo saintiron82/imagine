@@ -558,6 +558,12 @@ function WorkerPage({ appMode }) {
   const [workerStatus, setWorkerStatus] = useState('idle'); // idle | running | stopping | error
   const [logs, setLogs] = useState([]);
   const [currentJobs, setCurrentJobs] = useState([]);
+  const [processingMode, setProcessingMode] = useState(null); // mc/vv/mv/parse_thumb/full
+  const [myCompleted, setMyCompleted] = useState(0);
+  const [myFailed, setMyFailed] = useState(0);
+  const [currentFile, setCurrentFile] = useState('');
+  const [batchProgress, setBatchProgress] = useState(null); // {index, count, phase}
+  const startTimeRef = useRef(null);
   const logEndRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -615,17 +621,38 @@ function WorkerPage({ appMode }) {
     };
     const onLog = (data) => addLog(data.message, data.type);
     const onJobDone = (data) => {
-      addLog(`Completed: ${data.file_name || data.file_path}`, 'success');
+      if (data.success !== false) {
+        setMyCompleted(prev => prev + 1);
+      } else {
+        setMyFailed(prev => prev + 1);
+      }
+      setCurrentFile('');
+    };
+    const onBatchFileDone = (data) => {
+      setCurrentFile(data.file_name || '');
+      setBatchProgress({ index: data.index, count: data.count, phase: data.phase });
+      if (data.success) {
+        setMyCompleted(prev => prev + 1);
+      } else {
+        setMyFailed(prev => prev + 1);
+      }
+    };
+    const onMode = (data) => {
+      setProcessingMode(data.mode);
     };
 
     w.onStatus?.(onStatus);
     w.onLog?.(onLog);
     w.onJobDone?.(onJobDone);
+    w.onBatchFileDone?.(onBatchFileDone);
+    w.onProcessingMode?.(onMode);
 
     return () => {
       w.offStatus?.();
       w.offLog?.();
       w.offJobDone?.();
+      w.offBatchFileDone?.();
+      w.offProcessingMode?.();
     };
   }, [addLog]);
 
@@ -652,6 +679,9 @@ function WorkerPage({ appMode }) {
           return;
         }
         setWorkerStatus('running');
+        setMyCompleted(0);
+        setMyFailed(0);
+        startTimeRef.current = Date.now();
         addLog(t('worker.connecting'), 'info');
       } catch (e) {
         addLog(e.message, 'error');
@@ -789,30 +819,70 @@ function WorkerPage({ appMode }) {
         {/* Connect My PC (server mode only) */}
         {appMode === 'server' && <ConnectMyPC />}
 
-        {/* Queue Stats */}
+        {/* My Worker Status */}
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <h3 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
-            <RefreshCw size={14} className={stats ? '' : 'animate-spin'} />
-            {t('worker.queue_stats')}
+            <Activity size={14} />
+            {t('worker.my_status')}
           </h3>
-          {stats ? (
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
-              {[
-                { key: 'pending', value: stats.pending, color: 'text-yellow-400' },
-                { key: 'assigned', value: stats.assigned, color: 'text-blue-400' },
-                { key: 'processing', value: stats.processing, color: 'text-cyan-400' },
-                { key: 'completed', value: stats.completed, color: 'text-green-400' },
-                { key: 'failed', value: stats.failed, color: 'text-red-400' },
-                { key: 'total', value: stats.total, color: 'text-gray-300' },
-              ].map(({ key, value, color }) => (
-                <div key={key} className="text-center">
-                  <div className={`text-lg font-bold ${color}`}>{value ?? 0}</div>
-                  <div className="text-xs text-gray-500">{t(`admin.queue_${key}`)}</div>
-                </div>
-              ))}
+
+          {/* Role badge */}
+          {processingMode && (
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs text-gray-500">{t('worker.assigned_role')}:</span>
+              <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                processingMode === 'mc' ? 'bg-purple-900/50 text-purple-300' :
+                processingMode === 'vv' ? 'bg-blue-900/50 text-blue-300' :
+                processingMode === 'mv' ? 'bg-green-900/50 text-green-300' :
+                processingMode === 'parse_thumb' ? 'bg-sky-900/50 text-sky-300' :
+                'bg-gray-700 text-gray-300'
+              }`}>
+                {processingMode === 'mc' ? 'MC (VLM Caption)' :
+                 processingMode === 'vv' ? 'VV (SigLIP2 Visual)' :
+                 processingMode === 'mv' ? 'MV (Text Embedding)' :
+                 processingMode === 'parse_thumb' ? 'Parse + Thumbnail' :
+                 processingMode}
+              </span>
             </div>
-          ) : (
-            <div className="text-sm text-gray-500">{t('status.loading')}</div>
+          )}
+
+          {/* Stats grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="text-center">
+              <div className="text-lg font-bold text-green-400">{myCompleted}</div>
+              <div className="text-xs text-gray-500">{t('worker.completed')}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-bold text-red-400">{myFailed}</div>
+              <div className="text-xs text-gray-500">{t('worker.failed')}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-bold text-cyan-400">
+                {startTimeRef.current && myCompleted > 0
+                  ? ((myCompleted / ((Date.now() - startTimeRef.current) / 60000)).toFixed(1))
+                  : '—'}
+              </div>
+              <div className="text-xs text-gray-500">files/min</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-bold text-gray-300">
+                {startTimeRef.current
+                  ? `${Math.floor((Date.now() - startTimeRef.current) / 60000)}m`
+                  : '—'}
+              </div>
+              <div className="text-xs text-gray-500">{t('worker.uptime')}</div>
+            </div>
+          </div>
+
+          {/* Current file */}
+          {currentFile && (
+            <div className="mt-3 flex items-center gap-2 text-xs">
+              <Loader2 size={12} className="animate-spin text-blue-400" />
+              <span className="text-gray-400 truncate">
+                {batchProgress ? `[${batchProgress.index}/${batchProgress.count}] ` : ''}
+                {currentFile}
+              </span>
+            </div>
           )}
         </div>
 

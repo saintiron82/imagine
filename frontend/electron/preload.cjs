@@ -28,9 +28,13 @@ contextBridge.exposeInMainWorld('electron', {
         onStatus: (cb) => { ipcRenderer.removeAllListeners('worker-status'); ipcRenderer.on('worker-status', (_, d) => cb(d)); },
         onLog: (cb) => { ipcRenderer.removeAllListeners('worker-log'); ipcRenderer.on('worker-log', (_, d) => cb(d)); },
         onJobDone: (cb) => { ipcRenderer.removeAllListeners('worker-job-done'); ipcRenderer.on('worker-job-done', (_, d) => cb(d)); },
+        onBatchFileDone: (cb) => { ipcRenderer.removeAllListeners('worker-batch-file-done'); ipcRenderer.on('worker-batch-file-done', (_, d) => cb(d)); },
+        onProcessingMode: (cb) => { ipcRenderer.removeAllListeners('worker-processing-mode'); ipcRenderer.on('worker-processing-mode', (_, d) => cb(d)); },
         offStatus: () => ipcRenderer.removeAllListeners('worker-status'),
         offLog: () => ipcRenderer.removeAllListeners('worker-log'),
         offJobDone: () => ipcRenderer.removeAllListeners('worker-job-done'),
+        offBatchFileDone: () => ipcRenderer.removeAllListeners('worker-batch-file-done'),
+        offProcessingMode: () => ipcRenderer.removeAllListeners('worker-processing-mode'),
     },
     fs: {
         // Get Home Directory

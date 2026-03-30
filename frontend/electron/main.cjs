@@ -776,6 +776,7 @@ function processWorkerOutput(line) {
         else if (event === 'batch_file_done') sendWorkerEvent('worker-batch-file-done', parsed);
         else if (event === 'batch_phase_complete') sendWorkerEvent('worker-batch-phase-complete', parsed);
         else if (event === 'batch_complete') sendWorkerEvent('worker-batch-complete', parsed);
+        else if (event === 'processing_mode') sendWorkerEvent('worker-processing-mode', parsed);
     } catch {
         writeLog('WARN', '[Worker] unparseable:', line.substring(0, 200));
     }
