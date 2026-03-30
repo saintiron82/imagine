@@ -17,7 +17,7 @@ export default function FactoryPage({
   queueReloadSignal,
 }) {
   const { t } = useLocale();
-  const [activeTab, setActiveTab] = useState('pipeline');
+  const [activeTab, setActiveTab] = useState(isAdmin ? 'pipeline' : 'workers');
   const [stats, setStats] = useState(null);
 
   // Fetch queue stats for summary bar
@@ -44,17 +44,18 @@ export default function FactoryPage({
   const completed = stats?.completed ?? 0;
   const failed = stats?.failed ?? 0;
 
-  const tabs = [
-    { id: 'pipeline', label: t('factory.tab_pipeline'), icon: Monitor },
-    { id: 'workers', label: t('factory.tab_workers'), icon: Server },
-    { id: 'dashboard', label: t('factory.tab_dashboard'), icon: BarChart3 },
-    { id: 'logs', label: t('factory.tab_logs'), icon: FileText },
+  const allTabs = [
+    { id: 'pipeline', label: t('factory.tab_pipeline'), icon: Monitor, adminOnly: true },
+    { id: 'workers', label: t('factory.tab_workers'), icon: Server, adminOnly: false },
+    { id: 'dashboard', label: t('factory.tab_dashboard'), icon: BarChart3, adminOnly: true },
+    { id: 'logs', label: t('factory.tab_logs'), icon: FileText, adminOnly: true },
   ];
+  const tabs = isAdmin ? allTabs : allTabs.filter(tab => !tab.adminOnly);
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white">
-      {/* Summary bar with live stats */}
-      <div className="px-4 py-2.5 bg-gray-800 border-b border-gray-700">
+      {/* Summary bar with live stats — admin only */}
+      {isAdmin && <div className="px-4 py-2.5 bg-gray-800 border-b border-gray-700">
         <div className="flex items-center gap-4 text-sm">
           <span className="text-gray-400">
             {t('factory.summary_pending')}:{' '}
@@ -95,7 +96,7 @@ export default function FactoryPage({
             <RefreshCw size={12} />
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* Sub-tabs */}
       <div className="flex overflow-x-auto border-b border-gray-700 px-4 pt-2">
