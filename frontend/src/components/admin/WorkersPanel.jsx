@@ -404,100 +404,108 @@ export default function WorkersPanel() {
       {/* Pipeline phase dashboard */}
       {onlineCount > 0 && (
         <div className="mb-4 space-y-3">
-          {/* Top row: speed + workers + completed */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
-              <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_total_speed')}</div>
-              <div className="text-xl font-bold text-emerald-400 font-mono">
-                {totalThroughput > 0 ? totalThroughput.toFixed(1) : '-'}
-                {totalThroughput > 0 && <span className="text-xs font-normal text-emerald-400/60 ml-1">{t('admin.queue_files_per_min')}</span>}
-              </div>
-            </div>
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
-              <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_online_count')}</div>
-              <div className="text-xl font-bold text-green-400 font-mono">{onlineCount}</div>
-            </div>
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
-              <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_total_completed')}</div>
-              <div className="text-xl font-bold text-blue-400 font-mono">{totalCompleted}</div>
-            </div>
-          </div>
-
-          {/* Pipeline overview: progress + speed + ETA + phase flow */}
+          {/* System performance dashboard */}
           {queueStats && (() => {
             const s = queueStats;
-            const total = s.total || 1;
+            const total = s.total || 0;
             const done = s.completed || 0;
             const failed = s.failed || 0;
             const pct = total > 0 ? ((done / total) * 100).toFixed(1) : 0;
             const speed = s.throughput || 0;
             const eta = s.eta_seconds;
-            const etaStr = eta ? (eta >= 3600 ? `${Math.floor(eta/3600)}h ${Math.floor((eta%3600)/60)}m` : `${Math.floor(eta/60)}m`) : '-';
+            const etaStr = eta ? (eta >= 3600 ? `${Math.floor(eta/3600)}h ${Math.floor((eta%3600)/60)}m` : `${Math.floor(eta/60)}m`) : null;
+            // Per-file average: if speed > 0, seconds per file
+            const secPerFile = speed > 0 ? Math.round(60 / speed) : null;
 
-            // Find bottleneck: phase with most pending
             const phases = [
-              { name: 'Download', pending: s.download_waiting || 0, color: 'yellow' },
+              { name: 'Download', pending: s.download_waiting || 0, color: 'yellow', speed: null },
               { name: 'Parse', pending: s.parse_pending || 0, color: 'sky', speed: s.parse_throughput },
               { name: 'MC', pending: s.mc_pending || 0, color: 'purple', speed: s.mc_throughput },
               { name: 'VV', pending: s.vv_pending || 0, color: 'blue', speed: s.vv_throughput },
               { name: 'MV', pending: s.mv_pending || 0, color: 'green', speed: s.mv_throughput },
             ];
-            const bottleneck = phases.reduce((a, b) => a.pending > b.pending ? a : b);
+            const bottleneck = phases.filter(p => p.pending > 0).reduce((a, b) => a.pending > b.pending ? a : b, phases[0]);
 
             return (
               <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
-                {/* Row 1: Progress bar + speed + ETA */}
-                <div className="flex items-center gap-4">
+                {/* Row 1: Key metrics — progress, speed, ETA, workers */}
+                <div className="flex items-center gap-6">
+                  {/* Progress */}
                   <div className="flex-1">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm text-white font-medium">{done} / {total}</span>
+                    <div className="flex items-baseline gap-2 mb-1">
+                      <span className="text-lg font-bold text-white font-mono">{done}<span className="text-gray-500 text-sm">/{total}</span></span>
                       <span className="text-sm text-gray-400">{pct}%</span>
+                      {failed > 0 && <span className="text-xs text-red-400">{failed} fail</span>}
                     </div>
-                    <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                        style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className={`text-lg font-bold font-mono ${speed > 0 ? 'text-emerald-400' : 'text-gray-500'}`}>
-                      {speed > 0 ? speed.toFixed(1) : '-'} <span className="text-xs font-normal text-gray-500">/min</span>
-                    </div>
-                    <div className="text-xs text-gray-400">
-                      ETA <span className={`font-mono ${eta ? 'text-white' : 'text-gray-500'}`}>{etaStr}</span>
+                    <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${pct}%`, background: failed > 0 ? 'linear-gradient(90deg, #10b981, #10b981 90%, #ef4444)' : '#10b981' }} />
                     </div>
                   </div>
-                  {failed > 0 && (
-                    <div className="text-right shrink-0">
-                      <div className="text-lg font-bold font-mono text-red-400">{failed}</div>
-                      <div className="text-xs text-red-400/60">fail</div>
+
+                  {/* Speed */}
+                  <div className="text-center shrink-0">
+                    <div className={`text-2xl font-bold font-mono ${speed > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>
+                      {speed > 0 ? speed.toFixed(1) : '-'}
                     </div>
-                  )}
+                    <div className="text-[10px] text-gray-500">files/min</div>
+                  </div>
+
+                  {/* Per-file time */}
+                  <div className="text-center shrink-0">
+                    <div className={`text-2xl font-bold font-mono ${secPerFile ? 'text-amber-400' : 'text-gray-600'}`}>
+                      {secPerFile ? (secPerFile >= 60 ? `${Math.floor(secPerFile/60)}m${secPerFile%60}s` : `${secPerFile}s`) : '-'}
+                    </div>
+                    <div className="text-[10px] text-gray-500">/file</div>
+                  </div>
+
+                  {/* ETA */}
+                  <div className="text-center shrink-0">
+                    <div className={`text-2xl font-bold font-mono ${etaStr ? 'text-white' : 'text-gray-600'}`}>
+                      {etaStr || '-'}
+                    </div>
+                    <div className="text-[10px] text-gray-500">ETA</div>
+                  </div>
+
+                  {/* Workers */}
+                  <div className="text-center shrink-0">
+                    <div className="text-2xl font-bold font-mono text-green-400">{onlineCount}</div>
+                    <div className="text-[10px] text-gray-500">workers</div>
+                  </div>
                 </div>
 
-                {/* Row 2: Phase flow with pending counts + speeds */}
-                <div className="flex items-center">
-                  {phases.map((p, i) => (
-                    <div key={p.name} className="flex items-center flex-1">
-                      <div className={`flex-1 text-center px-1 py-1.5 rounded ${p === bottleneck && p.pending > 0 ? `bg-${p.color}-900/30 border border-${p.color}-700/50` : ''}`}>
-                        <div className={`text-[10px] ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-600'} mb-0.5`}>
-                          {p.name}
+                {/* Row 2: Phase pipeline — pending + speed + bottleneck */}
+                <div className="flex items-stretch gap-0.5">
+                  {phases.map((p, i) => {
+                    const isBn = p === bottleneck && p.pending > 0;
+                    const phaseSpeed = p.speed;
+                    const phaseSecPer = phaseSpeed > 0 ? Math.round(60 / phaseSpeed) : null;
+                    return (
+                      <div key={p.name} className="flex items-center flex-1">
+                        <div className={`flex-1 text-center py-2 rounded ${
+                          isBn ? 'bg-red-900/20 border border-red-700/50' : 'bg-gray-750'
+                        }`}>
+                          <div className="flex items-center justify-center gap-1 mb-0.5">
+                            <span className={`text-[10px] font-medium ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-600'}`}>{p.name}</span>
+                            {isBn && <span className="text-[8px] text-red-400">bottleneck</span>}
+                          </div>
+                          <div className={`text-lg font-bold font-mono ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-700'}`}>
+                            {p.pending}
+                          </div>
+                          {phaseSpeed > 0 && (
+                            <div className="text-[9px] text-gray-400 font-mono">
+                              {phaseSpeed}/m {phaseSecPer && <span className="text-gray-500">· {phaseSecPer}s</span>}
+                            </div>
+                          )}
                         </div>
-                        <div className={`text-base font-bold font-mono ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-600'}`}>
-                          {p.pending}
-                        </div>
-                        {p.speed > 0 && (
-                          <div className="text-[9px] text-gray-500 font-mono">{p.speed}/m</div>
-                        )}
+                        {i < phases.length - 1 && <span className="text-gray-700 mx-0.5 text-xs">→</span>}
                       </div>
-                      {i < phases.length - 1 && <span className="text-gray-700 mx-0.5">→</span>}
-                    </div>
-                  ))}
-                  <div className="flex items-center flex-1">
-                    <span className="text-gray-700 mx-0.5">→</span>
-                    <div className="flex-1 text-center">
-                      <div className="text-[10px] text-gray-500 mb-0.5">Done</div>
-                      <div className="text-base font-bold font-mono text-emerald-400">{done}</div>
-                    </div>
+                    );
+                  })}
+                  <span className="text-gray-700 mx-0.5 text-xs self-center">→</span>
+                  <div className="text-center py-2 flex-1">
+                    <div className="text-[10px] text-emerald-400/60 mb-0.5">Done</div>
+                    <div className="text-lg font-bold font-mono text-emerald-400">{done}</div>
                   </div>
                 </div>
               </div>
