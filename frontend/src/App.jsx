@@ -1755,16 +1755,8 @@ function App() {
         <div className="flex-1 flex flex-col bg-gray-900 relative">
           {/* Content Area */}
           <div className="flex-1 overflow-hidden">
-            {currentTab === 'download' && !isElectron ? (
-              <DownloadPage onBack={() => setCurrentTab('search')} />
-            ) : currentTab === 'settings' ? (
-              <SettingsPage
-                onScanFolder={handleScanFolders}
-                isBusy={isProcessing || isDiscovering}
-              />
-            ) : currentTab === 'admin' && isAdmin ? (
-              <AdminPage />
-            ) : currentTab === 'search' ? (
+            {/* SearchPanel always mounted — hidden via CSS to preserve state across tab switches */}
+            <div className={currentTab === 'search' ? 'contents' : 'hidden'}>
               <SearchPanel
                 onScanFolder={handleScanFolders}
                 isBusy={isProcessing || isDiscovering}
@@ -1774,6 +1766,16 @@ function App() {
                 onOpenSettings={() => setCurrentTab('settings')}
                 onNavigateToFolder={handleNavigateToFolder}
               />
+            </div>
+            {currentTab === 'download' && !isElectron ? (
+              <DownloadPage onBack={() => setCurrentTab('search')} />
+            ) : currentTab === 'settings' ? (
+              <SettingsPage
+                onScanFolder={handleScanFolders}
+                isBusy={isProcessing || isDiscovering}
+              />
+            ) : currentTab === 'admin' && isAdmin ? (
+              <AdminPage />
             ) : currentTab === 'archiving' && isAdmin ? (
               <ArchivingPage
                 currentPath={currentPath}
