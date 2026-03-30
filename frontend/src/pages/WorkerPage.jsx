@@ -819,66 +819,73 @@ function WorkerPage({ appMode }) {
         {/* Connect My PC (server mode only) */}
         {appMode === 'server' && <ConnectMyPC />}
 
-        {/* My Worker Status */}
+        {/* My Worker Status — all phases with active highlight */}
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-          <h3 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
-            <Activity size={14} />
-            {t('worker.my_status')}
-          </h3>
-
-          {/* Role badge */}
-          {processingMode && (
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-xs text-gray-500">{t('worker.assigned_role')}:</span>
-              <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                processingMode === 'mc' ? 'bg-purple-900/50 text-purple-300' :
-                processingMode === 'vv' ? 'bg-blue-900/50 text-blue-300' :
-                processingMode === 'mv' ? 'bg-green-900/50 text-green-300' :
-                processingMode === 'parse_thumb' ? 'bg-sky-900/50 text-sky-300' :
-                'bg-gray-700 text-gray-300'
-              }`}>
-                {processingMode === 'mc' ? 'MC (VLM Caption)' :
-                 processingMode === 'vv' ? 'VV (SigLIP2 Visual)' :
-                 processingMode === 'mv' ? 'MV (Text Embedding)' :
-                 processingMode === 'parse_thumb' ? 'Parse + Thumbnail' :
-                 processingMode}
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-gray-300 flex items-center gap-2">
+              <Activity size={14} />
+              {t('worker.my_status')}
+            </h3>
+            {startTimeRef.current && (
+              <span className="text-[11px] text-gray-500">
+                {Math.floor((Date.now() - startTimeRef.current) / 60000)}m {t('worker.uptime')}
               </span>
-            </div>
-          )}
-
-          {/* Stats grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="text-center">
-              <div className="text-lg font-bold text-green-400">{myCompleted}</div>
-              <div className="text-xs text-gray-500">{t('worker.completed')}</div>
-            </div>
-            <div className="text-center">
-              <div className="text-lg font-bold text-red-400">{myFailed}</div>
-              <div className="text-xs text-gray-500">{t('worker.failed')}</div>
-            </div>
-            <div className="text-center">
-              <div className="text-lg font-bold text-cyan-400">
-                {startTimeRef.current && myCompleted > 0
-                  ? ((myCompleted / ((Date.now() - startTimeRef.current) / 60000)).toFixed(1))
-                  : '—'}
-              </div>
-              <div className="text-xs text-gray-500">files/min</div>
-            </div>
-            <div className="text-center">
-              <div className="text-lg font-bold text-gray-300">
-                {startTimeRef.current
-                  ? `${Math.floor((Date.now() - startTimeRef.current) / 60000)}m`
-                  : '—'}
-              </div>
-              <div className="text-xs text-gray-500">{t('worker.uptime')}</div>
-            </div>
+            )}
           </div>
 
-          {/* Current file */}
+          {/* Phase cards — all phases shown, active one highlighted */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { id: 'parse_thumb', label: 'Parse', color: 'sky', icon: '📄' },
+              { id: 'mc', label: 'MC', color: 'purple', icon: '🧠' },
+              { id: 'vv', label: 'VV', color: 'blue', icon: '👁' },
+              { id: 'mv', label: 'MV', color: 'green', icon: '📝' },
+            ].map(phase => {
+              const isActive = processingMode === phase.id;
+              return (
+                <div
+                  key={phase.id}
+                  className={`rounded-lg p-3 border transition-all ${
+                    isActive
+                      ? `border-${phase.color}-500/60 bg-${phase.color}-500/10 ring-1 ring-${phase.color}-500/30`
+                      : 'border-gray-700/50 bg-gray-900/30 opacity-40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-xs font-bold ${isActive ? `text-${phase.color}-300` : 'text-gray-500'}`}>
+                      {phase.icon} {phase.label}
+                    </span>
+                    {isActive && (
+                      <span className={`w-2 h-2 rounded-full bg-${phase.color}-400 animate-pulse`} />
+                    )}
+                  </div>
+                  {isActive ? (
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-bold text-white">{myCompleted}</span>
+                        {myFailed > 0 && (
+                          <span className="text-xs text-red-400">+{myFailed} fail</span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-gray-400 mt-0.5">
+                        {startTimeRef.current && myCompleted > 0
+                          ? `${(myCompleted / ((Date.now() - startTimeRef.current) / 60000)).toFixed(1)} files/min`
+                          : 'starting...'}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-600">—</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Current file progress */}
           {currentFile && (
-            <div className="mt-3 flex items-center gap-2 text-xs">
-              <Loader2 size={12} className="animate-spin text-blue-400" />
-              <span className="text-gray-400 truncate">
+            <div className="mt-3 flex items-center gap-2 px-1">
+              <Loader2 size={12} className="animate-spin text-blue-400 shrink-0" />
+              <span className="text-xs text-gray-400 truncate">
                 {batchProgress ? `[${batchProgress.index}/${batchProgress.count}] ` : ''}
                 {currentFile}
               </span>
