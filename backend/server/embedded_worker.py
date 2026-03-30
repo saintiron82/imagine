@@ -82,13 +82,35 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         _worker_daemon._heartbeat()
                         last_heartbeat = now
 
-                    # Embedded worker reads its chunk size from server config
+                    # 1. Decide mode FIRST (determines batch size)
+                    try:
+                        from backend.server.queue.manager import JobQueueManager
+                        from backend.db.sqlite_client import SQLiteDB
+                        _qdb = SQLiteDB()
+                        _qm = JobQueueManager(_qdb)
+                        mode = _qm._decide_worker_mode(_worker_daemon.session_id)
+                        _worker_daemon.processing_mode = mode
+                        # Phase-appropriate batch size (time-based)
+                        chunk = _qm.get_phase_batch_size(mode) if mode not in ("idle", "full") else 5
+                    except Exception:
+                        _worker_daemon.processing_mode = "full"
+                        mode = "full"
+                        chunk = 5
+
+                    if mode == "idle":
+                        time.sleep(10)
+                        continue
+
+                    # 2. Cap by server config max
                     try:
                         from backend.utils.config import get_config
-                        chunk = get_config().get("server.auto_processing.batch_size", 5)
+                        max_chunk = get_config().get("server.auto_processing.batch_size", 20)
+                        chunk = min(chunk, max_chunk)
                     except Exception:
-                        chunk = 5
+                        chunk = min(chunk, 20)
                     _worker_daemon.batch_capacity = chunk
+
+                    # 3. Claim jobs
                     jobs = _worker_daemon.claim_jobs_count(chunk)
 
                     if not jobs:
@@ -101,19 +123,6 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         continue
 
                     consecutive_empty = 0
-
-                    # Decide which phase to focus on using unified logic.
-                    # Same _decide_worker_mode() as external workers,
-                    # with 50-job min batch and model switching rules.
-                    try:
-                        from backend.server.queue.manager import JobQueueManager
-                        from backend.db.sqlite_client import SQLiteDB
-                        _qdb = SQLiteDB()
-                        _qm = JobQueueManager(_qdb)
-                        mode = _qm._decide_worker_mode(_worker_daemon.session_id)
-                        _worker_daemon.processing_mode = mode
-                    except Exception:
-                        _worker_daemon.processing_mode = "full"
 
                     # Batch processing with dynamically chosen mode
                     try:
