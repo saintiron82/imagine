@@ -341,17 +341,46 @@ class JobQueueManager:
                        "OR wr.status NOT IN ('paused', 'cancelled'))")
         _WR_ORDER = "ORDER BY jq.priority DESC, jq.created_at ASC"
 
-        # Claim pre-parsed jobs filtered by worker's processing mode.
-        # Each worker type claims only the jobs matching its single role.
-        _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
-                 AND jq.parse_status = 'parsed'
-                 {_WR_FILTER}"""
+        # Claim jobs filtered by worker's processing mode.
         _BASE_SELECT = f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
                FROM job_queue jq
                LEFT JOIN work_requests wr ON jq.work_request_id = wr.id"""
 
+        # parse_thumb workers claim unparsed jobs (file_ready=1 but not yet parsed)
+        if processing_mode == "parse_thumb":
+            _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
+                     AND (jq.parse_status IS NULL OR jq.parse_status = 'pending')
+                     {_WR_FILTER}"""
+            phase_filter = ""  # No phase filter — these jobs haven't been parsed yet
+
+            cursor.execute(
+                f"""{_BASE_SELECT}
+                   WHERE {_BASE_WHERE}
+                   {_WR_ORDER}
+                   LIMIT ?""",
+                (count,)
+            )
+            rows = list(cursor.fetchall())
+
+            # Mark claimed jobs as parse_status='parsing' to prevent ParseAheadPool conflict
+            for r in rows:
+                cursor.execute(
+                    "UPDATE job_queue SET parse_status = 'parsing' WHERE id = ? AND parse_status IN (NULL, 'pending')",
+                    (r[0],)
+                )
+
+            vision_done_ids = set()
+            # Skip the normal claim logic below — go directly to assignment
+        else:
+            # All other modes: claim pre-parsed jobs only
+            _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
+                     AND jq.parse_status = 'parsed'
+                     {_WR_FILTER}"""
+
         # Build phase filter based on worker mode
-        if processing_mode == "mc" or processing_mode == "mc_only":
+        if processing_mode == "parse_thumb":
+            pass  # Already handled above
+        elif processing_mode == "mc" or processing_mode == "mc_only":
             # MC worker: needs jobs where MC is not done yet
             phase_filter = """AND (json_extract(jq.phase_completed, '$.mc') IS NULL
                               OR json_extract(jq.phase_completed, '$.mc') = 0)"""
@@ -382,28 +411,29 @@ class JobQueueManager:
                               OR json_extract(jq.phase_completed, '$.mv') IS NULL
                               OR json_extract(jq.phase_completed, '$.mv') = 0)"""
 
-        cursor.execute(
-            f"""{_BASE_SELECT}
-               WHERE {_BASE_WHERE}
-                 {phase_filter}
-               {_WR_ORDER}
-               LIMIT ?""",
-            (count,)
-        )
-        rows = list(cursor.fetchall())
+        if processing_mode != "parse_thumb":
+            cursor.execute(
+                f"""{_BASE_SELECT}
+                   WHERE {_BASE_WHERE}
+                     {phase_filter}
+                   {_WR_ORDER}
+                   LIMIT ?""",
+                (count,)
+            )
+            rows = list(cursor.fetchall())
 
-        # Track which jobs already have MC done (for vision_data prefetch)
-        vision_done_ids = set()
-        for r in rows:
-            try:
-                pm = json.loads(r[4]) if r[4] else {}
-                pc = pm.get("phase_completed", {})
-                if isinstance(pc, str):
-                    pc = json.loads(pc)
-                if pc.get("mc") or pc.get("vision"):
-                    vision_done_ids.add(r[0])
-            except (json.JSONDecodeError, TypeError):
-                pass
+            # Track which jobs already have MC done (for vision_data prefetch)
+            vision_done_ids = set()
+            for r in rows:
+                try:
+                    pm = json.loads(r[4]) if r[4] else {}
+                    pc = pm.get("phase_completed", {})
+                    if isinstance(pc, str):
+                        pc = json.loads(pc)
+                    if pc.get("mc") or pc.get("vision"):
+                        vision_done_ids.add(r[0])
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         # Signal demand to ParseAheadPool BEFORE early return.
         # Uses requested count (not actual claimed count) — represents
@@ -1075,6 +1105,16 @@ class JobQueueManager:
     def get_phase_stats(self) -> Dict[str, int]:
         """Get pending job counts per phase for embedded worker scheduling."""
         cursor = self.db.conn.cursor()
+
+        # Parse pending: file ready but not yet parsed
+        cursor.execute("""
+            SELECT COUNT(*) FROM job_queue
+            WHERE status = 'pending' AND file_ready = 1
+              AND (parse_status IS NULL OR parse_status = 'pending')
+        """)
+        parse_pending = cursor.fetchone()[0] or 0
+
+        # MC/VV/MV pending: parsed but AI phases incomplete
         cursor.execute("""
             SELECT
                 COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') IS NULL
@@ -1090,6 +1130,7 @@ class JobQueueManager:
         """)
         row = cursor.fetchone()
         return {
+            "parse_pending": parse_pending,
             "mc_pending": row[0] or 0,
             "vv_pending": row[1] or 0,
             "mv_pending": row[2] or 0,

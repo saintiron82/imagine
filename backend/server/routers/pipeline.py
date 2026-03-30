@@ -450,6 +450,69 @@ def complete_mv(
     return {"success": True, "file_id": stored_file_id}
 
 
+@router.patch("/api/v1/jobs/{job_id}/complete_parse")
+def complete_parse(
+    job_id: int,
+    req: JobCompleteRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """parse_thumb worker: upload parse results (metadata + thumbnail) to server.
+
+    Worker has downloaded the file, parsed it, generated a thumbnail,
+    and now uploads the results. Server stores metadata in files table
+    and marks parse phase complete in job_queue.
+    """
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT file_id, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
+        (job_id, user["id"])
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
+
+    file_id, file_path = row
+    file_path = unicodedata.normalize('NFC', file_path)
+
+    meta = req.metadata or {}
+    meta["file_path"] = file_path
+
+    # Upsert metadata to files table
+    stored_file_id = db.upsert_metadata(file_path, meta)
+
+    # Build mc_raw context for downstream MC workers
+    from backend.pipeline.ingest_engine import _build_mc_raw, _set_tier_metadata
+    from backend.parser.schema import AssetMeta
+
+    asset_meta = AssetMeta()
+    for k, v in meta.items():
+        if hasattr(asset_meta, k):
+            setattr(asset_meta, k, v)
+    _set_tier_metadata(asset_meta)
+    mc_raw = _build_mc_raw(asset_meta)
+
+    # Store parsed_metadata in job_queue
+    parsed_metadata = {
+        "metadata": meta,
+        "thumb_path": meta.get("thumbnail_url"),
+        "mc_raw": mc_raw,
+    }
+    cursor.execute(
+        """UPDATE job_queue
+           SET parse_status = 'parsed', file_ready = 1,
+               parsed_metadata = ?,
+               phase_completed = json_set(COALESCE(phase_completed, '{}'), '$.parse', json('true')),
+               parsed_at = datetime('now')
+           WHERE id = ?""",
+        (json.dumps(parsed_metadata, ensure_ascii=False, default=str), job_id)
+    )
+    db.conn.commit()
+
+    logger.info(f"Parse job {job_id} completed by worker {user['username']}: {file_path}")
+    return {"success": True, "file_id": stored_file_id}
+
+
 # ── Discover: Browse & Scan server filesystem ────────────────
 
 SUPPORTED_EXTENSIONS = {'.psd', '.png', '.jpg', '.jpeg'}

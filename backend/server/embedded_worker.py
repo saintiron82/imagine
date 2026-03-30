@@ -112,17 +112,23 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         _qm = JobQueueManager(_qdb)
                         phase_stats = _qm.get_phase_stats()
 
-                        # Pick the most backed-up phase
+                        # Pick the most backed-up phase (including parse)
+                        parse_p = phase_stats.get("parse_pending", 0)
                         mc_p = phase_stats.get("mc_pending", 0)
                         vv_p = phase_stats.get("vv_pending", 0)
                         mv_p = phase_stats.get("mv_pending", 0)
 
-                        if mc_p >= vv_p and mc_p >= mv_p and mc_p > 0:
-                            _worker_daemon.processing_mode = "mc"
-                        elif vv_p >= mv_p and vv_p > 0:
-                            _worker_daemon.processing_mode = "vv"
-                        elif mv_p > 0:
-                            _worker_daemon.processing_mode = "mv"
+                        candidates = [
+                            ("parse_thumb", parse_p),
+                            ("mc", mc_p),
+                            ("vv", vv_p),
+                            ("mv", mv_p),
+                        ]
+                        candidates.sort(key=lambda x: x[1], reverse=True)
+                        best_mode, best_count = candidates[0]
+
+                        if best_count > 0:
+                            _worker_daemon.processing_mode = best_mode
                         else:
                             _worker_daemon.processing_mode = "full"
                     except Exception:

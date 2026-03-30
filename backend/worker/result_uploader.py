@@ -141,6 +141,30 @@ class ResultUploader:
             logger.error(f"MC-only job {job_id} request failed: {e}")
             return False
 
+    def complete_parse(self, job_id: int, metadata: dict, thumbnail_path: str = None) -> bool:
+        """parse_thumb mode: upload parse results + thumbnail to server."""
+        try:
+            # 1. Upload metadata
+            resp = self.session.patch(
+                f"{self.base}/api/v1/jobs/{job_id}/complete_parse",
+                json={"metadata": metadata},
+            )
+            if resp.status_code != 200:
+                logger.error(f"Parse job {job_id} metadata upload failed: {resp.status_code} {resp.text}")
+                return False
+
+            # 2. Upload thumbnail if available
+            if thumbnail_path:
+                file_id = metadata.get("file_id") or resp.json().get("file_id")
+                if file_id:
+                    self.upload_thumbnail(file_id, thumbnail_path)
+
+            logger.info(f"Parse job {job_id} completed successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Parse job {job_id} request failed: {e}")
+            return False
+
     def complete_vv(self, job_id: int, vv_vec) -> bool:
         """VV-only mode: upload single VV vector."""
         try:

@@ -1033,6 +1033,9 @@ class WorkerDaemon:
         Returns:
             List of (job_id, success) tuples.
         """
+        if self.processing_mode == "parse_thumb":
+            return self._process_batch_parse_thumb(jobs, progress_callback)
+
         if self.processing_mode in ("mc_only", "mc"):
             return self._process_batch_mc_only(jobs, progress_callback)
 
@@ -1763,7 +1766,92 @@ class WorkerDaemon:
         self._try_empty_gpu_cache()
         logger.info("VLM unloaded")
 
-    # ── Single-Role Processing: VV-only and MV-only ────────────
+    # ── Single-Role Processing: parse_thumb, VV-only, MV-only ──
+
+    def _process_batch_parse_thumb(self, jobs: list, progress_callback=None) -> list:
+        """parse_thumb mode: download file → parse → thumbnail → upload results to server.
+
+        No GPU required. CPU-only workers can do this.
+        Server stores the metadata + thumbnail; downstream mc/vv/mv workers use the results.
+        """
+        from backend.pipeline.ingest_engine import ParserFactory, _set_tier_metadata, _build_mc_raw
+        from backend.utils.content_hash import compute_content_hash
+        from backend.utils.meta_helpers import meta_to_dict
+
+        _notify = lambda cb, evt, data: cb(evt, data) if cb else None
+
+        results = []
+        _notify(progress_callback, "batch_phase_start", {"phase": "parse", "count": len(jobs)})
+
+        for idx, job in enumerate(jobs):
+            job_id = job["job_id"]
+            file_path = job.get("file_path", "")
+            file_name = Path(file_path).name
+
+            try:
+                # 1. Resolve file (download if remote, local path if shared_fs)
+                local_path = self._resolve_file(job)
+                if not local_path or not Path(local_path).exists():
+                    self.uploader.fail_job(job_id, f"File not accessible: {file_path}")
+                    results.append((job_id, False))
+                    continue
+
+                file_p = Path(local_path)
+
+                # 2. Parse
+                parser = ParserFactory.get_parser(file_p)
+                if not parser:
+                    self.uploader.fail_job(job_id, f"No parser for: {file_name}")
+                    results.append((job_id, False))
+                    continue
+
+                parse_result = parser.parse(file_p)
+                if not parse_result.success:
+                    self.uploader.fail_job(job_id, f"Parse failed: {parse_result.errors}")
+                    results.append((job_id, False))
+                    continue
+
+                meta = parse_result.asset_meta
+
+                # 3. Content hash
+                try:
+                    meta.content_hash = compute_content_hash(file_p)
+                except Exception:
+                    pass
+
+                # 4. Folder metadata
+                parent = file_p.parent
+                if parent.name and parent.name not in (".", ""):
+                    meta.folder_path = parent.name
+                    meta.folder_depth = 0
+                    meta.folder_tags = [parent.name]
+
+                # 5. Tier metadata
+                _set_tier_metadata(meta)
+
+                # 6. Upload results to server
+                meta_dict = meta_to_dict(meta)
+                meta_dict["file_path"] = file_path  # Use original path (not temp local)
+
+                thumb_path = meta.thumbnail_url if meta.thumbnail_url else None
+                ok = self.uploader.complete_parse(job_id, meta_dict, thumb_path)
+                results.append((job_id, ok))
+
+                _notify(progress_callback, "batch_file_done", {
+                    "phase": "parse",
+                    "file_name": file_name,
+                    "index": idx + 1,
+                    "count": len(jobs),
+                    "success": ok,
+                })
+
+            except Exception as e:
+                logger.error(f"parse_thumb job {job_id} failed: {e}")
+                self.uploader.fail_job(job_id, str(e))
+                results.append((job_id, False))
+
+        _notify(progress_callback, "batch_phase_complete", {"phase": "parse", "count": len(jobs)})
+        return results
 
     def _process_batch_vv_only(self, jobs: list, progress_callback=None) -> list:
         """VV-only mode: SigLIP2 stays loaded, generates visual vectors only."""
