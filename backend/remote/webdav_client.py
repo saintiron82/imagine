@@ -5,7 +5,6 @@ Synology NAS WebDAV Server compatible.
 """
 
 import logging
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import List, Optional
@@ -67,9 +66,11 @@ class WebDAVClient:
         encoded = '/'.join(quote(p, safe='') for p in parts)
         return f"{self.base_url}{encoded}"
 
-    def _nfc(self, text: str) -> str:
+    @staticmethod
+    def _nfc(text: str) -> str:
         """Normalize Unicode to NFC (for Korean filenames)."""
-        return unicodedata.normalize('NFC', text)
+        from backend.utils.path_utils import nfc_path
+        return nfc_path(text)
 
     def test_connection(self) -> dict:
         """

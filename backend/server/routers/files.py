@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
 from backend.server.auth.jwt import decode_access_token
+from backend.utils.thumbnail_resolver import resolve_thumbnail
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +250,7 @@ def get_thumbnail(
     file_name = row[1]
 
     # Resolve thumbnail path
-    resolved = _resolve_thumbnail(thumb_path, file_name)
+    resolved = resolve_thumbnail(thumb_path, file_name, _PROJECT_ROOT)
     if not resolved:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
@@ -258,28 +259,6 @@ def get_thumbnail(
 
 # Project root for resolving relative paths
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-
-
-def _resolve_thumbnail(thumb_path: Optional[str], file_name: Optional[str]) -> Optional[Path]:
-    """Resolve thumbnail path: try DB value, then infer from file name."""
-    # 1) Try DB thumbnail_url (may be relative or absolute)
-    if thumb_path:
-        p = Path(thumb_path)
-        if p.is_absolute() and p.exists():
-            return p
-        # Relative → resolve from project root
-        resolved = _PROJECT_ROOT / thumb_path
-        if resolved.exists():
-            return resolved
-
-    # 2) Infer from file_name: {stem}_thumb.png in output/thumbnails/
-    if file_name:
-        stem = Path(file_name).stem
-        inferred = _PROJECT_ROOT / "output" / "thumbnails" / f"{stem}_thumb.png"
-        if inferred.exists():
-            return inferred
-
-    return None
 
 
 @router.get("/{file_id}/download")

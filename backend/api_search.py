@@ -45,6 +45,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.search.sqlite_search import SqliteVectorSearch
 from backend.db.sqlite_client import SQLiteDB
+from backend.utils.thumbnail_resolver import resolve_thumbnail_str
+from backend.search.search_logger import log_search as _log_search
 
 # Suppress noisy logs from libraries during search
 logging.basicConfig(level=logging.WARNING)
@@ -52,26 +54,6 @@ logger = logging.getLogger(__name__)
 
 # Persistent searcher instance (models loaded once, reused across requests)
 _searcher: SqliteVectorSearch = None
-_log_db: SQLiteDB = None
-
-
-def _log_search_local(query: str, mode: str, result_count: int, elapsed_ms: int,
-                      filters: dict = None, threshold: float = None):
-    """Log search request for Electron (local) mode."""
-    global _log_db
-    try:
-        if _log_db is None:
-            _log_db = SQLiteDB()
-        _log_db.conn.execute(
-            """INSERT INTO search_logs
-               (query, mode, result_count, elapsed_ms, username, filters, threshold)
-               VALUES (?, ?, ?, ?, 'local', ?, ?)""",
-            (query[:500], mode, result_count, elapsed_ms,
-             json.dumps(filters) if filters else None, threshold)
-        )
-        _log_db.conn.commit()
-    except Exception:
-        pass
 
 
 def _candidate_roots() -> List[Path]:
@@ -146,21 +128,6 @@ def _get_searcher() -> SqliteVectorSearch:
     return _searcher
 
 
-def _resolve_thumbnail_path(result: dict) -> str:
-    """Resolve thumbnail path: DB value or infer from file_name on disk."""
-    thumb = result.get("thumbnail_url") or ""
-    if thumb:
-        return thumb
-    # Infer from file_name: output/thumbnails/{stem}_thumb.png
-    file_name = result.get("file_name", "")
-    if file_name:
-        stem = Path(file_name).stem
-        inferred = _PROJECT_ROOT / "output" / "thumbnails" / f"{stem}_thumb.png"
-        if inferred.exists():
-            return str(inferred)
-    return ""
-
-
 # Project root for thumbnail inference
 _PROJECT_ROOT = Path(__file__).parent.parent
 
@@ -184,7 +151,7 @@ def format_result(result: dict, skip_fs: bool = False) -> dict:
         # Electron local mode: resolve paths on disk
         resolved_path = _resolve_local_path(result)
         path_exists = bool(resolved_path and Path(resolved_path).exists())
-        thumb_path = _resolve_thumbnail_path(result)
+        thumb_path = resolve_thumbnail_str(result, _PROJECT_ROOT)
 
     # Lightweight result for search grid — no heavy metadata/layer_tree.
     # Full metadata is loaded on demand via getFileDetail().
@@ -291,7 +258,8 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
             query_text = query_text or f"[image_search:{len(query_images)} images]"
         elif query_image:
             query_text = query_text or "[image_search]"
-        _log_search_local(query_text, mode, len(formatted), elapsed_ms, filters, threshold)
+        _log_search(query_text, mode, len(formatted), elapsed_ms,
+                    username='local', filters=filters, threshold=threshold)
 
         return response
 

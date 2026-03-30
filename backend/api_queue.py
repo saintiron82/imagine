@@ -23,6 +23,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.queue.manager import JobQueueManager
 
+# Module-level singleton to avoid repeated SQLiteDB() construction
+_db = None
+
+
+def _get_db() -> SQLiteDB:
+    global _db
+    if _db is None:
+        _db = SQLiteDB()
+    return _db
+
 
 def _extract_folder_from_path(fpath):
     """Extract folder_path/folder_depth/folder_tags from file_path.
@@ -63,7 +73,7 @@ def _extract_folder_from_path(fpath):
 def register_paths(file_paths, priority=0):
     """Register file paths and create processing jobs."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         cursor = db.conn.cursor()
 
@@ -87,7 +97,6 @@ def register_paths(file_paths, priority=0):
 
         db.conn.commit()
         jobs_created = queue.create_jobs(file_ids, registered_paths, priority) if file_ids else 0
-        db.close()
 
         return {
             "success": True,
@@ -116,7 +125,7 @@ def scan_folder(folder_path, priority=0, webdav_configs=None):
         if not discovered:
             return {"success": True, "discovered": 0, "jobs_created": 0, "skipped": 0}
 
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         cursor = db.conn.cursor()
 
@@ -161,8 +170,6 @@ def scan_folder(folder_path, priority=0, webdav_configs=None):
             jobs_created = result.get("jobs_created", 0)
         else:
             jobs_created = 0
-
-        db.close()
 
         return {
             "success": True,
@@ -271,7 +278,7 @@ def scan_folders(folder_paths, priority=0, webdav_configs=None):
         from backend.pipeline.ingest_engine import discover_files
         from collections import defaultdict
 
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         cursor = db.conn.cursor()
 
@@ -347,8 +354,6 @@ def scan_folders(folder_paths, priority=0, webdav_configs=None):
         else:
             jobs_created = 0
 
-        db.close()
-
         return {
             "success": True,
             "discovered": total_discovered,
@@ -363,10 +368,9 @@ def scan_folders(folder_paths, priority=0, webdav_configs=None):
 def get_stats():
     """Get job queue statistics."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         stats = queue.get_stats()
-        db.close()
         return {"success": True, **stats}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -375,10 +379,9 @@ def get_stats():
 def list_jobs(status=None, limit=50, offset=0):
     """List jobs with optional filtering and pagination."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         result = queue.list_jobs(status=status, limit=limit, offset=offset)
-        db.close()
         return {"success": True, **result}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -387,10 +390,9 @@ def list_jobs(status=None, limit=50, offset=0):
 def cancel_job(job_id):
     """Cancel a job."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         success = queue.cancel_job(job_id)
-        db.close()
         return {"success": success}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -399,10 +401,9 @@ def cancel_job(job_id):
 def retry_failed():
     """Retry all failed jobs."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         count = queue.retry_failed_jobs()
-        db.close()
         return {"success": True, "retried": count}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -411,10 +412,9 @@ def retry_failed():
 def clear_completed():
     """Clear all completed jobs."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         count = queue.clear_completed_jobs()
-        db.close()
         return {"success": True, "deleted": count}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -423,10 +423,9 @@ def clear_completed():
 def list_work_requests(include_completed=False):
     """List work requests."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         wrs = queue.get_work_requests(include_completed)
-        db.close()
         return {"success": True, "work_requests": wrs}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -435,10 +434,9 @@ def list_work_requests(include_completed=False):
 def get_work_request_detail(wr_id):
     """Get work request detail with subtasks."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         detail = queue.get_work_request_detail(wr_id)
-        db.close()
         if detail is None:
             return {"success": False, "error": "Work request not found"}
         return {"success": True, **detail}
@@ -449,10 +447,9 @@ def get_work_request_detail(wr_id):
 def pause_work_request(wr_id):
     """Pause a work request."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         ok = queue.pause_work_request(wr_id)
-        db.close()
         return {"success": ok}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -461,10 +458,9 @@ def pause_work_request(wr_id):
 def resume_work_request(wr_id):
     """Resume a paused work request."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         ok = queue.resume_work_request(wr_id)
-        db.close()
         return {"success": ok}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -473,10 +469,9 @@ def resume_work_request(wr_id):
 def cancel_work_request(wr_id):
     """Cancel a work request and its pending jobs."""
     try:
-        db = SQLiteDB()
+        db = _get_db()
         queue = JobQueueManager(db)
         result = queue.cancel_work_request(wr_id)
-        db.close()
         return {"success": True, **result}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -490,7 +485,7 @@ def backfill_folders():
     - Local files with existing folder info: skip
     """
     try:
-        db = SQLiteDB()
+        db = _get_db()
         cursor = db.conn.cursor()
         # All files: recalculate folder_path from file_path
         # (previous logic may have stored incomplete paths)
@@ -508,7 +503,6 @@ def backfill_folders():
                 db._refresh_fts_row(cursor, file_id)
                 updated += 1
         db.conn.commit()
-        db.close()
         return {"success": True, "updated": updated, "total": len(rows)}
     except Exception as e:
         import traceback

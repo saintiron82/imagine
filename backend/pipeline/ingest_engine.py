@@ -79,9 +79,7 @@ _global_sqlite_db = None
 _global_db_writer = None
 
 
-def _nfc(path) -> str:
-    """Normalize file path to NFC form to prevent macOS NFD/NFC duplicates in DB."""
-    return unicodedata.normalize('NFC', str(path).replace('\\', '/'))
+from backend.utils.path_utils import nfc_path as _nfc
 
 
 def _ensure_sqlite_db():

@@ -17,6 +17,7 @@ from backend.db.sqlite_client import SQLiteDB
 from backend.search.sqlite_search import SqliteVectorSearch
 from backend.server.deps import get_db, get_db_safe, get_current_user
 from backend.api_search import format_result
+from backend.search.search_logger import log_search as _log_search
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,6 @@ router = APIRouter(prefix="/search", tags=["search"])
 
 # Singleton searcher (lazy init, models loaded once)
 _searcher: Optional[SqliteVectorSearch] = None
-_log_db: Optional[SQLiteDB] = None
 
 
 def _get_searcher() -> SqliteVectorSearch:
@@ -32,28 +32,6 @@ def _get_searcher() -> SqliteVectorSearch:
     if _searcher is None:
         _searcher = SqliteVectorSearch()
     return _searcher
-
-
-def _log_search(query: str, mode: str, result_count: int, elapsed_ms: int,
-                username: str = None, ip_address: str = None,
-                filters: dict = None, threshold: float = None):
-    """Record search request to search_logs table (fire-and-forget)."""
-    global _log_db
-    try:
-        if _log_db is None:
-            _log_db = SQLiteDB()
-        _log_db.conn.execute(
-            """INSERT INTO search_logs
-               (query, mode, result_count, elapsed_ms, username, ip_address, filters, threshold)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (query[:500], mode, result_count, elapsed_ms,
-             username, ip_address,
-             json.dumps(filters) if filters else None,
-             threshold)
-        )
-        _log_db.conn.commit()
-    except Exception as e:
-        logger.debug(f"Failed to log search: {e}")
 
 
 # ── Request schemas ──────────────────────────────────────────
