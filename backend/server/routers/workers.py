@@ -258,9 +258,11 @@ def worker_connect(
     if req.resources:
         auto_mode = _auto_detect_mode_from_resources(req.resources)
         if auto_mode:
+            # Store as initial assigned_mode, NOT override (override = admin manual only)
             cursor.execute(
                 """UPDATE worker_sessions
-                   SET processing_mode_override = ?, resources_json = ?
+                   SET assigned_mode = ?, resources_json = ?,
+                       processing_mode_override = NULL
                    WHERE id = ?""",
                 (auto_mode, json.dumps(req.resources), session_id)
             )
