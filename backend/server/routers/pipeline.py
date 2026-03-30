@@ -364,6 +364,92 @@ def complete_embed(
     return {"success": True, "file_id": stored_file_id, "integrity": integrity["valid"]}
 
 
+@router.patch("/api/v1/jobs/{job_id}/complete_vv")
+def complete_vv(
+    job_id: int,
+    req: EmbedCompleteRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """VV-only worker: store VV vector. Job stays processing until MV is also done."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT file_id, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
+        (job_id, user["id"])
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
+
+    file_id, file_path = row
+    file_path = unicodedata.normalize('NFC', file_path)
+
+    cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
+    existing = cursor.fetchone()
+    if existing is None:
+        raise HTTPException(status_code=404, detail="File not found in DB")
+    stored_file_id = existing[0]
+
+    vv_vec = _decode_vector(req.vectors.get("vv"))
+    db.upsert_vectors(stored_file_id, vv_vec=vv_vec)
+
+    # Update phase_completed: mark vv=true
+    queue = _get_queue(db)
+    queue.update_phase(job_id, "vv", True)
+
+    # Check if all phases complete
+    integrity = db.verify_data_integrity(
+        stored_file_id, expect_mc=True, expect_vv=True, expect_mv=True
+    )
+    if integrity["valid"]:
+        queue.complete_job(job_id, user["id"])
+
+    return {"success": True, "file_id": stored_file_id}
+
+
+@router.patch("/api/v1/jobs/{job_id}/complete_mv")
+def complete_mv(
+    job_id: int,
+    req: EmbedCompleteRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """MV-only worker: store MV vector. Job stays processing until VV is also done."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT file_id, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
+        (job_id, user["id"])
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
+
+    file_id, file_path = row
+    file_path = unicodedata.normalize('NFC', file_path)
+
+    cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
+    existing = cursor.fetchone()
+    if existing is None:
+        raise HTTPException(status_code=404, detail="File not found in DB")
+    stored_file_id = existing[0]
+
+    mv_vec = _decode_vector(req.vectors.get("mv"))
+    db.upsert_vectors(stored_file_id, mv_vec=mv_vec)
+
+    # Update phase_completed: mark mv=true
+    queue = _get_queue(db)
+    queue.update_phase(job_id, "mv", True)
+
+    # Check if all phases complete
+    integrity = db.verify_data_integrity(
+        stored_file_id, expect_mc=True, expect_vv=True, expect_mv=True
+    )
+    if integrity["valid"]:
+        queue.complete_job(job_id, user["id"])
+
+    return {"success": True, "file_id": stored_file_id}
+
+
 # ── Discover: Browse & Scan server filesystem ────────────────
 
 SUPPORTED_EXTENSIONS = {'.psd', '.png', '.jpg', '.jpeg'}

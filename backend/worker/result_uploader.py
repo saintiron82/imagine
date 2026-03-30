@@ -141,6 +141,36 @@ class ResultUploader:
             logger.error(f"MC-only job {job_id} request failed: {e}")
             return False
 
+    def complete_vv(self, job_id: int, vv_vec) -> bool:
+        """VV-only mode: upload single VV vector."""
+        try:
+            resp = self.session.patch(
+                f"{self.base}/api/v1/jobs/{job_id}/complete_vv",
+                json={"vectors": {"vv": _encode_vector(vv_vec)}},
+            )
+            if resp.status_code == 200:
+                return True
+            logger.error(f"VV-only job {job_id} failed: {resp.status_code} {resp.text}")
+            return False
+        except Exception as e:
+            logger.error(f"VV-only job {job_id} request failed: {e}")
+            return False
+
+    def complete_mv(self, job_id: int, mv_vec) -> bool:
+        """MV-only mode: upload single MV vector."""
+        try:
+            resp = self.session.patch(
+                f"{self.base}/api/v1/jobs/{job_id}/complete_mv",
+                json={"vectors": {"mv": _encode_vector(mv_vec)}},
+            )
+            if resp.status_code == 200:
+                return True
+            logger.error(f"MV-only job {job_id} failed: {resp.status_code} {resp.text}")
+            return False
+        except Exception as e:
+            logger.error(f"MV-only job {job_id} request failed: {e}")
+            return False
+
     def upload_thumbnail(self, file_id: int, thumb_path: str) -> bool:
         """Upload thumbnail to server (dual storage)."""
         path = Path(thumb_path)

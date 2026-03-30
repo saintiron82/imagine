@@ -1017,8 +1017,14 @@ class WorkerDaemon:
         Returns:
             List of (job_id, success) tuples.
         """
-        if self.processing_mode == "mc_only":
+        if self.processing_mode in ("mc_only", "mc"):
             return self._process_batch_mc_only(jobs, progress_callback)
+
+        if self.processing_mode == "vv":
+            return self._process_batch_vv_only(jobs, progress_callback)
+
+        if self.processing_mode == "mv":
+            return self._process_batch_mv_only(jobs, progress_callback)
 
         if self.processing_mode == "embed_only":
             return self._process_batch_embed_only(jobs, progress_callback)
@@ -1740,6 +1746,132 @@ class WorkerDaemon:
         gc.collect()
         self._try_empty_gpu_cache()
         logger.info("VLM unloaded")
+
+    # ── Single-Role Processing: VV-only and MV-only ────────────
+
+    def _process_batch_vv_only(self, jobs: list, progress_callback=None) -> list:
+        """VV-only mode: SigLIP2 stays loaded, generates visual vectors only."""
+        from backend.vector.siglip2_encoder import SigLIP2Encoder
+        from PIL import Image as PILImage
+
+        _notify = lambda cb, evt, data: cb(evt, data) if cb else None
+
+        results = []
+        active = []
+        for job in jobs:
+            file_id = job.get("file_id")
+            thumb = self._resolve_thumbnail(job)
+            if not thumb:
+                self.uploader.fail_job(job["job_id"], "Thumbnail not available")
+                results.append((job["job_id"], False))
+                continue
+            active.append({"job": job, "thumb": thumb})
+
+        if not active:
+            return results
+
+        _notify(progress_callback, "batch_phase_start", {"phase": "embed_vv", "count": len(active)})
+
+        # SigLIP2 stays loaded across batches (class-level singleton)
+        if WorkerDaemon._vv_encoder is None:
+            WorkerDaemon._vv_encoder = SigLIP2Encoder()
+
+        vv_batch = 8
+        for i in range(0, len(active), vv_batch):
+            chunk = active[i:i + vv_batch]
+            images = []
+            for ctx in chunk:
+                img = PILImage.open(ctx["thumb"]).convert("RGB")
+                images.append(img)
+
+            vv_vectors = WorkerDaemon._vv_encoder.encode_image_batch(images)
+
+            for ctx, vec in zip(chunk, vv_vectors):
+                job_id = ctx["job"]["job_id"]
+                if vec is not None:
+                    ok = self.uploader.complete_vv(job_id, vec)
+                    results.append((job_id, ok))
+                else:
+                    self.uploader.fail_job(job_id, "VV encoding failed")
+                    results.append((job_id, False))
+
+                _notify(progress_callback, "batch_file_done", {
+                    "phase": "embed_vv",
+                    "file_name": Path(ctx["job"].get("file_path", "")).name,
+                    "index": len(results),
+                    "count": len(active),
+                    "success": results[-1][1],
+                })
+
+        # Do NOT unload — SigLIP2 stays resident for next batch
+        _notify(progress_callback, "batch_phase_complete", {"phase": "embed_vv", "count": len(active)})
+        return results
+
+    def _process_batch_mv_only(self, jobs: list, progress_callback=None) -> list:
+        """MV-only mode: Qwen3-Embedding stays loaded, generates meaning vectors only."""
+        from backend.vector.text_embedding import get_text_embedding_provider
+        from backend.search.sqlite_search import build_document_text
+
+        _notify = lambda cb, evt, data: cb(evt, data) if cb else None
+
+        results = []
+        active = []
+        for job in jobs:
+            vision_data = job.get("vision_data", {})
+            mc_caption = vision_data.get("mc_caption", "")
+            if not mc_caption:
+                self.uploader.fail_job(job["job_id"], "No MC caption available for MV")
+                results.append((job["job_id"], False))
+                continue
+            ai_tags = vision_data.get("ai_tags", [])
+            if isinstance(ai_tags, str):
+                try:
+                    ai_tags = json.loads(ai_tags)
+                except (json.JSONDecodeError, TypeError):
+                    ai_tags = []
+            doc_text = build_document_text(mc_caption, ai_tags, facts={
+                "image_type": vision_data.get("image_type", ""),
+                "scene_type": vision_data.get("scene_type", ""),
+                "art_style": vision_data.get("art_style", ""),
+            })
+            active.append({"job": job, "text": doc_text})
+
+        if not active:
+            return results
+
+        _notify(progress_callback, "batch_phase_start", {"phase": "embed_mv", "count": len(active)})
+
+        provider = get_text_embedding_provider()
+        mv_batch = 16
+        for i in range(0, len(active), mv_batch):
+            chunk = active[i:i + mv_batch]
+            texts = [ctx["text"] for ctx in chunk]
+
+            try:
+                vecs = provider.encode_batch(texts)
+            except Exception:
+                vecs = [provider.encode(t) for t in texts]
+
+            for ctx, vec in zip(chunk, vecs):
+                job_id = ctx["job"]["job_id"]
+                if vec is not None:
+                    ok = self.uploader.complete_mv(job_id, vec)
+                    results.append((job_id, ok))
+                else:
+                    self.uploader.fail_job(job_id, "MV encoding failed")
+                    results.append((job_id, False))
+
+                _notify(progress_callback, "batch_file_done", {
+                    "phase": "embed_mv",
+                    "file_name": Path(ctx["job"].get("file_path", "")).name,
+                    "index": len(results),
+                    "count": len(active),
+                    "success": results[-1][1],
+                })
+
+        # Do NOT unload — Qwen3-Embedding stays resident for next batch
+        _notify(progress_callback, "batch_phase_complete", {"phase": "embed_mv", "count": len(active)})
+        return results
 
     def _unload_vv(self):
         """Unload SigLIP2 encoder to free GPU memory."""

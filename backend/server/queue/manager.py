@@ -592,6 +592,21 @@ class JobQueueManager:
         self.db.conn.commit()
         return True
 
+    def update_phase(self, job_id: int, phase: str, value: bool = True):
+        """Update a single phase in phase_completed JSON."""
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT phase_completed FROM job_queue WHERE id = ?", (job_id,))
+        row = cursor.fetchone()
+        if not row:
+            return
+        pc = json.loads(row[0] or "{}")
+        pc[phase] = value
+        cursor.execute(
+            "UPDATE job_queue SET phase_completed = ? WHERE id = ?",
+            (json.dumps(pc), job_id)
+        )
+        self.db.conn.commit()
+
     def complete_job(self, job_id: int, user_id: int) -> bool:
         """Complete a job: cleanup temp files, log completion, DELETE from queue."""
         cursor = self.db.conn.cursor()
