@@ -451,7 +451,11 @@ export default function WorkersPanel() {
                 <td className="px-4 py-3 text-gray-400">{w.worker_name === '__builtin__' ? 'server' : w.username}</td>
                 <td className="px-4 py-3">{stateBadge(w)}</td>
                 <td className="px-4 py-3">
-                  {w.processing_mode_override === 'mc_only' ? (
+                  {w.processing_mode_override === 'parse_thumb' ? (
+                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-sky-900/50 text-sky-400">
+                      Parse+Thumb
+                    </span>
+                  ) : w.processing_mode_override === 'mc_only' ? (
                     <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-900/50 text-amber-400">
                       MC Only
                     </span>

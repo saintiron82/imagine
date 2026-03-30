@@ -13,6 +13,7 @@
   "factory.summary_processing": "처리중",
   "factory.summary_completed": "완료",
   "factory.summary_failed": "실패",
+  "factory.phase_breakdown": "단계별",
   "factory.tab_pipeline": "파이프라인",
   "factory.tab_queue": "큐",
   "factory.tab_workers": "워커",

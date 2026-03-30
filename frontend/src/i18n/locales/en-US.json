@@ -13,6 +13,7 @@
   "factory.summary_processing": "Processing",
   "factory.summary_completed": "Completed",
   "factory.summary_failed": "Failed",
+  "factory.phase_breakdown": "Phase",
   "factory.tab_pipeline": "Pipeline",
   "factory.tab_queue": "Queue",
   "factory.tab_workers": "Workers",

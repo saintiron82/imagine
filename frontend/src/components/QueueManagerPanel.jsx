@@ -15,18 +15,22 @@ const STATUS_COLORS = {
   cancelled: 'bg-gray-800/50 text-gray-400 border-gray-600/50',
 };
 
-function PhaseIndicator({ phaseCompleted }) {
-  const p = phaseCompleted?.parse;
-  const v = phaseCompleted?.vision;
-  const e = phaseCompleted?.embed;
+function PhaseIndicator({ phaseCompleted, parseStatus }) {
+  const parse = phaseCompleted?.parse || parseStatus === 'parsed';
+  const mc = phaseCompleted?.mc || phaseCompleted?.vision;  // backward compat
+  const vv = phaseCompleted?.vv || phaseCompleted?.embed;   // backward compat
+  const mv = phaseCompleted?.mv;
+  const isParsing = parseStatus === 'parsing';
+  const parseFailed = parseStatus === 'failed';
 
   return (
     <div className="flex items-center gap-0.5">
-      <span className={`w-2 h-2 rounded-full ${p ? 'bg-blue-400' : 'bg-gray-600'}`} title="Parse" />
-      <span className={`w-2 h-2 rounded-full ${v ? 'bg-purple-400' : 'bg-gray-600'}`} title="Vision" />
-      <span className={`w-2 h-2 rounded-full ${e ? 'bg-green-400' : 'bg-gray-600'}`} title="Embed" />
+      <span className={`w-2 h-2 rounded-full ${parseFailed ? 'bg-red-400' : parse ? 'bg-sky-400' : 'bg-gray-600'} ${isParsing ? 'animate-pulse' : ''}`} title="Parse" />
+      <span className={`w-2 h-2 rounded-full ${mc ? 'bg-purple-400' : 'bg-gray-600'}`} title="MC" />
+      <span className={`w-2 h-2 rounded-full ${vv ? 'bg-blue-400' : 'bg-gray-600'}`} title="VV" />
+      <span className={`w-2 h-2 rounded-full ${mv ? 'bg-green-400' : 'bg-gray-600'}`} title="MV" />
       <span className="text-[10px] text-gray-500 ml-1">
-        {p && v && e ? 'Done' : p && v ? 'E' : p ? 'V' : ''}
+        {parse && mc && vv && mv ? 'Done' : parse && mc && vv ? 'MV' : parse && mc ? 'VV' : parse ? 'MC' : ''}
       </span>
     </div>
   );
@@ -236,7 +240,7 @@ export default function QueueManagerPanel({ stats, onRefresh }) {
                     </span>
                   </td>
                   <td className="py-1 px-2 text-center">
-                    <PhaseIndicator phaseCompleted={job.phase_completed} />
+                    <PhaseIndicator phaseCompleted={job.phase_completed} parseStatus={job.parse_status} />
                   </td>
                   <td className="py-1 px-2 text-right text-gray-500 text-[10px]">
                     {timeAgo(job.completed_at || job.started_at || job.created_at)}

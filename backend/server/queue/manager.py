@@ -1334,6 +1334,7 @@ class JobQueueManager:
             "download_buffer": download_buffer,
             "server_mode": _get_actual_server_mode(),
             "embedded_worker": _get_embedded_worker_status(),
+            **self.get_phase_stats(),
         }
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0,
@@ -1360,7 +1361,7 @@ class JobQueueManager:
         # Fetch page
         cols = """id, file_path, status, phase_completed, priority,
                   error_message, retry_count, created_at, started_at, completed_at,
-                  work_request_id, worker_session_id"""
+                  work_request_id, worker_session_id, parse_status"""
         if status:
             cursor.execute(
                 f"""SELECT {cols} FROM job_queue
@@ -1389,6 +1390,7 @@ class JobQueueManager:
                 "completed_at": row[9],
                 "work_request_id": row[10],
                 "worker_session_id": row[11],
+                "parse_status": row[12],
             }
             for row in cursor.fetchall()
         ]
