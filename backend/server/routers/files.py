@@ -32,7 +32,7 @@ def _get_user_or_query_token(
     """Auth via header OR ?token= query param (for img src tags)."""
     # 1) Try Authorization header
     if credentials:
-        return get_current_user(credentials, db)
+        return get_current_user(request, credentials, db)
 
     # 2) Try ?token= query param
     token = request.query_params.get("token")

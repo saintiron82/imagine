@@ -114,7 +114,7 @@ class WorkerDaemon:
         # A session-level Content-Type: application/json breaks multipart uploads.
         self.access_token = None
         self.refresh_token = None
-        self.uploader = ResultUploader(self.session, self.server_url)
+        self.uploader = ResultUploader(self.session, self.server_url, authed_request_fn=self._authed_request)
         self.storage_mode = get_storage_mode()
         self.tmp_dir = tempfile.mkdtemp(prefix="imagine_worker_")
 

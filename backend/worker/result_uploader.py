@@ -22,19 +22,28 @@ logger = logging.getLogger(__name__)
 class ResultUploader:
     """Uploads processing results to the Imagine server."""
 
-    def __init__(self, session, server_url: str):
+    def __init__(self, session, server_url: str, authed_request_fn=None):
         """
         Args:
             session: requests.Session with Authorization header set
             server_url: Base URL (e.g. "http://localhost:8000")
+            authed_request_fn: Optional callable(method, url, **kwargs) that
+                handles 401 auto-refresh. If None, uses session directly.
         """
         self.session = session
         self.base = server_url
+        self._authed_request = authed_request_fn
+
+    def _request(self, method: str, url: str, **kwargs):
+        """Make HTTP request with optional auth-retry."""
+        if self._authed_request:
+            return self._authed_request(method, url, **kwargs)
+        return getattr(self.session, method)(url, **kwargs)
 
     def report_progress(self, job_id: int, phase: str) -> bool:
         """Report phase completion (parse/vision/embed)."""
         try:
-            resp = self.session.patch(
+            resp = self._request('patch',
                 f"{self.base}/api/v1/jobs/{job_id}/progress",
                 json={"phase": phase},
             )
@@ -65,7 +74,7 @@ class ResultUploader:
             payload["vectors"] = vectors
 
         try:
-            resp = self.session.patch(
+            resp = self._request('patch',
                 f"{self.base}/api/v1/jobs/{job_id}/complete",
                 json=payload,
             )
@@ -86,7 +95,7 @@ class ResultUploader:
             payload = {"error_message": error_message}
             if error_code:
                 payload["error_code"] = error_code
-            resp = self.session.patch(
+            resp = self._request('patch',
                 f"{self.base}/api/v1/jobs/{job_id}/fail",
                 json=payload,
             )
@@ -107,7 +116,7 @@ class ResultUploader:
             vectors["mv"] = _encode_vector(mv_vec)
 
         try:
-            resp = self.session.patch(
+            resp = self._request('patch',
                 f"{self.base}/api/v1/jobs/{job_id}/complete_embed",
                 json={"vectors": vectors},
             )
@@ -127,7 +136,7 @@ class ResultUploader:
         Server handles VV (ParseAhead) and MV (EmbedAhead) separately.
         """
         try:
-            resp = self.session.patch(
+            resp = self._request('patch',
                 f"{self.base}/api/v1/jobs/{job_id}/complete_mc",
                 json={"vision_fields": vision_fields},
             )
@@ -145,7 +154,7 @@ class ResultUploader:
         """parse_thumb mode: upload parse results + thumbnail to server."""
         try:
             # 1. Upload metadata
-            resp = self.session.patch(
+            resp = self._request('patch',
                 f"{self.base}/api/v1/jobs/{job_id}/complete_parse",
                 json={"metadata": metadata},
             )
@@ -168,7 +177,7 @@ class ResultUploader:
     def complete_vv(self, job_id: int, vv_vec) -> bool:
         """VV-only mode: upload single VV vector."""
         try:
-            resp = self.session.patch(
+            resp = self._request('patch',
                 f"{self.base}/api/v1/jobs/{job_id}/complete_vv",
                 json={"vectors": {"vv": _encode_vector(vv_vec)}},
             )
@@ -183,7 +192,7 @@ class ResultUploader:
     def complete_mv(self, job_id: int, mv_vec) -> bool:
         """MV-only mode: upload single MV vector."""
         try:
-            resp = self.session.patch(
+            resp = self._request('patch',
                 f"{self.base}/api/v1/jobs/{job_id}/complete_mv",
                 json={"vectors": {"mv": _encode_vector(mv_vec)}},
             )
@@ -203,7 +212,7 @@ class ResultUploader:
 
         try:
             with open(path, "rb") as f:
-                resp = self.session.post(
+                resp = self._request('post',
                     f"{self.base}/api/v1/upload/thumbnails/{file_id}",
                     files={"file": (path.name, f, "image/png")},
                 )
@@ -215,7 +224,7 @@ class ResultUploader:
     def download_file(self, file_id: int, dest_dir: str) -> Optional[str]:
         """Download original file from server for processing."""
         try:
-            resp = self.session.get(
+            resp = self._request('get',
                 f"{self.base}/api/v1/upload/download/{file_id}",
                 stream=True,
             )
@@ -248,7 +257,7 @@ class ResultUploader:
     def download_thumbnail(self, file_id: int, dest_dir: str) -> Optional[str]:
         """Download thumbnail only for a pre-parsed job (~200KB instead of ~500MB)."""
         try:
-            resp = self.session.get(
+            resp = self._request('get',
                 f"{self.base}/api/v1/upload/download/thumbnail/{file_id}",
                 stream=True,
             )
