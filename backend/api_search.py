@@ -220,9 +220,15 @@ def format_result(result: dict, skip_fs: bool = False) -> dict:
     return formatted
 
 
-def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None, query_images: list = None, image_search_mode: str = "and", query_file_id: int = None, use_codex: bool = True, file_ids: list = None):
+def _search_progress_callback(stage: str):
+    """Emit search progress event via stdout (Electron IPC)."""
+    _write_response({"event": "search_progress", "stage": stage})
+
+
+def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None, query_images: list = None, image_search_mode: str = "and", query_file_id: int = None, use_codex: bool = True, file_ids: list = None, emit_progress: bool = False):
     """Search SQLite and return JSON results."""
     t_start = time.time()
+    progress_cb = _search_progress_callback if emit_progress else None
     try:
         searcher = _get_searcher()
         # Always request diagnostic to extract scope info for frontend
@@ -235,6 +241,7 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
             query_file_id=query_file_id,
             use_codex=use_codex,
             file_ids=set(file_ids) if file_ids else None,
+            progress_callback=progress_cb,
         )
 
         if isinstance(result_data, tuple):
@@ -346,6 +353,7 @@ def _handle_request(data: dict) -> dict:
         query_file_id=data.get("query_file_id"),
         use_codex=data.get("use_codex", True),
         file_ids=data.get("file_ids"),
+        emit_progress=True,
     )
 
 
