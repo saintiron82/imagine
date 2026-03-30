@@ -197,42 +197,48 @@ class JobQueueManager:
         """
         return get_processing_mode()
 
+    _MIN_PHASE_BATCH = 50  # Minimum jobs before allowing phase switch
+
     def _decide_worker_mode(self, worker_session_id: int) -> str:
         """Dynamically decide optimal mode for a worker based on queue state.
 
         Principles:
-        1. Keep current model loaded (minimize switching) — if current phase still has work, stay
-        2. When current phase is empty, switch to most backed-up phase
-        3. Server (embedded) handles parse/download first; external workers focus on MC
+        1. Keep current model loaded until min batch (50) reached OR queue empty
+        2. After min batch, switch only if another phase is more backed up
+        3. Track assigned_mode + phase_job_count in worker_sessions
         """
         cursor = self.db.conn.cursor()
         phase_stats = self.get_phase_stats()
 
-        # Get worker's current phase from last heartbeat
-        cursor.execute(
-            "SELECT current_phase FROM worker_sessions WHERE id = ?",
-            (worker_session_id,)
-        )
-        row = cursor.fetchone()
-        current_phase = row[0] if row else None
+        # Get worker's current assigned mode and job count
+        try:
+            cursor.execute(
+                "SELECT assigned_mode, phase_job_count FROM worker_sessions WHERE id = ?",
+                (worker_session_id,)
+            )
+            row = cursor.fetchone()
+            assigned_mode = row[0] if row else None
+            phase_job_count = row[1] or 0 if row else 0
+        except Exception:
+            assigned_mode = None
+            phase_job_count = 0
 
-        # Map phase names to stats keys
-        phase_map = {
-            "mc": "mc_pending", "vision": "mc_pending",
-            "vv": "vv_pending", "embed_vv": "vv_pending",
-            "mv": "mv_pending", "embed_mv": "mv_pending",
-            "parse": "parse_pending", "parse_thumb": "parse_pending",
+        # Map mode names to stats keys
+        mode_to_stat = {
+            "mc": "mc_pending", "vv": "vv_pending",
+            "mv": "mv_pending", "parse_thumb": "parse_pending",
         }
 
-        # If current phase still has work → keep it (no model switch)
-        if current_phase:
-            stats_key = phase_map.get(current_phase)
-            if stats_key and phase_stats.get(stats_key, 0) > 0:
-                mode = current_phase if current_phase in ("mc", "vv", "mv", "parse_thumb") else "mc"
-                logger.debug(f"Worker {worker_session_id}: keep {mode} ({phase_stats.get(stats_key)} pending)")
-                return mode
+        # Current mode still has work?
+        current_pending = 0
+        if assigned_mode and assigned_mode in mode_to_stat:
+            current_pending = phase_stats.get(mode_to_stat[assigned_mode], 0)
 
-        # Current phase empty → switch to most backed-up phase
+        # Keep current mode if: still has work AND hasn't hit min batch
+        if assigned_mode and current_pending > 0 and phase_job_count < self._MIN_PHASE_BATCH:
+            return assigned_mode
+
+        # Find most backed-up phase
         candidates = [
             ("parse_thumb", phase_stats.get("parse_pending", 0)),
             ("mc", phase_stats.get("mc_pending", 0)),
@@ -242,11 +248,35 @@ class JobQueueManager:
         candidates.sort(key=lambda x: x[1], reverse=True)
         best_mode, best_count = candidates[0]
 
+        # After min batch: switch only if another phase is significantly more backed up
+        if assigned_mode and current_pending > 0 and phase_job_count >= self._MIN_PHASE_BATCH:
+            if best_count > current_pending * 1.5:
+                # Other phase is 50%+ more backed up → switch
+                self._update_assigned_mode(cursor, worker_session_id, best_mode)
+                logger.info(f"Worker {worker_session_id}: switch {assigned_mode}→{best_mode} "
+                           f"after {phase_job_count} jobs (backlog: {best_mode}={best_count} vs {assigned_mode}={current_pending})")
+                return best_mode
+            # Current phase still reasonable → keep
+            return assigned_mode
+
+        # Current phase empty OR no mode assigned → pick best
         if best_count > 0:
-            logger.debug(f"Worker {worker_session_id}: switch to {best_mode} ({best_count} pending)")
+            if best_mode != assigned_mode:
+                self._update_assigned_mode(cursor, worker_session_id, best_mode)
+                if assigned_mode:
+                    logger.info(f"Worker {worker_session_id}: switch {assigned_mode}→{best_mode} "
+                               f"(queue empty, backlog: {best_count})")
             return best_mode
 
-        return "full"  # Nothing pending, use full mode
+        return "full"
+
+    def _update_assigned_mode(self, cursor, session_id: int, new_mode: str):
+        """Update worker's assigned mode and reset phase job counter."""
+        cursor.execute(
+            "UPDATE worker_sessions SET assigned_mode = ?, phase_job_count = 0 WHERE id = ?",
+            (new_mode, session_id)
+        )
+        self.db.conn.commit()
 
     def _batch_check_existing_data(self, file_ids: List[int]) -> Dict[int, dict]:
         """Check actual DB data existence for a batch of files.

@@ -759,6 +759,20 @@ def migrate_search_logs(db):
         logger.warning(f"search_logs migration failed: {e}")
 
 
+def migrate_worker_phase_tracking(db):
+    """Add assigned_mode + phase_job_count to worker_sessions for dynamic mode tracking."""
+    if not db._table_exists('worker_sessions'):
+        return
+    try:
+        db.conn.execute("SELECT assigned_mode FROM worker_sessions LIMIT 1")
+    except Exception:
+        logger.info("Migrating: adding assigned_mode, phase_job_count to worker_sessions...")
+        db.conn.execute("ALTER TABLE worker_sessions ADD COLUMN assigned_mode TEXT DEFAULT NULL")
+        db.conn.execute("ALTER TABLE worker_sessions ADD COLUMN phase_job_count INTEGER DEFAULT 0")
+        db.conn.commit()
+        logger.info("worker_sessions phase tracking columns added")
+
+
 # ──────────────────────────────────────────────────────────────
 # Orchestrator: run all migrations in order
 # ──────────────────────────────────────────────────────────────
@@ -803,6 +817,7 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_job_queue_unique_file_id(db)
         migrate_job_queue_archived_at(db)
         migrate_search_logs(db)
+        migrate_worker_phase_tracking(db)
     else:
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()

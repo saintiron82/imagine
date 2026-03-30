@@ -349,6 +349,15 @@ def worker_heartbeat(
         resources_data["worker_state"] = req.worker_state
     if req.phase_counts:
         resources_data["phase_counts"] = req.phase_counts
+    # Track phase_job_count: increment by delta of jobs_completed since last heartbeat
+    cursor.execute(
+        "SELECT jobs_completed FROM worker_sessions WHERE id = ?",
+        (req.session_id,)
+    )
+    prev_row = cursor.fetchone()
+    prev_completed = prev_row[0] if prev_row else 0
+    delta = max(0, req.jobs_completed - prev_completed)
+
     cursor.execute(
         """UPDATE worker_sessions
            SET last_heartbeat = ?,
@@ -358,12 +367,13 @@ def worker_heartbeat(
                current_file = ?,
                current_phase = ?,
                resources_json = ?,
+               phase_job_count = COALESCE(phase_job_count, 0) + ?,
                pending_command = NULL
            WHERE id = ?""",
         (now, req.jobs_completed, req.jobs_failed,
          req.current_job_id, req.current_file, req.current_phase,
          json.dumps(resources_data) if resources_data else None,
-         req.session_id)
+         delta, req.session_id)
     )
     db.conn.commit()
 

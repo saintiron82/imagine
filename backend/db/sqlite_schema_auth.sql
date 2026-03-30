@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
     -- Command queue (server → worker, consumed on heartbeat)
     pending_command TEXT DEFAULT NULL
         CHECK (pending_command IN (NULL, 'stop', 'pause', 'block')),
+    -- Dynamic mode tracking (server-assigned, reset on phase switch)
+    assigned_mode TEXT DEFAULT NULL,              -- Current server-assigned mode (mc/vv/mv/parse_thumb)
+    phase_job_count INTEGER DEFAULT 0,            -- Jobs completed in current assigned_mode (reset on switch)
     -- Per-worker overrides (admin-controlled, applied via heartbeat)
     processing_mode_override TEXT DEFAULT NULL,   -- NULL = global config, "full" | "mc_only"
     batch_capacity_override INTEGER DEFAULT NULL,  -- NULL = worker default
