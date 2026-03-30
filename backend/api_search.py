@@ -44,6 +44,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.search.sqlite_search import SqliteVectorSearch
+from backend.db.sqlite_client import SQLiteDB
 
 # Suppress noisy logs from libraries during search
 logging.basicConfig(level=logging.WARNING)
@@ -51,6 +52,26 @@ logger = logging.getLogger(__name__)
 
 # Persistent searcher instance (models loaded once, reused across requests)
 _searcher: SqliteVectorSearch = None
+_log_db: SQLiteDB = None
+
+
+def _log_search_local(query: str, mode: str, result_count: int, elapsed_ms: int,
+                      filters: dict = None, threshold: float = None):
+    """Log search request for Electron (local) mode."""
+    global _log_db
+    try:
+        if _log_db is None:
+            _log_db = SQLiteDB()
+        _log_db.conn.execute(
+            """INSERT INTO search_logs
+               (query, mode, result_count, elapsed_ms, username, filters, threshold)
+               VALUES (?, ?, ?, ?, 'local', ?, ?)""",
+            (query[:500], mode, result_count, elapsed_ms,
+             json.dumps(filters) if filters else None, threshold)
+        )
+        _log_db.conn.commit()
+    except Exception:
+        pass
 
 
 def _candidate_roots() -> List[Path]:
@@ -187,6 +208,7 @@ def format_result(result: dict) -> dict:
 
 def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dict = None, threshold: float = 0.0, diagnostic: bool = False, query_image: str = None, query_images: list = None, image_search_mode: str = "and", query_file_id: int = None, use_codex: bool = True, file_ids: list = None):
     """Search SQLite and return JSON results."""
+    t_start = time.time()
     try:
         searcher = _get_searcher()
         # Always request diagnostic to extract scope info for frontend
@@ -240,6 +262,15 @@ def search(query: str = "", limit: int = 20, mode: str = "triaxis", filters: dic
         # Full diagnostic only when explicitly requested
         if diagnostic and diag is not None:
             response["diagnostic"] = diag
+
+        # Log search request
+        elapsed_ms = int((time.time() - t_start) * 1000)
+        query_text = query or (f"[file_id:{query_file_id}]" if query_file_id else "")
+        if query_images:
+            query_text = query_text or f"[image_search:{len(query_images)} images]"
+        elif query_image:
+            query_text = query_text or "[image_search]"
+        _log_search_local(query_text, mode, len(formatted), elapsed_ms, filters, threshold)
 
         return response
 
