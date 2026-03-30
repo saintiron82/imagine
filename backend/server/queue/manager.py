@@ -258,19 +258,30 @@ class JobQueueManager:
         if is_embedded:
             candidates.append(("parse_thumb", effective_parse))
 
-            # Embedded = fallback: deprioritize phases that external workers are handling
+            # Smart complementing: if external workers exist, check who's best for MC
             external_modes = self._get_external_worker_modes(cursor)
             if external_modes:
-                candidates = [
-                    (mode, pending * (0.1 if mode in external_modes else 1.0))
-                    for mode, pending in candidates
-                ]
+                # Compare VRAM: if embedded has more VRAM than all external workers,
+                # embedded should do MC and let externals do lighter work
+                my_vram = self._get_worker_vram(cursor, worker_session_id)
+                max_external_vram = self._get_max_external_vram(cursor)
+
+                if my_vram >= max_external_vram:
+                    # Embedded is strongest → prioritize MC, let externals complement
+                    candidates = [
+                        (mode, pending * (2.0 if mode == "mc" else 1.0))
+                        for mode, pending in candidates
+                    ]
+                else:
+                    # External workers are stronger → embedded complements
+                    candidates = [
+                        (mode, pending * (0.1 if mode in external_modes else 1.0))
+                        for mode, pending in candidates
+                    ]
 
         candidates.sort(key=lambda x: x[1], reverse=True)
-        best_mode, best_count = candidates[0]
-        # Restore actual pending count for threshold checks
-        best_count = int(best_count) if best_count == int(best_count) else phase_stats.get(
-            mode_to_stat.get(best_mode, ""), 0)
+        best_mode = candidates[0][0]
+        best_count = phase_stats.get(mode_to_stat.get(best_mode, ""), 0) or int(candidates[0][1])
 
         # After min batch: switch only if another phase is significantly more backed up
         if assigned_mode and current_pending > 0 and phase_job_count >= self._MIN_PHASE_BATCH:
@@ -302,6 +313,36 @@ class JobQueueManager:
             "AND assigned_mode IS NOT NULL"
         )
         return {r[0] for r in cursor.fetchall()}
+
+    def _get_worker_vram(self, cursor, session_id: int) -> float:
+        """Get worker's GPU VRAM in GB."""
+        try:
+            cursor.execute("SELECT resources_json FROM worker_sessions WHERE id = ?", (session_id,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                import json as _json
+                return _json.loads(row[0]).get("gpu_memory_total_gb") or 0
+        except Exception:
+            pass
+        return 0
+
+    def _get_max_external_vram(self, cursor) -> float:
+        """Get highest VRAM among online external workers."""
+        try:
+            cursor.execute(
+                "SELECT resources_json FROM worker_sessions "
+                "WHERE status = 'online' AND worker_name != '__builtin__'"
+            )
+            max_vram = 0
+            for row in cursor.fetchall():
+                if row[0]:
+                    import json as _json
+                    v = _json.loads(row[0]).get("gpu_memory_total_gb") or 0
+                    if v > max_vram:
+                        max_vram = v
+            return max_vram
+        except Exception:
+            return 0
 
     def _update_assigned_mode(self, cursor, session_id: int, new_mode: str):
         """Update worker's assigned mode and reset phase job counter."""
