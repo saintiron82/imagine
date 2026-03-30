@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 def determine_worker_mode(resources: Dict[str, Any], server_tier: str) -> str:
-    """서버 tier 기준으로 워커의 processing_mode를 결정.
+    """서버 tier 기준으로 워커의 단일 역할(processing_mode)을 결정.
 
-    워커 자체의 GPU 등급을 정하는 것이 아니라, 서버가 지정한 tier의 VLM을
-    해당 워커가 실행할 수 있는지 판단하여 역할을 부여한다.
+    워커는 하나의 역할만 반복 수행하여 모델 교체 비용을 제거한다.
+    서버 임베디드 워커만 전체 파이프라인(full)을 수행할 수 있다.
 
     Args:
         resources: 워커의 resources_json 딕셔너리
@@ -22,36 +22,27 @@ def determine_worker_mode(resources: Dict[str, Any], server_tier: str) -> str:
         server_tier: 서버 활성 tier ("standard" / "pro" / "ultra")
 
     Returns:
-        "full"       - 서버 tier VLM 실행 가능 → 전체 Phase P→V→VV→MV 처리
-        "embed_only" - VLM 실행 불가 (VRAM 부족 또는 CPU-only) → Phase VV+MV만 처리
+        "mc"  - VLM 구동 가능 → MC(캡션/태그) 생성만 반복 (VLM 상주)
+        "vv"  - GPU 있지만 VLM 불가 → VV(SigLIP2 시각 벡터)만 반복
+        "mv"  - CPU만 → MV(Qwen3-Embedding 의미 벡터)만 반복
+
+    Note:
+        "full" 모드는 서버 임베디드 워커 전용. 외부 워커에는 배정하지 않는다.
+        임베디드 워커는 모든 외부 워커가 안 하는 나머지 phase를 보완 처리한다.
 
     Decision logic:
-        1. gpu_type이 None (CPU-only) → embed_only
-        2. 워커 VRAM ≥ 서버 tier vram_min → full
-        3. 워커 VRAM < 서버 tier vram_min → embed_only
-
-    Examples:
-        # 서버 tier = pro (vram_min = 8192 MB)
-        determine_worker_mode({"gpu_type": "cuda", "gpu_memory_total_gb": 12.0}, "pro")
-        # → "full"   (12GB ≥ 8GB)
-
-        determine_worker_mode({"gpu_type": "cuda", "gpu_memory_total_gb": 6.0}, "pro")
-        # → "embed_only"  (6GB < 8GB)
-
-        determine_worker_mode({"gpu_type": None}, "pro")
-        # → "embed_only"  (CPU-only)
-
-        determine_worker_mode({"gpu_type": "mps", "gpu_memory_total_gb": 16.0}, "pro")
-        # → "full"   (M2 16GB ≥ 8GB)
+        1. gpu_type이 None (CPU-only) → "mv" (텍스트 임베딩은 CPU로도 가능)
+        2. 워커 VRAM ≥ 서버 tier vram_min → "mc" (가장 가치 높은 GPU 작업)
+        3. 워커 VRAM < 서버 tier vram_min → "vv" (SigLIP2는 2GB면 충분)
     """
     from backend.utils.config import get_config
 
     gpu_type = resources.get("gpu_type")  # "cuda" / "mps" / None
 
-    # GPU 없음 → VLM 실행 불가
+    # GPU 없음 → MV만 (텍스트 임베딩, CPU 가능)
     if not gpu_type:
-        logger.info("Worker has no GPU (CPU-only) → embed_only mode")
-        return "embed_only"
+        logger.info("Worker has no GPU (CPU-only) → mv mode")
+        return "mv"
 
     worker_vram_mb = int(resources.get("gpu_memory_total_gb", 0) * 1024)
 
@@ -64,15 +55,15 @@ def determine_worker_mode(resources: Dict[str, Any], server_tier: str) -> str:
     if worker_vram_mb >= vram_min_mb:
         logger.info(
             f"Worker VRAM {worker_vram_mb} MB ≥ {server_tier} tier min {vram_min_mb} MB"
-            f" → full mode"
+            f" → mc mode (VLM capable)"
         )
-        return "full"
+        return "mc"
 
     logger.info(
         f"Worker VRAM {worker_vram_mb} MB < {server_tier} tier min {vram_min_mb} MB"
-        f" → embed_only mode"
+        f" → vv mode (SigLIP2 only)"
     )
-    return "embed_only"
+    return "vv"
 
 
 def get_gpu_vram_mb() -> int:

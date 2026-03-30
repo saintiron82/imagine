@@ -252,8 +252,9 @@ class JobQueueManager:
             has_mv = data.get("has_mv", False)
             phase_completed = json.dumps({
                 "parse": True,  # Files being registered already have metadata
-                "vision": has_mc,
-                "embed": has_vv and has_mv,
+                "mc": has_mc,
+                "vv": has_vv,
+                "mv": has_mv,
             })
 
             # WebDAV files need download before processing (file_ready=0)
@@ -340,61 +341,69 @@ class JobQueueManager:
                        "OR wr.status NOT IN ('paused', 'cancelled'))")
         _WR_ORDER = "ORDER BY jq.priority DESC, jq.created_at ASC"
 
-        # Claim pre-parsed jobs (Phase P done by server).
-        # Priority: vision-done jobs first (VV+MV only), then regular (V+VV+MV).
-        # 1) Vision-done jobs (server gap-filled MC — just needs VV+MV)
-        cursor.execute(
-            f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-               FROM job_queue jq
-               LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
-               WHERE jq.status = 'pending' AND jq.file_ready = 1
+        # Claim pre-parsed jobs filtered by worker's processing mode.
+        # Each worker type claims only the jobs matching its single role.
+        _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
                  AND jq.parse_status = 'parsed'
-                 AND json_extract(jq.phase_completed, '$.vision') = 1
-                 AND (json_extract(jq.phase_completed, '$.embed') IS NULL
-                      OR json_extract(jq.phase_completed, '$.embed') = 0)
-                 {_WR_FILTER}
+                 {_WR_FILTER}"""
+        _BASE_SELECT = f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+               FROM job_queue jq
+               LEFT JOIN work_requests wr ON jq.work_request_id = wr.id"""
+
+        # Build phase filter based on worker mode
+        if processing_mode == "mc" or processing_mode == "mc_only":
+            # MC worker: needs jobs where MC is not done yet
+            phase_filter = """AND (json_extract(jq.phase_completed, '$.mc') IS NULL
+                              OR json_extract(jq.phase_completed, '$.mc') = 0)"""
+        elif processing_mode == "vv":
+            # VV worker: needs jobs where MC is done but VV is not
+            phase_filter = """AND json_extract(jq.phase_completed, '$.mc') = 1
+                              AND (json_extract(jq.phase_completed, '$.vv') IS NULL
+                                   OR json_extract(jq.phase_completed, '$.vv') = 0)"""
+        elif processing_mode == "mv":
+            # MV worker: needs jobs where MC is done but MV is not
+            phase_filter = """AND json_extract(jq.phase_completed, '$.mc') = 1
+                              AND (json_extract(jq.phase_completed, '$.mv') IS NULL
+                                   OR json_extract(jq.phase_completed, '$.mv') = 0)"""
+        elif processing_mode == "embed_only":
+            # Legacy embed_only: MC done, VV or MV not done
+            phase_filter = """AND json_extract(jq.phase_completed, '$.mc') = 1
+                              AND (json_extract(jq.phase_completed, '$.vv') IS NULL
+                                   OR json_extract(jq.phase_completed, '$.vv') = 0
+                                   OR json_extract(jq.phase_completed, '$.mv') IS NULL
+                                   OR json_extract(jq.phase_completed, '$.mv') = 0)"""
+        else:
+            # full mode (embedded worker): any incomplete phase
+            # Priority: MC-pending first, then VV/MV-pending
+            phase_filter = """AND (json_extract(jq.phase_completed, '$.mc') IS NULL
+                              OR json_extract(jq.phase_completed, '$.mc') = 0
+                              OR json_extract(jq.phase_completed, '$.vv') IS NULL
+                              OR json_extract(jq.phase_completed, '$.vv') = 0
+                              OR json_extract(jq.phase_completed, '$.mv') IS NULL
+                              OR json_extract(jq.phase_completed, '$.mv') = 0)"""
+
+        cursor.execute(
+            f"""{_BASE_SELECT}
+               WHERE {_BASE_WHERE}
+                 {phase_filter}
                {_WR_ORDER}
                LIMIT ?""",
             (count,)
         )
         rows = list(cursor.fetchall())
-        vision_done_ids = {r[0] for r in rows}  # Track which jobs have vision done
 
-        # 2) Regular pre-parsed jobs (needs V+VV+MV)
-        if len(rows) < count:
-            remainder = count - len(rows)
-            claimed_ids = [r[0] for r in rows]
-            if claimed_ids:
-                placeholders = ",".join("?" * len(claimed_ids))
-                cursor.execute(
-                    f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-                        FROM job_queue jq
-                        LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
-                        WHERE jq.status = 'pending' AND jq.file_ready = 1
-                          AND jq.parse_status = 'parsed'
-                          AND (json_extract(jq.phase_completed, '$.vision') IS NULL
-                               OR json_extract(jq.phase_completed, '$.vision') = 0)
-                          AND jq.id NOT IN ({placeholders})
-                          {_WR_FILTER}
-                        {_WR_ORDER}
-                        LIMIT ?""",
-                    (*claimed_ids, remainder)
-                )
-            else:
-                cursor.execute(
-                    f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-                       FROM job_queue jq
-                       LEFT JOIN work_requests wr ON jq.work_request_id = wr.id
-                       WHERE jq.status = 'pending' AND jq.file_ready = 1
-                         AND jq.parse_status = 'parsed'
-                         AND (json_extract(jq.phase_completed, '$.vision') IS NULL
-                              OR json_extract(jq.phase_completed, '$.vision') = 0)
-                         {_WR_FILTER}
-                       {_WR_ORDER}
-                       LIMIT ?""",
-                    (remainder,)
-                )
-            rows.extend(cursor.fetchall())
+        # Track which jobs already have MC done (for vision_data prefetch)
+        vision_done_ids = set()
+        for r in rows:
+            try:
+                pm = json.loads(r[4]) if r[4] else {}
+                pc = pm.get("phase_completed", {})
+                if isinstance(pc, str):
+                    pc = json.loads(pc)
+                if pc.get("mc") or pc.get("vision"):
+                    vision_done_ids.add(r[0])
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         # Signal demand to ParseAheadPool BEFORE early return.
         # Uses requested count (not actual claimed count) — represents
@@ -747,8 +756,9 @@ class JobQueueManager:
                     data = existing_data.get(fid, {})
                     phase_completed = json.dumps({
                         "parse": True,
-                        "vision": data.get("has_mc", False),
-                        "embed": data.get("has_vv", False) and data.get("has_mv", False),
+                        "mc": data.get("has_mc", False),
+                        "vv": data.get("has_vv", False),
+                        "mv": data.get("has_mv", False),
                     })
                     file_ready = 0 if fpath.startswith("webdav://") else 1
 
@@ -1047,6 +1057,29 @@ class JobQueueManager:
         logger.info(f"Reassigned {cursor.rowcount} stale jobs (phase_completed preserved)")
         return cursor.rowcount
 
+    def get_phase_stats(self) -> Dict[str, int]:
+        """Get pending job counts per phase for embedded worker scheduling."""
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') IS NULL
+                                  OR json_extract(phase_completed, '$.mc') = 0) AS mc_pending,
+                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') = 1
+                                 AND (json_extract(phase_completed, '$.vv') IS NULL
+                                      OR json_extract(phase_completed, '$.vv') = 0)) AS vv_pending,
+                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') = 1
+                                 AND (json_extract(phase_completed, '$.mv') IS NULL
+                                      OR json_extract(phase_completed, '$.mv') = 0)) AS mv_pending
+            FROM job_queue
+            WHERE status IN ('pending', 'assigned') AND parse_status = 'parsed'
+        """)
+        row = cursor.fetchone()
+        return {
+            "mc_pending": row[0] or 0,
+            "vv_pending": row[1] or 0,
+            "mv_pending": row[2] or 0,
+        }
+
     def get_stats(self) -> Dict[str, Any]:
         """Get job queue statistics including throughput."""
         cursor = self.db.conn.cursor()
@@ -1106,18 +1139,21 @@ class JobQueueManager:
             if parsed_count > 0:
                 cursor.execute("""
                     SELECT
-                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') IS NULL
-                                          OR json_extract(phase_completed, '$.vision') = 0),
-                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
-                                         AND (json_extract(phase_completed, '$.embed') IS NULL
-                                              OR json_extract(phase_completed, '$.embed') = 0))
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') IS NULL
+                                          OR json_extract(phase_completed, '$.mc') = 0),
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') = 1
+                                         AND (json_extract(phase_completed, '$.vv') IS NULL
+                                              OR json_extract(phase_completed, '$.vv') = 0)),
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') = 1
+                                         AND (json_extract(phase_completed, '$.mv') IS NULL
+                                              OR json_extract(phase_completed, '$.mv') = 0))
                     FROM job_queue
                     WHERE status = 'pending' AND parse_status = 'parsed'
                 """)
                 brow = cursor.fetchone()
                 buffer_need_mc = brow[0] or 0
-                buffer_need_vv = brow[1] or 0  # vision done but embed not done
-                buffer_need_mv = buffer_need_vv  # VV and MV are paired
+                buffer_need_vv = brow[1] or 0
+                buffer_need_mv = brow[2] or 0
 
             parse_ahead_stats = {
                 "parse_ahead_parsed": parsed_count,
