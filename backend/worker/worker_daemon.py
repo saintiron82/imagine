@@ -587,7 +587,7 @@ class WorkerDaemon:
             return None
 
         # 2) Remote URIs (webdav://) — try cache, then DownloadAheadPool,
-        #    then fall back to thumbnail.
+        #    then thumbnail, then full original download.
         if is_remote_uri:
             # Check download cache first
             from backend.utils.download_cache import get_download_cache
@@ -603,18 +603,30 @@ class WorkerDaemon:
             thumb = self._resolve_thumbnail(job)
             if thumb:
                 return thumb
-            logger.error(
-                f"[RESOLVE] Cannot resolve remote URI — no temp file or thumbnail: "
-                f"{file_path}"
+            # Last resort: download original from server
+            if file_id is not None:
+                logger.info(f"[RESOLVE] Thumbnail unavailable, trying full download for file_id={file_id}")
+                result = self.uploader.download_file(file_id, self.tmp_dir)
+                if result:
+                    logger.info(f"[RESOLVE] Full download OK -> {Path(result).name}")
+                    return result
+            logger.warning(
+                f"[RESOLVE] Cannot resolve remote URI — no temp/thumbnail/original: "
+                f"{file_path[:80]}"
             )
             return None
 
         if job.get("pre_parsed"):
-            # Pre-parsed by server: only thumbnail needed (never download original)
+            # Pre-parsed by server: try thumbnail first, fall back to original download
             thumb = self._resolve_thumbnail(job)
             if thumb:
                 return thumb
-            logger.error(f"Pre-parsed thumbnail download failed for file_id={file_id} — skipping (no full download fallback)")
+            if file_id is not None:
+                logger.info(f"[RESOLVE] Pre-parsed thumbnail unavailable, trying full download for file_id={file_id}")
+                result = self.uploader.download_file(file_id, self.tmp_dir)
+                if result:
+                    return result
+            logger.warning(f"[RESOLVE] Pre-parsed file_id={file_id}: no thumbnail or original available")
             return None
 
         # 3) server_upload mode — full original download (only for non-pre-parsed jobs)
@@ -672,16 +684,20 @@ class WorkerDaemon:
         return None
 
     def _resolve_thumbnail(self, job: dict) -> Optional[str]:
-        """Download only the thumbnail for a pre-parsed job (~200KB instead of ~500MB)."""
+        """Download only the thumbnail for a pre-parsed job (~200KB instead of ~500MB).
+
+        Uses _authed_request() for automatic JWT refresh on 401.
+        """
         file_id = job.get("file_id")
         try:
-            resp = self.session.get(
+            resp = self._authed_request(
+                'get',
                 f"{self.server_url}/api/v1/files/{file_id}/thumbnail",
                 stream=True,
             )
             try:
                 if resp.status_code != 200:
-                    logger.warning(f"Thumbnail download failed: HTTP {resp.status_code}")
+                    logger.warning(f"Thumbnail download failed for file_id={file_id}: HTTP {resp.status_code}")
                     return None
 
                 dest = Path(self.tmp_dir) / f"thumb_{file_id}.png"
@@ -696,7 +712,7 @@ class WorkerDaemon:
             return str(dest)
 
         except Exception as e:
-            logger.error(f"Thumbnail download failed for file_id={file_id}: {e}")
+            logger.warning(f"Thumbnail download failed for file_id={file_id}: {e}")
             return None
 
     # ── Background Download (overlap with GPU processing) ─────
