@@ -610,12 +610,14 @@ class WorkerDaemon:
             return None
 
         if job.get("pre_parsed"):
+            # Pre-parsed by server: only thumbnail needed (never download original)
             thumb = self._resolve_thumbnail(job)
             if thumb:
                 return thumb
-            logger.warning(f"Pre-parsed thumbnail download failed for file_id={file_id}, falling back to full download")
+            logger.error(f"Pre-parsed thumbnail download failed for file_id={file_id} — skipping (no full download fallback)")
+            return None
 
-        # 3) server_upload mode — full original download
+        # 3) server_upload mode — full original download (only for non-pre-parsed jobs)
         logger.info(f"[DOWNLOAD] Downloading file_id={file_id} from {self.server_url}...")
         result = self.uploader.download_file(file_id, self.tmp_dir)
         if result:
@@ -674,7 +676,7 @@ class WorkerDaemon:
         file_id = job.get("file_id")
         try:
             resp = self.session.get(
-                f"{self.server_url}/api/v1/upload/download/thumbnail/{file_id}",
+                f"{self.server_url}/api/v1/files/{file_id}/thumbnail",
                 stream=True,
             )
             try:
@@ -719,8 +721,8 @@ class WorkerDaemon:
 
             file_id = job.get("file_id")
             if file_id is not None and file_id not in self._download_cache:
-                if self.processing_mode == "embed_only" or is_remote:
-                    # Remote URIs: only thumbnail is realistically available
+                if self.processing_mode == "embed_only" or is_remote or job.get("pre_parsed"):
+                    # Pre-parsed / remote / embed_only: thumbnail only (never full file)
                     future = self._download_pool.submit(self._resolve_thumbnail, job)
                 else:
                     future = self._download_pool.submit(self._resolve_file, job)
