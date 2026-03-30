@@ -102,35 +102,16 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
 
                     consecutive_empty = 0
 
-                    # Decide which phase to focus on based on queue backlog.
-                    # Embedded worker acts as the "补完者" — fills whichever
-                    # phase has the most pending jobs.
+                    # Decide which phase to focus on using unified logic.
+                    # Same _decide_worker_mode() as external workers,
+                    # with 50-job min batch and model switching rules.
                     try:
                         from backend.server.queue.manager import JobQueueManager
                         from backend.db.sqlite_client import SQLiteDB
                         _qdb = SQLiteDB()
                         _qm = JobQueueManager(_qdb)
-                        phase_stats = _qm.get_phase_stats()
-
-                        # Pick the most backed-up phase (including parse)
-                        parse_p = phase_stats.get("parse_pending", 0)
-                        mc_p = phase_stats.get("mc_pending", 0)
-                        vv_p = phase_stats.get("vv_pending", 0)
-                        mv_p = phase_stats.get("mv_pending", 0)
-
-                        candidates = [
-                            ("parse_thumb", parse_p),
-                            ("mc", mc_p),
-                            ("vv", vv_p),
-                            ("mv", mv_p),
-                        ]
-                        candidates.sort(key=lambda x: x[1], reverse=True)
-                        best_mode, best_count = candidates[0]
-
-                        if best_count > 0:
-                            _worker_daemon.processing_mode = best_mode
-                        else:
-                            _worker_daemon.processing_mode = "full"
+                        mode = _qm._decide_worker_mode(_worker_daemon.session_id)
+                        _worker_daemon.processing_mode = mode
                     except Exception:
                         _worker_daemon.processing_mode = "full"
 

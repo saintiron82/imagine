@@ -482,9 +482,8 @@ class JobQueueManager:
             phase_filter = """AND (json_extract(jq.phase_completed, '$.mc') IS NULL
                               OR json_extract(jq.phase_completed, '$.mc') = 0)"""
         elif processing_mode == "vv":
-            # VV worker: needs jobs where MC is done but VV is not
-            phase_filter = """AND json_extract(jq.phase_completed, '$.mc') = 1
-                              AND (json_extract(jq.phase_completed, '$.vv') IS NULL
+            # VV worker: needs jobs where VV is not done (independent of MC)
+            phase_filter = """AND (json_extract(jq.phase_completed, '$.vv') IS NULL
                                    OR json_extract(jq.phase_completed, '$.vv') = 0)"""
         elif processing_mode == "mv":
             # MV worker: needs jobs where MC is done but MV is not
@@ -1212,13 +1211,13 @@ class JobQueueManager:
         parse_pending = cursor.fetchone()[0] or 0
 
         # MC/VV/MV pending: parsed but AI phases incomplete
+        # VV is independent of MC (image pixel based), MV depends on MC (caption vectorization)
         cursor.execute("""
             SELECT
                 COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') IS NULL
                                   OR json_extract(phase_completed, '$.mc') = 0) AS mc_pending,
-                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') = 1
-                                 AND (json_extract(phase_completed, '$.vv') IS NULL
-                                      OR json_extract(phase_completed, '$.vv') = 0)) AS vv_pending,
+                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') IS NULL
+                                  OR json_extract(phase_completed, '$.vv') = 0) AS vv_pending,
                 COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mc') = 1
                                  AND (json_extract(phase_completed, '$.mv') IS NULL
                                       OR json_extract(phase_completed, '$.mv') = 0)) AS mv_pending
