@@ -248,40 +248,42 @@ class JobQueueManager:
         if assigned_mode and current_pending > 0 and phase_job_count < self._MIN_PHASE_BATCH:
             return assigned_mode
 
-        # Find most backed-up phase
-        candidates = [
-            ("mc", phase_stats.get("mc_pending", 0)),
-            ("vv", phase_stats.get("embed_pending", 0)),
-            ("mv", phase_stats.get("embed_pending", 0)),
-        ]
+        # Build candidates based on worker GPU capability
+        my_vram = self._get_worker_vram(cursor, worker_session_id)
+        my_gpu = self._get_worker_gpu_type(cursor, worker_session_id)
+        has_gpu = bool(my_gpu)
+
+        candidates = []
+        # MC requires GPU — skip for CPU-only workers
+        if has_gpu:
+            candidates.append(("mc", phase_stats.get("mc_pending", 0)))
+        # VV (SigLIP2) needs GPU but much less VRAM
+        if has_gpu:
+            candidates.append(("vv", phase_stats.get("embed_pending", 0)))
+        # MV (text embedding) works on CPU
+        candidates.append(("mv", phase_stats.get("embed_pending", 0)))
+
         # Only embedded worker can do parse
         if is_embedded:
             candidates.append(("parse_thumb", effective_parse))
 
-            # Smart complementing: if external workers exist, check who's best for MC
-            external_modes = self._get_external_worker_modes(cursor)
-            if external_modes:
-                # Compare VRAM: if embedded has more VRAM than all external workers,
-                # embedded should do MC and let externals do lighter work
-                my_vram = self._get_worker_vram(cursor, worker_session_id)
-                max_external_vram = self._get_max_external_vram(cursor)
+        # Worker distribution: count how many workers are on each phase
+        cursor.execute(
+            "SELECT assigned_mode, COUNT(*) FROM worker_sessions "
+            "WHERE status = 'online' AND assigned_mode IS NOT NULL "
+            "GROUP BY assigned_mode"
+        )
+        worker_counts = dict(cursor.fetchall())
 
-                if my_vram >= max_external_vram:
-                    # Embedded is strongest → prioritize MC, let externals complement
-                    candidates = [
-                        (mode, pending * (2.0 if mode == "mc" else 1.0))
-                        for mode, pending in candidates
-                    ]
-                else:
-                    # External workers are stronger → embedded complements
-                    candidates = [
-                        (mode, pending * (0.1 if mode in external_modes else 1.0))
-                        for mode, pending in candidates
-                    ]
+        # Adjust candidates: divide pending by (workers_on_phase + 1) to balance
+        candidates = [
+            (mode, pending / (worker_counts.get(mode, 0) + 1))
+            for mode, pending in candidates
+        ]
 
         candidates.sort(key=lambda x: x[1], reverse=True)
-        best_mode = candidates[0][0]
-        best_count = phase_stats.get(mode_to_stat.get(best_mode, ""), 0) or int(candidates[0][1])
+        best_mode = candidates[0][0] if candidates else "full"
+        best_count = phase_stats.get(mode_to_stat.get(best_mode, ""), 0)
 
         # After min batch: switch only if another phase is significantly more backed up
         if assigned_mode and current_pending > 0 and phase_job_count >= self._MIN_PHASE_BATCH:
@@ -313,6 +315,18 @@ class JobQueueManager:
             "AND assigned_mode IS NOT NULL"
         )
         return {r[0] for r in cursor.fetchall()}
+
+    def _get_worker_gpu_type(self, cursor, session_id: int) -> str:
+        """Get worker's GPU type (cuda/mps/None)."""
+        try:
+            cursor.execute("SELECT resources_json FROM worker_sessions WHERE id = ?", (session_id,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                import json as _json
+                return _json.loads(row[0]).get("gpu_type") or ""
+        except Exception:
+            pass
+        return ""
 
     def _get_worker_vram(self, cursor, session_id: int) -> float:
         """Get worker's GPU VRAM in GB."""
