@@ -776,7 +776,7 @@ class JobQueueManager:
 
         # Keep completed job in queue for history (user archives manually)
         cursor.execute(
-            "UPDATE job_queue SET completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
+            "UPDATE job_queue SET status = 'completed', completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
             (job_id,)
         )
         self.db.conn.commit()
@@ -1058,7 +1058,7 @@ class JobQueueManager:
                 self._update_wr_counters(cursor, wr_id, ws_id, 'failed')
                 # Keep failed job in queue for history (user archives manually)
                 cursor.execute(
-                    "UPDATE job_queue SET completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
+                    "UPDATE job_queue SET status = 'failed', completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
                     (job_id,)
                 )
             else:
@@ -1127,7 +1127,7 @@ class JobQueueManager:
 
             # Keep failed job in queue for history (user archives manually)
             cursor.execute(
-                "UPDATE job_queue SET completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
+                "UPDATE job_queue SET status = 'failed', completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
                 (job_id,)
             )
         else:
