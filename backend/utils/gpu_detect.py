@@ -44,7 +44,7 @@ def determine_worker_mode(resources: Dict[str, Any], server_tier: str) -> str:
         logger.info("Worker has no GPU (CPU-only) → mv mode")
         return "mv"
 
-    worker_vram_mb = int(resources.get("gpu_memory_total_gb", 0) * 1024)
+    worker_vram_mb = int((resources.get("gpu_memory_total_gb") or 0) * 1024)
 
     # 서버 tier의 최소 VRAM 요구사항 조회
     cfg = get_config()
