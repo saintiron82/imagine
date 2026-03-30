@@ -8,7 +8,7 @@ import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
 import { WorkersPanel, DashboardPanel } from './AdminPage';
-import { MyWorkersSection, ConnectMyPC } from './WorkerPage';
+import WorkerPage, { MyWorkersSection, ConnectMyPC } from './WorkerPage';
 import PipelineBlackboard from '../components/PipelineBlackboard';
 
 export default function FactoryPage({
@@ -122,16 +122,13 @@ export default function FactoryPage({
           <PipelineBlackboard reloadSignal={queueReloadSignal} appMode={appMode} />
         )}
         {activeTab === 'workers' && (
-          <div className="p-4 space-y-6">
-            {isAdmin ? (
+          isAdmin ? (
+            <div className="p-4 space-y-6">
               <WorkersPanel />
-            ) : (
-              <>
-                <MyWorkersSection />
-                <ConnectMyPC />
-              </>
-            )}
-          </div>
+            </div>
+          ) : (
+            <WorkerPage appMode="client" />
+          )
         )}
         {activeTab === 'dashboard' && (
           <div className="p-4">
