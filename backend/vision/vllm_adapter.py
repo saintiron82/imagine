@@ -26,10 +26,12 @@ from .prompts import STAGE1_PROMPT, get_stage2_prompt
 from .schemas import STAGE1_SCHEMA, get_schema
 from .repair import parse_structured_output
 
+from backend.vision.base import BaseVisionAnalyzer
+
 logger = logging.getLogger(__name__)
 
 
-class VLLMAdapter:
+class VLLMAdapter(BaseVisionAnalyzer):
     """
     Vision analyzer using vLLM with optimized batch processing.
 

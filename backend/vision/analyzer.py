@@ -18,10 +18,12 @@ from PIL import Image
 import torch
 from backend.utils.config import get_config
 
+from backend.vision.base import BaseVisionAnalyzer
+
 logger = logging.getLogger(__name__)
 
 
-class VisionAnalyzer:
+class VisionAnalyzer(BaseVisionAnalyzer):
     """
     AI-powered vision analyzer using Florence-2 model.
 

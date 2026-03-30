@@ -9,6 +9,7 @@ This module provides AI-powered vision analysis for images:
 - Style analysis
 """
 
+from .base import BaseVisionAnalyzer
 from .analyzer import VisionAnalyzer
 
-__all__ = ['VisionAnalyzer']
+__all__ = ['BaseVisionAnalyzer', 'VisionAnalyzer']
