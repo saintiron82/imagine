@@ -29,7 +29,7 @@ def _get_user_or_query_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
     db: SQLiteDB = Depends(get_db_safe),
 ) -> dict:
-    """Auth via header OR ?token= query param (for img src tags)."""
+    """Auth via header OR ?token= query param OR localhost auto-admin."""
     # 1) Try Authorization header
     if credentials:
         return get_current_user(request, credentials, db)
@@ -43,7 +43,8 @@ def _get_user_or_query_token(
             if user_id_raw is not None:
                 return {"id": int(user_id_raw), "role": payload.get("role", "user")}
 
-    raise HTTPException(status_code=401, detail="Not authenticated")
+    # 3) Localhost auto-admin (embedded worker, Electron)
+    return get_current_user(request, credentials, db)
 
 
 # ── Schemas ──────────────────────────────────────────────────
