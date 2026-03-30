@@ -437,10 +437,10 @@ export default function WorkersPanel() {
             // Find bottleneck: phase with most pending
             const phases = [
               { name: 'Download', pending: s.download_waiting || 0, color: 'yellow' },
-              { name: 'Parse', pending: s.parse_pending || 0, color: 'sky' },
+              { name: 'Parse', pending: s.parse_pending || 0, color: 'sky', speed: s.parse_throughput },
               { name: 'MC', pending: s.mc_pending || 0, color: 'purple', speed: s.mc_throughput },
               { name: 'VV', pending: s.vv_pending || 0, color: 'blue', speed: s.vv_throughput },
-              { name: 'MV', pending: s.mv_pending || 0, color: 'green' },
+              { name: 'MV', pending: s.mv_pending || 0, color: 'green', speed: s.mv_throughput },
             ];
             const bottleneck = phases.reduce((a, b) => a.pending > b.pending ? a : b);
 
@@ -512,10 +512,22 @@ export default function WorkersPanel() {
           <thead>
             <tr className="border-b border-gray-700 text-gray-400 text-xs">
               <th className="text-left px-3 py-2">{t('admin.worker_name')}</th>
-              <th className="text-center px-2 py-2 text-sky-400">Parse</th>
-              <th className="text-center px-2 py-2 text-purple-400">MC</th>
-              <th className="text-center px-2 py-2 text-blue-400">VV</th>
-              <th className="text-center px-2 py-2 text-green-400">MV</th>
+              <th className="text-center px-2 py-2">
+                <div className="text-sky-400">Parse</div>
+                {queueStats?.parse_throughput > 0 && <div className="text-[9px] text-sky-400/60 font-mono">{queueStats.parse_throughput}/m</div>}
+              </th>
+              <th className="text-center px-2 py-2">
+                <div className="text-purple-400">MC</div>
+                {queueStats?.mc_throughput > 0 && <div className="text-[9px] text-purple-400/60 font-mono">{queueStats.mc_throughput}/m</div>}
+              </th>
+              <th className="text-center px-2 py-2">
+                <div className="text-blue-400">VV</div>
+                {queueStats?.vv_throughput > 0 && <div className="text-[9px] text-blue-400/60 font-mono">{queueStats.vv_throughput}/m</div>}
+              </th>
+              <th className="text-center px-2 py-2">
+                <div className="text-green-400">MV</div>
+                {queueStats?.mv_throughput > 0 && <div className="text-[9px] text-green-400/60 font-mono">{queueStats.mv_throughput}/m</div>}
+              </th>
               <th className="text-center px-2 py-2">{t('admin.worker_speed')}</th>
               <th className="text-center px-2 py-2">Batch</th>
               <th className="text-right px-3 py-2"></th>
