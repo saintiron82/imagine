@@ -151,7 +151,7 @@ def _do_search(req: SearchRequest, mode: str,
             results = result_data
             diag = None
 
-        formatted = [format_result(r) for r in results]
+        formatted = [format_result(r, skip_fs=True) for r in results]
         elapsed_ms = int((time.time() - t0) * 1000)
 
         # Log search request
