@@ -106,10 +106,10 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                     # Embedded worker acts as the "补完者" — fills whichever
                     # phase has the most pending jobs.
                     try:
-                        from backend.server.queue.manager import QueueManager
+                        from backend.server.queue.manager import JobQueueManager
                         from backend.db.sqlite_client import SQLiteDB
                         _qdb = SQLiteDB()
-                        _qm = QueueManager(_qdb)
+                        _qm = JobQueueManager(_qdb)
                         phase_stats = _qm.get_phase_stats()
 
                         # Pick the most backed-up phase
