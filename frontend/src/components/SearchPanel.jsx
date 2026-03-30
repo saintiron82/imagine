@@ -713,7 +713,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
+const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -753,7 +753,9 @@ const SearchResults = React.memo(({ results, isSearching, hasResults, onShowMeta
                 <div className="sticky top-0 z-10 flex justify-center py-3">
                     <div className="flex items-center gap-2 text-blue-400 bg-gray-900/90 px-4 py-2 rounded-full border border-blue-800/50 backdrop-blur-sm">
                         <Loader2 className="animate-spin" size={16} />
-                        <span className="text-sm">{t('status.searching')}</span>
+                        <span className="text-sm transition-opacity duration-300">
+                            {searchStage ? t(`search.stage.${searchStage}`) : t('status.searching')}
+                        </span>
                     </div>
                 </div>
             )}
@@ -936,6 +938,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [results, setResults] = useState([]); // Currently displayed slice
     const allResultsRef = useRef([]); // Full results from backend (up to FETCH_LIMIT)
     const [isSearching, setIsSearching] = useState(false);
+    const [searchStage, setSearchStage] = useState(null); // 'decompose'|'visual'|'semantic'|'keyword'|'ranking'
     const searchCache = useRef(new Map()); // query → {results, timestamp}
     const [searchHistory, setSearchHistory] = useState(() => {
         try { return JSON.parse(localStorage.getItem('search_history_v2') || '[]'); }
@@ -959,6 +962,26 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [noMoreResults, setNoMoreResults] = useState(false);
     const [resetSignal, setResetSignal] = useState(0);
     const inputRef = useRef(null);
+
+    // Listen for search progress events (Electron IPC)
+    useEffect(() => {
+        if (!window.electron?.onSearchProgress) return;
+        const cleanup = window.electron.onSearchProgress((stage) => {
+            setSearchStage(stage);
+        });
+        return () => cleanup?.();
+    }, []);
+
+    // Server mode: estimated stage progression (no IPC events available)
+    useEffect(() => {
+        if (!isSearching || window.electron?.onSearchProgress) return;
+        const stages = ['decompose', 'visual', 'semantic', 'keyword', 'ranking'];
+        const delays = [0, 800, 1800, 2600, 3200]; // estimated ms
+        const timers = stages.map((stage, i) =>
+            setTimeout(() => setSearchStage(stage), delays[i])
+        );
+        return () => timers.forEach(clearTimeout);
+    }, [isSearching]);
 
     // Load DB stats on mount and when pipeline/discover refresh signal changes.
     useEffect(() => {
@@ -984,7 +1007,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             setSearchMode(mode);
             setResults([]);
             setNoMoreResults(false);
-            setIsSearching(true);
+            setIsSearching(true); setSearchStage('decompose');
             setError(null);
             // Reset filters for a fresh "find similar"
             setActiveFilters({});
@@ -1011,7 +1034,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 } catch (err) {
                     setError(err.message);
                 } finally {
-                    setIsSearching(false);
+                    setIsSearching(false); setSearchStage(null);
                     if (onSearchConsumed) onSearchConsumed();
                 }
             };
@@ -1033,7 +1056,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setSearchMode(mode);
         setResults([]);
         setNoMoreResults(false);
-        setIsSearching(true);
+        setIsSearching(true); setSearchStage('decompose');
         setError(null);
         setActiveFilters({});
         setThreshold(0);
@@ -1059,7 +1082,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             } catch (err) {
                 setError(err.message);
             } finally {
-                setIsSearching(false);
+                setIsSearching(false); setSearchStage(null);
             }
         };
         performSearch();
@@ -1079,7 +1102,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setQuery(searchQuery || '');
         setQueryFileId(null);
         setSearchMode(null);
-        setIsSearching(true);
+        setIsSearching(true); setSearchStage('decompose');
         setError(null);
         setRefineStack([]);
         setRefineInput('');
@@ -1156,7 +1179,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             setError(err.message);
             setResults([]);
         } finally {
-            setIsSearching(false);
+            setIsSearching(false); setSearchStage(null);
         }
     }, []);
 
@@ -1175,7 +1198,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         const fileIds = currentResults.map(r => r.id).filter(Boolean);
         if (!fileIds.length) return;
 
-        setIsSearching(true);
+        setIsSearching(true); setSearchStage('decompose');
         try {
             const cfg = lastSearchConfigRef.current;
             const response = await searchImages({
@@ -1193,7 +1216,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         } catch (err) {
             console.error('[Refine] search failed:', err);
         } finally {
-            setIsSearching(false);
+            setIsSearching(false); setSearchStage(null);
         }
     }, [refineInput]);
 
@@ -1211,7 +1234,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setRefineStack(kept);
         const prevLevel = kept[kept.length - 1];
         const cfg = lastSearchConfigRef.current;
-        setIsSearching(true);
+        setIsSearching(true); setSearchStage('decompose');
         try {
             const response = await searchImages({
                 query: prevLevel.query, file_ids: prevLevel.resultIds, limit: FETCH_LIMIT,
@@ -1226,7 +1249,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         } catch (err) {
             console.error('[Refine] re-search failed:', err);
         } finally {
-            setIsSearching(false);
+            setIsSearching(false); setSearchStage(null);
         }
     }, [refineStack]);
 
@@ -1511,6 +1534,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             <SearchResults
                 results={results}
                 isSearching={isSearching}
+                searchStage={searchStage}
                 hasResults={hasResults}
                 onShowMeta={handleShowMeta}
                 onContextMenu={handleCardContextMenu}

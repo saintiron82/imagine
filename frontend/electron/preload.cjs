@@ -93,6 +93,11 @@ contextBridge.exposeInMainWorld('electron', {
         checkPhaseStatus: (filePaths) => ipcRenderer.invoke('check-phase-status', filePaths),
         fixRelativePaths: () => ipcRenderer.invoke('fix-relative-paths'),
         searchVector: (options) => ipcRenderer.invoke('search-vector', options),
+        onSearchProgress: (callback) => {
+            const handler = (_, stage) => callback(stage);
+            ipcRenderer.on('search-progress', handler);
+            return () => ipcRenderer.removeListener('search-progress', handler);
+        },
         fetchImageUrl: (url) => ipcRenderer.invoke('fetch-image-url', url),
         getDbStats: () => ipcRenderer.invoke('get-db-stats'),
         getIncompleteStats: () => ipcRenderer.invoke('get-incomplete-stats'),
