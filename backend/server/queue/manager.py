@@ -199,45 +199,93 @@ class JobQueueManager:
 
     # Time cost per file (seconds) — MC dominates, so GPU stays on MC
     _PHASE_TIME = {"parse_thumb": 1, "mc": 50, "vv": 2, "mv": 0.5}
+    # GPU-Weak MC penalty: can do MC but slower (pressure / penalty)
+    _MC_PENALTY = {"strong": 1.0, "weak": 2.0, "embedded": 1.0}
+
+    def _get_batch_target_seconds(self) -> int:
+        """Read batch_target_seconds from config (default 60)."""
+        try:
+            from backend.utils.config import get_config
+            return get_config().get("worker.batch_target_seconds", 60)
+        except Exception:
+            return 60
+
+    def get_phase_batch_size(self, phase: str) -> int:
+        """Time-based batch size: enough items to fill target_seconds of work."""
+        target = self._get_batch_target_seconds()
+        t = self._PHASE_TIME.get(phase, 1)
+        return max(1, int(target / t))
 
     def _decide_worker_mode(self, worker_session_id: int) -> str:
-        """Time-weighted pressure scheduling (Algorithm E).
+        """Algorithm E' v2: Time-Weighted + Batch Commit + GPU-Weak MC.
 
-        pressure = (pending / (workers_on_phase + 1)) * time_per_file
-
-        MC (50s/file) naturally dominates until queue nearly empty.
-        GPU workers stay on MC; CPU workers do MV. Minimal model switching.
+        1. Batch commit: if batch_remaining > 0 and work exists, stay
+        2. Time-weighted pressure: pending / (workers+1) * time_weight
+        3. GPU-Weak can do MC with penalty (slower but not idle)
+        4. Min guarantee: unserved phase gets 1.5x boost
+        5. Stability: switch only if best > current * 2x
+        6. Thermal: danger/critical → idle
         """
         cursor = self.db.conn.cursor()
         stats = self.get_phase_stats()
 
         # Worker info
         cursor.execute(
-            "SELECT assigned_mode, worker_name, resources_json FROM worker_sessions WHERE id = ?",
+            "SELECT assigned_mode, worker_name, resources_json, phase_job_count "
+            "FROM worker_sessions WHERE id = ?",
             (worker_session_id,)
         )
         row = cursor.fetchone()
         if not row:
             return "full"
-        assigned_mode, worker_name, res_json = row[0], row[1], row[2]
+        assigned_mode, worker_name, res_json, phase_job_count = row
+        phase_job_count = phase_job_count or 0
         is_embedded = worker_name == '__builtin__'
+        gpu_type = ""
         has_gpu = False
         throttle = "normal"
         if res_json:
             try:
                 res = json.loads(res_json)
-                has_gpu = bool(res.get("gpu_type"))
+                gpu_type = res.get("gpu_type") or ""
+                has_gpu = bool(gpu_type)
                 throttle = res.get("throttle_level", "normal")
             except Exception:
                 pass
 
-        # Thermal throttling: GPU too hot → idle
+        # Thermal throttling
         if throttle in ("danger", "critical"):
             return "idle"
 
-        # Build capable phases + pending counts
+        # Batch commit: check if current batch not yet finished
+        if assigned_mode and assigned_mode != "idle":
+            batch_size = self.get_phase_batch_size(assigned_mode)
+            pending = self._get_phase_pending(stats, assigned_mode)
+            if phase_job_count < batch_size and pending > 0:
+                return assigned_mode  # still within batch commit
+
+        # Determine GPU capability class
+        from backend.utils.config import get_config
+        cfg = get_config()
+        tiers = cfg.get("ai_mode.tiers", {})
+        active_tier = cfg.get("ai_mode.override") or "pro"
+        tier_cfg = tiers.get(active_tier, {})
+        vram_min = tier_cfg.get("vram_min", 0)
+        worker_vram_mb = 0
+        if res_json:
+            try:
+                worker_vram_mb = int((json.loads(res_json).get("gpu_memory_total_gb") or 0) * 1024)
+            except Exception:
+                pass
+        vram_threshold = int(vram_min * 0.90)
+        gpu_class = "embedded" if is_embedded else (
+            "strong" if has_gpu and worker_vram_mb >= vram_threshold else
+            "weak" if has_gpu else "cpu"
+        )
+
+        # Build capable phases + pending
         buffers = {}
-        if has_gpu:
+        if has_gpu or is_embedded:
             buffers["mc"] = stats.get("mc_pending", 0)
             buffers["vv"] = stats.get("embed_pending", 0)
         buffers["mv"] = stats.get("embed_pending", 0)
@@ -252,22 +300,34 @@ class JobQueueManager:
         )
         workers_on = dict(cursor.fetchall())
 
-        # Time-weighted pressure
+        # Time-weighted pressure with GPU penalty
         pressure = {}
         for phase, pending in buffers.items():
+            if pending <= 0:
+                continue
             w = self._PHASE_TIME.get(phase, 1)
             n = workers_on.get(phase, 0)
-            pressure[phase] = (pending / (n + 1)) * w
+            p = (pending / (n + 1)) * w
+            # GPU-Weak MC penalty
+            if phase == "mc":
+                penalty = self._MC_PENALTY.get(gpu_class)
+                if penalty is None:
+                    continue  # CPU cannot do MC at all
+                p /= penalty
+            # Min guarantee: unserved phase boost
+            if n == 0 and pending > 0:
+                p *= 1.5
+            pressure[phase] = p
 
         if not pressure:
-            return "full"
+            return "idle"
 
         best = max(pressure, key=pressure.get)
 
-        # Current mode stability: only switch if best is 2x current pressure
+        # Stability: only switch if best > current * 2
         if assigned_mode and assigned_mode in pressure and pressure[assigned_mode] > 0:
             if pressure[best] <= pressure[assigned_mode] * 2:
-                return assigned_mode  # keep current (avoid model switch)
+                return assigned_mode
 
         # Switch to best
         if pressure[best] > 0:
@@ -283,6 +343,13 @@ class JobQueueManager:
             return best
 
         return "idle"
+
+    @staticmethod
+    def _get_phase_pending(stats: dict, phase: str) -> int:
+        """Get pending count for a phase from stats dict."""
+        m = {"mc": "mc_pending", "vv": "embed_pending", "mv": "embed_pending",
+             "parse_thumb": "parse_pending", "parse": "parse_pending"}
+        return stats.get(m.get(phase, ""), 0)
 
     def _batch_check_existing_data(self, file_ids: List[int]) -> Dict[int, dict]:
         """Check actual DB data existence for a batch of files.
