@@ -451,11 +451,18 @@ class JobQueueManager:
             wn = cursor.fetchone()
             is_embedded = wn and wn[0] == '__builtin__'
 
-            remote_filter = "" if is_embedded else \
-                "AND (jq.file_path LIKE 'webdav://%' OR jq.file_path LIKE 'http://%' OR jq.file_path LIKE 'https://%')"
+            if is_embedded:
+                # Embedded: claim any unparsed file (local or remote, file_ready=1)
+                remote_filter = ""
+                ready_filter = "AND jq.file_ready = 1"
+            else:
+                # External: claim remote files only, even if not yet downloaded (file_ready=0 OK)
+                remote_filter = "AND (jq.file_path LIKE 'webdav://%' OR jq.file_path LIKE 'http://%' OR jq.file_path LIKE 'https://%')"
+                ready_filter = ""  # Worker will download the file itself
 
-            _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
+            _BASE_WHERE = f"""jq.status = 'pending'
                      AND (jq.parse_status IS NULL OR jq.parse_status = 'pending')
+                     {ready_filter}
                      {remote_filter}
                      {_WR_FILTER}"""
             phase_filter = ""  # No phase filter — these jobs haven't been parsed yet
