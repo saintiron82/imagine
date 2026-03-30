@@ -719,7 +719,7 @@ class JobQueueManager:
         return True
 
     def update_phase(self, job_id: int, phase: str, value: bool = True):
-        """Update a single phase in phase_completed JSON."""
+        """Update a single phase in phase_completed JSON + timestamp."""
         cursor = self.db.conn.cursor()
         cursor.execute("SELECT phase_completed FROM job_queue WHERE id = ?", (job_id,))
         row = cursor.fetchone()
@@ -727,10 +727,18 @@ class JobQueueManager:
             return
         pc = json.loads(row[0] or "{}")
         pc[phase] = value
-        cursor.execute(
-            "UPDATE job_queue SET phase_completed = ? WHERE id = ?",
-            (json.dumps(pc), job_id)
-        )
+        now = _utcnow_sql()
+        # Record phase completion timestamp for throughput calculation
+        if phase == "mc" or phase == "vision":
+            cursor.execute(
+                "UPDATE job_queue SET phase_completed = ?, mc_completed_at = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(pc), now, now, job_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE job_queue SET phase_completed = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(pc), now, job_id)
+            )
         self.db.conn.commit()
 
     def complete_job(self, job_id: int, user_id: int) -> bool:
@@ -1283,11 +1291,11 @@ class JobQueueManager:
                                      AND mc_completed_at IS NOT NULL
                                      AND datetime(mc_completed_at) > datetime('now', '-5 minutes')) AS mc_5m,
                     COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') = 1
-                                     AND completed_at IS NOT NULL
-                                     AND datetime(completed_at) > datetime('now', '-5 minutes')) AS vv_5m,
+                                     AND updated_at IS NOT NULL
+                                     AND datetime(updated_at) > datetime('now', '-5 minutes')) AS vv_5m,
                     COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mv') = 1
-                                     AND completed_at IS NOT NULL
-                                     AND datetime(completed_at) > datetime('now', '-5 minutes')) AS mv_5m
+                                     AND updated_at IS NOT NULL
+                                     AND datetime(updated_at) > datetime('now', '-5 minutes')) AS mv_5m
                 FROM job_queue WHERE archived_at IS NULL
             """)
             pt = cursor.fetchone()

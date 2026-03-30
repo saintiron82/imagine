@@ -575,12 +575,14 @@ def admin_list_workers(
     # Per-worker throughput: count any phase completion in last 5min/1min
     # Uses mc_completed_at (MC phase) as primary — most common worker activity.
     # Falls back to completed_at for VV/MV phases.
+    # Per-worker throughput: count any phase completion (mc_completed_at or updated_at)
     cursor.execute(
         """SELECT worker_session_id, COUNT(*) FROM job_queue
            WHERE worker_session_id IS NOT NULL
              AND (
                (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-5 minutes'))
-               OR (completed_at IS NOT NULL AND datetime(completed_at) > datetime('now', '-5 minutes'))
+               OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-5 minutes')
+                   AND json_extract(phase_completed, '$.vv') = 1)
              )
            GROUP BY worker_session_id"""
     )
@@ -591,19 +593,21 @@ def admin_list_workers(
            WHERE worker_session_id IS NOT NULL
              AND (
                (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-1 minute'))
-               OR (completed_at IS NOT NULL AND datetime(completed_at) > datetime('now', '-1 minute'))
+               OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-1 minute')
+                   AND json_extract(phase_completed, '$.vv') = 1)
              )
            GROUP BY worker_session_id"""
     )
     session_recent_1m = dict(cursor.fetchall())
 
-    # Fallback: per-user throughput for jobs without worker_session_id
+    # Fallback: per-user throughput
     cursor.execute(
         """SELECT assigned_to, COUNT(*) FROM job_queue
            WHERE worker_session_id IS NULL
              AND (
                (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-5 minutes'))
-               OR (completed_at IS NOT NULL AND datetime(completed_at) > datetime('now', '-5 minutes'))
+               OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-5 minutes')
+                   AND json_extract(phase_completed, '$.vv') = 1)
              )
            GROUP BY assigned_to"""
     )
@@ -614,7 +618,8 @@ def admin_list_workers(
            WHERE worker_session_id IS NULL
              AND (
                (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-1 minute'))
-               OR (completed_at IS NOT NULL AND datetime(completed_at) > datetime('now', '-1 minute'))
+               OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-1 minute')
+                   AND json_extract(phase_completed, '$.vv') = 1)
              )
            GROUP BY assigned_to"""
     )
