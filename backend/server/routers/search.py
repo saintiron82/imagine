@@ -5,10 +5,12 @@ Wraps existing SqliteVectorSearch with FastAPI endpoints.
 Reuses format_result() from api_search.py for response compatibility.
 """
 
+import json
 import logging
+import time
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.db.sqlite_client import SQLiteDB
@@ -22,6 +24,7 @@ router = APIRouter(prefix="/search", tags=["search"])
 
 # Singleton searcher (lazy init, models loaded once)
 _searcher: Optional[SqliteVectorSearch] = None
+_log_db: Optional[SQLiteDB] = None
 
 
 def _get_searcher() -> SqliteVectorSearch:
@@ -29,6 +32,28 @@ def _get_searcher() -> SqliteVectorSearch:
     if _searcher is None:
         _searcher = SqliteVectorSearch()
     return _searcher
+
+
+def _log_search(query: str, mode: str, result_count: int, elapsed_ms: int,
+                username: str = None, ip_address: str = None,
+                filters: dict = None, threshold: float = None):
+    """Record search request to search_logs table (fire-and-forget)."""
+    global _log_db
+    try:
+        if _log_db is None:
+            _log_db = SQLiteDB()
+        _log_db.conn.execute(
+            """INSERT INTO search_logs
+               (query, mode, result_count, elapsed_ms, username, ip_address, filters, threshold)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (query[:500], mode, result_count, elapsed_ms,
+             username, ip_address,
+             json.dumps(filters) if filters else None,
+             threshold)
+        )
+        _log_db.conn.commit()
+    except Exception as e:
+        logger.debug(f"Failed to log search: {e}")
 
 
 # ── Request schemas ──────────────────────────────────────────
@@ -50,54 +75,61 @@ class SearchRequest(BaseModel):
 @router.post("/triaxis")
 def search_triaxis(
     req: SearchRequest,
+    request: Request,
     _user: dict = Depends(get_current_user),
 ):
     """Triaxis search: VV + MV + FTS combined via RRF."""
-    return _do_search(req, mode="triaxis")
+    return _do_search(req, mode="triaxis", user=_user, request=request)
 
 
 @router.post("/visual")
 def search_visual(
     req: SearchRequest,
+    request: Request,
     _user: dict = Depends(get_current_user),
 ):
     """VV-only search (SigLIP2 visual similarity)."""
-    return _do_search(req, mode="vector")
+    return _do_search(req, mode="vector", user=_user, request=request)
 
 
 @router.post("/semantic")
 def search_semantic(
     req: SearchRequest,
+    request: Request,
     _user: dict = Depends(get_current_user),
 ):
     """MV-only search (Qwen3-Embedding text similarity)."""
-    return _do_search(req, mode="text_vector")
+    return _do_search(req, mode="text_vector", user=_user, request=request)
 
 
 @router.post("/keyword")
 def search_keyword(
     req: SearchRequest,
+    request: Request,
     _user: dict = Depends(get_current_user),
 ):
     """FTS-only search (FTS5 BM25 keyword matching)."""
-    return _do_search(req, mode="fts")
+    return _do_search(req, mode="fts", user=_user, request=request)
 
 
 @router.post("/similar/{file_id}")
 def search_similar(
     file_id: int,
+    request: Request,
     limit: int = 20,
     _user: dict = Depends(get_current_user),
 ):
     """Find similar images to a given file (VV + Structure)."""
     return _do_search(
         SearchRequest(query_file_id=file_id, limit=limit),
-        mode="triaxis",
+        mode="triaxis", user=_user, request=request,
     )
 
 
-def _do_search(req: SearchRequest, mode: str) -> dict:
+def _do_search(req: SearchRequest, mode: str,
+               user: dict = None, request: Request = None) -> dict:
     """Execute search and format results."""
+    t0 = time.time()
     try:
         searcher = _get_searcher()
         result_data = searcher.search(
@@ -120,10 +152,27 @@ def _do_search(req: SearchRequest, mode: str) -> dict:
             diag = None
 
         formatted = [format_result(r) for r in results]
+        elapsed_ms = int((time.time() - t0) * 1000)
+
+        # Log search request
+        query_text = req.query or f"[file_id:{req.query_file_id}]" if req.query_file_id else (req.query or "")
+        if req.query_images:
+            query_text = query_text or f"[image_search:{len(req.query_images)} images]"
+        elif req.query_image:
+            query_text = query_text or "[image_search]"
+        username = user.get("username") if user else None
+        ip = request.client.host if request and request.client else None
+        _log_search(
+            query=query_text, mode=mode, result_count=len(formatted),
+            elapsed_ms=elapsed_ms, username=username, ip_address=ip,
+            filters=req.filters, threshold=req.threshold,
+        )
+
         response = {
             "success": True,
             "results": formatted,
             "count": len(formatted),
+            "elapsed_ms": elapsed_ms,
         }
         if diag is not None:
             response["diagnostic"] = diag
@@ -133,3 +182,46 @@ def _do_search(req: SearchRequest, mode: str) -> dict:
     except Exception as e:
         logger.error(f"Search failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+# ── Search logs API ─────────────────────────────────────────
+
+@router.get("/logs")
+def get_search_logs(
+    limit: int = 50,
+    offset: int = 0,
+    username: Optional[str] = None,
+    _admin: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """List search logs (admin-visible)."""
+    cursor = db.conn.cursor()
+    conditions = []
+    params = []
+    if username:
+        conditions.append("username = ?")
+        params.append(username)
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+    cursor.execute(f"SELECT COUNT(*) FROM search_logs {where}", params)
+    total = cursor.fetchone()[0]
+
+    cursor.execute(
+        f"""SELECT id, query, mode, result_count, elapsed_ms,
+                   username, ip_address, filters, threshold, created_at
+            FROM search_logs {where}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?""",
+        params + [min(limit, 100), offset]
+    )
+    logs = [
+        {
+            "id": r[0], "query": r[1], "mode": r[2],
+            "result_count": r[3], "elapsed_ms": r[4],
+            "username": r[5], "ip_address": r[6],
+            "filters": json.loads(r[7]) if r[7] else None,
+            "threshold": r[8], "created_at": r[9],
+        }
+        for r in cursor.fetchall()
+    ]
+    return {"success": True, "logs": logs, "total": total}
