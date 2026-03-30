@@ -506,179 +506,145 @@ export default function WorkersPanel() {
         </div>
       )}
 
-      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-700 text-gray-400">
-              <th className="text-left px-4 py-3">{t('admin.worker_name')}</th>
-              <th className="text-left px-4 py-3">{t('auth.username')}</th>
-              <th className="text-left px-4 py-3">{t('admin.worker_state')}</th>
-              <th className="text-left px-4 py-3">Phase</th>
-              <th className="text-left px-4 py-3">{t('admin.worker_capacity')}</th>
-              <th className="text-left px-4 py-3">{t('admin.worker_speed')}</th>
-              <th className="text-left px-4 py-3">{t('admin.worker_resources')}</th>
-              <th className="text-left px-4 py-3">{t('admin.worker_jobs_done')}</th>
-              <th className="text-left px-4 py-3">{t('admin.worker_current_task')}</th>
-              <th className="text-left px-4 py-3">{t('admin.worker_last_heartbeat')}</th>
-              <th className="text-right px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {workers.map((w) => (
-              <tr key={w.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                <td className="px-4 py-3 font-medium">
-                  <div className="flex items-center gap-1.5">
-                    {w.worker_name === '__builtin__' ? (
-                      <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-400">
-                        {t('admin.worker_builtin_label')}
-                      </span>
-                    ) : (
-                      w.worker_name
-                    )}
-                  </div>
-                  {w.hostname && <div className="text-xs text-gray-500">{w.hostname}</div>}
-                </td>
-                <td className="px-4 py-3 text-gray-400">{w.worker_name === '__builtin__' ? 'server' : w.username}</td>
-                <td className="px-4 py-3">{stateBadge(w)}</td>
-                <td className="px-4 py-3">
-                  {(() => {
-                    const mode = w.assigned_mode || w.processing_mode_override || 'full';
-                    const isOverride = !!w.processing_mode_override;
-                    const badges = {
-                      parse_thumb: { bg: 'bg-sky-900/50 text-sky-400', label: 'Parse' },
-                      mc: { bg: 'bg-purple-900/50 text-purple-400', label: 'MC' },
-                      mc_only: { bg: 'bg-purple-900/50 text-purple-400', label: 'MC' },
-                      vv: { bg: 'bg-blue-900/50 text-blue-400', label: 'VV' },
-                      mv: { bg: 'bg-green-900/50 text-green-400', label: 'MV' },
-                      full: { bg: 'bg-gray-700/50 text-gray-300', label: 'Full' },
-                      embed_only: { bg: 'bg-orange-900/50 text-orange-400', label: 'Embed' },
-                    };
-                    const b = badges[mode] || badges.full;
-                    return (
-                      <div className="flex items-center gap-1">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${b.bg}`}>
-                          {b.label}
-                        </span>
-                        {w.phase_job_count > 0 && (
-                          <span className="text-[10px] text-gray-500 font-mono">{w.phase_job_count}</span>
-                        )}
-                        {isOverride && (
-                          <span className="text-[9px] text-yellow-600" title="Admin override">pin</span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </td>
-                <td className="px-4 py-3">
-                  {editingCapacity?.id === w.id ? (
-                    <input
-                      type="number"
-                      min={1}
-                      max={32}
-                      value={editingCapacity.value}
-                      onChange={(e) => setEditingCapacity({ id: w.id, value: Math.max(1, Math.min(32, Number(e.target.value))) })}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleCapacitySave(w.id);
-                        if (e.key === 'Escape') setEditingCapacity(null);
-                      }}
-                      onBlur={() => handleCapacitySave(w.id)}
-                      autoFocus
-                      className="w-14 bg-gray-900 border border-blue-500 rounded px-2 py-0.5 text-xs font-mono text-yellow-300 focus:outline-none"
-                    />
-                  ) : (
-                    <span
-                      className="font-mono text-yellow-300 cursor-pointer hover:text-yellow-200 flex items-center gap-1 group"
-                      onClick={() => setEditingCapacity({ id: w.id, value: w.batch_capacity_override || w.batch_capacity })}
-                      title={t('admin.worker_edit_capacity')}
-                    >
-                      B:{w.batch_capacity_override || w.batch_capacity}
-                      <Pencil size={10} className="text-gray-600 group-hover:text-yellow-300" />
+      {/* Worker cards */}
+      <div className="space-y-2">
+        {workers.map((w) => {
+          const mode = w.assigned_mode || w.processing_mode_override || 'full';
+          const pc = w.resources?.phase_counts || {};
+          const allPhases = [
+            { key: 'parse', label: 'Parse', count: pc.parse || 0, color: 'sky' },
+            { key: 'mc', label: 'MC', count: pc.mc || 0, color: 'purple' },
+            { key: 'vv', label: 'VV', count: pc.vv || 0, color: 'blue' },
+            { key: 'mv', label: 'MV', count: pc.mv || 0, color: 'green' },
+          ];
+          const isActive = (key) => {
+            const m = mode;
+            if (m === 'full') return true;
+            if (m === 'parse_thumb' && key === 'parse') return true;
+            if ((m === 'mc' || m === 'mc_only') && key === 'mc') return true;
+            if (m === 'vv' && key === 'vv') return true;
+            if (m === 'mv' && key === 'mv') return true;
+            if (m === 'embed_only' && (key === 'vv' || key === 'mv')) return true;
+            return false;
+          };
+          const currentPhaseLabel = w.current_phase === 'vision' ? 'MC' :
+            w.current_phase === 'embed_vv' ? 'VV' :
+            w.current_phase === 'embed_mv' ? 'MV' :
+            w.current_phase ? w.current_phase.toUpperCase() : null;
+          const batchSize = w.batch_capacity_override || w.batch_capacity;
+
+          return (
+            <div key={w.id} className="bg-gray-800 rounded-lg border border-gray-700 p-3">
+              {/* Row 1: identity + status + current task + actions */}
+              <div className="flex items-center gap-3 mb-2">
+                {/* Name */}
+                <div className="min-w-[140px]">
+                  {w.worker_name === '__builtin__' ? (
+                    <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-400">
+                      {t('admin.worker_builtin_label')}
                     </span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {w.throughput > 0 ? (
-                    <span className="font-mono text-emerald-400">{w.throughput.toFixed(1)}<span className="text-emerald-400/50 text-xs ml-0.5">/m</span></span>
                   ) : (
-                    <span className="text-gray-600">-</span>
+                    <span className="text-sm font-medium text-white">{w.worker_name}</span>
                   )}
-                </td>
-                <td className="px-4 py-3">
-                  <ResourceMetrics resources={w.resources} t={t} />
-                </td>
-                <td className="px-4 py-3">
-                  {(() => {
-                    const pc = w.resources?.phase_counts || {};
-                    const hasPhases = pc.mc || pc.vv || pc.mv || pc.parse;
-                    return hasPhases ? (
-                      <div className="flex items-center gap-1.5 text-[10px] font-mono">
-                        {pc.parse > 0 && <span className="text-sky-400" title="Parse">{pc.parse}<span className="text-sky-400/50">P</span></span>}
-                        {pc.mc > 0 && <span className="text-purple-400" title="MC">{pc.mc}<span className="text-purple-400/50">M</span></span>}
-                        {pc.vv > 0 && <span className="text-blue-400" title="VV">{pc.vv}<span className="text-blue-400/50">V</span></span>}
-                        {pc.mv > 0 && <span className="text-green-400" title="MV">{pc.mv}<span className="text-green-400/50">T</span></span>}
-                        <span className="text-gray-500">= {w.jobs_completed}</span>
-                        {w.jobs_failed > 0 && <span className="text-red-400">{w.jobs_failed}f</span>}
-                      </div>
-                    ) : (
-                      <span>
-                        <span className="text-green-400">{w.jobs_completed}</span>
-                        {w.jobs_failed > 0 && <span className="text-red-400 ml-1">/ {w.jobs_failed} fail</span>}
-                      </span>
-                    );
-                  })()}
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  {w.current_phase ? (
+                  <div className="text-[10px] text-gray-500">{w.hostname}</div>
+                </div>
+
+                {/* State */}
+                {stateBadge(w)}
+
+                {/* Speed */}
+                <div className="text-center min-w-[60px]">
+                  <div className={`text-sm font-bold font-mono ${w.throughput > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>
+                    {w.throughput > 0 ? w.throughput.toFixed(1) : '-'}
+                  </div>
+                  <div className="text-[9px] text-gray-500">/min</div>
+                </div>
+
+                {/* Batch size */}
+                <div className="text-center min-w-[40px]">
+                  {editingCapacity?.id === w.id ? (
+                    <input type="number" min={1} max={32} value={editingCapacity.value}
+                      onChange={(e) => setEditingCapacity({ id: w.id, value: Math.max(1, Math.min(32, Number(e.target.value))) })}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleCapacitySave(w.id); if (e.key === 'Escape') setEditingCapacity(null); }}
+                      onBlur={() => handleCapacitySave(w.id)} autoFocus
+                      className="w-10 bg-gray-900 border border-blue-500 rounded px-1 py-0.5 text-xs font-mono text-yellow-300 focus:outline-none text-center" />
+                  ) : (
+                    <div className="cursor-pointer group" onClick={() => setEditingCapacity({ id: w.id, value: batchSize })}
+                      title="Batch size">
+                      <div className="text-sm font-mono text-yellow-300 group-hover:text-yellow-200">{batchSize}</div>
+                      <div className="text-[9px] text-gray-500">batch</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Current task */}
+                <div className="flex-1 min-w-0">
+                  {w.current_file ? (
                     <div className="flex items-center gap-1.5">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                        w.current_phase === 'vision' || w.current_phase === 'mc' ? 'bg-purple-900/40 text-purple-300' :
-                        w.current_phase === 'embed_vv' || w.current_phase === 'vv' ? 'bg-blue-900/40 text-blue-300' :
-                        w.current_phase === 'embed_mv' || w.current_phase === 'mv' ? 'bg-green-900/40 text-green-300' :
-                        w.current_phase === 'parse' ? 'bg-sky-900/40 text-sky-300' :
-                        'bg-gray-700/40 text-gray-300'
-                      }`}>
-                        {w.current_phase === 'vision' ? 'MC' :
-                         w.current_phase === 'embed_vv' ? 'VV' :
-                         w.current_phase === 'embed_mv' ? 'MV' :
-                         w.current_phase.toUpperCase()}
-                      </span>
-                      {w.current_file && (
-                        <span className="text-gray-500 truncate max-w-[120px]" title={w.current_file}>
-                          {w.current_file.split(/[/\\]/).pop()}
-                        </span>
+                      {currentPhaseLabel && (
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
+                          currentPhaseLabel === 'MC' ? 'bg-purple-900/40 text-purple-300' :
+                          currentPhaseLabel === 'VV' ? 'bg-blue-900/40 text-blue-300' :
+                          currentPhaseLabel === 'MV' ? 'bg-green-900/40 text-green-300' :
+                          currentPhaseLabel === 'PARSE' ? 'bg-sky-900/40 text-sky-300' :
+                          'bg-gray-700/40 text-gray-300'
+                        }`}>{currentPhaseLabel}</span>
                       )}
+                      <span className="text-xs text-gray-400 truncate" title={w.current_file}>
+                        {w.current_file.split(/[/\\]/).pop()}
+                      </span>
                     </div>
-                  ) : <span className="text-gray-600">-</span>}
-                </td>
-                <td className="px-4 py-3 text-gray-500 text-xs font-mono">
-                  {timeAgo(w.last_heartbeat)}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {w.status === 'online' && (
-                    <div className="flex gap-1 justify-end">
-                      <button
-                        onClick={() => handleStop(w.id)}
-                        className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-gray-700 hover:bg-yellow-900/50 text-gray-300 hover:text-yellow-300"
-                        title={t('admin.worker_action_stop')}
-                      >
-                        <Square size={10} />
-                        {t('admin.worker_action_stop')}
-                      </button>
-                      <button
-                        onClick={() => handleBlock(w.id)}
-                        className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-gray-700 hover:bg-red-900/50 text-gray-300 hover:text-red-300"
-                        title={t('admin.worker_action_block')}
-                      >
-                        <Ban size={10} />
-                        {t('admin.worker_action_block')}
-                      </button>
-                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-600">idle</span>
                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+
+                {/* Resources mini */}
+                <div className="shrink-0">
+                  <ResourceMetrics resources={w.resources} t={t} />
+                </div>
+
+                {/* Actions */}
+                {w.status === 'online' && (
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => handleStop(w.id)}
+                      className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-yellow-900/50 text-gray-400 hover:text-yellow-300">
+                      <Square size={10} />
+                    </button>
+                    <button onClick={() => handleBlock(w.id)}
+                      className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-red-900/50 text-gray-400 hover:text-red-300">
+                      <Ban size={10} />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Row 2: Phase bars — what this worker has done per phase */}
+              <div className="flex items-center gap-1">
+                {allPhases.map((p) => {
+                  const active = isActive(p.key);
+                  const isCurrent = currentPhaseLabel === p.label;
+                  return (
+                    <div key={p.key} className={`flex-1 rounded px-2 py-1 text-center ${
+                      isCurrent ? `bg-${p.color}-900/40 border border-${p.color}-500/50` :
+                      active ? `bg-${p.color}-900/20` : 'bg-gray-800/50'
+                    }`}>
+                      <div className={`text-[10px] font-medium ${active ? `text-${p.color}-400` : 'text-gray-600'}`}>
+                        {p.label}
+                      </div>
+                      <div className={`text-sm font-bold font-mono ${
+                        isCurrent ? `text-${p.color}-300` :
+                        p.count > 0 ? `text-${p.color}-400` : 'text-gray-700'
+                      }`}>
+                        {p.count || '-'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
         {workers.length === 0 && (
           <div className="text-center text-gray-500 py-8 text-sm">{t('admin.workers_empty')}</div>
         )}
