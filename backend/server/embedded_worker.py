@@ -102,8 +102,33 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
 
                     consecutive_empty = 0
 
-                    # Batch processing: Phase-level sub-batching (MC→VV→MV)
-                    # Much more efficient than process_job (1 file at a time)
+                    # Decide which phase to focus on based on queue backlog.
+                    # Embedded worker acts as the "补完者" — fills whichever
+                    # phase has the most pending jobs.
+                    try:
+                        from backend.server.queue.manager import QueueManager
+                        from backend.db.sqlite_client import SQLiteDB
+                        _qdb = SQLiteDB()
+                        _qm = QueueManager(_qdb)
+                        phase_stats = _qm.get_phase_stats()
+
+                        # Pick the most backed-up phase
+                        mc_p = phase_stats.get("mc_pending", 0)
+                        vv_p = phase_stats.get("vv_pending", 0)
+                        mv_p = phase_stats.get("mv_pending", 0)
+
+                        if mc_p >= vv_p and mc_p >= mv_p and mc_p > 0:
+                            _worker_daemon.processing_mode = "mc"
+                        elif vv_p >= mv_p and vv_p > 0:
+                            _worker_daemon.processing_mode = "vv"
+                        elif mv_p > 0:
+                            _worker_daemon.processing_mode = "mv"
+                        else:
+                            _worker_daemon.processing_mode = "full"
+                    except Exception:
+                        _worker_daemon.processing_mode = "full"
+
+                    # Batch processing with dynamically chosen mode
                     try:
                         results = _worker_daemon.process_batch_phased(jobs)
                         # results = [(job_id, success_bool), ...]
