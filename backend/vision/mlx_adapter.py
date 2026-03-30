@@ -15,10 +15,12 @@ from typing import Dict, Any, Optional, List
 
 from PIL import Image
 
+from backend.vision.base import BaseVisionAnalyzer
+
 logger = logging.getLogger(__name__)
 
 
-class MLXVisionAdapter:
+class MLXVisionAdapter(BaseVisionAnalyzer):
     """
     VLM adapter using mlx-vlm for native Apple Silicon inference.
 
