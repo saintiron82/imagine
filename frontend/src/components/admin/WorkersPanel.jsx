@@ -528,7 +528,6 @@ export default function WorkersPanel() {
                 <div className="text-green-400">MV</div>
                 {queueStats?.mv_throughput > 0 && <div className="text-[9px] text-green-400/60 font-mono">{queueStats.mv_throughput}/m</div>}
               </th>
-              <th className="text-center px-2 py-2">{t('admin.worker_speed')}</th>
               <th className="text-center px-2 py-2">Batch</th>
               <th className="text-right px-3 py-2"></th>
             </tr>
@@ -553,6 +552,9 @@ export default function WorkersPanel() {
                     <div className={`text-sm font-bold font-mono ${count > 0 ? `text-${color}-400` : 'text-gray-700'}`}>
                       {count || '-'}
                     </div>
+                    {isCurrent && w.throughput > 0 && (
+                      <div className="text-[9px] text-emerald-400 font-mono">{w.throughput.toFixed(1)}/m</div>
+                    )}
                     {isCurrent && fileName && (
                       <div className={`text-[9px] text-${color}-300 truncate max-w-[120px] mx-auto`} title={w.current_file}>
                         {fileName}
@@ -574,12 +576,6 @@ export default function WorkersPanel() {
                   {phaseCell('mc', 'purple')}
                   {phaseCell('vv', 'blue')}
                   {phaseCell('mv', 'green')}
-                  <td className="text-center px-2 py-2">
-                    <div className={`text-sm font-bold font-mono ${w.throughput > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>
-                      {w.throughput > 0 ? w.throughput.toFixed(1) : '-'}
-                    </div>
-                    <div className="text-[9px] text-gray-500">/min</div>
-                  </td>
                   <td className="text-center px-2 py-2">
                     {editingCapacity?.id === w.id ? (
                       <input type="number" min={1} max={32} value={editingCapacity.value}
