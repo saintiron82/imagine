@@ -165,12 +165,26 @@ def _resolve_thumbnail_path(result: dict) -> str:
 _PROJECT_ROOT = Path(__file__).parent.parent
 
 
-def format_result(result: dict) -> dict:
-    """Format a single search result for the frontend."""
+def format_result(result: dict, skip_fs: bool = False) -> dict:
+    """Format a single search result for the frontend.
+
+    Args:
+        skip_fs: If True, skip filesystem I/O (Path.exists, thumbnail resolve).
+                 Used in server mode where clients use API URLs instead of local paths.
+    """
     metadata = result.get("metadata", {})
     db_path = result.get("file_path", "")
-    resolved_path = _resolve_local_path(result)
-    path_exists = bool(resolved_path and Path(resolved_path).exists())
+
+    if skip_fs:
+        # Server mode: no filesystem access — clients use /files/{id}/thumbnail API
+        resolved_path = db_path
+        path_exists = True  # assume accessible via server
+        thumb_path = result.get("thumbnail_url", "")
+    else:
+        # Electron local mode: resolve paths on disk
+        resolved_path = _resolve_local_path(result)
+        path_exists = bool(resolved_path and Path(resolved_path).exists())
+        thumb_path = _resolve_thumbnail_path(result)
 
     # Lightweight result for search grid — no heavy metadata/layer_tree.
     # Full metadata is loaded on demand via getFileDetail().
@@ -180,7 +194,7 @@ def format_result(result: dict) -> dict:
         "db_path": db_path,
         "resolved_path": resolved_path,
         "path_exists": path_exists,
-        "path_mapped": bool(db_path and resolved_path and db_path != resolved_path),
+        "path_mapped": bool(not skip_fs and db_path and resolved_path and db_path != resolved_path),
         "folder_path": result.get("folder_path", ""),
         "relative_path": result.get("relative_path", ""),
         "storage_root": result.get("storage_root", ""),
@@ -188,7 +202,7 @@ def format_result(result: dict) -> dict:
         "text_vec_score": result.get("text_vec_score", result.get("text_similarity")),
         "text_score": result.get("text_score"),
         "combined_score": result.get("rrf_score", result.get("similarity", 0)),
-        "thumbnail_path": _resolve_thumbnail_path(result),
+        "thumbnail_path": thumb_path,
         "format": result.get("format", ""),
         "width": result.get("width", 0),
         "height": result.get("height", 0),
