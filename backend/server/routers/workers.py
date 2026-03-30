@@ -561,8 +561,8 @@ def admin_list_workers(
                   ws.current_file, ws.current_phase,
                   ws.last_heartbeat, ws.connected_at, ws.disconnected_at,
                   ws.pending_command, u.username, ws.user_id,
-                  ws.processing_mode_override, ws.batch_capacity_override,\
-                  ws.resources_json
+                  ws.processing_mode_override, ws.batch_capacity_override,
+                  ws.resources_json, ws.assigned_mode, ws.phase_job_count
            FROM worker_sessions ws
            JOIN users u ON ws.user_id = u.id
            ORDER BY
@@ -684,6 +684,8 @@ def admin_list_workers(
             "processing_mode_override": row[15],
             "batch_capacity_override": row[16],
             "resources": json.loads(row[17]) if row[17] else None,
+            "assigned_mode": row[18],
+            "phase_job_count": row[19] or 0,
         })
     return {
         "workers": workers,

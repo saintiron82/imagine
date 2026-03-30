@@ -451,25 +451,33 @@ export default function WorkersPanel() {
                 <td className="px-4 py-3 text-gray-400">{w.worker_name === '__builtin__' ? 'server' : w.username}</td>
                 <td className="px-4 py-3">{stateBadge(w)}</td>
                 <td className="px-4 py-3">
-                  {w.processing_mode_override === 'parse_thumb' ? (
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-sky-900/50 text-sky-400">
-                      Parse+Thumb
-                    </span>
-                  ) : w.processing_mode_override === 'mc_only' ? (
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-900/50 text-amber-400">
-                      MC Only
-                    </span>
-                  ) : w.processing_mode_override === 'embed_only' ? (
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-400"
-                      title={t('admin.worker_capability_tooltip')}>
-                      {t('admin.worker_capability_lightweight')}
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-400"
-                      title={t('admin.worker_capability_tooltip')}>
-                      {t('admin.worker_capability_full')}
-                    </span>
-                  )}
+                  {(() => {
+                    const mode = w.assigned_mode || w.processing_mode_override || 'full';
+                    const isOverride = !!w.processing_mode_override;
+                    const badges = {
+                      parse_thumb: { bg: 'bg-sky-900/50 text-sky-400', label: 'Parse' },
+                      mc: { bg: 'bg-purple-900/50 text-purple-400', label: 'MC' },
+                      mc_only: { bg: 'bg-purple-900/50 text-purple-400', label: 'MC' },
+                      vv: { bg: 'bg-blue-900/50 text-blue-400', label: 'VV' },
+                      mv: { bg: 'bg-green-900/50 text-green-400', label: 'MV' },
+                      full: { bg: 'bg-gray-700/50 text-gray-300', label: 'Full' },
+                      embed_only: { bg: 'bg-orange-900/50 text-orange-400', label: 'Embed' },
+                    };
+                    const b = badges[mode] || badges.full;
+                    return (
+                      <div className="flex items-center gap-1">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${b.bg}`}>
+                          {b.label}
+                        </span>
+                        {w.phase_job_count > 0 && (
+                          <span className="text-[10px] text-gray-500 font-mono">{w.phase_job_count}</span>
+                        )}
+                        {isOverride && (
+                          <span className="text-[9px] text-yellow-600" title="Admin override">pin</span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </td>
                 <td className="px-4 py-3">
                   {editingCapacity?.id === w.id ? (
@@ -514,17 +522,28 @@ export default function WorkersPanel() {
                     <span className="text-red-400 ml-1">/ {w.jobs_failed} fail</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-gray-400 text-xs">
+                <td className="px-4 py-3 text-xs">
                   {w.current_phase ? (
-                    <span>
-                      <span className="text-blue-300">{w.current_phase}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        w.current_phase === 'vision' || w.current_phase === 'mc' ? 'bg-purple-900/40 text-purple-300' :
+                        w.current_phase === 'embed_vv' || w.current_phase === 'vv' ? 'bg-blue-900/40 text-blue-300' :
+                        w.current_phase === 'embed_mv' || w.current_phase === 'mv' ? 'bg-green-900/40 text-green-300' :
+                        w.current_phase === 'parse' ? 'bg-sky-900/40 text-sky-300' :
+                        'bg-gray-700/40 text-gray-300'
+                      }`}>
+                        {w.current_phase === 'vision' ? 'MC' :
+                         w.current_phase === 'embed_vv' ? 'VV' :
+                         w.current_phase === 'embed_mv' ? 'MV' :
+                         w.current_phase.toUpperCase()}
+                      </span>
                       {w.current_file && (
-                        <span className="ml-1 text-gray-500 truncate max-w-[120px] inline-block align-bottom">
+                        <span className="text-gray-500 truncate max-w-[120px]" title={w.current_file}>
                           {w.current_file.split(/[/\\]/).pop()}
                         </span>
                       )}
-                    </span>
-                  ) : '-'}
+                    </div>
+                  ) : <span className="text-gray-600">-</span>}
                 </td>
                 <td className="px-4 py-3 text-gray-500 text-xs font-mono">
                   {timeAgo(w.last_heartbeat)}
