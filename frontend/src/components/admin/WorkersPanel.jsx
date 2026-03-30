@@ -11,6 +11,7 @@ import {
   getAutoProcessing, updateAutoProcessing,
   getEmbeddedWorker,
 } from '../../api/admin';
+import { getJobStats } from '../../api/worker';
 import {
   RefreshCw, Square, Ban, Pencil, AlertOctagon, Loader2,
 } from 'lucide-react';
@@ -156,12 +157,17 @@ export default function WorkersPanel() {
   const [embeddedEnabled, setEmbeddedEnabled] = useState(false);
   const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
   const [dbStats, setDbStats] = useState(null);
+  const [queueStats, setQueueStats] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const data = await listWorkerSessions();
-      const all = data.workers || [];
+      const [workerData, statsData] = await Promise.all([
+        listWorkerSessions(),
+        getJobStats().catch(() => null),
+      ]);
+      const all = workerData.workers || [];
       setWorkers(all.filter(w => w.status === 'online'));
+      if (statsData) setQueueStats(statsData);
     } catch (e) {
       console.error('Failed to load workers:', e);
     }
@@ -395,24 +401,88 @@ export default function WorkersPanel() {
         )}
       </div>
 
-      {/* Aggregate stats */}
+      {/* Pipeline phase dashboard */}
       {onlineCount > 0 && (
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
-            <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_total_speed')}</div>
-            <div className="text-xl font-bold text-emerald-400 font-mono">
-              {totalThroughput > 0 ? totalThroughput.toFixed(1) : '-'}
-              {totalThroughput > 0 && <span className="text-xs font-normal text-emerald-400/60 ml-1">{t('admin.queue_files_per_min')}</span>}
+        <div className="mb-4 space-y-3">
+          {/* Top row: speed + workers + completed */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
+              <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_total_speed')}</div>
+              <div className="text-xl font-bold text-emerald-400 font-mono">
+                {totalThroughput > 0 ? totalThroughput.toFixed(1) : '-'}
+                {totalThroughput > 0 && <span className="text-xs font-normal text-emerald-400/60 ml-1">{t('admin.queue_files_per_min')}</span>}
+              </div>
+            </div>
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
+              <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_online_count')}</div>
+              <div className="text-xl font-bold text-green-400 font-mono">{onlineCount}</div>
+            </div>
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
+              <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_total_completed')}</div>
+              <div className="text-xl font-bold text-blue-400 font-mono">{totalCompleted}</div>
             </div>
           </div>
-          <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
-            <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_online_count')}</div>
-            <div className="text-xl font-bold text-green-400 font-mono">{onlineCount}</div>
-          </div>
-          <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 text-center">
-            <div className="text-xs text-gray-400 mb-0.5">{t('admin.worker_total_completed')}</div>
-            <div className="text-xl font-bold text-blue-400 font-mono">{totalCompleted}</div>
-          </div>
+
+          {/* Phase pipeline flow */}
+          {queueStats && (
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
+              <div className="flex items-center gap-1 mb-2">
+                <span className="text-xs text-gray-400 font-medium">Pipeline</span>
+                <span className="text-[10px] text-gray-600">
+                  ({queueStats.pending + queueStats.assigned + (queueStats.processing || 0)} active)
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                {/* Download */}
+                <div className="flex-1 text-center">
+                  <div className="text-[10px] text-gray-500 mb-1">Download</div>
+                  <div className={`text-lg font-bold font-mono ${(queueStats.download_waiting || 0) > 0 ? 'text-yellow-400' : 'text-gray-600'}`}>
+                    {queueStats.download_waiting || 0}
+                  </div>
+                </div>
+                <span className="text-gray-600">→</span>
+                {/* Parse */}
+                <div className="flex-1 text-center">
+                  <div className="text-[10px] text-sky-400 mb-1">Parse</div>
+                  <div className={`text-lg font-bold font-mono ${(queueStats.parse_pending || 0) > 0 ? 'text-sky-400' : 'text-gray-600'}`}>
+                    {queueStats.parse_pending || 0}
+                  </div>
+                </div>
+                <span className="text-gray-600">→</span>
+                {/* MC */}
+                <div className="flex-1 text-center">
+                  <div className="text-[10px] text-purple-400 mb-1">MC</div>
+                  <div className={`text-lg font-bold font-mono ${(queueStats.mc_pending || 0) > 0 ? 'text-purple-400' : 'text-gray-600'}`}>
+                    {queueStats.mc_pending || 0}
+                  </div>
+                </div>
+                <span className="text-gray-600">→</span>
+                {/* VV */}
+                <div className="flex-1 text-center">
+                  <div className="text-[10px] text-blue-400 mb-1">VV</div>
+                  <div className={`text-lg font-bold font-mono ${(queueStats.vv_pending || 0) > 0 ? 'text-blue-400' : 'text-gray-600'}`}>
+                    {queueStats.vv_pending || 0}
+                  </div>
+                </div>
+                <span className="text-gray-600">→</span>
+                {/* MV */}
+                <div className="flex-1 text-center">
+                  <div className="text-[10px] text-green-400 mb-1">MV</div>
+                  <div className={`text-lg font-bold font-mono ${(queueStats.mv_pending || 0) > 0 ? 'text-green-400' : 'text-gray-600'}`}>
+                    {queueStats.mv_pending || 0}
+                  </div>
+                </div>
+                <span className="text-gray-600">→</span>
+                {/* Done */}
+                <div className="flex-1 text-center">
+                  <div className="text-[10px] text-gray-500 mb-1">Done</div>
+                  <div className="text-lg font-bold font-mono text-emerald-400">
+                    {queueStats.completed || 0}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -517,10 +587,25 @@ export default function WorkersPanel() {
                   <ResourceMetrics resources={w.resources} t={t} />
                 </td>
                 <td className="px-4 py-3">
-                  <span className="text-green-400">{w.jobs_completed}</span>
-                  {w.jobs_failed > 0 && (
-                    <span className="text-red-400 ml-1">/ {w.jobs_failed} fail</span>
-                  )}
+                  {(() => {
+                    const pc = w.resources?.phase_counts || {};
+                    const hasPhases = pc.mc || pc.vv || pc.mv || pc.parse;
+                    return hasPhases ? (
+                      <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                        {pc.parse > 0 && <span className="text-sky-400" title="Parse">{pc.parse}<span className="text-sky-400/50">P</span></span>}
+                        {pc.mc > 0 && <span className="text-purple-400" title="MC">{pc.mc}<span className="text-purple-400/50">M</span></span>}
+                        {pc.vv > 0 && <span className="text-blue-400" title="VV">{pc.vv}<span className="text-blue-400/50">V</span></span>}
+                        {pc.mv > 0 && <span className="text-green-400" title="MV">{pc.mv}<span className="text-green-400/50">T</span></span>}
+                        <span className="text-gray-500">= {w.jobs_completed}</span>
+                        {w.jobs_failed > 0 && <span className="text-red-400">{w.jobs_failed}f</span>}
+                      </div>
+                    ) : (
+                      <span>
+                        <span className="text-green-400">{w.jobs_completed}</span>
+                        {w.jobs_failed > 0 && <span className="text-red-400 ml-1">/ {w.jobs_failed} fail</span>}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td className="px-4 py-3 text-xs">
                   {w.current_phase ? (
