@@ -579,14 +579,14 @@ function WorkerPage({ appMode }) {
     };
 
     const fetchWorkerStatus = async () => {
-      if (isElectron) return;
+      if (isElectron && window.electron?.worker) return; // IPC mode handles its own status via events
       try {
         const data = await apiClient.get('/api/v1/admin/worker/status');
         setWorkerStatus(data.running ? 'running' : 'idle');
         if (data.last_error) {
           setWorkerStatus('error');
         }
-      } catch { /* ignore - user may not be admin */ }
+      } catch { /* ignore — user may not be admin */ }
     };
 
     fetchStats();
@@ -630,8 +630,8 @@ function WorkerPage({ appMode }) {
   }, [addLog]);
 
   const handleStart = async () => {
-    if (isElectron) {
-      // Electron mode: use IPC
+    if (isElectron && window.electron?.worker?.start) {
+      // Electron: spawn worker_ipc.py via IPC
       const serverUrl = getServerUrl();
       const accessToken = getAccessToken();
       const refreshToken = getRefreshToken();
@@ -658,7 +658,7 @@ function WorkerPage({ appMode }) {
         setWorkerStatus('error');
       }
     } else {
-      // Web mode: call server embedded worker API
+      // Web: server embedded worker API
       try {
         const result = await apiClient.post('/api/v1/admin/worker/start');
         if (result.success === false) {
@@ -675,7 +675,7 @@ function WorkerPage({ appMode }) {
   };
 
   const handleStop = async () => {
-    if (isElectron) {
+    if (isElectron && window.electron?.worker?.stop) {
       try {
         await window.electron.worker.stop();
         setWorkerStatus('idle');
@@ -685,7 +685,6 @@ function WorkerPage({ appMode }) {
         addLog(e.message, 'error');
       }
     } else {
-      // Web mode: call server embedded worker stop API
       setWorkerStatus('stopping');
       try {
         const result = await apiClient.post('/api/v1/admin/worker/stop');

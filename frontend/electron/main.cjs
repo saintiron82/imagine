@@ -750,6 +750,103 @@ ipcMain.handle('google-oauth', async () => {
     });
 });
 
+// ── Worker IPC (spawn worker_ipc.py, control via stdin/stdout JSON) ──
+
+let workerProc = null;
+let workerResponseBuffer = '';
+
+function sendWorkerEvent(channel, data) {
+    const windows = BrowserWindow.getAllWindows();
+    for (const w of windows) {
+        if (!w.isDestroyed()) w.webContents.send(channel, data);
+    }
+}
+
+function processWorkerOutput(line) {
+    if (!line.trim()) return;
+    try {
+        const parsed = JSON.parse(line);
+        const event = parsed.event;
+        if (event === 'status') sendWorkerEvent('worker-status', parsed);
+        else if (event === 'log') sendWorkerEvent('worker-log', parsed);
+        else if (event === 'job_done') sendWorkerEvent('worker-job-done', parsed);
+        else if (event === 'stats') sendWorkerEvent('worker-stats', parsed);
+        else if (event === 'batch_start') sendWorkerEvent('worker-batch-start', parsed);
+        else if (event === 'batch_phase_start') sendWorkerEvent('worker-batch-phase-start', parsed);
+        else if (event === 'batch_file_done') sendWorkerEvent('worker-batch-file-done', parsed);
+        else if (event === 'batch_phase_complete') sendWorkerEvent('worker-batch-phase-complete', parsed);
+        else if (event === 'batch_complete') sendWorkerEvent('worker-batch-complete', parsed);
+    } catch {
+        writeLog('WARN', '[Worker] unparseable:', line.substring(0, 200));
+    }
+}
+
+function spawnWorkerIPC() {
+    if (workerProc) return;
+    workerProc = spawnBackend('worker-ipc', [], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    }, 'backend/worker/worker_ipc.py');
+
+    workerProc.stdout.on('data', (chunk) => {
+        workerResponseBuffer += chunk.toString('utf8');
+        const lines = workerResponseBuffer.split('\n');
+        workerResponseBuffer = lines.pop();
+        for (const line of lines) processWorkerOutput(line);
+    });
+
+    workerProc.stderr.on('data', (chunk) => {
+        const msg = chunk.toString('utf8').trim();
+        if (msg) writeLog('INFO', '[Worker stderr]', msg);
+    });
+
+    workerProc.on('exit', (code) => {
+        writeLog('INFO', `[Worker] process exited (code=${code})`);
+        workerProc = null;
+        workerResponseBuffer = '';
+        sendWorkerEvent('worker-status', { event: 'status', status: 'idle', jobs: [] });
+    });
+}
+
+function sendWorkerCmd(cmd) {
+    if (!workerProc || !workerProc.stdin.writable) return;
+    workerProc.stdin.write(JSON.stringify(cmd) + '\n');
+}
+
+ipcMain.handle('worker-start', async (_, opts) => {
+    try {
+        spawnWorkerIPC();
+        // Wait a moment for process to be ready
+        await new Promise(r => setTimeout(r, 300));
+        sendWorkerCmd({
+            cmd: 'start',
+            server_url: opts.serverUrl,
+            access_token: opts.accessToken || '',
+            refresh_token: opts.refreshToken || '',
+        });
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('worker-stop', async () => {
+    try {
+        if (workerProc) {
+            sendWorkerCmd({ cmd: 'stop' });
+        }
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('worker-status', async () => {
+    if (!workerProc) return { status: 'idle', jobs: [] };
+    sendWorkerCmd({ cmd: 'status' });
+    return { status: 'unknown' }; // actual status comes via event
+});
+
 // Auto Update IPC
 ipcMain.handle('updater-check', async () => {
     if (isDev || !autoUpdater) return { available: false, reason: 'dev-mode' };

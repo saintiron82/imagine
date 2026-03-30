@@ -21,6 +21,17 @@ contextBridge.exposeInMainWorld('electron', {
     auth: {
         googleOAuth: () => ipcRenderer.invoke('google-oauth'),
     },
+    worker: {
+        start: (opts) => ipcRenderer.invoke('worker-start', opts),
+        stop: () => ipcRenderer.invoke('worker-stop'),
+        status: () => ipcRenderer.invoke('worker-status'),
+        onStatus: (cb) => { ipcRenderer.removeAllListeners('worker-status'); ipcRenderer.on('worker-status', (_, d) => cb(d)); },
+        onLog: (cb) => { ipcRenderer.removeAllListeners('worker-log'); ipcRenderer.on('worker-log', (_, d) => cb(d)); },
+        onJobDone: (cb) => { ipcRenderer.removeAllListeners('worker-job-done'); ipcRenderer.on('worker-job-done', (_, d) => cb(d)); },
+        offStatus: () => ipcRenderer.removeAllListeners('worker-status'),
+        offLog: () => ipcRenderer.removeAllListeners('worker-log'),
+        offJobDone: () => ipcRenderer.removeAllListeners('worker-job-done'),
+    },
     fs: {
         // Get Home Directory
         getHomeDir: () => os.homedir(),
