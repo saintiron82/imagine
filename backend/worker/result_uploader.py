@@ -189,6 +189,22 @@ class ResultUploader:
             logger.error(f"VV-only job {job_id} request failed: {e}")
             return False
 
+    def complete_vv_batch(self, items: list) -> list:
+        """Batch VV upload: [{job_id, vec}, ...] → [bool, ...]"""
+        try:
+            payload = [{"job_id": it["job_id"], "vv": _encode_vector(it["vec"])} for it in items]
+            resp = self._request('patch',
+                f"{self.base}/api/v1/jobs/batch/complete_vv",
+                json={"items": payload},
+            )
+            if resp.status_code == 200:
+                return resp.json().get("results", [True] * len(items))
+            logger.error(f"VV batch failed: {resp.status_code}")
+            return [False] * len(items)
+        except Exception as e:
+            logger.error(f"VV batch request failed: {e}")
+            return [False] * len(items)
+
     def complete_mv(self, job_id: int, mv_vec) -> bool:
         """MV-only mode: upload single MV vector."""
         try:
@@ -203,6 +219,22 @@ class ResultUploader:
         except Exception as e:
             logger.error(f"MV-only job {job_id} request failed: {e}")
             return False
+
+    def complete_mv_batch(self, items: list) -> list:
+        """Batch MV upload: [{job_id, vec}, ...] → [bool, ...]"""
+        try:
+            payload = [{"job_id": it["job_id"], "mv": _encode_vector(it["vec"])} for it in items]
+            resp = self._request('patch',
+                f"{self.base}/api/v1/jobs/batch/complete_mv",
+                json={"items": payload},
+            )
+            if resp.status_code == 200:
+                return resp.json().get("results", [True] * len(items))
+            logger.error(f"MV batch failed: {resp.status_code}")
+            return [False] * len(items)
+        except Exception as e:
+            logger.error(f"MV batch request failed: {e}")
+            return [False] * len(items)
 
     def upload_thumbnail(self, file_id: int, thumb_path: str) -> bool:
         """Upload thumbnail to server (dual storage)."""

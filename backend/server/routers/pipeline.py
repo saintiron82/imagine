@@ -466,6 +466,116 @@ def complete_mv(
     return {"success": True, "file_id": stored_file_id}
 
 
+class BatchVectorRequest(BaseModel):
+    items: List[dict]  # [{job_id, vv/mv: base64_vector}, ...]
+
+
+@router.patch("/api/v1/jobs/batch/complete_vv")
+def batch_complete_vv(
+    req: BatchVectorRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Batch VV upload: process multiple VV vectors in one request."""
+    queue = _get_queue(db)
+    cursor = db.conn.cursor()
+    results = []
+
+    for item in req.items:
+        job_id = item.get("job_id")
+        try:
+            cursor.execute(
+                "SELECT file_id, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
+                (job_id, user["id"])
+            )
+            row = cursor.fetchone()
+            if not row:
+                results.append(False)
+                continue
+
+            file_id, file_path = row
+            file_path = unicodedata.normalize('NFC', file_path)
+            cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
+            existing = cursor.fetchone()
+            if not existing:
+                results.append(False)
+                continue
+            stored_file_id = existing[0]
+
+            vv_vec = _decode_vector(item.get("vv"))
+            db.upsert_vectors(stored_file_id, vv_vec=vv_vec)
+            queue.update_phase(job_id, "vv", True)
+
+            integrity = db.verify_data_integrity(stored_file_id, expect_mc=True, expect_vv=True, expect_mv=True)
+            if integrity["valid"]:
+                queue.complete_job(job_id, user["id"])
+            else:
+                cursor.execute(
+                    "UPDATE job_queue SET status = 'pending', assigned_to = NULL, worker_session_id = NULL WHERE id = ?",
+                    (job_id,)
+                )
+            results.append(True)
+        except Exception as e:
+            logger.error(f"Batch VV job {job_id} failed: {e}")
+            results.append(False)
+
+    db.conn.commit()
+    return {"success": True, "results": results}
+
+
+@router.patch("/api/v1/jobs/batch/complete_mv")
+def batch_complete_mv(
+    req: BatchVectorRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Batch MV upload: process multiple MV vectors in one request."""
+    queue = _get_queue(db)
+    cursor = db.conn.cursor()
+    results = []
+
+    for item in req.items:
+        job_id = item.get("job_id")
+        try:
+            cursor.execute(
+                "SELECT file_id, file_path FROM job_queue WHERE id = ? AND assigned_to = ?",
+                (job_id, user["id"])
+            )
+            row = cursor.fetchone()
+            if not row:
+                results.append(False)
+                continue
+
+            file_id, file_path = row
+            file_path = unicodedata.normalize('NFC', file_path)
+            cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
+            existing = cursor.fetchone()
+            if not existing:
+                results.append(False)
+                continue
+            stored_file_id = existing[0]
+
+            mv_vec = _decode_vector(item.get("mv"))
+            db.upsert_vectors(stored_file_id, mv_vec=mv_vec)
+            queue.update_phase(job_id, "mv", True)
+
+            integrity = db.verify_data_integrity(stored_file_id, expect_mc=True, expect_vv=True, expect_mv=True)
+            if integrity["valid"]:
+                queue.complete_job(job_id, user["id"])
+            else:
+                cursor.execute(
+                    "UPDATE job_queue SET status = 'pending', assigned_to = NULL, worker_session_id = NULL WHERE id = ?",
+                    (job_id,)
+                )
+            results.append(True)
+        except Exception as e:
+            logger.error(f"Batch MV job {job_id} failed: {e}")
+            results.append(False)
+
+    db.conn.commit()
+    return {"success": True, "results": results}
+
+
 @router.patch("/api/v1/jobs/{job_id}/complete_parse")
 def complete_parse(
     job_id: int,

@@ -1878,24 +1878,34 @@ class WorkerDaemon:
 
             vv_vectors = WorkerDaemon._vv_encoder.encode_image_batch(images)
 
+            # Batch upload all VV vectors at once
+            batch_items = []
+            failed_items = []
             for ctx, vec in zip(chunk, vv_vectors):
                 job_id = ctx["job"]["job_id"]
                 self._current_file = Path(ctx["job"].get("file_path", "")).name
                 if vec is not None:
-                    ok = self.uploader.complete_vv(job_id, vec)
-                    results.append((job_id, ok))
-                    self._phase_counts["vv"] += 1
+                    batch_items.append({"job_id": job_id, "vec": vec, "ctx": ctx})
                 else:
                     self.uploader.fail_job(job_id, "VV encoding failed")
-                    results.append((job_id, False))
+                    failed_items.append((job_id, False))
 
-                _notify(progress_callback, "batch_file_done", {
-                    "phase": "embed_vv",
-                    "file_name": Path(ctx["job"].get("file_path", "")).name,
-                    "index": len(results),
-                    "count": len(active),
-                    "success": results[-1][1],
-                })
+            if batch_items:
+                batch_results = self.uploader.complete_vv_batch(
+                    [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
+                )
+                for it, ok in zip(batch_items, batch_results):
+                    results.append((it["job_id"], ok))
+                    if ok:
+                        self._phase_counts["vv"] += 1
+                    _notify(progress_callback, "batch_file_done", {
+                        "phase": "embed_vv",
+                        "file_name": Path(it["ctx"]["job"].get("file_path", "")).name,
+                        "index": len(results) + len(failed_items),
+                        "count": len(active),
+                        "success": ok,
+                    })
+            results.extend(failed_items)
 
         # Do NOT unload — SigLIP2 stays resident for next batch
         _notify(progress_callback, "batch_phase_complete", {"phase": "embed_vv", "count": len(active)})
@@ -1946,17 +1956,29 @@ class WorkerDaemon:
             except Exception:
                 vecs = [provider.encode(t) for t in texts]
 
+            # Batch upload
+            batch_items = []
+            failed_items = []
             for ctx, vec in zip(chunk, vecs):
                 job_id = ctx["job"]["job_id"]
                 self._current_file = Path(ctx["job"].get("file_path", "")).name
                 if vec is not None:
-                    ok = self.uploader.complete_mv(job_id, vec)
-                    results.append((job_id, ok))
-                    self._phase_counts["mv"] += 1
+                    batch_items.append({"job_id": job_id, "vec": vec, "ctx": ctx})
                 else:
                     self.uploader.fail_job(job_id, "MV encoding failed")
-                    results.append((job_id, False))
+                    failed_items.append((job_id, False))
 
+            if batch_items:
+                batch_results = self.uploader.complete_mv_batch(
+                    [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
+                )
+                for it, ok in zip(batch_items, batch_results):
+                    results.append((it["job_id"], ok))
+                    if ok:
+                        self._phase_counts["mv"] += 1
+
+            results.extend(failed_items)
+            for ctx in chunk:
                 _notify(progress_callback, "batch_file_done", {
                     "phase": "embed_mv",
                     "file_name": Path(ctx["job"].get("file_path", "")).name,
