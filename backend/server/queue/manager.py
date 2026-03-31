@@ -1514,6 +1514,45 @@ class JobQueueManager:
         queue_failed = status_counts.get("failed", 0)
         queue_total = pending + assigned + processing + queue_completed + queue_failed
 
+        # Pipeline position: each file is in exactly ONE stage (no overlap)
+        # Stage = the FIRST incomplete step in the pipeline
+        try:
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN file_ready = 0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN file_ready = 1
+                             AND (parse_status IS NULL OR parse_status IN ('pending','parsing'))
+                         THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN parse_status = 'parsed'
+                             AND (json_extract(phase_completed, '$.vision') IS NULL
+                                  OR json_extract(phase_completed, '$.vision') = 0)
+                         THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN parse_status = 'parsed'
+                             AND json_extract(phase_completed, '$.vision') = 1
+                             AND (json_extract(phase_completed, '$.vv') IS NULL
+                                  OR json_extract(phase_completed, '$.vv') = 0)
+                         THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN parse_status = 'parsed'
+                             AND json_extract(phase_completed, '$.vision') = 1
+                             AND json_extract(phase_completed, '$.vv') = 1
+                             AND (json_extract(phase_completed, '$.mv') IS NULL
+                                  OR json_extract(phase_completed, '$.mv') = 0)
+                         THEN 1 ELSE 0 END)
+                FROM job_queue
+                WHERE archived_at IS NULL
+                  AND status NOT IN ('completed', 'failed')
+            """)
+            pr = cursor.fetchone()
+            pipeline = {
+                "pipe_download": pr[0] or 0,
+                "pipe_parse": pr[1] or 0,
+                "pipe_mc": pr[2] or 0,
+                "pipe_vv": pr[3] or 0,
+                "pipe_mv": pr[4] or 0,
+            }
+        except Exception:
+            pipeline = {}
+
         return {
             "total": queue_total,
             "total_files": total_files,
@@ -1537,6 +1576,7 @@ class JobQueueManager:
             **parse_ahead_stats,
             **file_ready_stats,
             "download_buffer": download_buffer,
+            **pipeline,
             "server_mode": _get_actual_server_mode(),
             "embedded_worker": _get_embedded_worker_status(),
             **self.get_phase_stats(),

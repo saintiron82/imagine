@@ -418,12 +418,13 @@ export default function WorkersPanel() {
             const etaStr = eta ? (eta >= 3600 ? `${Math.floor(eta/3600)}h ${Math.floor((eta%3600)/60)}m` : `${Math.floor(eta/60)}m`) : null;
             const secPerFile = speed > 0 ? Math.round(60 / speed) : null;
 
+            // Pipeline position: each file counted in exactly ONE stage
             const phases = [
-              { name: 'Download', pending: s.download_waiting || 0, color: 'yellow', speed: null },
-              { name: 'Parse', pending: s.parse_pending || 0, color: 'sky', speed: s.parse_throughput },
-              { name: 'MC', pending: s.mc_pending || 0, color: 'purple', speed: s.mc_throughput },
-              { name: 'VV', pending: s.vv_pending || 0, color: 'blue', speed: s.vv_throughput },
-              { name: 'MV', pending: s.mv_pending || 0, color: 'green', speed: s.mv_throughput },
+              { name: 'Download', pending: s.pipe_download ?? s.download_waiting ?? 0, color: 'yellow', speed: null },
+              { name: 'Parse', pending: s.pipe_parse ?? s.parse_pending ?? 0, color: 'sky', speed: s.parse_throughput },
+              { name: 'MC', pending: s.pipe_mc ?? s.mc_pending ?? 0, color: 'purple', speed: s.mc_throughput },
+              { name: 'VV', pending: s.pipe_vv ?? 0, color: 'blue', speed: s.vv_throughput },
+              { name: 'MV', pending: s.pipe_mv ?? 0, color: 'green', speed: s.mv_throughput },
             ];
             const workerPhases = phases.filter(p => p.name !== 'Download');
             const bottleneck = workerPhases.filter(p => p.pending > 0).reduce((a, b) => a.pending > b.pending ? a : b, workerPhases[0]);
