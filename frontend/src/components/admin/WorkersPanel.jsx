@@ -488,7 +488,7 @@ export default function WorkersPanel() {
                     <div className={`text-2xl font-bold font-mono ${etaStr ? 'text-white' : 'text-gray-600'}`}>
                       {etaStr || '-'}
                     </div>
-                    <div className="text-[10px] text-gray-500">ETA</div>
+                    <div className="text-[10px] text-gray-500">남은시간</div>
                   </div>
 
                   {/* Workers */}
