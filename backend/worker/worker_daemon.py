@@ -1843,12 +1843,15 @@ class WorkerDaemon:
         from backend.vector.siglip2_encoder import SigLIP2Encoder
         from PIL import Image as PILImage
 
+        self._current_phase = "vv"
         _notify = lambda cb, evt, data: cb(evt, data) if cb else None
 
         results = []
         active = []
         for job in jobs:
             file_id = job.get("file_id")
+            self._current_file = job.get("file_path", "").split("/")[-1].split("\\")[-1]
+            self._current_job_id = job.get("job_id")
             thumb = self._resolve_thumbnail(job)
             if not thumb:
                 self.uploader.fail_job(job["job_id"], "Thumbnail not available")
@@ -1877,9 +1880,11 @@ class WorkerDaemon:
 
             for ctx, vec in zip(chunk, vv_vectors):
                 job_id = ctx["job"]["job_id"]
+                self._current_file = Path(ctx["job"].get("file_path", "")).name
                 if vec is not None:
                     ok = self.uploader.complete_vv(job_id, vec)
                     results.append((job_id, ok))
+                    self._phase_counts["vv"] += 1
                 else:
                     self.uploader.fail_job(job_id, "VV encoding failed")
                     results.append((job_id, False))
@@ -1898,6 +1903,7 @@ class WorkerDaemon:
 
     def _process_batch_mv_only(self, jobs: list, progress_callback=None) -> list:
         """MV-only mode: Qwen3-Embedding stays loaded, generates meaning vectors only."""
+        self._current_phase = "mv"
         from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
 
         _notify = lambda cb, evt, data: cb(evt, data) if cb else None
@@ -1942,9 +1948,11 @@ class WorkerDaemon:
 
             for ctx, vec in zip(chunk, vecs):
                 job_id = ctx["job"]["job_id"]
+                self._current_file = Path(ctx["job"].get("file_path", "")).name
                 if vec is not None:
                     ok = self.uploader.complete_mv(job_id, vec)
                     results.append((job_id, ok))
+                    self._phase_counts["mv"] += 1
                 else:
                     self.uploader.fail_job(job_id, "MV encoding failed")
                     results.append((job_id, False))

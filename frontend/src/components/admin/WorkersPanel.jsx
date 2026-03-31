@@ -606,7 +606,7 @@ export default function WorkersPanel() {
                     </div>
                     <div className="text-[10px] text-gray-500">{w.hostname}</div>
                   </td>
-                  {phaseCell('parse', 'sky')}
+                  {w.worker_name === '__builtin__' ? phaseCell('parse', 'sky') : <td className="text-center px-2 py-2 text-gray-800">-</td>}
                   {phaseCell('mc', 'purple')}
                   {phaseCell('vv', 'blue')}
                   {phaseCell('mv', 'green')}
