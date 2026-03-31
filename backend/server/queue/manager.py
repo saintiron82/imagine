@@ -317,6 +317,11 @@ class JobQueueManager:
             # Min guarantee: unserved phase boost
             if n == 0 and pending > 0:
                 p *= 1.5
+            # Completion bonus: MV is the last step before Done.
+            # Processing MV immediately frees files (disk, search).
+            # Bonus = pending * 10 (small vs MC's 50x, but tips balance when MC is low)
+            if phase == "mv":
+                p += pending * 10
             pressure[phase] = p
 
         if not pressure:
