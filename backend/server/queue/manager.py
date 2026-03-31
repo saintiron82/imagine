@@ -1498,7 +1498,25 @@ class JobQueueManager:
         queue_failed = status_counts.get("failed", 0)
         queue_total = pending + assigned + processing + queue_completed + queue_failed
 
-        # All counts from active job_queue (archived_at IS NULL)
+        # Total = original queue size from work_requests (includes completed+failed that left queue)
+        try:
+            cursor.execute(
+                "SELECT SUM(total_files), SUM(completed_count), SUM(failed_count) "
+                "FROM work_requests WHERE status IN ('queued', 'processing')"
+            )
+            wr = cursor.fetchone()
+            wr_total = wr[0] or 0
+            wr_completed = wr[1] or 0
+            wr_failed = wr[2] or 0
+        except Exception:
+            wr_total = 0
+            wr_completed = 0
+            wr_failed = 0
+
+        # Use WR total as the "original queue size", add current queue completed/failed
+        original_total = wr_total if wr_total > 0 else queue_total
+        total_completed = wr_completed + queue_completed
+        total_failed = wr_failed + queue_failed
 
         # Pipeline position: each file is in exactly ONE stage (no overlap)
         # Stage = the FIRST incomplete step in the pipeline
@@ -1540,14 +1558,14 @@ class JobQueueManager:
             pipeline = {}
 
         return {
-            "total": queue_total,
+            "total": original_total,
             "total_files": total_files,
             "complete_files": complete_files,
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": queue_completed,   # job_queue status='completed'
-            "failed": queue_failed,         # job_queue status='failed'
+            "completed": total_completed,   # WR aggregate + current queue completed
+            "failed": total_failed,         # WR aggregate + current queue failed
             "db_completed": complete_files, # files-based: total DB inventory (for reference)
             "db_failed": failed_files,      # files-based: total DB failures
             "throughput": throughput,
