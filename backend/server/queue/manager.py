@@ -409,7 +409,7 @@ class JobQueueManager:
             has_mv = data.get("has_mv", False)
             phase_completed = json.dumps({
                 "parse": True,  # Files being registered already have metadata
-                "mc": has_mc,
+                "vision": has_mc,
                 "vv": has_vv,
                 "mv": has_mv,
             })
@@ -1048,7 +1048,7 @@ class JobQueueManager:
         Args:
             job_id: Job ID
             user_id: Assigned worker's user ID
-            phases: {"parse": bool, "vision": bool, "embed": bool}
+            phases: {"parse": bool, "vision": bool, "vv": bool, "mv": bool}
 
         Returns:
             True if updated successfully.
@@ -1997,7 +1997,8 @@ class JobQueueManager:
             actual_phases = json.dumps({
                 "parse": has_thumbnail,
                 "vision": bool(has_mc),
-                "embed": bool(has_vv and has_mv),
+                "vv": bool(has_vv),
+                "mv": bool(has_mv),
             })
             parsed_metadata = json.dumps({
                 "metadata": {},
@@ -2484,7 +2485,7 @@ class JobQueueManager:
                        (file_id, file_path, status, parse_status,
                         phase_completed, parsed_metadata, created_at)
                        VALUES (?, ?, 'pending', 'backfill',
-                               '{"parse":true,"vision":true,"embed":false}',
+                               '{"parse":true,"vision":true,"vv":false,"mv":false}',
                                '{"backfill":"structure"}', ?)""",
                     (file_id, file_path, now),
                 )
