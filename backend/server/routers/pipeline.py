@@ -291,14 +291,16 @@ def complete_mc(
             detail="mc_caption save failed — data not found in DB after write"
         )
 
-    # Update job: mark vision done, keep status='processing' for EmbedAhead to finish MV
-    phase_json = json.dumps({"parse": True, "vision": True, "embed": False})
+    # Update job: mark vision done, release back to pending for VV/MV workers
+    queue = _get_queue(db)
+    queue.update_phase(job_id, "mc", True)
     mc_now = _utcnow_sql()
     cursor.execute(
         """UPDATE job_queue
-           SET phase_completed = ?, status = 'processing', mc_completed_at = ?
-           WHERE id = ? AND assigned_to = ?""",
-        (phase_json, mc_now, job_id, user["id"])
+           SET status = 'pending', assigned_to = NULL, worker_session_id = NULL,
+               mc_completed_at = ?
+           WHERE id = ?""",
+        (mc_now, job_id)
     )
     db.conn.commit()
 
@@ -403,6 +405,13 @@ def complete_vv(
     )
     if integrity["valid"]:
         queue.complete_job(job_id, user["id"])
+    else:
+        # Release back to pending for remaining phases (MV)
+        cursor.execute(
+            "UPDATE job_queue SET status = 'pending', assigned_to = NULL, worker_session_id = NULL WHERE id = ?",
+            (job_id,)
+        )
+        db.conn.commit()
 
     return {"success": True, "file_id": stored_file_id}
 
@@ -446,6 +455,13 @@ def complete_mv(
     )
     if integrity["valid"]:
         queue.complete_job(job_id, user["id"])
+    else:
+        # Release back to pending for remaining phases (VV)
+        cursor.execute(
+            "UPDATE job_queue SET status = 'pending', assigned_to = NULL, worker_session_id = NULL WHERE id = ?",
+            (job_id,)
+        )
+        db.conn.commit()
 
     return {"success": True, "file_id": stored_file_id}
 
