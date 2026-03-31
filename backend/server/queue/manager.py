@@ -1498,9 +1498,12 @@ class JobQueueManager:
         queue_failed = status_counts.get("failed", 0)
         queue_total = pending + assigned + processing + queue_completed + queue_failed
 
-        # Work request aggregate: tracks total/completed/failed across server restarts
+        # Active work requests: only queued/processing (not completed/cancelled)
         try:
-            cursor.execute("SELECT SUM(total_files), SUM(completed_count), SUM(failed_count) FROM work_requests")
+            cursor.execute(
+                "SELECT SUM(total_files), SUM(completed_count), SUM(failed_count) "
+                "FROM work_requests WHERE status IN ('queued', 'processing')"
+            )
             wr = cursor.fetchone()
             wr_total = wr[0] or 0
             wr_completed = wr[1] or 0
