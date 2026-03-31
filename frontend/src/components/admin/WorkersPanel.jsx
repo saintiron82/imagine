@@ -547,6 +547,9 @@ export default function WorkersPanel() {
             <tr className="border-b border-gray-700 text-gray-400 text-xs">
               <th className="text-left px-3 py-2">{t('admin.worker_name')}</th>
               <th className="text-center px-2 py-2">
+                <div className="text-orange-400">REST</div>
+              </th>
+              <th className="text-center px-2 py-2">
                 <div className="text-purple-400">MC</div>
                 {queueStats?.mc_throughput > 0 && <div className="text-[9px] text-purple-400/60 font-mono">{queueStats.mc_throughput}/m</div>}
               </th>
@@ -601,6 +604,18 @@ export default function WorkersPanel() {
                       {w.worker_name === '__builtin__' ? t('admin.worker_builtin_label') : w.worker_name}
                     </div>
                     <div className="text-[10px] text-gray-500">{w.hostname}</div>
+                  </td>
+                  <td className="text-center px-2 py-2">
+                    {w.current_phase === 'resting' ? (
+                      <div>
+                        <div className="text-sm font-bold font-mono text-orange-400 animate-pulse">
+                          {w.current_file || '...'}
+                        </div>
+                        <div className="text-[8px] text-orange-400/60">휴식중</div>
+                      </div>
+                    ) : (
+                      <span className="text-gray-800">-</span>
+                    )}
                   </td>
                   {phaseCell('mc', 'purple')}
                   {phaseCell('vv', 'blue')}
