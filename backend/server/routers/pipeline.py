@@ -470,7 +470,7 @@ class BatchVectorRequest(BaseModel):
     items: List[dict]  # [{job_id, vv/mv: base64_vector}, ...]
 
 
-@router.patch("/api/v1/jobs/batch/complete_vv")
+@router.patch("/api/v1/admin/jobs/batch-complete-vv")
 def batch_complete_vv(
     req: BatchVectorRequest,
     user: dict = Depends(get_current_user),
@@ -523,7 +523,7 @@ def batch_complete_vv(
     return {"success": True, "results": results}
 
 
-@router.patch("/api/v1/jobs/batch/complete_mv")
+@router.patch("/api/v1/admin/jobs/batch-complete-mv")
 def batch_complete_mv(
     req: BatchVectorRequest,
     user: dict = Depends(get_current_user),

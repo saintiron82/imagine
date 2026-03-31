@@ -194,7 +194,7 @@ class ResultUploader:
         try:
             payload = [{"job_id": it["job_id"], "vv": _encode_vector(it["vec"])} for it in items]
             resp = self._request('patch',
-                f"{self.base}/api/v1/jobs/batch/complete_vv",
+                f"{self.base}/api/v1/admin/jobs/batch-complete-vv",
                 json={"items": payload},
             )
             if resp.status_code == 200:
@@ -225,7 +225,7 @@ class ResultUploader:
         try:
             payload = [{"job_id": it["job_id"], "mv": _encode_vector(it["vec"])} for it in items]
             resp = self._request('patch',
-                f"{self.base}/api/v1/jobs/batch/complete_mv",
+                f"{self.base}/api/v1/admin/jobs/batch-complete-mv",
                 json={"items": payload},
             )
             if resp.status_code == 200:
