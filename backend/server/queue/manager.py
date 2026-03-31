@@ -1498,20 +1498,7 @@ class JobQueueManager:
         queue_failed = status_counts.get("failed", 0)
         queue_total = pending + assigned + processing + queue_completed + queue_failed
 
-        # Active work requests: only queued/processing (not completed/cancelled)
-        try:
-            cursor.execute(
-                "SELECT SUM(total_files), SUM(completed_count), SUM(failed_count) "
-                "FROM work_requests WHERE status IN ('queued', 'processing')"
-            )
-            wr = cursor.fetchone()
-            wr_total = wr[0] or 0
-            wr_completed = wr[1] or 0
-            wr_failed = wr[2] or 0
-        except Exception:
-            wr_total = queue_total
-            wr_completed = queue_completed
-            wr_failed = queue_failed
+        # All counts from active job_queue (archived_at IS NULL)
 
         # Pipeline position: each file is in exactly ONE stage (no overlap)
         # Stage = the FIRST incomplete step in the pipeline
@@ -1553,16 +1540,14 @@ class JobQueueManager:
             pipeline = {}
 
         return {
-            "total": wr_total or queue_total,
+            "total": queue_total,
             "total_files": total_files,
             "complete_files": complete_files,
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": wr_completed,     # work_request aggregate (survives restarts)
-            "failed": wr_failed,           # work_request aggregate
-            "queue_completed": queue_completed,  # queue-based: current session only
-            "queue_failed": queue_failed,        # queue-based: current session only
+            "completed": queue_completed,   # job_queue status='completed'
+            "failed": queue_failed,         # job_queue status='failed'
             "db_completed": complete_files, # files-based: total DB inventory (for reference)
             "db_failed": failed_files,      # files-based: total DB failures
             "throughput": throughput,
