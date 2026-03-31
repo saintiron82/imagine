@@ -407,9 +407,9 @@ export default function WorkersPanel() {
           {/* System performance dashboard */}
           {queueStats && (() => {
             const s = queueStats;
-            const total = s.total || 0;
-            const done = s.completed || 0;
-            const failed = s.failed || 0;
+            const total = s.total_files || s.total || 0;
+            const done = s.complete_files || s.completed || 0;
+            const failed = s.db_failed || s.failed || 0;
             const pct = total > 0 ? ((done / total) * 100).toFixed(1) : 0;
             const speed = s.throughput || 0;
             const eta = s.eta_seconds;
