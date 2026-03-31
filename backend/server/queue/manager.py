@@ -1315,8 +1315,17 @@ class JobQueueManager:
 
         # Phase-level throughput: count phase completions in last 5 minutes
         # Uses phase_completed timestamps from job_queue (not job_completions)
-        parse_throughput = mc_throughput = vv_throughput = mv_throughput = 0.0
+        # Phase-level throughput: only measure when workers are actively doing that phase
+        parse_throughput = mc_throughput = vv_throughput = mv_throughput = None
         try:
+            # Which phases have active workers right now?
+            cursor.execute(
+                "SELECT assigned_mode FROM worker_sessions WHERE status = 'online' AND assigned_mode IS NOT NULL"
+            )
+            active_modes = {r[0] for r in cursor.fetchall()}
+            # ParseAheadPool is always active (background thread)
+            active_modes.add("parse")
+
             cursor.execute("""
                 SELECT
                     COUNT(*) FILTER (WHERE parse_status = 'parsed'
@@ -1334,16 +1343,22 @@ class JobQueueManager:
                 FROM job_queue WHERE archived_at IS NULL
             """)
             pt = cursor.fetchone()
-            parse_throughput = round((pt[0] or 0) / 5.0, 1)
-            mc_throughput = round((pt[1] or 0) / 5.0, 1)
-            vv_throughput = round((pt[2] or 0) / 5.0, 1)
-            mv_throughput = round((pt[3] or 0) / 5.0, 1)
+            # Only report speed for phases with active workers
+            if "parse" in active_modes:
+                parse_throughput = round((pt[0] or 0) / 5.0, 1)
+            if "mc" in active_modes:
+                mc_throughput = round((pt[1] or 0) / 5.0, 1)
+            if "vv" in active_modes:
+                vv_throughput = round((pt[2] or 0) / 5.0, 1)
+            if "mv" in active_modes:
+                mv_throughput = round((pt[3] or 0) / 5.0, 1)
         except Exception:
             pass
 
-        # If no pipeline-complete throughput, use MC throughput as primary indicator
-        if throughput == 0 and mc_throughput > 0:
-            throughput = mc_throughput
+        # Primary throughput: use whichever phase is actively producing
+        active_speeds = [s for s in [mc_throughput, vv_throughput, mv_throughput] if s and s > 0]
+        if throughput == 0 and active_speeds:
+            throughput = max(active_speeds)
 
         # Phase-level progress counts — deferred to file-centric block below
         phase_stats = {}
