@@ -583,7 +583,8 @@ def admin_list_workers(
              AND (
                (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-5 minutes'))
                OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-5 minutes')
-                   AND json_extract(phase_completed, '$.vv') = 1)
+                                     AND (json_extract(phase_completed, '$.vv') = 1
+                                                OR json_extract(phase_completed, '$.mv') = 1))
              )
            GROUP BY worker_session_id"""
     )
@@ -595,7 +596,8 @@ def admin_list_workers(
              AND (
                (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-1 minute'))
                OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-1 minute')
-                   AND json_extract(phase_completed, '$.vv') = 1)
+                                     AND (json_extract(phase_completed, '$.vv') = 1
+                                                OR json_extract(phase_completed, '$.mv') = 1))
              )
            GROUP BY worker_session_id"""
     )
@@ -608,7 +610,8 @@ def admin_list_workers(
              AND (
                (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-5 minutes'))
                OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-5 minutes')
-                   AND json_extract(phase_completed, '$.vv') = 1)
+                                     AND (json_extract(phase_completed, '$.vv') = 1
+                                                OR json_extract(phase_completed, '$.mv') = 1))
              )
            GROUP BY assigned_to"""
     )
@@ -620,7 +623,8 @@ def admin_list_workers(
              AND (
                (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-1 minute'))
                OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-1 minute')
-                   AND json_extract(phase_completed, '$.vv') = 1)
+                                     AND (json_extract(phase_completed, '$.vv') = 1
+                                                OR json_extract(phase_completed, '$.mv') = 1))
              )
            GROUP BY assigned_to"""
     )

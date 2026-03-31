@@ -517,10 +517,14 @@ class JobQueueManager:
             # MC worker: needs jobs where MC is not done yet
             phase_filter = """AND (json_extract(jq.phase_completed, '$.vision') IS NULL
                               OR json_extract(jq.phase_completed, '$.vision') = 0)"""
-        elif processing_mode == "vv":
-            # VV worker: needs jobs where VV is not done (independent of MC)
-            phase_filter = """AND (json_extract(jq.phase_completed, '$.vv') IS NULL
-                                   OR json_extract(jq.phase_completed, '$.vv') = 0)"""
+        elif processing_mode in ("vv", "embed_only"):
+            # Legacy vv is treated as embed_only.
+            # External embed workers run VV+MV after MC is ready.
+            phase_filter = """AND json_extract(jq.phase_completed, '$.vision') = 1
+                              AND ((json_extract(jq.phase_completed, '$.vv') IS NULL
+                                    OR json_extract(jq.phase_completed, '$.vv') = 0)
+                                   OR (json_extract(jq.phase_completed, '$.mv') IS NULL
+                                       OR json_extract(jq.phase_completed, '$.mv') = 0))"""
         elif processing_mode == "mv":
             # MV worker: needs jobs where MC is done but MV is not
             phase_filter = """AND json_extract(jq.phase_completed, '$.vision') = 1
@@ -1284,8 +1288,14 @@ class JobQueueManager:
             SELECT
                 COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') IS NULL
                                   OR json_extract(phase_completed, '$.vision') = 0) AS mc_pending,
-                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') IS NULL
-                                  OR json_extract(phase_completed, '$.vv') = 0) AS vv_pending,
+                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                                 AND (json_extract(phase_completed, '$.vv') IS NULL
+                                      OR json_extract(phase_completed, '$.vv') = 0)) AS vv_pending,
+                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                                 AND ((json_extract(phase_completed, '$.vv') IS NULL
+                                       OR json_extract(phase_completed, '$.vv') = 0)
+                                      OR (json_extract(phase_completed, '$.mv') IS NULL
+                                          OR json_extract(phase_completed, '$.mv') = 0))) AS embed_pending,
                 COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
                                  AND (json_extract(phase_completed, '$.mv') IS NULL
                                       OR json_extract(phase_completed, '$.mv') = 0)) AS mv_pending
@@ -1297,7 +1307,8 @@ class JobQueueManager:
             "parse_pending": parse_pending,
             "mc_pending": row[0] or 0,
             "vv_pending": row[1] or 0,
-            "mv_pending": row[2] or 0,
+            "embed_pending": row[2] or 0,
+            "mv_pending": row[3] or 0,
         }
 
     def get_stats(self) -> Dict[str, Any]:
@@ -1373,9 +1384,9 @@ class JobQueueManager:
                 parse_throughput = round((pt[0] or 0) / 5.0, 1)
             if "mc" in active_modes:
                 mc_throughput = round((pt[1] or 0) / 5.0, 1)
-            if "vv" in active_modes:
+            if "vv" in active_modes or "embed_only" in active_modes:
                 vv_throughput = round((pt[2] or 0) / 5.0, 1)
-            if "mv" in active_modes:
+            if "mv" in active_modes or "embed_only" in active_modes:
                 mv_throughput = round((pt[3] or 0) / 5.0, 1)
         except Exception:
             pass
@@ -1408,8 +1419,9 @@ class JobQueueManager:
                     SELECT
                         COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') IS NULL
                                           OR json_extract(phase_completed, '$.vision') = 0),
-                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') IS NULL
-                                          OR json_extract(phase_completed, '$.vv') = 0),
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                                         AND (json_extract(phase_completed, '$.vv') IS NULL
+                                              OR json_extract(phase_completed, '$.vv') = 0)),
                         COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
                                          AND (json_extract(phase_completed, '$.mv') IS NULL
                                               OR json_extract(phase_completed, '$.mv') = 0))
@@ -1559,8 +1571,9 @@ class JobQueueManager:
                                   OR json_extract(phase_completed, '$.vision') = 0)
                          THEN 1 ELSE 0 END),
                     SUM(CASE WHEN parse_status = 'parsed'
-                             AND (json_extract(phase_completed, '$.vv') IS NULL
-                                  OR json_extract(phase_completed, '$.vv') = 0)
+                            AND json_extract(phase_completed, '$.vision') = 1
+                            AND (json_extract(phase_completed, '$.vv') IS NULL
+                                OR json_extract(phase_completed, '$.vv') = 0)
                          THEN 1 ELSE 0 END),
                     SUM(CASE WHEN parse_status = 'parsed'
                              AND json_extract(phase_completed, '$.vision') = 1
