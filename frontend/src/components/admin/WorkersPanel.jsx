@@ -547,10 +547,6 @@ export default function WorkersPanel() {
             <tr className="border-b border-gray-700 text-gray-400 text-xs">
               <th className="text-left px-3 py-2">{t('admin.worker_name')}</th>
               <th className="text-center px-2 py-2">
-                <div className="text-sky-400">Parse</div>
-                {queueStats?.parse_throughput > 0 && <div className="text-[9px] text-sky-400/60 font-mono">{queueStats.parse_throughput}/m</div>}
-              </th>
-              <th className="text-center px-2 py-2">
                 <div className="text-purple-400">MC</div>
                 {queueStats?.mc_throughput > 0 && <div className="text-[9px] text-purple-400/60 font-mono">{queueStats.mc_throughput}/m</div>}
               </th>
@@ -606,7 +602,6 @@ export default function WorkersPanel() {
                     </div>
                     <div className="text-[10px] text-gray-500">{w.hostname}</div>
                   </td>
-                  {w.worker_name === '__builtin__' ? phaseCell('parse', 'sky') : <td className="text-center px-2 py-2 text-gray-800">-</td>}
                   {phaseCell('mc', 'purple')}
                   {phaseCell('vv', 'blue')}
                   {phaseCell('mv', 'green')}

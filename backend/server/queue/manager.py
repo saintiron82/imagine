@@ -198,7 +198,7 @@ class JobQueueManager:
         return get_processing_mode()
 
     # Time cost per file (seconds) — MC dominates, so GPU stays on MC
-    _PHASE_TIME = {"parse_thumb": 1, "mc": 50, "vv": 2, "mv": 0.5}
+    _PHASE_TIME = {"mc": 50, "vv": 2, "mv": 0.5}
     # GPU-Weak MC penalty: can do MC but slower (pressure / penalty)
     _MC_PENALTY = {"strong": 1.0, "weak": 2.0, "embedded": 1.0}
 
@@ -289,8 +289,7 @@ class JobQueueManager:
             buffers["mc"] = stats.get("mc_pending", 0)
             buffers["vv"] = stats.get("vv_pending", 0)
         buffers["mv"] = stats.get("mv_pending", 0)
-        if is_embedded:
-            buffers["parse_thumb"] = stats.get("parse_pending", 0)
+        # Parse is handled by ParseAheadPool (background thread), not workers
 
         # Worker distribution
         cursor.execute(
@@ -352,8 +351,7 @@ class JobQueueManager:
     @staticmethod
     def _get_phase_pending(stats: dict, phase: str) -> int:
         """Get pending count for a phase from stats dict."""
-        m = {"mc": "mc_pending", "vv": "vv_pending", "mv": "mv_pending",
-             "parse_thumb": "parse_pending", "parse": "parse_pending"}
+        m = {"mc": "mc_pending", "vv": "vv_pending", "mv": "mv_pending"}
         return stats.get(m.get(phase, ""), 0)
 
     def _batch_check_existing_data(self, file_ids: List[int]) -> Dict[int, dict]:
@@ -508,42 +506,14 @@ class JobQueueManager:
                FROM job_queue jq
                LEFT JOIN work_requests wr ON jq.work_request_id = wr.id"""
 
-        # parse_thumb: server-only (embedded worker). External workers never parse.
-        # Server has local disk + NAS mount; downloading via worker is too slow.
-        if processing_mode == "parse_thumb":
-            _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
-                     AND (jq.parse_status IS NULL OR jq.parse_status = 'pending')
-                     {_WR_FILTER}"""
-            phase_filter = ""  # No phase filter — these jobs haven't been parsed yet
-
-            cursor.execute(
-                f"""{_BASE_SELECT}
-                   WHERE {_BASE_WHERE}
-                   {_WR_ORDER}
-                   LIMIT ?""",
-                (count,)
-            )
-            rows = list(cursor.fetchall())
-
-            # Mark claimed jobs as parse_status='parsing' to prevent ParseAheadPool conflict
-            for r in rows:
-                cursor.execute(
-                    "UPDATE job_queue SET parse_status = 'parsing' WHERE id = ? AND parse_status IN (NULL, 'pending')",
-                    (r[0],)
-                )
-
-            vision_done_ids = set()
-            # Skip the normal claim logic below — go directly to assignment
-        else:
-            # All other modes: claim pre-parsed jobs only
-            _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
-                     AND jq.parse_status = 'parsed'
-                     {_WR_FILTER}"""
+        # Parse is handled by ParseAheadPool (background thread), not workers.
+        # Workers only claim pre-parsed jobs.
+        _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
+                 AND jq.parse_status = 'parsed'
+                 {_WR_FILTER}"""
 
         # Build phase filter based on worker mode
-        if processing_mode == "parse_thumb":
-            pass  # Already handled above
-        elif processing_mode == "mc" or processing_mode == "mc_only":
+        if processing_mode == "mc" or processing_mode == "mc_only":
             # MC worker: needs jobs where MC is not done yet
             phase_filter = """AND (json_extract(jq.phase_completed, '$.vision') IS NULL
                               OR json_extract(jq.phase_completed, '$.vision') = 0)"""
@@ -572,29 +542,28 @@ class JobQueueManager:
                               OR json_extract(jq.phase_completed, '$.mv') IS NULL
                               OR json_extract(jq.phase_completed, '$.mv') = 0)"""
 
-        if processing_mode != "parse_thumb":
-            cursor.execute(
-                f"""{_BASE_SELECT}
-                   WHERE {_BASE_WHERE}
-                     {phase_filter}
-                   {_WR_ORDER}
-                   LIMIT ?""",
-                (count,)
-            )
-            rows = list(cursor.fetchall())
+        cursor.execute(
+            f"""{_BASE_SELECT}
+               WHERE {_BASE_WHERE}
+                 {phase_filter}
+               {_WR_ORDER}
+               LIMIT ?""",
+            (count,)
+        )
+        rows = list(cursor.fetchall())
 
-            # Track which jobs already have MC done (for vision_data prefetch)
-            vision_done_ids = set()
-            for r in rows:
-                try:
-                    pm = json.loads(r[4]) if r[4] else {}
-                    pc = pm.get("phase_completed", {})
-                    if isinstance(pc, str):
-                        pc = json.loads(pc)
-                    if pc.get("mc") or pc.get("vision"):
-                        vision_done_ids.add(r[0])
-                except (json.JSONDecodeError, TypeError):
-                    pass
+        # Track which jobs already have MC done (for vision_data prefetch)
+        vision_done_ids = set()
+        for r in rows:
+            try:
+                pm = json.loads(r[4]) if r[4] else {}
+                pc = pm.get("phase_completed", {})
+                if isinstance(pc, str):
+                    pc = json.loads(pc)
+                if pc.get("mc") or pc.get("vision"):
+                    vision_done_ids.add(r[0])
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         # Signal demand to ParseAheadPool BEFORE early return.
         # Uses requested count (not actual claimed count) — represents
