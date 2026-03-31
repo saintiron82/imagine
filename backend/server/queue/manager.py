@@ -708,12 +708,12 @@ class JobQueueManager:
                     except Exception:
                         pass
 
-                # Attach vision data for vision-done jobs (VV+MV only).
-                if job_id in vision_done_ids:
-                    nfc_path = unicodedata.normalize('NFC', file_path)
-                    vision = embed_vision_map.get(nfc_path)
-                    if vision:
-                        job_data["vision_data"] = vision
+                # Attach vision data for vision-done jobs (VV+MV need mc_caption).
+                # MV/VV mode jobs passed $.vision=1 filter, so always attach.
+                nfc_path = unicodedata.normalize('NFC', file_path)
+                vision = embed_vision_map.get(nfc_path)
+                if vision:
+                    job_data["vision_data"] = vision
 
                 claimed.append(job_data)
 
