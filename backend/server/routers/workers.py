@@ -379,11 +379,10 @@ def worker_heartbeat(
     )
     db.conn.commit()
 
-    # Auto-detect mode on first heartbeat when:
-    #   - worker reports resources (GPU info available)
-    #   - no manual override is set (NULL = never auto-detected or admin-configured)
+    # Dynamic mode is handled by _decide_worker_mode() — no auto-detect override needed.
+    # processing_mode_override is ONLY for admin manual pinning.
     pool_needs_recalc = False
-    if req.resources and not mode_override:
+    if False and req.resources and not mode_override:  # DISABLED: was overriding dynamic scheduling
         detected_mode = _auto_detect_mode_from_resources(req.resources)
         if detected_mode:
             cursor.execute(
