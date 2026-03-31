@@ -407,14 +407,15 @@ export default function WorkersPanel() {
           {/* System performance dashboard */}
           {queueStats && (() => {
             const s = queueStats;
-            const total = s.total || 0;       // queue total (pending + assigned + processing + completed + failed)
-            const done = s.completed || 0;    // queue completed jobs
+            const total = s.total || 0;
+            const done = s.completed || 0;
             const failed = s.failed || 0;
+            const inProgress = (s.assigned || 0) + (s.processing || 0);
+            const waiting = (s.pending || 0);
             const pct = total > 0 ? ((done / total) * 100).toFixed(1) : 0;
             const speed = s.throughput || 0;
             const eta = s.eta_seconds;
             const etaStr = eta ? (eta >= 3600 ? `${Math.floor(eta/3600)}h ${Math.floor((eta%3600)/60)}m` : `${Math.floor(eta/60)}m`) : null;
-            // Per-file average: if speed > 0, seconds per file
             const secPerFile = speed > 0 ? Math.round(60 / speed) : null;
 
             const phases = [
@@ -424,26 +425,49 @@ export default function WorkersPanel() {
               { name: 'VV', pending: s.vv_pending || 0, color: 'blue', speed: s.vv_throughput },
               { name: 'MV', pending: s.mv_pending || 0, color: 'green', speed: s.mv_throughput },
             ];
-            const bottleneck = phases.filter(p => p.pending > 0).reduce((a, b) => a.pending > b.pending ? a : b, phases[0]);
+            const workerPhases = phases.filter(p => p.name !== 'Download');
+            const bottleneck = workerPhases.filter(p => p.pending > 0).reduce((a, b) => a.pending > b.pending ? a : b, workerPhases[0]);
 
             return (
               <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
-                {/* Row 1: Key metrics — progress, speed, ETA, workers */}
-                <div className="flex items-center gap-6">
-                  {/* Progress */}
+                {/* Row 1: Queue summary — total / in-progress / done */}
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-6 flex-1">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold font-mono text-white">{total}</div>
+                      <div className="text-[10px] text-gray-500">전체 큐</div>
+                    </div>
+                    <div className="text-gray-600">→</div>
+                    <div className="text-center">
+                      <div className={`text-2xl font-bold font-mono ${inProgress > 0 ? 'text-cyan-400' : 'text-gray-600'}`}>{inProgress}</div>
+                      <div className="text-[10px] text-gray-500">진행 중</div>
+                    </div>
+                    <div className="text-gray-600">→</div>
+                    <div className="text-center">
+                      <div className={`text-2xl font-bold font-mono ${done > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>{done}</div>
+                      <div className="text-[10px] text-gray-500">완료</div>
+                    </div>
+                    {failed > 0 && <>
+                      <div className="text-gray-600">|</div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold font-mono text-red-400">{failed}</div>
+                        <div className="text-[10px] text-red-400/60">실패</div>
+                      </div>
+                    </>}
+                  </div>
+
+                  {/* Progress bar */}
                   <div className="flex-1">
-                    <div className="flex items-baseline gap-2 mb-1">
-                      <span className="text-lg font-bold text-white font-mono">{done}<span className="text-gray-500 text-sm">/{total}</span></span>
-                      <span className="text-sm text-gray-400">{pct}%</span>
-                      {failed > 0 && <span className="text-xs text-red-400">{failed} fail</span>}
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-gray-400">{pct}%</span>
                     </div>
                     <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500"
-                        style={{ width: `${pct}%`, background: failed > 0 ? 'linear-gradient(90deg, #10b981, #10b981 90%, #ef4444)' : '#10b981' }} />
+                      <div className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                        style={{ width: `${pct}%` }} />
                     </div>
                   </div>
 
-                  {/* Speed */}
+                  {/* Speed / ETA */}
                   <div className="text-center shrink-0">
                     <div className={`text-2xl font-bold font-mono ${speed > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>
                       {speed > 0 ? speed.toFixed(1) : '-'}
@@ -477,7 +501,7 @@ export default function WorkersPanel() {
                 {/* Row 2: Phase pipeline — pending + speed + bottleneck */}
                 <div className="flex items-stretch gap-0.5">
                   {phases.map((p, i) => {
-                    const isBn = p === bottleneck && p.pending > 0;
+                    const isBn = p.name !== 'Download' && p === bottleneck && p.pending > 0;
                     const phaseSpeed = p.speed;
                     const phaseSecPer = phaseSpeed > 0 ? Math.round(60 / phaseSpeed) : null;
                     return (
@@ -492,6 +516,7 @@ export default function WorkersPanel() {
                           <div className={`text-lg font-bold font-mono ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-700'}`}>
                             {p.pending}
                           </div>
+                          {p.pending > 0 && <div className="text-[8px] text-gray-500">대기</div>}
                           {phaseSpeed > 0 && (
                             <div className="text-[9px] text-gray-400 font-mono">
                               {phaseSpeed}/m {phaseSecPer && <span className="text-gray-500">· {phaseSecPer}s</span>}
