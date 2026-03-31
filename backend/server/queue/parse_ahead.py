@@ -41,48 +41,36 @@ class ParseAheadPool(BaseAheadPool):
     # ── Buffer management ────────────────────────────────────────
 
     def _calculate_buffer_target(self) -> int:
-        """Calculate how many pre-parsed jobs to maintain.
+        """Calculate how many pre-parsed jobs to maintain in the buffer.
 
-        ParseAheadPool runs independently — always parses downloaded files.
-        Each stage (download → parse → worker) runs at its own pace with
-        buffers in between, not synchronized to each other.
+        Returns the DESIRED number of parsed-and-waiting jobs.
+        _run_pre_parse_buffer() computes deficit = target - current_parsed
+        and parses that many additional files.
+
+        Strategy: 2× the worker consumption rate over the last 10 minutes,
+        with a floor of 50.  This keeps the buffer ~20 minutes ahead of
+        worker demand so workers never starve waiting for parsed jobs.
         """
-        # Always parse downloaded files (file_ready=1, not yet parsed)
+        BASE_TARGET = 50
+
         try:
             cursor = self.db.conn.cursor()
+
+            # Worker consumption in last 10 minutes:
+            # Count jobs that left 'parsed' state (became assigned/processing/completed)
+            # mc_completed_at is set when MC phase finishes — good proxy for consumption.
             cursor.execute(
                 """SELECT COUNT(*) FROM job_queue
-                   WHERE status = 'pending' AND file_ready = 1
-                   AND (parse_status IS NULL OR parse_status = 'pending')"""
+                   WHERE mc_completed_at >= datetime('now', '-10 minutes')"""
             )
-            unparsed_ready = cursor.fetchone()[0]
-            if unparsed_ready > 0:
-                return unparsed_ready  # Parse everything that's downloaded
-        except Exception:
-            pass
+            consumed_10m = cursor.fetchone()[0]
 
-        # Worker demand: maintain buffer for workers to claim
-        if self.has_recent_demand():
-            return max(self.get_total_demand(), 10)
+            # Dynamic target: 2× recent consumption, at least BASE_TARGET
+            target = max(BASE_TARGET, consumed_10m * 2)
+            return target
 
-        # Workers online but not claiming yet: keep minimum buffer
-        try:
-            from backend.server.embedded_worker import get_status
-            if get_status().get("running"):
-                return 10
         except Exception:
-            pass
-        try:
-            cursor = self.db.conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM worker_sessions WHERE status = 'online'"
-            )
-            if cursor.fetchone()[0] > 0:
-                return 10
-        except Exception:
-            pass
-
-        return 0
+            return BASE_TARGET
 
     def _self_repair(self):
         """Fix invariant violations periodically. Silent if nothing to fix."""
@@ -159,6 +147,51 @@ class ParseAheadPool(BaseAheadPool):
             except Exception:
                 pass
 
+    def _retry_failed_jobs(self):
+        """Reset parse-failed jobs for retry, independent of main parse loop.
+
+        Runs every 60 seconds regardless of whether new unparsed jobs exist.
+        This fixes the bug where retries never ran because new files kept
+        the unparsed queue non-empty.
+        """
+        now = time.time()
+        if now - self._last_retry_reset < 60:
+            return
+        self._last_retry_reset = now
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """UPDATE job_queue SET parse_status = NULL,
+                       retry_count = COALESCE(retry_count, 0) + 1
+                   WHERE status = 'pending' AND parse_status = 'failed'
+                     AND file_ready = 1
+                     AND COALESCE(retry_count, 0) < 3"""
+            )
+            if cursor.rowcount > 0:
+                logger.info(
+                    f"ParseAhead: reset {cursor.rowcount} parse-failed "
+                    f"jobs for retry (max 3 attempts)"
+                )
+            self.db.conn.commit()
+
+            # Warn about permanently failed jobs (exhausted retries)
+            cursor.execute(
+                """SELECT COUNT(*) FROM job_queue
+                   WHERE status = 'pending' AND parse_status = 'failed'
+                     AND COALESCE(retry_count, 0) >= 3"""
+            )
+            perm_failed = cursor.fetchone()[0]
+            if perm_failed > 0:
+                logger.warning(
+                    f"ParseAhead: {perm_failed} jobs permanently failed "
+                    f"(retries exhausted, check error_message)"
+                )
+        except Exception:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+
     def _run_pre_parse_buffer(self) -> bool:
         """Run one cycle of pre-parse buffer filling.
 
@@ -196,23 +229,6 @@ class ParseAheadPool(BaseAheadPool):
         jobs_to_parse = cursor.fetchall()
 
         if not jobs_to_parse:
-            # No unparsed jobs — retry parse-failed jobs that are actually downloadable.
-            # Only retry if file_ready=1 (temp file exists) and retry_count < 3.
-            now = time.time()
-            if now - self._last_retry_reset > 60:
-                cursor.execute(
-                    """UPDATE job_queue SET parse_status = NULL, retry_count = COALESCE(retry_count, 0) + 1
-                       WHERE status = 'pending' AND parse_status = 'failed'
-                       AND file_ready = 1
-                       AND COALESCE(retry_count, 0) < 3"""
-                )
-                if cursor.rowcount > 0:
-                    logger.info(
-                        f"ParseAhead: reset {cursor.rowcount} parse-failed "
-                        f"jobs for retry (max 3 attempts)"
-                    )
-                self.db.conn.commit()
-                self._last_retry_reset = now
             return False
 
         parsed_count = 0
@@ -238,9 +254,11 @@ class ParseAheadPool(BaseAheadPool):
                 continue
 
             success = False
+            error_msg = None
             try:
                 success = self._parse_single_job(job_id, file_id, file_path)
             except Exception as e:
+                error_msg = str(e)[:500]
                 logger.error(
                     f"ParseAhead job {job_id} exception: {e}\n"
                     f"{traceback.format_exc()}"
@@ -269,9 +287,11 @@ class ParseAheadPool(BaseAheadPool):
                         logger.warning(f"DL cache release failed for file_id={file_id}: {e}")
             else:
                 # Parse failed — keep DL cache for retry (tollgate C2)
+                if not error_msg:
+                    error_msg = f"Parse failed for {Path(file_path).name if file_path else 'unknown'}"
                 cursor.execute(
-                    "UPDATE job_queue SET parse_status = 'failed' WHERE id = ?",
-                    (job_id,),
+                    "UPDATE job_queue SET parse_status = 'failed', error_message = ? WHERE id = ?",
+                    (error_msg, job_id),
                 )
             self.db.conn.commit()
 
@@ -299,6 +319,9 @@ class ParseAheadPool(BaseAheadPool):
                     repair_ticks = max(1, int(repair_interval / poll_interval_s))
                     if self._diag_counter % repair_ticks == 0:
                         self._self_repair()
+
+                    # Retry failed jobs independently (every 60s)
+                    self._retry_failed_jobs()
 
                     self._run_pre_parse_buffer()
 

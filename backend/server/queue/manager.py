@@ -686,6 +686,34 @@ class JobQueueManager:
                 # MV/VV mode jobs passed $.vision=1 filter, so always attach.
                 nfc_path = unicodedata.normalize('NFC', file_path)
                 vision = embed_vision_map.get(nfc_path)
+                
+                # --- [START] Auto-heal Zombie Vision Jobs ---
+                # If job claims vision is done, but actual DB `mc_caption` is missing:
+                if job_id in vision_done_ids:
+                    if not vision or not vision.get("mc_caption") or not str(vision["mc_caption"]).strip():
+                        try:
+                            cursor.execute("SELECT phase_completed FROM job_queue WHERE id = ?", (job_id,))
+                            row_pc = cursor.fetchone()
+                            if row_pc and row_pc[0]:
+                                pc = json.loads(row_pc[0])
+                                pc["vision"] = False
+                                pc["mc"] = False
+                                cursor.execute(
+                                    """UPDATE job_queue 
+                                       SET phase_completed = ?, status = 'pending', assigned_to = NULL, 
+                                           worker_session_id = NULL, assigned_at = NULL
+                                       WHERE id = ?""", 
+                                    (json.dumps(pc), job_id)
+                                )
+                                logger.warning(
+                                    f"Auto-healed corrupted 'vision=true' state for job {job_id} "
+                                    f"({file_path}) - Resetting to MC Phase"
+                                )
+                        except Exception as e:
+                            logger.error(f"Failed to auto-heal job {job_id}: {e}")
+                        continue  # Do not give this poisoned job to the caller
+                # --- [END] Auto-heal ---
+
                 if vision:
                     job_data["vision_data"] = vision
 
@@ -726,17 +754,14 @@ class JobQueueManager:
         if row is None:
             return False
 
-        phases = json.loads(row[0])
         file_path = row[1]
-        if phase in phases:
-            phases[phase] = True
 
         now = _utcnow_sql()
         cursor.execute(
             """UPDATE job_queue
-               SET phase_completed = ?, status = 'processing', started_at = COALESCE(started_at, ?)
+               SET status = 'processing', started_at = COALESCE(started_at, ?)
                WHERE id = ?""",
-            (json.dumps(phases), now, job_id)
+            (now, job_id)
         )
 
         # Update worker_sessions with current phase + file (real-time, not just heartbeat)
@@ -1521,6 +1546,8 @@ class JobQueueManager:
         # Pipeline position: each file is in exactly ONE stage (no overlap)
         # Stage = the FIRST incomplete step in the pipeline
         try:
+            # Pipeline stages: MC and VV are parallel after Parse, MV depends on MC.
+            # A file may appear in both pipe_mc and pipe_vv (parallel tracks).
             cursor.execute("""
                 SELECT
                     SUM(CASE WHEN file_ready = 0 THEN 1 ELSE 0 END),
@@ -1532,13 +1559,11 @@ class JobQueueManager:
                                   OR json_extract(phase_completed, '$.vision') = 0)
                          THEN 1 ELSE 0 END),
                     SUM(CASE WHEN parse_status = 'parsed'
-                             AND json_extract(phase_completed, '$.vision') = 1
                              AND (json_extract(phase_completed, '$.vv') IS NULL
                                   OR json_extract(phase_completed, '$.vv') = 0)
                          THEN 1 ELSE 0 END),
                     SUM(CASE WHEN parse_status = 'parsed'
                              AND json_extract(phase_completed, '$.vision') = 1
-                             AND json_extract(phase_completed, '$.vv') = 1
                              AND (json_extract(phase_completed, '$.mv') IS NULL
                                   OR json_extract(phase_completed, '$.mv') = 0)
                          THEN 1 ELSE 0 END)

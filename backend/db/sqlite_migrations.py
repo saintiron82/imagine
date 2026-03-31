@@ -447,6 +447,11 @@ def migrate_error_code(db):
             WHERE status = 'failed' AND error_code IS NULL
             AND LOWER(error_message) LIKE '%parse failed%'
         """)
+        # UNKNOWN fallback for everything else
+        db.conn.execute("""
+            UPDATE job_queue SET error_code = 'UNKNOWN'
+            WHERE status = 'failed' AND error_code IS NULL
+        """)
         db.conn.commit()
         filled = null_count - db.conn.execute(
             "SELECT COUNT(*) FROM job_queue WHERE status='failed' AND error_code IS NULL AND error_message IS NOT NULL"
