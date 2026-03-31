@@ -1898,8 +1898,7 @@ class WorkerDaemon:
 
     def _process_batch_mv_only(self, jobs: list, progress_callback=None) -> list:
         """MV-only mode: Qwen3-Embedding stays loaded, generates meaning vectors only."""
-        from backend.vector.text_embedding import get_text_embedding_provider
-        from backend.search.sqlite_search import build_document_text
+        from backend.vector.text_embedding import get_text_embedding_provider, build_document_text
 
         _notify = lambda cb, evt, data: cb(evt, data) if cb else None
 
