@@ -773,6 +773,51 @@ def migrate_worker_phase_tracking(db):
         logger.info("worker_sessions phase tracking columns added")
 
 
+def migrate_phase_completed_vv_mv(db):
+    """Split phase_completed 'embed' key into separate 'vv' and 'mv' keys.
+    Also sync with actual vec_files/vec_text data."""
+    if not db._table_exists('job_queue'):
+        return
+    import json as _json
+    cursor = db.conn.cursor()
+
+    # 1. Convert embed → vv + mv
+    cursor.execute("SELECT id, phase_completed FROM job_queue WHERE phase_completed LIKE '%embed%'")
+    rows = cursor.fetchall()
+    if rows:
+        for jid, pc_str in rows:
+            pc = _json.loads(pc_str or '{}')
+            if 'embed' in pc:
+                val = pc.pop('embed')
+                pc['vv'] = val
+                pc['mv'] = val
+                cursor.execute("UPDATE job_queue SET phase_completed = ? WHERE id = ?",
+                             (_json.dumps(pc), jid))
+        db.conn.commit()
+        logger.info(f"Migrated {len(rows)} jobs: embed → vv + mv")
+
+    # 2. Sync vv/mv with actual DB data (vec_files/vec_text)
+    cursor.execute("""SELECT jq.id, jq.file_id, jq.phase_completed FROM job_queue jq
+                      WHERE jq.file_id IS NOT NULL""")
+    rows = cursor.fetchall()
+    fixed = 0
+    for jid, fid, pc_str in rows:
+        pc = _json.loads(pc_str or '{}')
+        cursor.execute("SELECT COUNT(*) FROM vec_files WHERE file_id = ?", (fid,))
+        actual_vv = cursor.fetchone()[0] > 0
+        cursor.execute("SELECT COUNT(*) FROM vec_text WHERE file_id = ?", (fid,))
+        actual_mv = cursor.fetchone()[0] > 0
+        if pc.get('vv') != actual_vv or pc.get('mv') != actual_mv:
+            pc['vv'] = actual_vv
+            pc['mv'] = actual_mv
+            cursor.execute("UPDATE job_queue SET phase_completed = ? WHERE id = ?",
+                         (_json.dumps(pc), jid))
+            fixed += 1
+    if fixed:
+        db.conn.commit()
+        logger.info(f"Synced {fixed} jobs vv/mv with actual DB data")
+
+
 # ──────────────────────────────────────────────────────────────
 # Orchestrator: run all migrations in order
 # ──────────────────────────────────────────────────────────────
@@ -818,6 +863,7 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_job_queue_archived_at(db)
         migrate_search_logs(db)
         migrate_worker_phase_tracking(db)
+        migrate_phase_completed_vv_mv(db)
     else:
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()
