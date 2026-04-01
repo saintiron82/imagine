@@ -98,7 +98,20 @@ def _collect_cuda_metrics(metrics: MetricsDict) -> None:
         if mem_total > 0:
             metrics["gpu_memory_percent"] = round(mem_used / mem_total * 100, 1)
     except Exception as exc:
-        logger.debug(f"Failed to read CUDA memory: {exc}")
+        logger.debug(f"Failed to read CUDA memory via torch: {exc}")
+        # Fallback: nvidia-smi for VRAM
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                mem_total_mb = int(result.stdout.strip().split("\n")[0])
+                metrics["gpu_memory_total_gb"] = round(mem_total_mb / 1024, 2)
+                logger.debug(f"VRAM from nvidia-smi: {metrics['gpu_memory_total_gb']}GB")
+        except Exception:
+            pass
 
     # Temperature via nvidia-smi (subprocess, ~50ms)
     try:
