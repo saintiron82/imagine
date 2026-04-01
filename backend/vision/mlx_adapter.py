@@ -74,7 +74,12 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
             self._config = load_config(self.model_id)
 
             elapsed = time.perf_counter() - t0
-            logger.info(f"MLX VLM model loaded in {elapsed:.1f}s")
+            try:
+                import mlx.core as mx
+                metal_mb = mx.get_active_memory() / 1024 ** 2
+                logger.info(f"MLX VLM model loaded in {elapsed:.1f}s — Metal: {metal_mb:.0f}MB ({self.model_id})")
+            except Exception:
+                logger.info(f"MLX VLM model loaded in {elapsed:.1f}s ({self.model_id})")
 
         except Exception as e:
             logger.error(f"Failed to load MLX VLM model {self.model_id}: {e}")
@@ -303,6 +308,12 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         MLX uses its own Metal buffer allocator (not torch.mps),
         so we must call mx.clear_cache() to release GPU memory.
         """
+        try:
+            import mlx.core as mx
+            metal_before = mx.get_active_memory() / 1024 ** 2
+        except Exception:
+            metal_before = -1
+
         if self._model is not None:
             del self._model
             self._model = None
@@ -318,6 +329,11 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         try:
             import mlx.core as mx
             mx.clear_cache()
+            metal_after = mx.get_active_memory() / 1024 ** 2
+            freed = metal_before - metal_after if metal_before >= 0 else -1
+            logger.info(
+                f"[MLX] Model unloaded ({self.model_id}) — "
+                f"Metal: {metal_before:.0f}→{metal_after:.0f}MB (freed {freed:.0f}MB)"
+            )
         except Exception:
-            pass
-        logger.info(f"[MLX] Model unloaded ({self.model_id})")
+            logger.info(f"[MLX] Model unloaded ({self.model_id})")

@@ -1631,14 +1631,15 @@ class WorkerDaemon:
         try:
             from backend.vision.vision_factory import get_vision_analyzer, VisionAnalyzerFactory
             analyzer = get_vision_analyzer()
+            model_id = getattr(analyzer, 'model_id', '?')
             if hasattr(analyzer, 'unload_model'):
                 analyzer.unload_model()
             VisionAnalyzerFactory.reset()
-        except Exception:
-            pass
+            logger.info(f"VLM unloaded ({model_id})")
+        except Exception as e:
+            logger.warning(f"VLM unload error: {e}")
         gc.collect()
         self._try_empty_gpu_cache()
-        logger.info("VLM unloaded")
 
     # ── Single-Role Processing: parse, VV-only, MV-only ──
 
