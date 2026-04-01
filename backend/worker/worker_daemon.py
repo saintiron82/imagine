@@ -907,8 +907,8 @@ class WorkerDaemon:
             return fields
 
         except Exception as e:
-            logger.warning(f"Vision failed for {file_path.name}: {e}")
-            return {}
+            logger.warning(f"Vision failed for {file_path.name}: {e}", exc_info=True)
+            return {"_error": str(e)}
 
     _vv_encoder = None  # Cached SigLIP2 encoder (class-level singleton)
 
@@ -998,15 +998,17 @@ class WorkerDaemon:
                 Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
                 mc_raw_override=mc_raw_override,
             )
+            vlm_err = vision_fields.get("_error") if isinstance(vision_fields, dict) else None
             if vision_fields and vision_fields.get("mc_caption"):
                 if ctx.metadata:
                     ctx.metadata.update(vision_fields)
                 ctx.vision_fields = vision_fields
-            elif not vision_fields or not vision_fields.get("mc_caption"):
-                # VLM failed to generate MC — mark as failed so worker
-                # calls fail_job() instead of complete_mc() with empty data.
+            else:
                 ctx.failed = True
-                ctx.error = f"VLM failed to generate MC for {self._current_file}"
+                if vlm_err:
+                    ctx.error = f"VLM error for {self._current_file}: {vlm_err}"
+                else:
+                    ctx.error = f"VLM returned empty MC for {self._current_file}"
                 logger.warning(ctx.error)
 
             _notify(progress_callback, "file_done", {
