@@ -1007,6 +1007,13 @@ class WorkerDaemon:
             self._current_file = Path(ctx.job["file_path"]).name
             self.uploader.report_progress(ctx.job["job_id"], "vision")
 
+            # Keep-alive heartbeat during long processing (prevents server job reclaim)
+            if i > 0 and i % 5 == 0:
+                try:
+                    self._heartbeat()
+                except Exception:
+                    pass
+
             # Log VLM backend info BEFORE loading (so user sees it immediately)
             if not vlm_loaded:
                 try:
