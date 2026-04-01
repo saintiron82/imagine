@@ -413,6 +413,8 @@ class WorkerIPCController:
                             _emit_log(
                                 f"  ... and {failed - 5} more failures",
                                 "error")
+                    elif event_type == "diag_log":
+                        _emit_log(data.get("message", ""), data.get("level", "info"))
                     elif event_type == "file_error":
                         _emit_log(f"[ERROR] {data.get('file_name', '?')}: {data.get('error', 'unknown')}", "error")
                     elif event_type == "batch_complete":

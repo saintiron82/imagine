@@ -1902,7 +1902,13 @@ class WorkerDaemon:
         from PIL import Image as PILImage
 
         self._current_phase = "vv"
-        logger.info(f"[VV-ONLY] === START batch: {len(jobs)} jobs ===")
+
+        def _log(msg, level="info"):
+            """Log to both Python logger AND IPC (via progress_callback)."""
+            getattr(logger, level)(msg)
+            _notify(progress_callback, "diag_log", {"message": msg, "level": level})
+
+        _log(f"[VV] === START batch: {len(jobs)} jobs ===")
 
         results = []
         active = []
@@ -1913,44 +1919,34 @@ class WorkerDaemon:
             self._current_file = file_name
             self._current_job_id = job_id
 
-            # Detailed per-job diagnostics
             vision_data = job.get("vision_data") or {}
             mc_caption = str(vision_data.get("mc_caption") or "").strip()
             has_thumb_path = bool(job.get("thumb_path"))
-            has_pre_parsed = bool(job.get("pre_parsed"))
-            logger.info(
-                f"[VV-ONLY] [{idx+1}/{len(jobs)}] job={job_id} file={file_name} "
-                f"mc_caption={len(mc_caption)}chars thumb_path={has_thumb_path} pre_parsed={has_pre_parsed}"
-            )
 
             if not mc_caption:
                 err = (
                     f"NO_MC_CAPTION: vision_data keys={list(vision_data.keys())}, "
-                    f"mc_caption raw={repr(vision_data.get('mc_caption'))}"
+                    f"raw={repr(vision_data.get('mc_caption'))!s:.60}"
                 )
-                logger.warning(f"[VV-ONLY] {file_name}: {err}")
+                _log(f"[VV] FAIL {file_name}: {err}", "warning")
                 self.uploader.fail_job(job_id, err, "MODE_MISMATCH")
                 results.append((job_id, False, err))
-                _notify(progress_callback, "file_error", {
-                    "file_name": file_name, "error": err,
-                })
+                _notify(progress_callback, "file_error", {"file_name": file_name, "error": err})
                 continue
             thumb = self._resolve_thumbnail(job)
             if not thumb:
                 err = f"THUMB_FAIL: file_id={file_id}, thumb_path={job.get('thumb_path')}"
-                logger.warning(f"[VV-ONLY] {file_name}: {err}")
+                _log(f"[VV] FAIL {file_name}: {err}", "warning")
                 self.uploader.fail_job(job_id, err)
                 results.append((job_id, False, err))
-                _notify(progress_callback, "file_error", {
-                    "file_name": file_name, "error": err,
-                })
+                _notify(progress_callback, "file_error", {"file_name": file_name, "error": err})
                 continue
             active.append({"job": job, "thumb": thumb})
 
-        logger.info(f"[VV-ONLY] Validation: {len(active)} active, {len(results)} pre-failed out of {len(jobs)}")
+        _log(f"[VV] Validation: {len(active)} active, {len(results)} pre-failed / {len(jobs)} total")
 
         if not active:
-            logger.warning(f"[VV-ONLY] ALL {len(jobs)} jobs failed validation — returning early")
+            _log(f"[VV] ALL {len(jobs)} jobs failed validation", "warning")
             return results
 
         _notify(progress_callback, "phase_start", {"phase": "embed_vv", "count": len(active)})
@@ -1958,13 +1954,14 @@ class WorkerDaemon:
         # SigLIP2 stays loaded across batches (class-level singleton)
         try:
             if WorkerDaemon._vv_encoder is None:
+                _log("[VV] Loading SigLIP2 model...")
                 WorkerDaemon._vv_encoder = SigLIP2Encoder()
             encoder = WorkerDaemon._vv_encoder
             model_name = getattr(encoder, 'model_name', None) or type(encoder).__name__
-            logger.info(f"[VV-ONLY] SigLIP2 ready: {model_name}")
+            _log(f"[VV] SigLIP2 ready: {model_name}")
         except Exception as e:
             err = f"SigLIP2 load failed: {e}"
-            logger.error(f"[VV-ONLY] {err}", exc_info=True)
+            _log(f"[VV] {err}", "error")
             for ctx in active:
                 job_id = ctx["job"]["job_id"]
                 self.uploader.fail_job(job_id, err)
@@ -2052,11 +2049,12 @@ class WorkerDaemon:
                     processed += 1
 
             if batch_items:
-                logger.info(f"[VV-ONLY] Uploading {len(batch_items)} VV vectors...")
+                _log(f"[VV] Uploading {len(batch_items)} vectors...")
                 batch_results = self.uploader.complete_vv_batch(
                     [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
                 )
-                logger.info(f"[VV-ONLY] Upload response: {len(batch_results)} results")
+                n_upload_ok = sum(1 for r in batch_results if (r.get("ok") if isinstance(r, dict) else bool(r)))
+                _log(f"[VV] Upload: {n_upload_ok}/{len(batch_results)} ok")
                 for it, batch_result in zip(batch_items, batch_results):
                     file_name = Path(it["ctx"]["job"].get("file_path", "")).name
                     if isinstance(batch_result, dict):
@@ -2066,7 +2064,7 @@ class WorkerDaemon:
                         ok = bool(batch_result)
                         err = "" if ok else "VV upload failed (server rejected)"
                     if not ok:
-                        logger.warning(f"[VV-ONLY] UPLOAD FAIL {file_name}: result={batch_result!r} err={err!r}")
+                        _log(f"[VV] UPLOAD FAIL {file_name}: {batch_result!r}", "warning")
                     results.append((it["job_id"], ok, err))
                     if ok:
                         self._phase_counts["vv"] += 1
