@@ -262,8 +262,9 @@ class JobQueueManager:
             except Exception:
                 pass
         vram_threshold = int(vram_min * 0.90)
+        # GPU present but VRAM unknown (None/0) → assume strong (driver/torch issue, not weak GPU)
         gpu_class = "embedded" if is_embedded else (
-            "strong" if has_gpu and worker_vram_mb >= vram_threshold else
+            "strong" if has_gpu and (worker_vram_mb >= vram_threshold or worker_vram_mb == 0) else
             "weak" if has_gpu else "cpu"
         )
         return gpu_class, throttle, assigned_mode, phase_job_count, is_embedded
