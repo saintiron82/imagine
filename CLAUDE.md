@@ -968,21 +968,54 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 **결합**: RRF (Reciprocal Rank Fusion), 가중치는 `config.yaml` > `search.rrf.presets` 설정.
 **검색 엔진**: `backend/search/sqlite_search.py` (SqliteVectorSearch)
 
-### Tier 시스템 (config.yaml) — 2026-02-20 기준
+### Tier 시스템 (config.yaml) — 2026-04-01 업데이트
 
 **VV/MV 크로스 티어 호환성 확보 완료.**
 
 | Tier | VRAM | VV 모델 (SigLIP2) | VLM (MC 생성) | MV 모델 (Qwen3-Embedding) | 검색 LLM (쿼리 분해) |
 |------|------|-------------------|---------------|----------------------|----------------------|
 | **standard** | ~6GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-0.8B` (mlx/transformers) |
-| **pro** | 8-16GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-4B` (auto: mlx/transformers) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-4B-OptiQ-4bit` (mlx/transformers) |
+| **pro** | 8-16GB | `siglip2-so400m-patch16-naflex` (1152d) | 플랫폼별 (아래 참조) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-4B-OptiQ-4bit` (mlx/transformers) |
 | **ultra** | 20GB+ | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-8B` (auto: mlx/ollama/vllm/transformers) | `Qwen3-Embedding-8B` (4096d) | `Qwen3.5-9B` (mlx/transformers) |
 
-**핵심 설계 결정 (2026-02-20):**
+**Pro Tier VLM 플랫폼별 설정:**
+
+| 플랫폼 | 백엔드 | 모델 | 폴백 |
+|--------|--------|------|------|
+| macOS | MLX | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | transformers |
+| **Windows** | **Ollama** | **`qwen3.5:4b`** | transformers |
+| Linux | transformers | `Qwen/Qwen3-VL-4B-Instruct` | - |
+
+### Windows VLM 선택 근거 (2026-04-01 벤치마크)
+
+**테스트 환경**: RTX 3060 Ti 8GB, Ollama, 동일 이미지 3회 반복
+
+| 모델 | 속도(avg) | VRAM | 캡션 품질 | 안정성 |
+|------|----------|------|----------|:------:|
+| qwen3-vl:4b | ~10s | 7.0GB | **불안정 (0/3 빈 결과)** | ❌ |
+| qwen3-vl:8b-q4_K_M | 7.2s | 7.2GB | 안정, 347-434자 | 3/3 ✅ |
+| **qwen3.5:4b** | **6.2s** | 7.5GB | **상세, 392-620자** | **3/3 ✅** |
+| qwen3.5:9b | 13.2s | 7.5GB | 가장 상세, 450-599자 | 3/3 ✅ |
+
+**qwen3.5:4b 선택 이유:**
+1. **최고 속도** (6.2s/장, 4.7s/장 warm) — 9b 대비 2배 빠름
+2. **안정적 JSON 출력** — 3/3 성공, 캡션+태그 정상
+3. **배치 가능** — 5장 동시 처리 시 1.5배 추가 속도 향상 확인
+4. **VRAM 적합** — 7.5GB/8GB (모델 1개만 로드 원칙)
+5. **Unified VL 아키텍처** — Qwen3-VL보다 벤치마크 상위 (early fusion)
+6. **CPU 폴백 가능** — GPU 없는 환경에서 5-10 tok/s (백업용)
+7. **Apache 2.0 라이선스**
+
+**qwen3-vl:4b 탈락 이유:** Ollama에서 thinking 모드 문제로 빈 결과 반복. think=True/False 모두 불안정.
+
+**Ollama API 주의사항:** `/api/generate`가 아닌 **`/api/chat` + `think: False`** 사용 필수. Qwen3-VL/3.5 모델은 `/api/generate`에서 응답이 `thinking` 필드로 라우팅되어 `response`가 비는 알려진 이슈.
+
+**핵심 설계 결정:**
 - **VV 모델 통일**: 모든 Tier에서 동일한 `siglip2-so400m-patch16-naflex` (1152d) 사용. Tier 전환 시 VV 재생성 불필요.
-- **MV 모델 통일 (standard↔pro)**: 동일한 `qwen3-embedding:0.6b` (1024d). standard↔pro 전환이 **완전 무중단**.
-- **MV ultra 분리**: ultra는 `qwen3-embedding:8b` (4096d)로 모델 자체가 다름. 전환 시 MV만 재생성 (빠름, ~0.5s/file).
+- **MV 모델 통일 (standard/pro)**: 동일한 `qwen3-embedding:0.6b` (1024d). standard/pro 전환이 **완전 무중단**.
+- **MV ultra 분리**: ultra는 `qwen3-embedding:8b` (4096d)로 모델 자체가 다름. 전환 시 MV만 재생성.
 - **SigLIP2 so400m NaFlex 선택 근거**: Meta PE-Core(2025.04)가 성능 최강이나 CC-BY-NC 라이선스 + transformers 미통합 + MPS 미검증. SigLIP2는 Apache 2.0, transformers 네이티브, MPS 검증됨. 동급 파라미터 대비 성능 차이 0.5% 미만.
+- **워커 모델 1개 동시 로드 원칙**: MC/VV/MV 중 한 모델만 VRAM에 올림. 8GB GPU에서 OOM 방지.
 
 **Tier 전환 호환성 매트릭스:**
 
