@@ -186,7 +186,7 @@ class VisionAnalyzer(BaseVisionAnalyzer):
                 **hf_kwargs,
             )
 
-        elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id or "Qwen3.5" in self.model_id:
+        elif "Qwen3.5" in self.model_id:
             from transformers import AutoProcessor, AutoModelForImageTextToText
 
             t_proc = time.perf_counter()
@@ -423,8 +423,8 @@ class VisionAnalyzer(BaseVisionAnalyzer):
 
                 return caption
 
-            elif "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
-                # Qwen2-VL / Qwen3-VL caption generation (same chat template API)
+            elif "Qwen2-VL" in self.model_id or "Qwen3.5" in self.model_id:
+                # Qwen2-VL / Qwen3.5 caption generation (same chat template API)
                 messages = [{
                     "role": "user",
                     "content": [
@@ -697,7 +697,7 @@ class VisionAnalyzer(BaseVisionAnalyzer):
         self._load_model()
 
         _is_qwen35 = "Qwen3.5" in self.model_id
-        if "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id or _is_qwen35:
+        if "Qwen2-VL" in self.model_id or "Qwen3.5" in self.model_id:
             messages = []
             if system_prompt:
                 messages.append({
@@ -849,7 +849,7 @@ class VisionAnalyzer(BaseVisionAnalyzer):
     # ── Batch inference helpers ─────────────────────────────────
 
     def _is_qwen_vl(self) -> bool:
-        return "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id
+        return "Qwen2-VL" in self.model_id or "Qwen3.5" in self.model_id
 
     def _generate_response_batch(
         self, images: List[Image.Image], prompts, system_prompt: str = None

@@ -51,7 +51,7 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
         from ..utils.config import get_config
         cfg = get_config()
 
-        self.model = model or cfg.get("vision.model", "qwen3-vl:8b")
+        self.model = model or cfg.get("vision.model", "qwen3.5:4b")
         self.host = host or cfg.get("vision.ollama_host", "http://localhost:11434")
         self.api_url = f"{self.host}/api/chat"
         self._temperature = cfg.get("vision.temperature", 0.1)
@@ -265,7 +265,7 @@ Format your response as JSON:
         """Low-level Ollama chat API call. Returns raw response text.
 
         Uses /api/chat + think=false to avoid thinking-mode empty response
-        (Qwen3-VL routes image responses to 'thinking' field in /api/generate).
+        (Qwen3.5 routes image responses to 'thinking' field in /api/generate).
         """
         payload = {
             "model": self.model,

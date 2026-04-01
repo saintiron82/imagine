@@ -200,7 +200,7 @@ class VisionAnalyzerFactory:
             model = (
                 model
                 or os.getenv('VISION_MODEL')
-                or "Qwen/Qwen3-VL-8B-Instruct"
+                or "Qwen/Qwen3.5-9B"
             )
             return VLLMAdapter(model=model, tier_name=tier_name)
 
@@ -210,7 +210,7 @@ class VisionAnalyzerFactory:
             model = (
                 model
                 or os.getenv('VISION_MODEL')
-                or "qwen3-vl:4b"
+                or "qwen3.5:4b"
             )
             return OllamaVisionAdapter(model=model)
 

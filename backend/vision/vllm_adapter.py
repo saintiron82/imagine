@@ -49,7 +49,7 @@ class VLLMAdapter(BaseVisionAnalyzer):
 
     def __init__(
         self,
-        model: str = "Qwen/Qwen3-VL-8B-Instruct",
+        model: str = "Qwen/Qwen3.5-9B",
         tier_name: str = "ultra",
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.9,
@@ -59,7 +59,7 @@ class VLLMAdapter(BaseVisionAnalyzer):
         Initialize vLLM vision adapter.
 
         Args:
-            model: HuggingFace model ID (e.g., "Qwen/Qwen3-VL-8B-Instruct")
+            model: HuggingFace model ID (e.g., "Qwen/Qwen3.5-9B")
             tier_name: AI tier name for logging
             tensor_parallel_size: Number of GPUs to use
             gpu_memory_utilization: GPU memory usage ratio (0.0-1.0)
