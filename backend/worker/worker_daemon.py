@@ -1007,11 +1007,22 @@ class WorkerDaemon:
             self._current_file = Path(ctx.job["file_path"]).name
             self.uploader.report_progress(ctx.job["job_id"], "vision")
 
-            # Log VLM backend on first invocation
+            # Log VLM backend info BEFORE loading (so user sees it immediately)
             if not vlm_loaded:
-                _notify(progress_callback, "diag_log", {
-                    "message": f"[MC] Loading VLM...", "level": "info",
-                })
+                try:
+                    from backend.vision.vision_factory import VisionAnalyzerFactory
+                    from backend.utils.tier_config import get_active_tier
+                    tier_name, tier_config = get_active_tier()
+                    vlm_cfg = tier_config.get("vlm", {})
+                    chain = VisionAnalyzerFactory._resolve_backend_chain(vlm_cfg, tier_name)
+                    chain_str = " -> ".join(f"{e['backend']}({e.get('model','?')})" for e in chain)
+                    _notify(progress_callback, "diag_log", {
+                        "message": f"[MC] Loading VLM: {chain_str}", "level": "info",
+                    })
+                except Exception:
+                    _notify(progress_callback, "diag_log", {
+                        "message": f"[MC] Loading VLM...", "level": "info",
+                    })
 
             mc_raw_override = ctx.job.get("mc_raw") if ctx.job.get("pre_parsed") else None
             vision_fields = self._run_vision(
