@@ -416,6 +416,15 @@ class WorkerIPCController:
                     jobs, progress_callback=_batch_progress_cb
                 )
 
+                # Batch result summary (always visible)
+                n_ok = sum(1 for r in results if len(r) > 1 and r[1])
+                n_fail = sum(1 for r in results if len(r) > 1 and not r[1])
+                _emit_log(
+                    f"[BATCH] {len(results)} results: {n_ok} ok, {n_fail} fail "
+                    f"(mode={daemon.processing_mode}, jobs_given={len(jobs)})",
+                    "info" if n_fail == 0 else "warning"
+                )
+
                 # Emit individual job_done events (for compatibility)
                 for result_tuple in results:
                     # Backward-compatible: 2-tuple (job_id, success) or 3-tuple (job_id, success, error)
