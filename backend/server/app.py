@@ -434,6 +434,15 @@ def _cleanup_stale_jobs():
         except Exception:
             pass
 
+        # Auto-recover: retry failed files that can be reprocessed
+        # (files with processing_status='failed' and no job in queue)
+        try:
+            recovered = queue.retry_failed_jobs()
+            if recovered > 0:
+                logger.info(f"Startup auto-recovery: {recovered} failed files returned to queue")
+        except Exception as e:
+            logger.warning(f"Startup auto-recovery failed: {e}")
+
         db.conn.commit()
     except Exception as e:
         logger.warning(f"Startup job cleanup failed: {e}")
