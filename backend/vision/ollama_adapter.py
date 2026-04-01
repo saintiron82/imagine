@@ -108,7 +108,7 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt, "images": [img_base64]}],
                 "stream": False,
-                "think": True,
+                "think": False,
                 "options": {
                     "temperature": 0.7,
                     "top_p": 0.9
@@ -271,7 +271,7 @@ Format your response as JSON:
             "model": self.model,
             "messages": [{"role": "user", "content": prompt, "images": [img_base64]}],
             "stream": False,
-            "think": True,
+            "think": False,
             "options": {"temperature": self._temperature},
             "keep_alive": keep_alive or self._keep_alive,
         }
