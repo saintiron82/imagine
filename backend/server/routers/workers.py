@@ -254,24 +254,15 @@ def worker_connect(
 
     # Auto-detect processing_mode from resources provided at connect time.
     # Only set if no manual override already exists (admin pre-configuration).
-    auto_mode = None
+    # Store resources only. Mode is decided dynamically by _decide_worker_mode().
     if req.resources:
-        auto_mode = _auto_detect_mode_from_resources(req.resources)
-        if auto_mode:
-            # Store as initial assigned_mode, NOT override (override = admin manual only)
-            cursor.execute(
-                """UPDATE worker_sessions
-                   SET assigned_mode = ?, resources_json = ?,
-                       processing_mode_override = NULL
-                   WHERE id = ?""",
-                (auto_mode, json.dumps(req.resources), session_id)
-            )
-            vram_gb = req.resources.get('gpu_memory_total_gb') or 0
-            gpu_type = req.resources.get('gpu_type') or 'none'
-            logger.info(
-                f"Worker {req.worker_name} auto-detected mode: {auto_mode} "
-                f"(VRAM={vram_gb:.1f}GB, GPU={gpu_type})"
-            )
+        cursor.execute(
+            "UPDATE worker_sessions SET resources_json = ?, processing_mode_override = NULL WHERE id = ?",
+            (json.dumps(req.resources), session_id)
+        )
+        vram_gb = req.resources.get('gpu_memory_total_gb') or 0
+        gpu_type = req.resources.get('gpu_type') or 'none'
+        logger.info(f"Worker {req.worker_name} resources: GPU={gpu_type}, VRAM={vram_gb:.1f}GB")
 
     db.conn.commit()
 
