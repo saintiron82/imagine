@@ -92,7 +92,9 @@ def _collect_cuda_metrics(metrics: MetricsDict) -> None:
     # Memory via torch.cuda
     try:
         mem_used = torch.cuda.memory_allocated() / (1024 ** 3)
-        mem_total = torch.cuda.get_device_properties(0).total_mem / (1024 ** 3)
+        props = torch.cuda.get_device_properties(0)
+        mem_total = getattr(props, 'total_memory', None) or getattr(props, 'total_mem', 0)
+        mem_total = mem_total / (1024 ** 3)
         metrics["gpu_memory_used_gb"] = round(mem_used, 2)
         metrics["gpu_memory_total_gb"] = round(mem_total, 2)
         if mem_total > 0:
