@@ -216,7 +216,7 @@ class JobQueueManager:
         t = self._PHASE_TIME.get(phase, 1)
         return max(1, int(target / t))
 
-    def _decide_worker_mode(self, worker_session_id: int) -> str:
+    def _decide_worker_mode(self, worker_session_id: int, *, return_diag: bool = False):
         """Algorithm E' v2: Time-Weighted + Batch Commit + GPU-Weak MC.
 
         1. Batch commit: if batch_remaining > 0 and work exists, stay
@@ -225,6 +225,9 @@ class JobQueueManager:
         4. Min guarantee: unserved phase gets 1.5x boost
         5. Stability: switch only if best > current * 2x
         6. Thermal: danger/critical → idle
+
+        Args:
+            return_diag: If True, returns (mode, diag_dict) instead of just mode.
         """
         cursor = self.db.conn.cursor()
         stats = self.get_phase_stats()
@@ -237,7 +240,10 @@ class JobQueueManager:
         )
         row = cursor.fetchone()
         if not row:
-            return "full"
+            mode = "full"
+            if return_diag:
+                return mode, {"reason": "session not found", "gpu_class": "unknown"}
+            return mode
         assigned_mode, worker_name, res_json, phase_job_count = row
         phase_job_count = phase_job_count or 0
         is_embedded = worker_name == '__builtin__'
@@ -253,16 +259,41 @@ class JobQueueManager:
             except Exception:
                 pass
 
+        def _result(mode, reason, **extra):
+            """Helper to build result with optional diagnostics."""
+            diag = {
+                "reason": reason,
+                "gpu_class": extra.get("gpu_class", "unknown"),
+                "pending": extra.get("pending", {}),
+                "workers_on": extra.get("workers_on", {}),
+                "pressure": extra.get("pressure", {}),
+                "assigned_mode": assigned_mode,
+            }
+            # Always log structured diagnostic
+            pend_str = " ".join(f"{k}={v}" for k, v in diag["pending"].items()) if diag["pending"] else "n/a"
+            work_str = " ".join(f"{k}={v}" for k, v in diag["workers_on"].items()) if diag["workers_on"] else "n/a"
+            pres_str = " ".join(f"{k}={v:.0f}" for k, v in diag["pressure"].items()) if diag["pressure"] else "n/a"
+            logger.info(
+                f"[MODE-DECIDE] session={worker_session_id} gpu={diag['gpu_class']} | "
+                f"pending: {pend_str} | workers: {work_str} | pressure: {pres_str} | "
+                f"current={assigned_mode} best={mode} | {reason}"
+            )
+            if return_diag:
+                return mode, diag
+            return mode
+
         # Thermal throttling
         if throttle in ("danger", "critical"):
-            return "idle"
+            return _result("idle", f"thermal={throttle}")
 
         # Batch commit: check if current batch not yet finished
         if assigned_mode and assigned_mode != "idle":
             batch_size = self.get_phase_batch_size(assigned_mode)
             pending = self._get_phase_pending(stats, assigned_mode)
             if phase_job_count < batch_size and pending > 0:
-                return assigned_mode  # still within batch commit
+                return _result(assigned_mode,
+                               f"batch_commit ({phase_job_count}/{batch_size}, {pending} pending)",
+                               pending=dict(stats))
 
         # Determine GPU capability class
         from backend.utils.config import get_config
@@ -323,15 +354,20 @@ class JobQueueManager:
                 p += pending * 10
             pressure[phase] = p
 
+        # Shared context for _result
+        diag_ctx = dict(gpu_class=gpu_class, pending=buffers, workers_on=workers_on, pressure=pressure)
+
         if not pressure:
-            return "idle"
+            return _result("idle", "no pending work in any capable phase", **diag_ctx)
 
         best = max(pressure, key=pressure.get)
 
         # Stability: only switch if best > current * 2
         if assigned_mode and assigned_mode in pressure and pressure[assigned_mode] > 0:
             if pressure[best] <= pressure[assigned_mode] * 2:
-                return assigned_mode
+                return _result(assigned_mode,
+                               f"hysteresis (best={best}:{pressure[best]:.0f} <= current*2={pressure[assigned_mode]*2:.0f})",
+                               **diag_ctx)
 
         # Switch to best
         if pressure[best] > 0:
@@ -341,12 +377,12 @@ class JobQueueManager:
                     (best, worker_session_id)
                 )
                 self.db.conn.commit()
-                if assigned_mode:
-                    logger.info(f"Worker {worker_session_id}: {assigned_mode}→{best} "
-                               f"(pressure: {pressure.get(best, 0):.0f} vs {pressure.get(assigned_mode, 0):.0f})")
-            return best
+                return _result(best,
+                               f"switch {assigned_mode}→{best} (pressure {pressure.get(best,0):.0f} vs {pressure.get(assigned_mode,0):.0f})",
+                               **diag_ctx)
+            return _result(best, "stay (already best)", **diag_ctx)
 
-        return "idle"
+        return _result("idle", "all pressure zero", **diag_ctx)
 
     @staticmethod
     def _get_phase_pending(stats: dict, phase: str) -> int:
@@ -583,7 +619,8 @@ class JobQueueManager:
                 pass
 
         if not rows:
-            # Diagnostic: log queue state once when transitioning to idle
+            # Diagnostic: log queue state and return structured diag to worker
+            claim_diag = None
             if worker_session_id is not None:
                 try:
                     diag = cursor.execute(
@@ -598,19 +635,49 @@ class JobQueueManager:
                             COUNT(*) FROM job_queue,
                             COUNT(*) FILTER (WHERE status = 'pending' AND file_ready = 0) as not_ready"""
                     ).fetchone()
+                    not_ready = diag[8] if len(diag) > 8 else 0
+                    # Phase-level pending for worker diagnostics
+                    phase_stats = self.get_phase_stats()
+                    # Determine reason for empty claim
+                    if diag[0] == 0:
+                        empty_reason = "queue empty"
+                    elif diag[3] == 0 and diag[0] > 0:
+                        empty_reason = f"all {diag[0]} pending jobs still parsing (parsed=0)"
+                    elif processing_mode in ("vv", "embed_only") and phase_stats.get("vv_pending", 0) == 0 and phase_stats.get("mv_pending", 0) == 0:
+                        empty_reason = f"mode={processing_mode} but vv_pending=0, mv_pending=0 (mc_pending={phase_stats.get('mc_pending',0)} — waiting for MC)"
+                    elif processing_mode in ("mc", "mc_only") and phase_stats.get("mc_pending", 0) == 0:
+                        empty_reason = f"mode={processing_mode} but mc_pending=0 (all MC done)"
+                    elif processing_mode == "mv" and phase_stats.get("mv_pending", 0) == 0:
+                        empty_reason = f"mode=mv but mv_pending=0"
+                    else:
+                        empty_reason = f"no jobs match mode={processing_mode} filter (parsed={diag[3]}, not_ready={not_ready})"
+
+                    claim_diag = {
+                        "mode": processing_mode,
+                        "pending_total": diag[0],
+                        "pending_parsed": diag[3],
+                        "not_ready": not_ready,
+                        "phase_pending": {
+                            "mc": phase_stats.get("mc_pending", 0),
+                            "vv": phase_stats.get("vv_pending", 0),
+                            "mv": phase_stats.get("mv_pending", 0),
+                        },
+                        "reason": empty_reason,
+                    }
+
                     diag_key = (worker_session_id, diag[0], diag[6], diag[7])
                     if diag_key != _last_claim_diag.get("key"):
                         _last_claim_diag["key"] = diag_key
-                        not_ready = diag[8] if len(diag) > 8 else 0
                         logger.info(
-                            f"[CLAIM-DIAG] session={worker_session_id} mode={processing_mode} | "
+                            f"[CLAIM-EMPTY] session={worker_session_id} mode={processing_mode} | "
                             f"pending={diag[0]} (unparsed={diag[1]} parsing={diag[2]} "
-                            f"parsed={diag[3]} failed={diag[4]} not_ready={not_ready}) "
-                            f"assigned={diag[5]} completed={diag[6]} total={diag[7]}"
+                            f"parsed={diag[3]} failed={diag[4]} not_ready={not_ready}) | "
+                            f"phase: mc={phase_stats.get('mc_pending',0)} vv={phase_stats.get('vv_pending',0)} mv={phase_stats.get('mv_pending',0)} | "
+                            f"reason: {empty_reason}"
                         )
                 except Exception:
                     pass
-            return []
+            return {"jobs": [], "count": 0, "diag": claim_diag} if claim_diag else []
 
         # Pre-fetch vision fields from files table for vision-done jobs.
         # Workers need vision_data for jobs where server already did Phase V

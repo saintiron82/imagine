@@ -130,6 +130,7 @@ class WorkerDaemon:
         self._total_completed = 0
         self._total_failed = 0
         self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
+        self._last_claim_diag = None  # Last empty-claim diagnostic from server
         self._batch_throughput = 0.0  # files/min from last completed batch
         self._current_job_id = None
         self._current_file = None
@@ -369,7 +370,18 @@ class WorkerDaemon:
                     old_mode = self.processing_mode
                     self.processing_mode = data["processing_mode"]
                     if old_mode != self.processing_mode:
-                        logger.info(f"Processing mode changed: {old_mode} → {self.processing_mode}")
+                        reason = data.get("mode_reason", "no reason given")
+                        snap = data.get("queue_snapshot", {})
+                        snap_str = " ".join(f"{k}={v}" for k, v in snap.items()) if snap else "n/a"
+                        logger.info(
+                            f"[MODE-CHANGE] {old_mode} → {self.processing_mode} | "
+                            f"reason: {reason} | queue: {snap_str}"
+                        )
+                    elif data.get("mode_reason"):
+                        # Log reason even without mode change (periodic diagnostic)
+                        logger.debug(
+                            f"[MODE-KEEP] {self.processing_mode} | reason: {data['mode_reason']}"
+                        )
                 return data
             return {}
         except Exception as e:
@@ -407,6 +419,18 @@ class WorkerDaemon:
                 jobs = data.get("jobs", [])
                 if jobs:
                     logger.info(f"Claimed {len(jobs)} jobs (requested {count})")
+                    self._last_claim_diag = None
+                elif data.get("diag"):
+                    # Server returned structured diagnostics for empty claim
+                    diag = data["diag"]
+                    self._last_claim_diag = diag
+                    phase = diag.get("phase_pending", {})
+                    logger.info(
+                        f"[CLAIM-EMPTY] mode={diag.get('mode','?')} | "
+                        f"phase: mc={phase.get('mc',0)} vv={phase.get('vv',0)} mv={phase.get('mv',0)} | "
+                        f"total_pending={diag.get('pending_total',0)} parsed={diag.get('pending_parsed',0)} | "
+                        f"reason: {diag.get('reason','unknown')}"
+                    )
                 return jobs
             else:
                 logger.warning(f"Claim failed: {resp.status_code}")

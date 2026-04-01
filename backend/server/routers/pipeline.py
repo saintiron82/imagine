@@ -78,8 +78,11 @@ def claim_jobs(
 ):
     """Claim pending jobs for processing."""
     queue = _get_queue(db)
-    jobs = queue.claim_jobs(user["id"], min(req.count, 50), worker_session_id=req.session_id)
-    return {"success": True, "jobs": jobs, "count": len(jobs)}
+    result = queue.claim_jobs(user["id"], min(req.count, 50), worker_session_id=req.session_id)
+    # claim_jobs may return a dict with diag info (empty claim) or a list of jobs
+    if isinstance(result, dict):
+        return {"success": True, **result}
+    return {"success": True, "jobs": result, "count": len(result)}
 
 
 @router.get("/api/v1/jobs")

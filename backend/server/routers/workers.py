@@ -425,18 +425,25 @@ def worker_heartbeat(
                 "processing_mode": "full",
             }
 
+    mode_reason = None
+    queue_snapshot = None
     if global_mode == "mc_only":
         processing_mode = "mc_only"
+        mode_reason = "global_mode=mc_only"
     elif mode_override:
         processing_mode = mode_override  # Admin manual override
+        mode_reason = f"admin_override={mode_override}"
     else:
         # Dynamic mode: server decides based on queue state + worker's current phase
         from backend.server.queue.manager import JobQueueManager
         try:
             _qm = JobQueueManager(db)
-            processing_mode = _qm._decide_worker_mode(req.session_id)
+            processing_mode, mode_diag = _qm._decide_worker_mode(req.session_id, return_diag=True)
+            mode_reason = mode_diag.get("reason", "unknown")
+            queue_snapshot = mode_diag.get("pending", {})
         except Exception:
             processing_mode = "full"
+            mode_reason = "fallback (decision error)"
     # For embedded worker: read live batch_size from config (Admin UI changes)
     cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
     wn_row = cursor.fetchone()
@@ -460,13 +467,18 @@ def worker_heartbeat(
     else:
         resource_batch_hint = effective_batch
 
-    return {
+    resp = {
         "ok": True,
         "command": pending_cmd,
         "pool_hint": resource_batch_hint * 2,
         "batch_hint": resource_batch_hint,
         "processing_mode": processing_mode,
     }
+    if mode_reason:
+        resp["mode_reason"] = mode_reason
+    if queue_snapshot:
+        resp["queue_snapshot"] = queue_snapshot
+    return resp
 
 
 @router.post("/workers/disconnect")

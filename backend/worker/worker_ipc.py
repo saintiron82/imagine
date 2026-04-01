@@ -334,7 +334,16 @@ class WorkerIPCController:
                 jobs = daemon.claim_jobs()
 
                 if not jobs:
-                    if loop_count <= 3 or loop_count % 10 == 0:
+                    diag = getattr(daemon, '_last_claim_diag', None)
+                    if diag and (loop_count <= 3 or loop_count % 10 == 0):
+                        phase = diag.get("phase_pending", {})
+                        _emit_log(
+                            f"[CLAIM-EMPTY] mode={diag.get('mode','?')} | "
+                            f"mc={phase.get('mc',0)} vv={phase.get('vv',0)} mv={phase.get('mv',0)} | "
+                            f"reason: {diag.get('reason','?')}",
+                            "info"
+                        )
+                    elif loop_count <= 3 or loop_count % 10 == 0:
                         _emit_log(f"[CLAIM] No jobs available, waiting {poll_interval}s...", "info")
                     _emit_status("running", [])
                     # Update state machine with no pending jobs (may trigger idle timeout)
