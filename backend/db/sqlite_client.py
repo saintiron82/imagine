@@ -766,8 +766,8 @@ class SQLiteDB:
             for col in allowed_cols:
                 if col in fields:
                     val = fields[col]
-                    # ai_tags: convert list to JSON string
-                    if col == 'ai_tags' and isinstance(val, list):
+                    # SQLite cannot bind list/dict — serialize to JSON string
+                    if isinstance(val, (list, dict)):
                         val = json.dumps(val)
                     updates[col] = val
 
