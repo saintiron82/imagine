@@ -106,22 +106,30 @@ class VisionAnalyzerFactory:
 
         chain = []
 
+        # Resolve platform-specific config (has correct model names per backend)
+        import platform as _plat
+        plat_key = {"Darwin": "darwin", "Windows": "windows", "Linux": "linux"}.get(_plat.system(), "linux")
+        plat_cfg = vlm_config.get("backends", {}).get(plat_key, {})
+
         if backend == 'auto':
             # Auto-detect: use platform detector to find optimal backend
             detected = get_optimal_backend(tier_name)
-            logger.info(f"Auto-detected backend: {detected} (tier: {tier_name})")
+            # Use platform-specific model if available, else top-level
+            model = plat_cfg.get("model") if plat_cfg.get("backend") == detected else vlm_config.get("model")
+            logger.info(f"Auto-detected backend: {detected} (tier: {tier_name}, model: {model})")
             chain.append({
                 "backend": detected,
-                "model": vlm_config.get("model"),
-                "batch_size": vlm_config.get("batch_size"),
+                "model": model,
+                "batch_size": plat_cfg.get("batch_size") or vlm_config.get("batch_size"),
             })
         else:
-            # Explicit backend (from env, user-settings, or config)
-            logger.info(f"Explicit backend: {backend} (tier: {tier_name})")
+            # Explicit backend — check if platform config has a model override
+            model = plat_cfg.get("model") if plat_cfg.get("backend") == backend else vlm_config.get("model")
+            logger.info(f"Explicit backend: {backend} (tier: {tier_name}, model: {model})")
             chain.append({
                 "backend": backend,
-                "model": vlm_config.get("model"),
-                "batch_size": vlm_config.get("batch_size"),
+                "model": model,
+                "batch_size": plat_cfg.get("batch_size") or vlm_config.get("batch_size"),
             })
 
         # Always ensure transformers is the final fallback
