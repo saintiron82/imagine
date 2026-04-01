@@ -1023,6 +1023,11 @@ class WorkerDaemon:
                 else:
                     ctx.error = f"VLM returned empty MC for {self._current_file}"
                 logger.warning(ctx.error)
+                # Surface error to UI via diag_log
+                _notify(progress_callback, "diag_log", {
+                    "message": f"[MC] FAIL {self._current_file}: {ctx.error}",
+                    "level": "warning",
+                })
 
             _notify(progress_callback, "file_done", {
                 "phase": "vision", "file_name": self._current_file,
