@@ -2999,7 +2999,8 @@ async function startEmbeddedServer(port = 8000) {
             const isWarning = /\bWARN(?:ING)?\b/i.test(msg);
             // Check isError only if not already a WARNING — prevents "permanently failed"
             // in WARNING-level audit messages from being misclassified as errors.
-            const isError = !isWarning && /\bERROR\b|\bCRITICAL\b|Traceback|Exception:|FAIL/i.test(msg);
+            const isError = !isWarning && /\bERROR\b|\bCRITICAL\b|Traceback|Exception:|\bFAIL(?:ED)?\b/i.test(msg)
+                && !/\b(?:pre-failed|0 failed|0 pre-failed)\b/i.test(msg);
             writeLog(isError ? 'ERROR' : 'INFO', '[Server:stderr]', msg);
             if (isError) {
                 console.error('[Server:ERR]', msg);
