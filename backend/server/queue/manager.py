@@ -1935,9 +1935,17 @@ class JobQueueManager:
                 )
                 count += 1
 
+        # Restore work_request failed_count for retried files
+        if count > 0:
+            cursor.execute(
+                """UPDATE work_requests SET failed_count = MAX(0, failed_count - ?)
+                   WHERE status IN ('queued', 'processing')""",
+                (count,)
+            )
+
         self.db.conn.commit()
         if count > 0:
-            logger.info(f"Retried {count} failed files")
+            logger.info(f"Retried {count} failed files (failed_count restored)")
         return count
 
     def force_retry_failed_jobs(self) -> int:
@@ -2009,6 +2017,14 @@ class JobQueueManager:
                 (file_id, file_path)
             )
             count += 1
+
+        # Restore work_request failed_count
+        if count > 0:
+            cursor.execute(
+                """UPDATE work_requests SET failed_count = MAX(0, failed_count - ?)
+                   WHERE status IN ('queued', 'processing')""",
+                (count,)
+            )
 
         self.db.conn.commit()
         if count > 0:
