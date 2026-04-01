@@ -620,18 +620,21 @@ class JobQueueManager:
             )
             rows = list(cursor.fetchall())
 
-        # Track which jobs already have MC done (for vision_data prefetch)
+        # Track which jobs have MC done (for vision_data prefetch + auto-heal).
+        # Read from job_queue.phase_completed (current state), NOT parsed_metadata (snapshot).
         vision_done_ids = set()
-        for r in rows:
-            try:
-                pm = json.loads(r[4]) if r[4] else {}
-                pc = pm.get("phase_completed", {})
-                if isinstance(pc, str):
-                    pc = json.loads(pc)
-                if pc.get("mc") or pc.get("vision"):
-                    vision_done_ids.add(r[0])
-            except (json.JSONDecodeError, TypeError):
-                pass
+        if rows:
+            job_ids_str = ",".join(str(r[0]) for r in rows)
+            cursor.execute(
+                f"SELECT id, phase_completed FROM job_queue WHERE id IN ({job_ids_str})"
+            )
+            for jid, pc_json in cursor.fetchall():
+                try:
+                    pc = json.loads(pc_json) if pc_json else {}
+                    if pc.get("vision") or pc.get("mc"):
+                        vision_done_ids.add(jid)
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         # Signal demand to ParseAheadPool
         if worker_session_id is not None:
@@ -817,7 +820,7 @@ class JobQueueManager:
             f"({pre_parsed_count} pre-parsed, {len(claimed) - pre_parsed_count} unparsed)"
         )
 
-        return claimed
+        return {"jobs": claimed, "count": len(claimed), "processing_mode": processing_mode}
 
     def update_progress(self, job_id: int, user_id: int, phase: str) -> bool:
         """Update phase completion for a job + worker session current_phase."""
