@@ -753,8 +753,8 @@ class WorkerDaemon:
 
             file_id = job.get("file_id")
             if file_id is not None and file_id not in self._download_cache:
-                if self.processing_mode in ("vv", "mv") or is_remote or job.get("pre_parsed"):
-                    # Pre-parsed / remote / vv / mv: thumbnail only (never full file)
+                if self.processing_mode in ("mc", "vv", "mv") or is_remote or job.get("pre_parsed"):
+                    # MC/VV/MV/pre-parsed/remote: thumbnail only (never full file)
                     future = self._download_pool.submit(self._resolve_thumbnail, job)
                 else:
                     future = self._download_pool.submit(self._resolve_file, job)
@@ -1522,12 +1522,14 @@ class WorkerDaemon:
                 if server_thumb and Path(server_thumb).exists():
                     ctx.thumb_path = server_thumb
                 else:
-                    thumb = self._resolve_thumbnail(job)
-                    if thumb:
-                        ctx.thumb_path = thumb
+                    # Use prefetch cache if available (downloaded in background)
+                    cached = self._get_downloaded(job)
+                    if cached:
+                        ctx.thumb_path = cached
                     else:
-                        ctx.local_path = self._get_downloaded(job)
-                        ctx.thumb_path = ctx.local_path
+                        # Fallback: synchronous thumbnail download
+                        thumb = self._resolve_thumbnail(job)
+                        ctx.thumb_path = thumb
 
             if not ctx.thumb_path or not Path(ctx.thumb_path).exists():
                 ctx.failed = True
