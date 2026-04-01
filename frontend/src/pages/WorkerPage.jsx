@@ -564,7 +564,7 @@ function WorkerPage({ appMode }) {
   const [currentFile, setCurrentFile] = useState('');
   const [batchProgress, setBatchProgress] = useState(null); // {index, count, phase}
   const startTimeRef = useRef(null);
-  const logEndRef = useRef(null);
+  // logEndRef removed — using logContainerRef for scroll
   const pollRef = useRef(null);
 
   const addLog = useCallback((message, type = 'info') => {
@@ -604,9 +604,13 @@ function WorkerPage({ appMode }) {
     return () => clearInterval(pollRef.current);
   }, []);
 
-  // Auto-scroll logs
+  // Auto-scroll logs — only within the log container, not the whole page
+  const logContainerRef = useRef(null);
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = logContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [logs]);
 
   // Worker IPC listeners (Electron only)
@@ -920,7 +924,7 @@ function WorkerPage({ appMode }) {
           <h3 className="text-sm font-medium text-gray-300 px-4 py-3 border-b border-gray-700">
             {t('worker.recent_log')}
           </h3>
-          <div className="h-64 overflow-y-auto p-3 font-mono text-xs space-y-1">
+          <div ref={logContainerRef} className="h-64 overflow-y-auto p-3 font-mono text-xs space-y-1">
             {logs.length === 0 ? (
               <div className="text-gray-600">{t('msg.no_logs')}</div>
             ) : (
@@ -938,7 +942,6 @@ function WorkerPage({ appMode }) {
                 </div>
               ))
             )}
-            <div ref={logEndRef} />
           </div>
         </div>
 
