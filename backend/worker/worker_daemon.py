@@ -875,7 +875,20 @@ class WorkerDaemon:
                     raw_img.close()
 
             # Use pre-built mc_raw if provided (pre-parsed mode), otherwise build from meta
-            mc_raw = mc_raw_override if mc_raw_override else _build_mc_raw(meta)
+            if mc_raw_override:
+                mc_raw = mc_raw_override
+            elif meta is not None:
+                mc_raw = _build_mc_raw(meta)
+            else:
+                # MC-only mode without mc_raw or meta — build minimal context from job
+                mc_raw = {
+                    "file_name": file_path.name,
+                    "folder_path": "",
+                    "layer_names": [],
+                    "used_fonts": [],
+                    "ocr_text": "",
+                    "text_content": [],
+                }
 
             # Run 2-Stage vision
             try:
