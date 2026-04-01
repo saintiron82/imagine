@@ -1609,25 +1609,10 @@ class JobQueueManager:
         queue_failed = status_counts.get("failed", 0)
         queue_total = pending + assigned + processing + queue_completed + queue_failed
 
-        # Total = original queue size from work_requests (includes completed+failed that left queue)
-        try:
-            cursor.execute(
-                "SELECT SUM(total_files), SUM(completed_count), SUM(failed_count) "
-                "FROM work_requests WHERE status IN ('queued', 'processing')"
-            )
-            wr = cursor.fetchone()
-            wr_total = wr[0] or 0
-            wr_completed = wr[1] or 0
-            wr_failed = wr[2] or 0
-        except Exception:
-            wr_total = 0
-            wr_completed = 0
-            wr_failed = 0
-
-        # Use WR total as the "original queue size", add current queue completed/failed
-        original_total = wr_total if wr_total > 0 else queue_total
-        total_completed = wr_completed + queue_completed
-        total_failed = wr_failed + queue_failed
+        # Counts from actual DB state (not counters — always accurate)
+        # total = active queue + complete files + failed files in scope
+        # completed = files with mc+vv+mv all present
+        # failed = files.processing_status='failed'
 
         # Pipeline position: each file is in exactly ONE stage (no overlap)
         # Stage = the FIRST incomplete step in the pipeline
@@ -1670,14 +1655,14 @@ class JobQueueManager:
             pipeline = {}
 
         return {
-            "total": original_total,
+            "total": total_files,  # all files in DB
             "total_files": total_files,
             "complete_files": complete_files,
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": total_completed,   # WR aggregate + current queue completed
-            "failed": total_failed,         # WR aggregate + current queue failed
+            "completed": complete_files,    # actual DB: mc+vv+mv all present
+            "failed": failed_files,         # actual DB: processing_status='failed'
             "db_completed": complete_files, # files-based: total DB inventory (for reference)
             "db_failed": failed_files,      # files-based: total DB failures
             "throughput": throughput,
@@ -1935,17 +1920,9 @@ class JobQueueManager:
                 )
                 count += 1
 
-        # Restore work_request failed_count for retried files
-        if count > 0:
-            cursor.execute(
-                """UPDATE work_requests SET failed_count = MAX(0, failed_count - ?)
-                   WHERE status IN ('queued', 'processing')""",
-                (count,)
-            )
-
         self.db.conn.commit()
         if count > 0:
-            logger.info(f"Retried {count} failed files (failed_count restored)")
+            logger.info(f"Retried {count} failed files")
         return count
 
     def force_retry_failed_jobs(self) -> int:
@@ -2017,14 +1994,6 @@ class JobQueueManager:
                 (file_id, file_path)
             )
             count += 1
-
-        # Restore work_request failed_count
-        if count > 0:
-            cursor.execute(
-                """UPDATE work_requests SET failed_count = MAX(0, failed_count - ?)
-                   WHERE status IN ('queued', 'processing')""",
-                (count,)
-            )
 
         self.db.conn.commit()
         if count > 0:
