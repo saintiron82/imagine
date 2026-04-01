@@ -996,8 +996,9 @@ class WorkerDaemon:
         t_phase = time.perf_counter()
         _notify(progress_callback, "phase_start", {"phase": "vision", "count": len(active)})
 
+        # Log VLM load on first file
+        vlm_loaded = False
         for i, ctx in enumerate(active):
-            # Check stop signal between files within Vision phase
             if self._stop_requested:
                 logger.info(f"Stop requested during Vision phase ({i}/{len(active)})")
                 break
@@ -1006,11 +1007,30 @@ class WorkerDaemon:
             self._current_file = Path(ctx.job["file_path"]).name
             self.uploader.report_progress(ctx.job["job_id"], "vision")
 
+            # Log VLM backend on first invocation
+            if not vlm_loaded:
+                _notify(progress_callback, "diag_log", {
+                    "message": f"[MC] Loading VLM...", "level": "info",
+                })
+
             mc_raw_override = ctx.job.get("mc_raw") if ctx.job.get("pre_parsed") else None
             vision_fields = self._run_vision(
                 Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
                 mc_raw_override=mc_raw_override,
             )
+
+            if not vlm_loaded:
+                elapsed_first = time.perf_counter() - t_phase
+                from backend.vision.vision_factory import VisionAnalyzerFactory
+                cached = VisionAnalyzerFactory._cached_analyzer
+                backend_name = type(cached).__name__ if cached else "unknown"
+                model_name = getattr(cached, 'model', getattr(cached, 'model_id', '?'))
+                _notify(progress_callback, "diag_log", {
+                    "message": f"[MC] VLM ready: {backend_name} ({model_name}) — first file {elapsed_first:.1f}s",
+                    "level": "info",
+                })
+                vlm_loaded = True
+
             vlm_err = vision_fields.get("_error") if isinstance(vision_fields, dict) else None
             if vision_fields and vision_fields.get("mc_caption"):
                 if ctx.metadata:
