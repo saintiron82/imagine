@@ -130,10 +130,10 @@ class ResultUploader:
             logger.error(f"Embed-only job {job_id} request failed: {e}")
             return False
 
-    def complete_mc(self, job_id: int, vision_fields: Dict[str, Any]) -> bool:
-        """MC-only mode: upload vision fields without vectors.
+    def complete_mc(self, job_id: int, vision_fields: Dict[str, Any]):
+        """MC mode: upload vision fields without vectors.
 
-        Server handles VV (ParseAhead) and MV (EmbedAhead) separately.
+        Returns True on success, or error string on failure.
         """
         try:
             resp = self._request('patch',
@@ -141,14 +141,16 @@ class ResultUploader:
                 json={"vision_fields": vision_fields},
             )
             if resp.status_code == 200:
-                logger.info(f"MC-only job {job_id} completed successfully")
+                logger.info(f"MC job {job_id} completed")
                 return True
             else:
-                logger.error(f"MC-only job {job_id} failed: {resp.status_code} {resp.text}")
-                return False
+                err = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                logger.error(f"MC job {job_id} upload failed: {err}")
+                return err
         except Exception as e:
-            logger.error(f"MC-only job {job_id} request failed: {e}")
-            return False
+            err = f"Request failed: {e}"
+            logger.error(f"MC job {job_id}: {err}")
+            return err
 
     def complete_parse(self, job_id: int, metadata: dict, thumbnail_path: str = None) -> bool:
         """Parse mode: upload parse results + thumbnail to server."""

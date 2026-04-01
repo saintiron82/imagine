@@ -1558,13 +1558,13 @@ class WorkerDaemon:
                 results.append((job_id, False, err))
                 continue
 
-            success = self.uploader.complete_mc(job_id, ctx.vision_fields)
-            if success:
+            upload_result = self.uploader.complete_mc(job_id, ctx.vision_fields)
+            if upload_result is True:
                 self._total_completed += 1
                 results.append((job_id, True, ""))
             else:
-                err = f"MC upload failed for {file_name}"
-                _log(f"[MC] FAIL {file_name}: {err}", "warning")
+                err = f"MC upload failed: {upload_result}" if isinstance(upload_result, str) else "MC upload rejected"
+                _log(f"[MC] UPLOAD FAIL {file_name}: {err}", "warning")
                 self._total_failed += 1
                 results.append((job_id, False, err))
 
