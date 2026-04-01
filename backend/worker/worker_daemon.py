@@ -1873,7 +1873,7 @@ class WorkerDaemon:
         fpm = (len(active) / elapsed * 60) if elapsed > 0 else 0
 
         # Emit error summary if any failures
-        errors = [(Path(a["job"].get("file_path","")).name, e) for _, s, e in results if not s and e]
+        errors = [(e.split(":")[0] if ":" in e else "unknown", e) for _, s, e in results if not s and e]
         if errors:
             _notify(progress_callback, "phase_errors", {
                 "phase": "embed_vv", "total": len(active), "failed": len(errors),
