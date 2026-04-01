@@ -44,7 +44,7 @@ TIER_SPECS = {
         'visual_dim': 1152,
         'text_model': 'qwen3-embedding:0.6b',
         'text_dim': 1024,
-        'vlm_model': 'Qwen/Qwen3-VL-2B-Instruct',
+        'vlm_model': 'Qwen/Qwen3.5-4B',
         'vram_req': '~6GB',
         'quality_tier': 1  # 1=basic, 2=medium, 3=high
     },
@@ -53,7 +53,7 @@ TIER_SPECS = {
         'visual_dim': 1152,
         'text_model': 'qwen3-embedding:0.6b',
         'text_dim': 1024,
-        'vlm_model': 'Qwen/Qwen3-VL-4B-Instruct',
+        'vlm_model': 'Qwen/Qwen3.5-9B',
         'vram_req': '8-16GB',
         'quality_tier': 2
     },
@@ -62,7 +62,7 @@ TIER_SPECS = {
         'visual_dim': 1152,
         'text_model': 'qwen3-embedding:8b',
         'text_dim': 4096,
-        'vlm_model': 'qwen3-vl:8b',
+        'vlm_model': 'Qwen/Qwen3.5-9B',
         'vram_req': '20GB+',
         'quality_tier': 3
     }
@@ -125,7 +125,7 @@ TIER_COMPATIBILITY_MATRIX = {
             'Upgrade to Ultra tier detected:\n'
             '  • VV (visual): compatible (same SigLIP2 model)\n'
             '  • MV (text): reprocess needed (0.6B → 8B model)\n'
-            '  • VLM: Qwen3-VL-2B → Qwen3-VL-8B\n\n'
+            '  • VLM: Qwen3.5-4B → Qwen3.5-9B\n\n'
             'Only MV embeddings need reprocessing (fast, ~0.5s/file).\n'
             'VV embeddings and MC captions are preserved.\n\n'
             'Reprocess MV for Ultra tier?'
@@ -141,7 +141,7 @@ TIER_COMPATIBILITY_MATRIX = {
             'Upgrade to Ultra tier detected:\n'
             '  • VV (visual): compatible (same SigLIP2 model)\n'
             '  • MV (text): reprocess needed (0.6B → 8B model)\n'
-            '  • VLM: Qwen3-VL-4B → Qwen3-VL-8B\n\n'
+            '  • VLM: Qwen3.5-9B → Qwen3.5-9B\n\n'
             'Only MV embeddings need reprocessing (fast, ~0.5s/file).\n'
             'VV embeddings and MC captions are preserved.\n\n'
             'Reprocess MV for Ultra tier?'
@@ -157,7 +157,7 @@ TIER_COMPATIBILITY_MATRIX = {
             'Downgrade to Pro tier detected:\n'
             '  • VV (visual): compatible (same SigLIP2 model)\n'
             '  • MV (text): reprocess needed (8B → 0.6B model)\n'
-            '  • VLM: Qwen3-VL-8B → Qwen3-VL-4B\n\n'
+            '  • VLM: Qwen3.5-9B → Qwen3.5-9B\n\n'
             'Only MV embeddings need reprocessing (fast, ~0.5s/file).\n'
             'VV embeddings and MC captions are preserved.\n\n'
             'Reprocess MV for Pro tier?'
@@ -173,7 +173,7 @@ TIER_COMPATIBILITY_MATRIX = {
             'Downgrade to Standard tier detected:\n'
             '  • VV (visual): compatible (same SigLIP2 model)\n'
             '  • MV (text): reprocess needed (8B → 0.6B model)\n'
-            '  • VLM: Qwen3-VL-8B → Qwen3-VL-2B\n\n'
+            '  • VLM: Qwen3.5-9B → Qwen3.5-4B\n\n'
             'Only MV embeddings need reprocessing (fast, ~0.5s/file).\n'
             'VV embeddings and MC captions are preserved.\n\n'
             'Reprocess MV for Standard tier?'

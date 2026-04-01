@@ -200,7 +200,7 @@ class AssetMeta(BaseModel):
     )
     caption_model: str = Field(
         "",
-        description="VLM model used for captioning (e.g., Qwen/Qwen3-VL-4B-Instruct)"
+        description="VLM model used for captioning (e.g., Qwen/Qwen3.5-9B)"
     )
     text_embed_model: str = Field(
         "",

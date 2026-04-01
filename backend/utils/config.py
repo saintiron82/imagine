@@ -81,7 +81,7 @@ class AppConfig:
         User settings take precedence over system config.
 
         Example:
-            cfg.get("vision.model")          -> "qwen3-vl:8b"
+            cfg.get("vision.model")          -> "qwen3.5:9b"
             cfg.get("search.rrf.k", 60)      -> 60
             cfg.get("ai_mode.override")      -> "pro"  (from user-settings)
         """

@@ -86,7 +86,7 @@ def get_tier_info(tier_name: str = None) -> Dict[str, Any]:
         {
             'tier': 'pro',
             'visual_model': 'google/siglip2-so400m-patch14-384',
-            'vlm_model': 'Qwen/Qwen3-VL-4B-Instruct',
+            'vlm_model': 'Qwen/Qwen3.5-9B',
             'text_embed_model': 'qwen3-embedding:0.6b',
             'max_edge': 768,
             'vram_range': '8192-16384 MB'

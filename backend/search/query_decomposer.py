@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Default from .env
 _DEFAULT_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-_DEFAULT_MODEL = os.getenv("VISION_MODEL", "qwen3-vl:8b")
+_DEFAULT_MODEL = os.getenv("VISION_MODEL", "qwen3.5:9b")
 
 # MLX model for query decomposition (text-only, Korean-capable)
 _MLX_MODEL_ID = "mlx-community/Qwen3.5-4B-OptiQ-4bit"

@@ -29,7 +29,7 @@ DEFAULT_VV_MODEL = "google/siglip2-so400m-patch16-naflex"
 REQUIRED_PACKAGES = [
     "torch",
     "sqlite-vec",          # SQLite vector extension
-    "transformers",        # SigLIP2, Qwen3-VL
+    "transformers",        # SigLIP2, Qwen3.5
     "accelerate",          # Model loading
     "numpy",               # Array operations
     "deep-translator",
@@ -138,9 +138,9 @@ def check_ollama():
 def check_ollama_models(tier_name=None):
     """Check if required Ollama models are available for the given tier."""
     tier_models = {
-        "standard": ["qwen3-vl:2b", "qwen3-embedding:0.6b"],
+        "standard": ["qwen3-embedding:0.6b"],
         "pro": ["qwen3-embedding:0.6b"],  # pro VLM uses transformers
-        "ultra": ["qwen3-vl:8b", "qwen3-embedding:8b"],
+        "ultra": ["qwen3.5:9b", "qwen3-embedding:8b"],
     }
 
     if tier_name is None:

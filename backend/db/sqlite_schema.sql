@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS files (
 
     -- v3.1: 3-Tier AI Mode metadata
     mode_tier TEXT DEFAULT '{DEFAULT_TIER}',           -- standard | pro | ultra
-    caption_model TEXT,                              -- VLM model (e.g., Qwen/Qwen3-VL-4B-Instruct)
+    caption_model TEXT,                              -- VLM model (e.g., Qwen/Qwen3.5-9B)
     text_embed_model TEXT,                           -- MV model (e.g., qwen3-embedding:0.6b)
     runtime_version TEXT,                            -- Ollama/runtime version (e.g., ollama-0.15.2)
     preprocess_params TEXT,                          -- JSON: {max_edge, aspect_ratio_mode, padding_color}

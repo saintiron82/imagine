@@ -191,7 +191,7 @@ def get_optimal_backend(tier: str = 'ultra') -> str:
             logger.warning("[WARNING] Neither vLLM nor Ollama available, falling back to Transformers")
             return 'transformers'
 
-    # Windows: Ollama only option for Qwen3-VL
+    # Windows: Ollama only option for Qwen3.5
     elif system == 'Windows':
         if is_ollama_available():
             logger.info("[OK] Ollama available (vLLM not supported on Windows)")

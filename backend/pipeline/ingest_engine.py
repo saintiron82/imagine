@@ -848,7 +848,7 @@ def _load_vlm_model_with_policy(analyzer, preload_timeout_s: float):
 
 def _prewarm_vlm_imports() -> None:
     """
-    Pre-import Qwen3-VL transformer classes on the main thread.
+    Pre-import Qwen3.5 transformer classes on the main thread.
 
     This avoids late heavy import chains being triggered after threaded parse work,
     which can appear as a freeze before VLM weight loading starts.
@@ -863,11 +863,11 @@ def _prewarm_vlm_imports() -> None:
 
         _, tier_cfg = get_active_tier()
         model_id = str(tier_cfg.get("vlm", {}).get("model", "") or "")
-        if "Qwen3-VL" not in model_id and "Qwen3VL" not in model_id:
+        if "Qwen3.5" not in model_id and "Qwen3_5" not in model_id:
             return
 
         t0 = time.perf_counter()
-        logger.info("[VLM prewarm] Importing Qwen3-VL transformer classes on main thread...")
+        logger.info("[VLM prewarm] Importing Qwen3.5 transformer classes on main thread...")
         from transformers import AutoProcessor, AutoModelForImageTextToText  # noqa: F401
         logger.info(f"[VLM prewarm] Import complete in {time.perf_counter() - t0:.1f}s")
     except Exception as e:
