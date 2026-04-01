@@ -331,7 +331,16 @@ class WorkerIPCController:
                 # Claim jobs
                 if loop_count <= 3 or loop_count % 10 == 0:
                     _emit_log(f"[CLAIM] Requesting jobs (loop #{loop_count})...", "info")
+                old_claim_mode = daemon.processing_mode
                 jobs = daemon.claim_jobs()
+
+                # Notify UI of mode change from claim response
+                if daemon.processing_mode != old_claim_mode:
+                    _emit({"event": "processing_mode", "mode": daemon.processing_mode})
+                    _emit_log(
+                        f"[MODE] {old_claim_mode} → {daemon.processing_mode}",
+                        "info"
+                    )
 
                 if not jobs:
                     diag = getattr(daemon, '_last_claim_diag', None)
