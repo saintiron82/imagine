@@ -109,7 +109,9 @@ function authGateSignIn() {
   if (!authObj) return;
   const provider = new firebase.auth.GoogleAuthProvider();
   authObj.signInWithPopup(provider).catch(err => {
-    console.error('Sign in failed:', err);
+    console.warn('Popup sign-in failed, trying redirect:', err.code);
+    // Fallback to redirect for COOP/popup-blocked scenarios
+    authObj.signInWithRedirect(provider);
   });
 }
 

@@ -137,7 +137,7 @@ M.m.p.YYYYMMDD_NN
 
 1. **VV (Visual Vector)**: SigLIP2로 시각적 임베딩 (이미지 픽셀 유사도 검색, `vec_files`)
 2. **MV (Meaning Vector)**: Qwen3-Embedding으로 MC를 벡터화 (의미 기반 검색, `vec_text`)
-3. **MC (Meta-Context Caption)**: VLM(Qwen3-VL)이 생성한 캡션/태그 (`mc_caption`, `ai_tags`)
+3. **MC (Meta-Context Caption)**: VLM(Qwen3.5)이 생성한 캡션/태그 (`mc_caption`, `ai_tags`)
 4. **FTS (Full-Text Search)**: FTS5 BM25로 파일명/레이어명/태그 키워드 검색 (`files_fts`)
 
 **기술 스택**:
@@ -145,7 +145,7 @@ M.m.p.YYYYMMDD_NN
 - **Server**: FastAPI (JWT 인증, 분산 워커 지원, REST API)
 - **Frontend**: React 19 + Electron 40 + Vite + Tailwind CSS (데스크탑 + 웹 듀얼 모드)
 - **Database**: SQLite + sqlite-vec (통합 메타데이터 + 벡터 저장소, Docker 불필요)
-- **AI 모델**: SigLIP2 (VV), Qwen3-VL (VLM/MC), Qwen3-Embedding (MV)
+- **AI 모델**: SigLIP2 (VV), Qwen3.5 (VLM/MC), Qwen3-Embedding (MV)
 
 ## 설계 근거 (Design Rationale)
 
@@ -198,29 +198,89 @@ M.m.p.YYYYMMDD_NN
 
 | Tier | 타겟 하드웨어 | VRAM | VLM | 품질 |
 |------|-------------|------|-----|------|
-| **standard** | 통합 GPU 노트북, 저사양 | ~6GB | Qwen3-VL-**2B** | 기본 캡션/태그 |
-| **pro** | Mac M-시리즈, RTX 3060+ | 8-16GB | Qwen3-VL-**4B** | 상세 캡션, 정확한 분류 |
-| **ultra** | RTX 4090, A100 서버 | 20GB+ | Qwen3-VL-**8B** | 최고 품질 |
+| **standard** | 통합 GPU 노트북, 저사양 | ~6GB | Qwen3.5-**4B** | 기본 캡션/태그 |
+| **pro** | Mac M-시리즈 (32GB+) | 8-16GB | Qwen3.5-**9B** | 상세 캡션, 정확한 분류 |
+| **ultra** | RTX 4090, A100 서버 | 20GB+ | Qwen3.5-**9B** (또는 27B) | 최고 품질 |
 
 **핵심 설계**: VV(SigLIP2)와 MV(0.6B)를 standard↔pro에서 **동일 모델**로 통일 → Tier 전환 시 벡터 재생성 불필요.
 VLM만 Tier에 따라 교체되므로, Tier 업그레이드 = MC만 재생성 (VV/MV 유지).
 
 **왜 3단계인가**: 2단계(light/full)로는 8GB Mac과 24GB RTX를 같은 설정으로 쓸 수 없고, 4단계 이상은 관리 복잡도 대비 이점이 없음.
 
-### VLM 선택: 왜 Qwen3-VL인가?
+### VLM 선택: Qwen3-VL → Qwen3.5 전환 (2026-04-01)
 
-| 모델 | 크기 범위 | 구조화 출력 | 다국어(한/영) | 라이선스 | 크로스 플랫폼 |
-|------|----------|-----------|-------------|---------|------------|
-| **Qwen3-VL** | 2B/4B/8B | ✅ JSON | ✅ | Apache 2.0 | transformers + MLX + Ollama |
-| LLaVA-Next | 7B/13B | 제한적 | △ | 혼합 | transformers만 |
-| InternVL2 | 2B/8B/26B | ✅ | △ 영어 중심 | 혼합 | transformers만 |
-| Phi-4-Vision | 14B | ✅ | △ | MIT | transformers만 |
+**Qwen3.5**(2026-03-02 출시)는 별도 `-VL` 모델 없이 **네이티브 멀티모달**을 지원하는 세대 교체 모델.
 
-**결정 근거**:
-1. **2B/4B/8B 3단 라인업** — Tier 시스템과 1:1 매핑 가능 (다른 모델은 크기 간격이 큼)
-2. **한국어+영어 캡션 품질** — 한국 아티스트 대상, 한국어 MC가 MV 검색 품질에 직접 영향
-3. **크로스 플랫폼** — transformers(범용) + MLX(macOS) + Ollama(Windows) 모두 지원
-4. **Apache 2.0** — 상업적 제약 없음
+| 모델 | 아키텍처 | 크기 범위 | MMMU-Pro | 라이선스 | 비고 |
+|------|---------|----------|---------|---------|------|
+| ~~Qwen3-VL~~ | 볼트온 VL | 2B/4B/8B | 52.0 (4B) | Apache 2.0 | **이전 기본값** |
+| **Qwen3.5** | Early Fusion 네이티브 멀티모달 | 0.8B~397B | 66.3 (4B) / 70.1 (9B) | Apache 2.0 | **현재 기본값** |
+
+**전환 근거**:
+1. **동일 4B에서 MMMU-Pro +14점** (52.0 → 66.3) — 벤치마크 대폭 향상
+2. **9B가 Qwen3-VL-30B-A3B(30B) 초과** — 같은 메모리로 더 높은 품질
+3. **네이티브 멀티모달** — `qwen_vl_utils` 불필요, `apply_chat_template`으로 이미지 처리 통합
+4. **Apache 2.0** — 라이선스 동일
+5. **MLX 4bit 지원** — `mlx-community/Qwen3.5-9B-MLX-4bit` (6.6GB Metal)
+6. **Thinking 모드 제어 필수** — `enable_thinking=False` 미설정 시 12.7배 느림 + JSON 파싱 실패
+
+### Qwen3.5 벤치마크 (2026-04-01 M5 32GB 실측)
+
+**배치 모드 10장 처리 실측 (MLX 4bit, 2-Stage Pipeline):**
+
+| 모델 | files/min | Avg S1 | Avg S2 | Avg Total | Metal Peak | 성공률 |
+|------|:---------:|:------:|:------:|:---------:|:----------:|:------:|
+| Qwen3-VL-4B (이전) | 6.8 | 1.4s | 7.4s | 8.8s | 3.8GB | 10/10 |
+| Qwen3.5-4B | 2.5 | 2.6s | 21.0s | 23.6s | 3.9GB | 9/10 |
+| Qwen3.5-9B (장황 프롬프트) | 2.3 | 3.1s | 23.1s | 26.3s | 6.6GB | 10/10 |
+| **Qwen3.5-9B (최적화 프롬프트)** | **6.4** | **1.6-3.6s** | **3.7-8.9s** | **5.2-12.5s** | **6.6GB** | **10/10** |
+
+**tok/s 비교 (MLX 4bit, Stage 2):**
+
+| 모델 | Prefill (tok/s) | Generation (tok/s) | 생성 토큰 수 |
+|------|:-:|:-:|:-:|
+| Qwen3-VL-4B | 419 | 47.4 | 58 |
+| Qwen3.5-4B | 588 | 45.9 | 100 |
+| Qwen3.5-9B | 290 | 24.8 | 201 (장황) / ~80 (최적화) |
+
+**핵심 발견**:
+- **tok/s는 모델 크기에 비례하여 감소** (9B = 4B의 약 절반)
+- **Qwen3.5가 같은 프롬프트에 더 장황하게 응답** — 속도 병목의 주원인
+- **프롬프트 최적화 ("max 20 words, max 8 tags")로 해결** — 23s → 3.7-8.9s (2.6-6x 단축)
+- **9B + 최적화 프롬프트 = VL-4B와 동급 속도 + 더 높은 품질**
+
+### Qwen3.5 Thinking 모드 제어 (MANDATORY)
+
+Qwen3.5는 기본적으로 Thinking 모드가 ON. **MC 생성에서 반드시 비활성화해야 함.**
+
+| 백엔드 | 비활성화 방법 |
+|--------|------------|
+| **MLX** (`mlx_adapter.py`) | `tokenizer.apply_chat_template(msgs, enable_thinking=False)` — `mlx_vlm.prompt_utils`는 이 파라미터를 전달하지 않으므로 tokenizer 직접 호출 필수 |
+| **Transformers** (`analyzer.py`) | `processor.apply_chat_template(msgs, chat_template_kwargs={"enable_thinking": False})` |
+| **Ollama** | TODO: 아직 미적용 |
+
+**Thinking ON vs OFF 실측:**
+
+| 항목 | Thinking ON | Thinking OFF |
+|------|:---:|:---:|
+| 생성 시간 | 11.8s | **0.9s** |
+| JSON 파싱 | **실패** (자연어 출력) | **성공** (Tier 1 직접 파싱) |
+| 속도 차이 | — | **12.7x 빠름** |
+
+### VLM 선택 이력
+
+| 시점 | VLM | 근거 |
+|------|-----|------|
+| 2026-02-20 | Qwen3-VL-4B | 2B/4B/8B 라인업, Apache 2.0, MLX+Ollama 지원 |
+| **2026-04-01** | **Qwen3.5-9B** | 세대 교체 (Early Fusion), 동급 속도에서 품질 대폭 향상, 32GB Mac에서 6.6GB Metal로 여유 |
+
+**다음 재평가 시점**: Qwen4 시리즈 출시 시, 또는 경쟁 모델(InternVL3 등)이 동급 크기에서 유의미한 성능 차이를 보일 때
+
+**결정 근거 (기존 유지)**:
+1. **한국어+영어 캡션 품질** — 한국 아티스트 대상, 한국어 MC가 MV 검색 품질에 직접 영향
+2. **크로스 플랫폼** — transformers(범용) + MLX(macOS) + Ollama(Windows) 모두 지원
+3. **Apache 2.0** — 상업적 제약 없음
+4. **Qwen3-Embedding과 동일 패밀리** — MC→MV 변환 시 의미 손실 최소화
 
 ### MV 선택: 왜 Qwen3-Embedding인가?
 
@@ -291,7 +351,7 @@ VLM만 Tier에 따라 교체되므로, Tier 업그레이드 = MC만 재생성 (V
 | **MV** | Meaning Vector | Qwen3-Embedding이 MC 텍스트로부터 생성하는 의미 임베딩 벡터. 텍스트↔텍스트 유사도 검색에 사용 | `vec_text.embedding` |
 | **MC** | Meta-Context Caption | VLM이 이미지 + 파일 메타데이터(경로, 레이어 등) 컨텍스트를 보고 생성한 캡션과 태그. "Meta-Context"는 단순 AI 캡션이 아닌 메타데이터 맥락 포함을 의미. MV의 입력 소스 | `files.mc_caption`, `files.ai_tags` |
 | **FTS** | Full-Text Search | FTS5 BM25 기반 키워드 전문 검색. 파일명, 레이어명, 태그 등 메타데이터 검색 | `files_fts` |
-| **VLM** | Vision-Language Model | 이미지를 보고 자연어를 생성하는 AI 모델 (현재: Qwen3-VL). MC를 생성하는 주체 | — |
+| **VLM** | Vision-Language Model | 이미지를 보고 자연어를 생성하는 AI 모델 (현재: Qwen3.5). MC를 생성하는 주체 | — |
 | **RRF** | Reciprocal Rank Fusion | VV, MV, FTS 3축 검색 결과를 하나로 결합하는 랭킹 알고리즘 | — |
 | **MRL** | Matryoshka Representation Learning | 고차원 임베딩을 저차원으로 잘라도 품질이 유지되는 학습 기법. MV 차원 조절에 사용 | — |
 
@@ -301,7 +361,7 @@ VLM만 Tier에 따라 교체되므로, Tier 업그레이드 = MC만 재생성 (V
 이미지 파일 ──→ [Parser] ──→ 메타데이터 (AssetMeta)
                                  │
                                  ▼
-                            [VLM: Qwen3-VL]
+                            [VLM: Qwen3.5]
                                  │
                                  ├──→ MC (mc_caption + ai_tags)  ──→ [Qwen3-Embedding] ──→ MV (vec_text)
                                  │
@@ -318,7 +378,7 @@ VLM만 Tier에 따라 교체되므로, Tier 업그레이드 = MC만 재생성 (V
 | 모델 | 입력 | 출력 | 역할 |
 |------|------|------|------|
 | **SigLIP2** | 이미지 픽셀 | VV 벡터 | 이미지를 시각적으로 벡터화 (비전 인코더) |
-| **Qwen3-VL** | 이미지 + 프롬프트 | MC 텍스트 | 이미지를 보고 캡션/태그 생성 (VLM, 생성형) |
+| **Qwen3.5** | 이미지 + 프롬프트 | MC 텍스트 | 이미지를 보고 캡션/태그 생성 (VLM, 네이티브 멀티모달) |
 | **Qwen3-Embedding** | MC 텍스트 | MV 벡터 | 텍스트를 의미 벡터로 변환 (텍스트 인코더, 비전 없음) |
 
 ### 금지 용어 → 올바른 용어
@@ -519,7 +579,7 @@ Claim 5 jobs → Download/resolve all →
 
 | 메서드 | 대상 | 시점 |
 |--------|------|------|
-| `_unload_vlm()` | VLM (Qwen3-VL) | Phase V 완료 후 |
+| `_unload_vlm()` | VLM (Qwen3.5) | Phase V 완료 후 |
 | `_unload_vv()` | SigLIP2 인코더 | Phase VV 완료 후 |
 | `_unload_mv()` | Qwen3-Embedding | Phase MV 완료 후 |
 
@@ -663,7 +723,7 @@ ParserFactory.get_parser(file_path)
     └─ layer_tree → translated_layer_tree (ko/en)
     ↓
 Phase V: AI Vision (vision_factory.py)
-    ├─ VLM 캡션/태그/분류 생성 (Qwen3-VL, tier별 backend)
+    ├─ VLM 캡션/태그/분류 생성 (Qwen3.5, tier별 backend)
     ├─ 2-Stage Pipeline: 빠른 분류 → 상세 캡션
     └─ 서브배치마다 즉시 DB 저장 (mc_caption, ai_tags → files)
     ↓
@@ -968,23 +1028,51 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 **결합**: RRF (Reciprocal Rank Fusion), 가중치는 `config.yaml` > `search.rrf.presets` 설정.
 **검색 엔진**: `backend/search/sqlite_search.py` (SqliteVectorSearch)
 
-### Tier 시스템 (config.yaml) — 2026-04-01 업데이트
+### Tier 시스템 (config.yaml) — 2026-04-01 기준
 
-**VV/MV 크로스 티어 호환성 확보 완료.**
+**VV/MV 크로스 티어 호환성 확보 완료. VLM은 Qwen3.5로 세대 교체.**
 
 | Tier | VRAM | VV 모델 (SigLIP2) | VLM (MC 생성) | MV 모델 (Qwen3-Embedding) | 검색 LLM (쿼리 분해) |
 |------|------|-------------------|---------------|----------------------|----------------------|
-| **standard** | ~6GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-2B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-0.8B` (mlx/transformers) |
+| **standard** | ~6GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3.5-4B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-0.8B` (mlx/transformers) |
 | **pro** | 8-16GB | `siglip2-so400m-patch16-naflex` (1152d) | 플랫폼별 (아래 참조) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-4B-OptiQ-4bit` (mlx/transformers) |
-| **ultra** | 20GB+ | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3-VL-8B` (auto: mlx/ollama/vllm/transformers) | `Qwen3-Embedding-8B` (4096d) | `Qwen3.5-9B` (mlx/transformers) |
+| **ultra** | 20GB+ | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3.5-9B` (auto: mlx/ollama/vllm/transformers) | `Qwen3-Embedding-8B` (4096d) | `Qwen3.5-9B` (mlx/transformers) |
 
 **Pro Tier VLM 플랫폼별 설정:**
 
 | 플랫폼 | 백엔드 | 모델 | 폴백 |
 |--------|--------|------|------|
-| macOS | MLX | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | transformers |
+| **macOS** | **MLX** | **`mlx-community/Qwen3.5-9B-MLX-4bit`** | transformers |
 | **Windows** | **Ollama** | **`qwen3.5:4b`** | transformers |
-| Linux | transformers | `Qwen/Qwen3-VL-4B-Instruct` | - |
+| Linux | transformers | `Qwen/Qwen3.5-9B` | - |
+
+### macOS VLM 선택 근거 (2026-04-01 벤치마크)
+
+**테스트 환경**: Apple M5 32GB, MLX 4bit, 동일 이미지 10장 배치
+
+| 모델 | files/min | Avg S1 | Avg S2 | Metal Peak | 성공률 |
+|------|:---------:|:------:|:------:|:----------:|:------:|
+| Qwen3-VL-4B MLX (이전) | 6.8 | 1.4s | 7.4s | 3.8GB | 10/10 |
+| Qwen3.5-4B MLX | 2.5 | 2.6s | 21.0s | 3.9GB | 9/10 |
+| Qwen3.5-9B MLX (장황 프롬프트) | 2.3 | 3.1s | 23.1s | 6.6GB | 10/10 |
+| **Qwen3.5-9B MLX (최적화 프롬프트)** | **6.4** | **1.6-3.6s** | **3.7-8.9s** | **6.6GB** | **10/10** |
+
+**Qwen3.5-9B 선택 이유:**
+1. **최적화 프롬프트로 VL-4B와 동급 속도** (6.4 vs 6.8 files/min)
+2. **품질 대폭 향상** — MMMU-Pro 70.1 (VL-4B: 52.0), 더 상세한 캡션, 이미지 내 텍스트(OCR) 인식
+3. **32GB Mac에서 여유** — Metal 6.6GB peak, RSS 증가 48MB (안정)
+4. **메모리 누수 없음** — 5장 배치 후 Metal 성장 0MB
+5. **Apache 2.0 라이선스**
+
+**tok/s 실측 (MLX 4bit):**
+
+| 모델 | Prefill (tok/s) | Generation (tok/s) | 비고 |
+|------|:-:|:-:|------|
+| Qwen3-VL-4B | 419 | 47.4 | — |
+| Qwen3.5-4B | 588 | 45.9 | Prefill 빠르지만 생성 토큰 수 많음 |
+| Qwen3.5-9B | 290 | 24.8 | 프롬프트 최적화로 토큰 수 제어 필수 |
+
+**속도 병목 해결**: Qwen3.5가 같은 질문에 3.5배 많은 토큰을 생성하는 것이 주 원인. 프롬프트에 "max 20 words caption, max 8 tags, no markdown fences" 제약 → Stage 2를 23s에서 3.7-8.9s로 단축.
 
 ### Windows VLM 선택 근거 (2026-04-01 벤치마크)
 
@@ -1010,7 +1098,11 @@ python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
 
 **Ollama API 주의사항:** `/api/generate`가 아닌 **`/api/chat` + `think: False`** 사용 필수. Qwen3-VL/3.5 모델은 `/api/generate`에서 응답이 `thinking` 필드로 라우팅되어 `response`가 비는 알려진 이슈.
 
-**핵심 설계 결정:**
+**핵심 설계 결정 (2026-04-01):**
+- **VLM Qwen3.5 전환**: Qwen3-VL → Qwen3.5 (네이티브 멀티모달).
+- **플랫폼별 최적 모델**: macOS=9B MLX 4bit (32GB), Windows=4B Ollama (8GB GPU).
+- **Thinking 모드 비활성화 필수**: 모든 백엔드에서 `enable_thinking=False` / `think: False`.
+- **간결 프롬프트 적용**: "max 20 words, max 8 tags" 제약으로 토큰 수 제어 → 속도 3x 단축.
 - **VV 모델 통일**: 모든 Tier에서 동일한 `siglip2-so400m-patch16-naflex` (1152d) 사용. Tier 전환 시 VV 재생성 불필요.
 - **MV 모델 통일 (standard/pro)**: 동일한 `qwen3-embedding:0.6b` (1024d). standard/pro 전환이 **완전 무중단**.
 - **MV ultra 분리**: ultra는 `qwen3-embedding:8b` (4096d)로 모델 자체가 다름. 전환 시 MV만 재생성.
@@ -1460,8 +1552,9 @@ analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
   - 원인: Ollama 0.15.5의 Metal shader가 M5 Metal 4 bfloat 미지원
   - 해결: MV 생성을 TransformersEmbeddingProvider로 전환 (Ollama 우회)
   - Ollama는 현재 MV 생성에 사용하지 않음
-- **VLM (Qwen3-VL-4B)**: transformers 5.1.0의 video_processing_auto.py TypeError 가능성
-  - 모델 파일은 캐시됨, 런타임 로딩 시 확인 필요
+- **VLM (Qwen3.5-9B)**: transformers 5.4.0+ 필수 (5.3.0 이하에서 비디오 입력 버그)
+  - mlx-vlm 0.3.12 동작 확인, 0.4.2에서 Qwen3.5 버그 수정 포함
+  - Thinking 모드 미비활성화 시 JSON 파싱 100% 실패 — `enable_thinking=False` 필수
 - **멀티워커 동일 GPU 경합**: 같은 머신에서 워커 N개 실행 시 각 워커 속도 1/N (총 처리량 이득 없음)
   - 원인: GPU 시분할로 인한 경합
   - 멀티워커는 **별도 GPU 머신에 분산 배치할 때만 효과적**
