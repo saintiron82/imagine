@@ -53,7 +53,7 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
 
         self.model = model or cfg.get("vision.model", "qwen3-vl:8b")
         self.host = host or cfg.get("vision.ollama_host", "http://localhost:11434")
-        self.api_url = f"{self.host}/api/generate"
+        self.api_url = f"{self.host}/api/chat"
         self._temperature = cfg.get("vision.temperature", 0.1)
         self._max_retries = cfg.get("vision.max_retries", 2)
         self._keep_alive = cfg.get("vision.keep_alive", "5m")
@@ -103,17 +103,17 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
             # Prepare prompt
             prompt = self._build_prompt(context)
 
-            # Call Ollama API with keep_alive=0 for immediate memory release
+            # Call Ollama chat API with think=false to avoid thinking-mode empty response
             payload = {
                 "model": self.model,
-                "prompt": prompt,
-                "images": [img_base64],
+                "messages": [{"role": "user", "content": prompt, "images": [img_base64]}],
                 "stream": False,
+                "think": False,
                 "options": {
                     "temperature": 0.7,
                     "top_p": 0.9
                 },
-                "keep_alive": 0  # 🔥 Key: Unload model immediately after use
+                "keep_alive": 0,
             }
 
             logger.info(f"Analyzing image with {self.model}...")
@@ -128,7 +128,7 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
                 return self._empty_result()
 
             result = response.json()
-            response_text = result.get("response", "")
+            response_text = result.get("message", {}).get("content", "")
 
             # Parse response
             parsed = self._parse_response(response_text)
@@ -262,19 +262,23 @@ Format your response as JSON:
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
     def _call_ollama(self, prompt: str, img_base64: str, keep_alive: str = None) -> str:
-        """Low-level Ollama API call. Returns raw response text."""
+        """Low-level Ollama chat API call. Returns raw response text.
+
+        Uses /api/chat + think=false to avoid thinking-mode empty response
+        (Qwen3-VL routes image responses to 'thinking' field in /api/generate).
+        """
         payload = {
             "model": self.model,
-            "prompt": prompt,
-            "images": [img_base64],
+            "messages": [{"role": "user", "content": prompt, "images": [img_base64]}],
             "stream": False,
+            "think": False,
             "options": {"temperature": self._temperature},
             "keep_alive": keep_alive or self._keep_alive,
         }
         response = requests.post(self.api_url, json=payload, timeout=120)
         if response.status_code != 200:
             raise RuntimeError(f"Ollama API error: {response.status_code}")
-        return response.json().get("response", "")
+        return response.json().get("message", {}).get("content", "")
 
     def classify(self, image: Image.Image, keep_alive: str = None, domain=None) -> Dict[str, Any]:
         """
@@ -403,7 +407,7 @@ Format your response as JSON:
         try:
             payload = {
                 "model": self.model,
-                "prompt": "",
+                "messages": [],
                 "stream": False,
                 "keep_alive": 0,
             }
