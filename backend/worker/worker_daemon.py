@@ -418,7 +418,15 @@ class WorkerDaemon:
                 data = resp.json()
                 jobs = data.get("jobs", [])
                 if jobs:
-                    logger.info(f"Claimed {len(jobs)} jobs (requested {count})")
+                    # Server tells us what phase these jobs are for
+                    server_mode = data.get("processing_mode")
+                    if server_mode and server_mode != self.processing_mode:
+                        logger.info(
+                            f"[CLAIM-MODE] Server assigned {server_mode} jobs "
+                            f"(worker was {self.processing_mode})"
+                        )
+                        self.processing_mode = server_mode
+                    logger.info(f"Claimed {len(jobs)} jobs (requested {count}, mode={self.processing_mode})")
                     self._last_claim_diag = None
                 elif data.get("diag"):
                     # Server returned structured diagnostics for empty claim
