@@ -1580,7 +1580,7 @@ class WorkerDaemon:
                 results.append((job_id, False, err))
 
             _notify(progress_callback, "job_upload", {
-                "job_id": job_id, "success": success,
+                "job_id": job_id, "success": upload_result is True,
                 "file_name": Path(ctx.job["file_path"]).name,
             })
 
