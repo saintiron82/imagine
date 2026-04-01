@@ -277,8 +277,8 @@ export default function WorkersPanel() {
   if (loading) return <div className="text-gray-400 text-sm">{t('status.loading')}</div>;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="flex items-center justify-between mb-4 shrink-0">
         <h2 className="text-lg font-semibold">
           {t('admin.workers_title')}
           {onlineCount > 0 && (
@@ -314,8 +314,11 @@ export default function WorkersPanel() {
         </div>
       )}
 
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+
       {/* Server Auto-Processing (unified: auto_processing + embedded worker) */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-medium text-gray-300">{t('worker.auto_title')}</div>
@@ -667,6 +670,8 @@ export default function WorkersPanel() {
           <div className="text-center text-gray-500 py-8 text-sm">{t('admin.workers_empty')}</div>
         )}
       </div>
+
+      </div>{/* end scrollable content */}
     </div>
   );
 }
