@@ -86,10 +86,20 @@ class PhaseRunner:
         try:
             analyzer = self.models.get_vlm()
         except Exception as e:
-            logger.error(f"[PHASE:vision] VLM load failed: {e}")
+            logger.error(f"[PHASE:vision] VLM load failed: {e}", exc_info=True)
             for it in needed:
                 it.error = f"VLM load failed: {e}"
+            self.progress.phase_complete("vision", time.perf_counter() - t0)
             return items
+
+        # Log VLM model info for diagnostics
+        _vlm_model = getattr(analyzer, 'model_id', None) or getattr(analyzer, 'model_name', None) or 'unknown'
+        _vlm_backend = type(analyzer).__name__
+        _vlm_device = getattr(analyzer, 'device', 'unknown')
+        logger.info(
+            f"[PHASE:vision] VLM ready: {_vlm_backend} "
+            f"(model={_vlm_model}, device={_vlm_device})"
+        )
 
         # Get active domain for VLM
         domain = self._get_active_domain()
@@ -109,7 +119,13 @@ class PhaseRunner:
                 try:
                     img = self._load_thumbnail(item)
                     if img is None:
-                        item.error = "thumbnail load failed"
+                        item.error = (
+                            f"thumbnail load failed "
+                            f"(path={item.thumb_path or item.file_path})"
+                        )
+                        logger.warning(
+                            f"[PHASE:vision] {item.file_name}: {item.error}"
+                        )
                         self.progress.file_done(
                             "vision", processed + i, count, item.file_name, False)
                         continue
@@ -118,6 +134,7 @@ class PhaseRunner:
                     context = self._build_vision_context(item)
 
                     # Call VLM
+                    t_vlm = time.perf_counter()
                     if hasattr(analyzer, "classify_and_analyze"):
                         result = analyzer.classify_and_analyze(
                             img, context=context, domain=domain)
@@ -125,6 +142,7 @@ class PhaseRunner:
                         result = analyzer.analyze(img, context or {})
                     else:
                         result = {}
+                    vlm_elapsed = time.perf_counter() - t_vlm
 
                     img.close()
 
@@ -132,15 +150,49 @@ class PhaseRunner:
                     item.vision_result = result
                     item.mc_raw = result
 
+                    # Validate MC result — empty caption = VLM failure
+                    # (matches _run_vision_phase behavior in worker_daemon)
+                    _caption = ""
+                    if isinstance(result, dict):
+                        _caption = (
+                            result.get("mc_caption")
+                            or result.get("caption")
+                            or ""
+                        )
+                    if not _caption:
+                        result_keys = (
+                            list(result.keys())
+                            if isinstance(result, dict)
+                            else type(result).__name__
+                        )
+                        item.error = (
+                            f"VLM returned empty caption "
+                            f"(elapsed={vlm_elapsed:.1f}s, "
+                            f"result_keys={result_keys})"
+                        )
+                        logger.warning(
+                            f"[PHASE:vision] {item.file_name}: {item.error}"
+                        )
+                    else:
+                        logger.debug(
+                            f"[PHASE:vision] {item.file_name}: OK "
+                            f"({vlm_elapsed:.1f}s, "
+                            f"caption_len={len(_caption)})"
+                        )
+
                     # Save incrementally
                     self.storage.save_vision(item, result)
 
                     self.progress.file_done(
-                        "vision", processed + i, count, item.file_name, True)
+                        "vision", processed + i, count,
+                        item.file_name, item.error is None)
 
                 except Exception as e:
-                    logger.warning(f"[PHASE:vision] {item.file_name}: {e}")
-                    item.error = str(e)
+                    logger.warning(
+                        f"[PHASE:vision] {item.file_name}: "
+                        f"{type(e).__name__}: {e}"
+                    )
+                    item.error = f"{type(e).__name__}: {e}"
                     self.progress.file_done(
                         "vision", processed + i, count, item.file_name, False)
 
@@ -153,7 +205,13 @@ class PhaseRunner:
 
         elapsed = time.perf_counter() - t0
         self.progress.phase_complete("vision", elapsed)
-        logger.info(f"[PHASE:vision] {processed}/{count} in {elapsed:.1f}s")
+        ok = sum(1 for it in needed if it.error is None)
+        fail = count - ok
+        logger.info(
+            f"[PHASE:vision] {processed}/{count} in {elapsed:.1f}s "
+            f"(ok={ok}, fail={fail}, "
+            f"backend={_vlm_backend}, model={_vlm_model})"
+        )
 
         return items
 

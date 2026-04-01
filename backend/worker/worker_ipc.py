@@ -334,7 +334,16 @@ class WorkerIPCController:
                 jobs = daemon.claim_jobs()
 
                 if not jobs:
-                    if loop_count <= 3 or loop_count % 10 == 0:
+                    diag = getattr(daemon, '_last_claim_diag', None)
+                    if diag and (loop_count <= 3 or loop_count % 10 == 0):
+                        phase = diag.get("phase_pending", {})
+                        _emit_log(
+                            f"[CLAIM-EMPTY] mode={diag.get('mode','?')} | "
+                            f"mc={phase.get('mc',0)} vv={phase.get('vv',0)} mv={phase.get('mv',0)} | "
+                            f"reason: {diag.get('reason','?')}",
+                            "info"
+                        )
+                    elif loop_count <= 3 or loop_count % 10 == 0:
                         _emit_log(f"[CLAIM] No jobs available, waiting {poll_interval}s...", "info")
                     _emit_status("running", [])
                     # Update state machine with no pending jobs (may trigger idle timeout)
@@ -361,11 +370,34 @@ class WorkerIPCController:
                     elif event_type == "file_done":
                         bs = data.get('batch_size', 1)
                         bs_tag = f" [x{bs}]" if bs > 1 else ""
-                        _emit_log(f"  [{data.get('phase', '?')}] {data.get('index', 0)}/{data.get('count', 0)} {data.get('file_name', '')}{bs_tag}", "info")
+                        ok = data.get('success', True)
+                        icon = "✓" if ok else "✗"
+                        log_type = "info" if ok else "warning"
+                        _emit_log(
+                            f"  [{data.get('phase', '?')}] "
+                            f"{data.get('index', 0)}/{data.get('count', 0)} "
+                            f"{data.get('file_name', '')}{bs_tag} {icon}",
+                            log_type)
                     elif event_type == "phase_complete":
                         fpm = data.get('files_per_min', 0)
                         elapsed = data.get('elapsed_s', 0)
                         _emit_log(f"Phase {data.get('phase', '?')} done — {elapsed}s ({fpm:.1f}/min)", "success")
+                    elif event_type == "phase_errors":
+                        phase = data.get('phase', '?')
+                        failed = data.get('failed', 0)
+                        total = data.get('total', 0)
+                        _emit_log(
+                            f"[DIAG] Phase {phase}: {failed}/{total} failed",
+                            "error")
+                        for err_info in data.get('errors', [])[:5]:
+                            _emit_log(
+                                f"  → {err_info.get('file', '?')}: "
+                                f"{err_info.get('error', 'unknown')}",
+                                "error")
+                        if failed > 5:
+                            _emit_log(
+                                f"  ... and {failed - 5} more failures",
+                                "error")
                     elif event_type == "file_error":
                         _emit_log(f"[ERROR] {data.get('file_name', '?')}: {data.get('error', 'unknown')}", "error")
                     elif event_type == "batch_complete":
@@ -379,7 +411,11 @@ class WorkerIPCController:
                 )
 
                 # Emit individual job_done events (for compatibility)
-                for job_id, success in results:
+                for result_tuple in results:
+                    # Backward-compatible: 2-tuple (job_id, success) or 3-tuple (job_id, success, error)
+                    job_id = result_tuple[0]
+                    success = result_tuple[1]
+                    error_reason = result_tuple[2] if len(result_tuple) > 2 else ""
                     job_info = next(
                         (j for j in jobs if j.get("job_id") == job_id), {}
                     )
@@ -392,7 +428,8 @@ class WorkerIPCController:
                         "success": success,
                     })
                     if not success:
-                        _emit_log(f"Failed: {file_name}", "error")
+                        detail = f": {error_reason}" if error_reason else ""
+                        _emit_log(f"Failed: {file_name}{detail}", "error")
 
                 # Record job activity to reset idle timeout timer
                 daemon._state_machine.record_job_activity()

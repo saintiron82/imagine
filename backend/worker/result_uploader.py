@@ -190,7 +190,7 @@ class ResultUploader:
             return False
 
     def complete_vv_batch(self, items: list) -> list:
-        """Batch VV upload: [{job_id, vec}, ...] → [bool, ...]"""
+        """Batch VV upload: [{job_id, vec}, ...] → [{ok, error}, ...]"""
         try:
             payload = [{"job_id": it["job_id"], "vv": _encode_vector(it["vec"])} for it in items]
             resp = self._request('patch',
@@ -198,12 +198,25 @@ class ResultUploader:
                 json={"items": payload},
             )
             if resp.status_code == 200:
-                return resp.json().get("results", [True] * len(items))
-            logger.error(f"VV batch failed: {resp.status_code}")
-            return [False] * len(items)
+                data = resp.json()
+                raw_results = data.get("results", [True] * len(items))
+                error_map = {
+                    err.get("job_id"): err.get("error", "")
+                    for err in data.get("errors", [])
+                    if isinstance(err, dict)
+                }
+                return [
+                    {
+                        "ok": bool(ok),
+                        "error": "" if ok else error_map.get(item["job_id"], "VV upload failed"),
+                    }
+                    for item, ok in zip(items, raw_results)
+                ]
+            logger.error(f"VV batch failed: {resp.status_code} {resp.text}")
+            return [{"ok": False, "error": f"HTTP {resp.status_code}: {resp.text}"} for _ in items]
         except Exception as e:
             logger.error(f"VV batch request failed: {e}")
-            return [False] * len(items)
+            return [{"ok": False, "error": str(e)} for _ in items]
 
     def complete_mv(self, job_id: int, mv_vec) -> bool:
         """MV-only mode: upload single MV vector."""

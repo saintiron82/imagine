@@ -78,8 +78,11 @@ def claim_jobs(
 ):
     """Claim pending jobs for processing."""
     queue = _get_queue(db)
-    jobs = queue.claim_jobs(user["id"], min(req.count, 50), worker_session_id=req.session_id)
-    return {"success": True, "jobs": jobs, "count": len(jobs)}
+    result = queue.claim_jobs(user["id"], min(req.count, 50), worker_session_id=req.session_id)
+    # claim_jobs may return a dict with diag info (empty claim) or a list of jobs
+    if isinstance(result, dict):
+        return {"success": True, **result}
+    return {"success": True, "jobs": result, "count": len(result)}
 
 
 @router.get("/api/v1/jobs")
@@ -480,6 +483,7 @@ def batch_complete_vv(
     queue = _get_queue(db)
     cursor = db.conn.cursor()
     results = []
+    errors = []
 
     for item in req.items:
         job_id = item.get("job_id")
@@ -490,6 +494,10 @@ def batch_complete_vv(
             )
             row = cursor.fetchone()
             if not row:
+                errors.append({
+                    "job_id": job_id,
+                    "error": "Job not found or not assigned to this worker user",
+                })
                 results.append(False)
                 continue
 
@@ -498,6 +506,10 @@ def batch_complete_vv(
             cursor.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
             existing = cursor.fetchone()
             if not existing:
+                errors.append({
+                    "job_id": job_id,
+                    "error": f"File not found in DB for path: {file_path}",
+                })
                 results.append(False)
                 continue
             stored_file_id = existing[0]
@@ -517,10 +529,11 @@ def batch_complete_vv(
             results.append(True)
         except Exception as e:
             logger.error(f"Batch VV job {job_id} failed: {e}")
+            errors.append({"job_id": job_id, "error": str(e)})
             results.append(False)
 
     db.conn.commit()
-    return {"success": True, "results": results}
+    return {"success": True, "results": results, "errors": errors}
 
 
 @router.patch("/api/v1/admin/jobs/batch-complete-mv")

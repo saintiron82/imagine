@@ -202,34 +202,31 @@ class JobQueueManager:
     # GPU-Weak MC penalty: can do MC but slower (pressure / penalty)
     _MC_PENALTY = {"strong": 1.0, "weak": 2.0, "embedded": 1.0}
 
-    def _get_batch_target_seconds(self) -> int:
-        """Read batch_target_seconds from config (default 60)."""
-        try:
-            from backend.utils.config import get_config
-            return get_config().get("worker.batch_target_seconds", 60)
-        except Exception:
-            return 60
+    # Phase filter SQL fragments — shared between claimable counting and actual claim
+    _PHASE_FILTERS = {
+        "mc": """AND (json_extract(jq.phase_completed, '$.vision') IS NULL
+                      OR json_extract(jq.phase_completed, '$.vision') = 0)""",
+        "vv": """AND json_extract(jq.phase_completed, '$.vision') = 1
+                 AND (json_extract(jq.phase_completed, '$.vv') IS NULL
+                      OR json_extract(jq.phase_completed, '$.vv') = 0)""",
+        "mv": """AND json_extract(jq.phase_completed, '$.vision') = 1
+                 AND (json_extract(jq.phase_completed, '$.mv') IS NULL
+                      OR json_extract(jq.phase_completed, '$.mv') = 0)""",
+        "full": """AND (json_extract(jq.phase_completed, '$.vision') IS NULL
+                       OR json_extract(jq.phase_completed, '$.vision') = 0
+                       OR json_extract(jq.phase_completed, '$.vv') IS NULL
+                       OR json_extract(jq.phase_completed, '$.vv') = 0
+                       OR json_extract(jq.phase_completed, '$.mv') IS NULL
+                       OR json_extract(jq.phase_completed, '$.mv') = 0)""",
+    }
 
-    def get_phase_batch_size(self, phase: str) -> int:
-        """Time-based batch size: enough items to fill target_seconds of work."""
-        target = self._get_batch_target_seconds()
-        t = self._PHASE_TIME.get(phase, 1)
-        return max(1, int(target / t))
+    def _get_worker_gpu_class(self, worker_session_id: int) -> tuple:
+        """Determine GPU capability class for a worker.
 
-    def _decide_worker_mode(self, worker_session_id: int) -> str:
-        """Algorithm E' v2: Time-Weighted + Batch Commit + GPU-Weak MC.
-
-        1. Batch commit: if batch_remaining > 0 and work exists, stay
-        2. Time-weighted pressure: pending / (workers+1) * time_weight
-        3. GPU-Weak can do MC with penalty (slower but not idle)
-        4. Min guarantee: unserved phase gets 1.5x boost
-        5. Stability: switch only if best > current * 2x
-        6. Thermal: danger/critical → idle
+        Returns: (gpu_class, throttle, assigned_mode, phase_job_count, is_embedded)
+            gpu_class: 'embedded' | 'strong' | 'weak' | 'cpu'
         """
         cursor = self.db.conn.cursor()
-        stats = self.get_phase_stats()
-
-        # Worker info
         cursor.execute(
             "SELECT assigned_mode, worker_name, resources_json, phase_job_count "
             "FROM worker_sessions WHERE id = ?",
@@ -237,34 +234,21 @@ class JobQueueManager:
         )
         row = cursor.fetchone()
         if not row:
-            return "full"
+            return "cpu", "normal", None, 0, False
+
         assigned_mode, worker_name, res_json, phase_job_count = row
         phase_job_count = phase_job_count or 0
         is_embedded = worker_name == '__builtin__'
-        gpu_type = ""
         has_gpu = False
         throttle = "normal"
         if res_json:
             try:
                 res = json.loads(res_json)
-                gpu_type = res.get("gpu_type") or ""
-                has_gpu = bool(gpu_type)
+                has_gpu = bool(res.get("gpu_type"))
                 throttle = res.get("throttle_level", "normal")
             except Exception:
                 pass
 
-        # Thermal throttling
-        if throttle in ("danger", "critical"):
-            return "idle"
-
-        # Batch commit: check if current batch not yet finished
-        if assigned_mode and assigned_mode != "idle":
-            batch_size = self.get_phase_batch_size(assigned_mode)
-            pending = self._get_phase_pending(stats, assigned_mode)
-            if phase_job_count < batch_size and pending > 0:
-                return assigned_mode  # still within batch commit
-
-        # Determine GPU capability class
         from backend.utils.config import get_config
         cfg = get_config()
         tiers = cfg.get("ai_mode.tiers", {})
@@ -282,26 +266,23 @@ class JobQueueManager:
             "strong" if has_gpu and worker_vram_mb >= vram_threshold else
             "weak" if has_gpu else "cpu"
         )
+        return gpu_class, throttle, assigned_mode, phase_job_count, is_embedded
 
-        # Build capable phases + pending
-        buffers = {}
-        if has_gpu or is_embedded:
-            buffers["mc"] = stats.get("mc_pending", 0)
-            buffers["vv"] = stats.get("vv_pending", 0)
-        buffers["mv"] = stats.get("mv_pending", 0)
-        # Parse is handled by ParseAheadPool (background thread), not workers
+    def _pick_best_phase(self, claimable: Dict[str, int], workers_on: Dict[str, int],
+                         assigned_mode: Optional[str], gpu_class: str,
+                         phase_job_count: int = 0) -> Optional[str]:
+        """Algorithm E' pressure calculation on actual claimable counts.
 
-        # Worker distribution
-        cursor.execute(
-            "SELECT assigned_mode, COUNT(*) FROM worker_sessions "
-            "WHERE status = 'online' AND assigned_mode IS NOT NULL "
-            "GROUP BY assigned_mode"
-        )
-        workers_on = dict(cursor.fetchall())
+        Returns best phase name, or None if no work available.
+        """
+        # Batch commit: stay in current phase if mid-batch and work exists
+        if assigned_mode and assigned_mode != "idle" and assigned_mode in claimable:
+            batch_size = self.get_phase_batch_size(assigned_mode)
+            if phase_job_count < batch_size and claimable.get(assigned_mode, 0) > 0:
+                return assigned_mode
 
-        # Time-weighted pressure with GPU penalty
         pressure = {}
-        for phase, pending in buffers.items():
+        for phase, pending in claimable.items():
             if pending <= 0:
                 continue
             w = self._PHASE_TIME.get(phase, 1)
@@ -316,15 +297,13 @@ class JobQueueManager:
             # Min guarantee: unserved phase boost
             if n == 0 and pending > 0:
                 p *= 1.5
-            # Completion bonus: MV is the last step before Done.
-            # Processing MV immediately frees files (disk, search).
-            # Bonus = pending * 10 (small vs MC's 50x, but tips balance when MC is low)
+            # MV completion bonus
             if phase == "mv":
                 p += pending * 10
             pressure[phase] = p
 
         if not pressure:
-            return "idle"
+            return None
 
         best = max(pressure, key=pressure.get)
 
@@ -333,26 +312,81 @@ class JobQueueManager:
             if pressure[best] <= pressure[assigned_mode] * 2:
                 return assigned_mode
 
-        # Switch to best
-        if pressure[best] > 0:
-            if best != assigned_mode:
-                cursor.execute(
-                    "UPDATE worker_sessions SET assigned_mode = ?, phase_job_count = 0 WHERE id = ?",
-                    (best, worker_session_id)
-                )
-                self.db.conn.commit()
-                if assigned_mode:
-                    logger.info(f"Worker {worker_session_id}: {assigned_mode}→{best} "
-                               f"(pressure: {pressure.get(best, 0):.0f} vs {pressure.get(assigned_mode, 0):.0f})")
-            return best
+        return best if pressure[best] > 0 else None
 
-        return "idle"
+    def _get_batch_target_seconds(self) -> int:
+        """Read batch_target_seconds from config (default 60)."""
+        try:
+            from backend.utils.config import get_config
+            return get_config().get("worker.batch_target_seconds", 60)
+        except Exception:
+            return 60
 
-    @staticmethod
-    def _get_phase_pending(stats: dict, phase: str) -> int:
-        """Get pending count for a phase from stats dict."""
-        m = {"mc": "mc_pending", "vv": "vv_pending", "mv": "mv_pending"}
-        return stats.get(m.get(phase, ""), 0)
+    def get_phase_batch_size(self, phase: str) -> int:
+        """Time-based batch size: enough items to fill target_seconds of work."""
+        target = self._get_batch_target_seconds()
+        t = self._PHASE_TIME.get(phase, 1)
+        return max(1, int(target / t))
+
+    def _decide_worker_mode(self, worker_session_id: int, *, return_diag: bool = False):
+        """Algorithm E' v2 — stats-based mode estimation for UI/heartbeat.
+
+        NOTE: This is used by heartbeat for UI display and diagnostics only.
+        Actual job assignment uses claimable-based instant decision in _claim_jobs_inner().
+        Stats here may differ from actual claimable counts (assigned jobs included).
+        """
+        gpu_class, throttle, assigned_mode, phase_job_count, is_embedded = \
+            self._get_worker_gpu_class(worker_session_id)
+
+        stats = self.get_phase_stats()
+
+        def _result(mode, reason, **extra):
+            diag = {
+                "reason": reason,
+                "gpu_class": extra.get("gpu_class", gpu_class),
+                "pending": extra.get("pending", {}),
+                "workers_on": extra.get("workers_on", {}),
+                "pressure": extra.get("pressure", {}),
+                "assigned_mode": assigned_mode,
+            }
+            pend_str = " ".join(f"{k}={v}" for k, v in diag["pending"].items()) if diag["pending"] else "n/a"
+            work_str = " ".join(f"{k}={v}" for k, v in diag["workers_on"].items()) if diag["workers_on"] else "n/a"
+            pres_str = " ".join(f"{k}={v:.0f}" for k, v in diag["pressure"].items()) if diag["pressure"] else "n/a"
+            logger.info(
+                f"[MODE-HINT] session={worker_session_id} gpu={gpu_class} | "
+                f"stats: {pend_str} | workers: {work_str} | pressure: {pres_str} | "
+                f"current={assigned_mode} hint={mode} | {reason}"
+            )
+            if return_diag:
+                return mode, diag
+            return mode
+
+        if throttle in ("danger", "critical"):
+            return _result("idle", f"thermal={throttle}")
+
+        # Build capable phases + stats-based pending
+        has_gpu = gpu_class in ("strong", "weak", "embedded")
+        buffers = {}
+        if has_gpu:
+            buffers["mc"] = stats.get("mc_pending", 0)
+            buffers["vv"] = stats.get("vv_pending", 0)
+        buffers["mv"] = stats.get("mv_pending", 0)
+
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "SELECT assigned_mode, COUNT(*) FROM worker_sessions "
+            "WHERE status = 'online' AND assigned_mode IS NOT NULL "
+            "GROUP BY assigned_mode"
+        )
+        workers_on = dict(cursor.fetchall())
+
+        best = self._pick_best_phase(buffers, workers_on, assigned_mode, gpu_class, phase_job_count)
+        diag_ctx = dict(gpu_class=gpu_class, pending=buffers, workers_on=workers_on, pressure={})
+
+        if not best:
+            return _result("idle", "no pending work in any capable phase", **diag_ctx)
+
+        return _result(best, f"stats-based hint (actual claim may differ)", **diag_ctx)
 
     def _batch_check_existing_data(self, file_ids: List[int]) -> Dict[int, dict]:
         """Check actual DB data existence for a batch of files.
@@ -449,12 +483,36 @@ class JobQueueManager:
             raise
 
     def _claim_jobs_inner(self, user_id: int, count: int, worker_session_id: int = None) -> List[Dict[str, Any]]:
-        """Internal claim implementation."""
+        """Internal claim implementation — claimable-based instant mode decision.
+
+        Instead of pre-assigning a mode (heartbeat) then filtering (claim),
+        we count actual claimable jobs per phase using the SAME WHERE clause,
+        then pick the highest-pressure phase and claim from it directly.
+        This eliminates the stats-vs-claimable mismatch.
+        """
         cursor = self.db.conn.cursor()
         now = _utcnow_sql()
 
-        # Determine effective processing mode for this specific worker.
-        processing_mode = self._get_processing_mode()  # Always "parse_only"
+        # Common WHERE clause (shared between counting and claiming)
+        _WR_FILTER = ("AND (jq.work_request_id IS NULL "
+                       "OR wr.status NOT IN ('paused', 'cancelled'))")
+        _WR_ORDER = "ORDER BY jq.priority DESC, jq.created_at ASC"
+
+        _BASE_SELECT = f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
+               FROM job_queue jq
+               LEFT JOIN work_requests wr ON jq.work_request_id = wr.id"""
+
+        _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
+                 AND jq.parse_status = 'parsed'
+                 {_WR_FILTER}"""
+
+        _COUNT_FROM = f"""FROM job_queue jq
+               LEFT JOIN work_requests wr ON jq.work_request_id = wr.id"""
+
+        # --- Determine processing mode ---
+        processing_mode = self._get_processing_mode()  # server default: "parse_only"
+        gpu_class = "cpu"
+        phase_filter = self._PHASE_FILTERS["full"]  # fallback
 
         if worker_session_id is not None:
             cursor.execute(
@@ -463,94 +521,104 @@ class JobQueueManager:
             )
             session_row = cursor.fetchone()
             if not session_row:
-                logger.warning(
-                    f"Claim rejected: worker_session_id={worker_session_id} not found in DB"
-                )
+                logger.warning(f"Claim rejected: worker_session_id={worker_session_id} not found")
                 return []
-            if session_row:
-                mode_override = session_row[1]
-                if mode_override:
-                    processing_mode = mode_override
+
+            mode_override = session_row[1]
+
+            # Resource-aware throttling
+            throttle = "normal"
+            if session_row[0]:
+                try:
+                    resources = json.loads(session_row[0])
+                    throttle = resources.get("throttle_level", "normal")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if throttle == "critical":
+                throttle_key = ("throttle", worker_session_id)
+                if throttle_key != _last_claim_diag.get("throttle_key"):
+                    _last_claim_diag["throttle_key"] = throttle_key
+                    logger.info(f"Claim denied for session {worker_session_id}: throttle=critical")
+                return []
+            elif throttle == "danger":
+                count = min(count, 1)
+            elif throttle == "warning":
+                count = max(1, int(count * 0.5))
+
+            if mode_override:
+                # Admin pinned mode — use directly
+                processing_mode = mode_override
+                phase_filter = self._PHASE_FILTERS.get(mode_override, self._PHASE_FILTERS["full"])
+            else:
+                # ── Claimable-based instant decision ──
+                gpu_class, _, assigned_mode, phase_job_count, is_embedded = \
+                    self._get_worker_gpu_class(worker_session_id)
+
+                # Determine capable phases
+                capable = ["mv"]  # all workers can do MV
+                if gpu_class != "cpu":
+                    capable += ["mc", "vv"]
+
+                # Count ACTUAL claimable per phase (same WHERE as claim query)
+                claimable = {}
+                for phase in capable:
+                    pf = self._PHASE_FILTERS.get(phase)
+                    if not pf:
+                        continue
+                    cnt = cursor.execute(
+                        f"SELECT COUNT(*) {_COUNT_FROM} WHERE {_BASE_WHERE} {pf}"
+                    ).fetchone()[0]
+                    claimable[phase] = cnt
+
+                # Worker distribution (for pressure calculation)
+                cursor.execute(
+                    "SELECT assigned_mode, COUNT(*) FROM worker_sessions "
+                    "WHERE status = 'online' AND assigned_mode IS NOT NULL "
+                    "GROUP BY assigned_mode"
+                )
+                workers_on = dict(cursor.fetchall())
+
+                # Pick best phase using Algorithm E' pressure
+                best = self._pick_best_phase(
+                    claimable, workers_on, assigned_mode, gpu_class, phase_job_count
+                )
+
+                if best:
+                    processing_mode = best
+                    phase_filter = self._PHASE_FILTERS[best]
+                    # Update assigned_mode for UI/monitoring
+                    if best != assigned_mode:
+                        cursor.execute(
+                            "UPDATE worker_sessions SET assigned_mode = ?, phase_job_count = 0 WHERE id = ?",
+                            (best, worker_session_id)
+                        )
+                    else:
+                        cursor.execute(
+                            "UPDATE worker_sessions SET phase_job_count = COALESCE(phase_job_count,0) + ? WHERE id = ?",
+                            (count, worker_session_id)
+                        )
+                    claimable_str = " ".join(f"{k}={v}" for k, v in claimable.items())
+                    logger.info(
+                        f"[CLAIM] session={worker_session_id} gpu={gpu_class} | "
+                        f"claimable: {claimable_str} | picked={best}"
+                    )
                 else:
-                    # No admin override → server decides dynamically
-                    processing_mode = self._decide_worker_mode(worker_session_id)
+                    processing_mode = "idle"
+                    phase_filter = None  # will trigger empty result
 
-                # Resource-aware throttling
-                if session_row[0]:
-                    try:
-                        resources = json.loads(session_row[0])
-                        throttle = resources.get("throttle_level", "normal")
-                        if throttle == "critical":
-                            throttle_key = ("throttle", worker_session_id)
-                            if throttle_key != _last_claim_diag.get("throttle_key"):
-                                _last_claim_diag["throttle_key"] = throttle_key
-                                logger.info(
-                                    f"Claim denied for session {worker_session_id}: "
-                                    f"throttle_level=critical (mode={processing_mode})"
-                                )
-                            return []
-                        elif throttle == "danger":
-                            count = min(count, 1)
-                        elif throttle == "warning":
-                            count = max(1, int(count * 0.5))
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-
-        # Common WHERE clause for work_request status filtering
-        _WR_FILTER = ("AND (jq.work_request_id IS NULL "
-                       "OR wr.status NOT IN ('paused', 'cancelled'))")
-        _WR_ORDER = "ORDER BY jq.priority DESC, jq.created_at ASC"
-
-        # Claim jobs filtered by worker's processing mode.
-        _BASE_SELECT = f"""SELECT jq.id, jq.file_id, jq.file_path, jq.priority, jq.parsed_metadata
-               FROM job_queue jq
-               LEFT JOIN work_requests wr ON jq.work_request_id = wr.id"""
-
-        # Parse is handled by ParseAheadPool (background thread), not workers.
-        # Workers only claim pre-parsed jobs.
-        _BASE_WHERE = f"""jq.status = 'pending' AND jq.file_ready = 1
-                 AND jq.parse_status = 'parsed'
-                 {_WR_FILTER}"""
-
-        # Build phase filter based on worker mode
-        if processing_mode == "mc" or processing_mode == "mc_only":
-            # MC worker: needs jobs where MC is not done yet
-            phase_filter = """AND (json_extract(jq.phase_completed, '$.vision') IS NULL
-                              OR json_extract(jq.phase_completed, '$.vision') = 0)"""
-        elif processing_mode == "vv":
-            # VV worker: needs jobs where VV is not done (independent of MC)
-            phase_filter = """AND (json_extract(jq.phase_completed, '$.vv') IS NULL
-                                   OR json_extract(jq.phase_completed, '$.vv') = 0)"""
-        elif processing_mode == "mv":
-            # MV worker: needs jobs where MC is done but MV is not
-            phase_filter = """AND json_extract(jq.phase_completed, '$.vision') = 1
-                              AND (json_extract(jq.phase_completed, '$.mv') IS NULL
-                                   OR json_extract(jq.phase_completed, '$.mv') = 0)"""
-        elif processing_mode == "embed_only":
-            # Legacy embed_only: vision done, vv or mv not done
-            phase_filter = """AND json_extract(jq.phase_completed, '$.vision') = 1
-                              AND ((json_extract(jq.phase_completed, '$.vv') IS NULL
-                                    OR json_extract(jq.phase_completed, '$.vv') = 0)
-                                   OR (json_extract(jq.phase_completed, '$.mv') IS NULL
-                                       OR json_extract(jq.phase_completed, '$.mv') = 0))"""
+        # --- Execute claim query ---
+        if phase_filter is None:
+            rows = []
         else:
-            # full mode (embedded worker): any incomplete phase
-            phase_filter = """AND (json_extract(jq.phase_completed, '$.vision') IS NULL
-                              OR json_extract(jq.phase_completed, '$.vision') = 0
-                              OR json_extract(jq.phase_completed, '$.vv') IS NULL
-                              OR json_extract(jq.phase_completed, '$.vv') = 0
-                              OR json_extract(jq.phase_completed, '$.mv') IS NULL
-                              OR json_extract(jq.phase_completed, '$.mv') = 0)"""
-
-        cursor.execute(
-            f"""{_BASE_SELECT}
-               WHERE {_BASE_WHERE}
-                 {phase_filter}
-               {_WR_ORDER}
-               LIMIT ?""",
-            (count,)
-        )
-        rows = list(cursor.fetchall())
+            cursor.execute(
+                f"""{_BASE_SELECT}
+                   WHERE {_BASE_WHERE}
+                     {phase_filter}
+                   {_WR_ORDER}
+                   LIMIT ?""",
+                (count,)
+            )
+            rows = list(cursor.fetchall())
 
         # Track which jobs already have MC done (for vision_data prefetch)
         vision_done_ids = set()
@@ -565,21 +633,17 @@ class JobQueueManager:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Signal demand to ParseAheadPool BEFORE early return.
-        # Uses requested count (not actual claimed count) — represents
-        # "workers want N jobs" regardless of what's available.
-        # This ensures ParseAheadPool has demand signal for pre-parsing.
+        # Signal demand to ParseAheadPool
         if worker_session_id is not None:
             try:
                 from backend.server.queue.base_ahead_pool import BaseAheadPool
-                BaseAheadPool.record_claim(
-                    session_id=worker_session_id, count=count
-                )
+                BaseAheadPool.record_claim(session_id=worker_session_id, count=count)
             except ImportError:
                 pass
 
         if not rows:
-            # Diagnostic: log queue state once when transitioning to idle
+            # Structured diagnostics for empty claim
+            claim_diag = None
             if worker_session_id is not None:
                 try:
                     diag = cursor.execute(
@@ -594,19 +658,33 @@ class JobQueueManager:
                             COUNT(*) FROM job_queue,
                             COUNT(*) FILTER (WHERE status = 'pending' AND file_ready = 0) as not_ready"""
                     ).fetchone()
+                    not_ready = diag[8] if len(diag) > 8 else 0
+
+                    if diag[0] == 0:
+                        empty_reason = "queue empty"
+                    elif diag[3] == 0 and diag[0] > 0:
+                        empty_reason = f"all {diag[0]} pending jobs still parsing (parsed=0)"
+                    else:
+                        empty_reason = f"no claimable jobs for gpu={gpu_class} (parsed={diag[3]}, not_ready={not_ready})"
+
+                    claim_diag = {
+                        "mode": processing_mode,
+                        "pending_total": diag[0],
+                        "pending_parsed": diag[3],
+                        "not_ready": not_ready,
+                        "reason": empty_reason,
+                    }
                     diag_key = (worker_session_id, diag[0], diag[6], diag[7])
                     if diag_key != _last_claim_diag.get("key"):
                         _last_claim_diag["key"] = diag_key
-                        not_ready = diag[8] if len(diag) > 8 else 0
                         logger.info(
-                            f"[CLAIM-DIAG] session={worker_session_id} mode={processing_mode} | "
-                            f"pending={diag[0]} (unparsed={diag[1]} parsing={diag[2]} "
-                            f"parsed={diag[3]} failed={diag[4]} not_ready={not_ready}) "
-                            f"assigned={diag[5]} completed={diag[6]} total={diag[7]}"
+                            f"[CLAIM-EMPTY] session={worker_session_id} gpu={gpu_class} | "
+                            f"pending={diag[0]} (parsed={diag[3]} not_ready={not_ready}) | "
+                            f"reason: {empty_reason}"
                         )
                 except Exception:
                     pass
-            return []
+            return {"jobs": [], "count": 0, "diag": claim_diag} if claim_diag else []
 
         # Pre-fetch vision fields from files table for vision-done jobs.
         # Workers need vision_data for jobs where server already did Phase V
@@ -1284,8 +1362,14 @@ class JobQueueManager:
             SELECT
                 COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') IS NULL
                                   OR json_extract(phase_completed, '$.vision') = 0) AS mc_pending,
-                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') IS NULL
-                                  OR json_extract(phase_completed, '$.vv') = 0) AS vv_pending,
+                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                                 AND (json_extract(phase_completed, '$.vv') IS NULL
+                                      OR json_extract(phase_completed, '$.vv') = 0)) AS vv_pending,
+                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                                 AND ((json_extract(phase_completed, '$.vv') IS NULL
+                                       OR json_extract(phase_completed, '$.vv') = 0)
+                                      OR (json_extract(phase_completed, '$.mv') IS NULL
+                                          OR json_extract(phase_completed, '$.mv') = 0))) AS embed_pending,
                 COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
                                  AND (json_extract(phase_completed, '$.mv') IS NULL
                                       OR json_extract(phase_completed, '$.mv') = 0)) AS mv_pending
@@ -1297,7 +1381,8 @@ class JobQueueManager:
             "parse_pending": parse_pending,
             "mc_pending": row[0] or 0,
             "vv_pending": row[1] or 0,
-            "mv_pending": row[2] or 0,
+            "embed_pending": row[2] or 0,
+            "mv_pending": row[3] or 0,
         }
 
     def get_stats(self) -> Dict[str, Any]:
@@ -1373,9 +1458,9 @@ class JobQueueManager:
                 parse_throughput = round((pt[0] or 0) / 5.0, 1)
             if "mc" in active_modes:
                 mc_throughput = round((pt[1] or 0) / 5.0, 1)
-            if "vv" in active_modes:
+            if "vv" in active_modes or "embed_only" in active_modes:
                 vv_throughput = round((pt[2] or 0) / 5.0, 1)
-            if "mv" in active_modes:
+            if "mv" in active_modes or "embed_only" in active_modes:
                 mv_throughput = round((pt[3] or 0) / 5.0, 1)
         except Exception:
             pass
@@ -1408,8 +1493,9 @@ class JobQueueManager:
                     SELECT
                         COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') IS NULL
                                           OR json_extract(phase_completed, '$.vision') = 0),
-                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') IS NULL
-                                          OR json_extract(phase_completed, '$.vv') = 0),
+                        COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                                         AND (json_extract(phase_completed, '$.vv') IS NULL
+                                              OR json_extract(phase_completed, '$.vv') = 0)),
                         COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
                                          AND (json_extract(phase_completed, '$.mv') IS NULL
                                               OR json_extract(phase_completed, '$.mv') = 0))
@@ -1559,8 +1645,9 @@ class JobQueueManager:
                                   OR json_extract(phase_completed, '$.vision') = 0)
                          THEN 1 ELSE 0 END),
                     SUM(CASE WHEN parse_status = 'parsed'
-                             AND (json_extract(phase_completed, '$.vv') IS NULL
-                                  OR json_extract(phase_completed, '$.vv') = 0)
+                            AND json_extract(phase_completed, '$.vision') = 1
+                            AND (json_extract(phase_completed, '$.vv') IS NULL
+                                OR json_extract(phase_completed, '$.vv') = 0)
                          THEN 1 ELSE 0 END),
                     SUM(CASE WHEN parse_status = 'parsed'
                              AND json_extract(phase_completed, '$.vision') = 1
