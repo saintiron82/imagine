@@ -428,9 +428,19 @@ class WorkerIPCController:
                 # Batch result summary (always visible)
                 n_ok = sum(1 for r in results if len(r) > 1 and r[1])
                 n_fail = sum(1 for r in results if len(r) > 1 and not r[1])
+                # Collect first 3 error reasons for quick diagnosis
+                fail_samples = []
+                for r in results:
+                    if len(r) > 2 and not r[1] and r[2]:
+                        fail_samples.append(r[2][:80])
+                    if len(fail_samples) >= 3:
+                        break
+                fail_hint = f" | errors: {fail_samples}" if fail_samples else ""
+                if not results and len(jobs) > 0:
+                    fail_hint = " | WARNING: 0 results returned from process_batch_phased()"
                 _emit_log(
                     f"[BATCH] {len(results)} results: {n_ok} ok, {n_fail} fail "
-                    f"(mode={daemon.processing_mode}, jobs_given={len(jobs)})",
+                    f"(mode={daemon.processing_mode}, jobs_given={len(jobs)}){fail_hint}",
                     "info" if n_fail == 0 else "warning"
                 )
 

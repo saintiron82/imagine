@@ -1902,41 +1902,55 @@ class WorkerDaemon:
         from PIL import Image as PILImage
 
         self._current_phase = "vv"
+        logger.info(f"[VV-ONLY] === START batch: {len(jobs)} jobs ===")
 
         results = []
         active = []
-        for job in jobs:
+        for idx, job in enumerate(jobs):
             file_id = job.get("file_id")
+            job_id = job.get("job_id")
             file_name = job.get("file_path", "").split("/")[-1].split("\\")[-1]
             self._current_file = file_name
-            self._current_job_id = job.get("job_id")
+            self._current_job_id = job_id
+
+            # Detailed per-job diagnostics
             vision_data = job.get("vision_data") or {}
             mc_caption = str(vision_data.get("mc_caption") or "").strip()
+            has_thumb_path = bool(job.get("thumb_path"))
+            has_pre_parsed = bool(job.get("pre_parsed"))
+            logger.info(
+                f"[VV-ONLY] [{idx+1}/{len(jobs)}] job={job_id} file={file_name} "
+                f"mc_caption={len(mc_caption)}chars thumb_path={has_thumb_path} pre_parsed={has_pre_parsed}"
+            )
+
             if not mc_caption:
                 err = (
-                    "MODE_MISMATCH: vv worker received job without vision_data.mc_caption "
-                    "(server assigned a non-VV-ready job)"
+                    f"NO_MC_CAPTION: vision_data keys={list(vision_data.keys())}, "
+                    f"mc_caption raw={repr(vision_data.get('mc_caption'))}"
                 )
                 logger.warning(f"[VV-ONLY] {file_name}: {err}")
-                self.uploader.fail_job(job["job_id"], err, "MODE_MISMATCH")
-                results.append((job["job_id"], False, err))
+                self.uploader.fail_job(job_id, err, "MODE_MISMATCH")
+                results.append((job_id, False, err))
                 _notify(progress_callback, "file_error", {
                     "file_name": file_name, "error": err,
                 })
                 continue
             thumb = self._resolve_thumbnail(job)
             if not thumb:
-                err = f"Thumbnail not available (file_id={file_id})"
+                err = f"THUMB_FAIL: file_id={file_id}, thumb_path={job.get('thumb_path')}"
                 logger.warning(f"[VV-ONLY] {file_name}: {err}")
-                self.uploader.fail_job(job["job_id"], err)
-                results.append((job["job_id"], False, err))
+                self.uploader.fail_job(job_id, err)
+                results.append((job_id, False, err))
                 _notify(progress_callback, "file_error", {
                     "file_name": file_name, "error": err,
                 })
                 continue
             active.append({"job": job, "thumb": thumb})
 
+        logger.info(f"[VV-ONLY] Validation: {len(active)} active, {len(results)} pre-failed out of {len(jobs)}")
+
         if not active:
+            logger.warning(f"[VV-ONLY] ALL {len(jobs)} jobs failed validation — returning early")
             return results
 
         _notify(progress_callback, "phase_start", {"phase": "embed_vv", "count": len(active)})
@@ -2038,9 +2052,11 @@ class WorkerDaemon:
                     processed += 1
 
             if batch_items:
+                logger.info(f"[VV-ONLY] Uploading {len(batch_items)} VV vectors...")
                 batch_results = self.uploader.complete_vv_batch(
                     [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
                 )
+                logger.info(f"[VV-ONLY] Upload response: {len(batch_results)} results")
                 for it, batch_result in zip(batch_items, batch_results):
                     file_name = Path(it["ctx"]["job"].get("file_path", "")).name
                     if isinstance(batch_result, dict):
@@ -2050,7 +2066,7 @@ class WorkerDaemon:
                         ok = bool(batch_result)
                         err = "" if ok else "VV upload failed (server rejected)"
                     if not ok:
-                        logger.warning(f"[VV-ONLY] {file_name}: {err}")
+                        logger.warning(f"[VV-ONLY] UPLOAD FAIL {file_name}: result={batch_result!r} err={err!r}")
                     results.append((it["job_id"], ok, err))
                     if ok:
                         self._phase_counts["vv"] += 1
