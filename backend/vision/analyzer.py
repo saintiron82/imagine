@@ -186,7 +186,7 @@ class VisionAnalyzer(BaseVisionAnalyzer):
                 **hf_kwargs,
             )
 
-        elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
+        elif "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id or "Qwen3.5" in self.model_id:
             from transformers import AutoProcessor, AutoModelForImageTextToText
 
             t_proc = time.perf_counter()
@@ -696,7 +696,8 @@ class VisionAnalyzer(BaseVisionAnalyzer):
         """
         self._load_model()
 
-        if "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id:
+        _is_qwen35 = "Qwen3.5" in self.model_id
+        if "Qwen2-VL" in self.model_id or "Qwen3-VL" in self.model_id or "Qwen3VL" in self.model_id or _is_qwen35:
             messages = []
             if system_prompt:
                 messages.append({
@@ -712,12 +713,16 @@ class VisionAnalyzer(BaseVisionAnalyzer):
             })
 
             # HF recommended 1-step apply_chat_template
+            chat_kwargs = {}
+            if _is_qwen35:
+                chat_kwargs["chat_template_kwargs"] = {"enable_thinking": False}
             inputs = self.processor.apply_chat_template(
                 messages,
                 tokenize=True,
                 add_generation_prompt=True,
                 return_dict=True,
                 return_tensors="pt",
+                **chat_kwargs,
             )
             inputs.pop("token_type_ids", None)
             inputs = {k: v.to(self.device) if hasattr(v, "to") else v for k, v in inputs.items()}

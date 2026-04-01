@@ -146,6 +146,22 @@ INSTRUCTIONS:
 {schema}""",
 }
 
+# ── Stage 2: Concise variant for Qwen3.5 (faster generation) ────────
+STAGE2_USER_CONCISE = """Analyze this image. Be concise. Return ONLY this JSON (no markdown fences):
+{
+  "caption": "one sentence, max 20 words",
+  "tags": ["max 8 tags"],
+  "art_style": "one word",
+  "color_palette": "max 3 colors"
+}"""
+
+
+def get_stage2_user_prompt(concise: bool = False) -> str:
+    """Get Stage 2 user prompt. Use concise=True for Qwen3.5 optimized output."""
+    if concise:
+        return STAGE2_USER_CONCISE
+    return None  # caller uses existing per-type STAGE2_PROMPTS
+
 
 def build_stage1_prompt(domain: "DomainProfile" = None) -> str:
     """

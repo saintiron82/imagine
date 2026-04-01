@@ -189,7 +189,7 @@ class VisionAnalyzerFactory:
                 raise RuntimeError("MLX is only supported on macOS")
             from .mlx_adapter import MLXVisionAdapter
 
-            model = model or "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+            model = model or "mlx-community/Qwen3.5-9B-MLX-4bit"
             return MLXVisionAdapter(model=model, tier_name=tier_name)
 
         elif backend_name == 'vllm':

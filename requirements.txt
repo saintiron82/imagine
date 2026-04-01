@@ -25,7 +25,7 @@ sqlite-vec>=0.1.6
 
 # AI Models (SigLIP2, Qwen3-VL, Qwen3-Embedding)
 torch>=2.6.0
-transformers>=5.0.0
+transformers>=5.4.0
 accelerate>=1.0.0
 
 # Server (FastAPI)

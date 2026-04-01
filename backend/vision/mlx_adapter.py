@@ -30,7 +30,7 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
 
     def __init__(
         self,
-        model: str = "mlx-community/Qwen3-VL-4B-Instruct-4bit",
+        model: str = "mlx-community/Qwen3.5-9B-MLX-4bit",
         tier_name: str = "pro",
         max_tokens: int = 512,
         temperature: float = 0.1,
@@ -86,6 +86,10 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         """
         Generate text response from VLM using mlx-vlm.
 
+        For Qwen3.5 models, uses tokenizer.apply_chat_template directly with
+        enable_thinking=False to suppress thinking tokens (12x faster, clean JSON).
+        Falls back to mlx_vlm.prompt_utils for legacy Qwen3-VL models.
+
         Args:
             image: PIL Image
             user_prompt: Text prompt for the model
@@ -97,16 +101,39 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         self._load_model()
 
         from mlx_vlm import generate
-        from mlx_vlm.prompt_utils import apply_chat_template
 
-        # Build prompt with chat template
-        prompt = user_prompt
-        if system_prompt:
-            prompt = f"{system_prompt}\n\n{user_prompt}"
+        # Detect if model supports thinking mode (Qwen3.5+)
+        _is_qwen35 = "Qwen3.5" in self.model_id or "qwen3.5" in self.model_id.lower()
 
-        formatted_prompt = apply_chat_template(
-            self._processor, self._config, prompt, num_images=1
-        )
+        if _is_qwen35 and system_prompt:
+            # Qwen3.5: Use tokenizer directly for enable_thinking control.
+            # Messages use list-of-dicts format with system/user role separation
+            # and {"type": "image"} placeholder for vision token injection.
+            messages = [
+                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+                {"role": "user", "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": user_prompt},
+                ]},
+            ]
+            tok = getattr(self._processor, 'tokenizer', self._processor)
+            formatted_prompt = tok.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        else:
+            # Legacy path: Qwen3-VL and other models without thinking mode
+            from mlx_vlm.prompt_utils import apply_chat_template
+
+            prompt = user_prompt
+            if system_prompt:
+                prompt = f"{system_prompt}\n\n{user_prompt}"
+
+            formatted_prompt = apply_chat_template(
+                self._processor, self._config, prompt, num_images=1
+            )
 
         # Generate response (returns GenerationResult with .text attribute)
         result = generate(
