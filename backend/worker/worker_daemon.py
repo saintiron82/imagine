@@ -366,16 +366,15 @@ class WorkerDaemon:
                     self.batch_capacity = data["batch_hint"]
                     if old_cap != self.batch_capacity:
                         logger.info(f"Batch capacity changed: {old_cap} → {self.batch_capacity}")
+                # Mode hint from heartbeat — logged but NOT applied.
+                # Actual mode is set by claim response (authoritative).
                 if data.get("processing_mode"):
-                    old_mode = self.processing_mode
-                    self.processing_mode = data["processing_mode"]
-                    if old_mode != self.processing_mode:
-                        reason = data.get("mode_reason", "no reason given")
-                        snap = data.get("queue_snapshot", {})
-                        snap_str = " ".join(f"{k}={v}" for k, v in snap.items()) if snap else "n/a"
-                        logger.info(
-                            f"[MODE-CHANGE] {old_mode} → {self.processing_mode} | "
-                            f"reason: {reason} | queue: {snap_str}"
+                    hint_mode = data["processing_mode"]
+                    if hint_mode != self.processing_mode:
+                        reason = data.get("mode_reason", "")
+                        logger.debug(
+                            f"[MODE-HINT] server suggests {hint_mode} "
+                            f"(current={self.processing_mode}, reason={reason})"
                         )
                     elif data.get("mode_reason"):
                         # Log reason even without mode change (periodic diagnostic)
