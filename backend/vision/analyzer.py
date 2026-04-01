@@ -805,7 +805,8 @@ class VisionAnalyzer(BaseVisionAnalyzer):
 
         try:
             t0 = time.perf_counter()
-            prompt = get_stage2_prompt(image_type, context=context, domain=domain)
+            _use_concise = "Qwen3.5" in self.model_id or "qwen3.5" in self.model_id.lower()
+            prompt = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
             raw = self._generate_response(image, prompt, STAGE2_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(raw, get_schema(image_type), image_type=image_type)
@@ -953,10 +954,11 @@ class VisionAnalyzer(BaseVisionAnalyzer):
 
         # Build per-image prompts (same template, different context)
         # If contexts differ, we must go sequential per unique prompt
+        _use_concise = "Qwen3.5" in self.model_id or "qwen3.5" in self.model_id.lower()
         prompts = []
         for i, img in enumerate(images):
             ctx = contexts[i] if contexts else None
-            prompts.append(get_stage2_prompt(image_type, context=ctx, domain=domain))
+            prompts.append(get_stage2_prompt(image_type, context=ctx, domain=domain, concise=_use_concise))
 
         # Batch with per-image prompts (different contexts are fine)
         t0 = time.perf_counter()

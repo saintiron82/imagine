@@ -338,7 +338,9 @@ Format your response as JSON:
             return {"caption": "", "tags": [], "image_type": image_type}
 
         # v3.1: Inject context into Stage 2 prompt
-        prompt = get_stage2_prompt(image_type, context=context, domain=domain)
+        # v4.1: Concise prompt for Qwen3.5 models (fewer tokens, faster generation)
+        _use_concise = "qwen3.5" in self.model.lower()
+        prompt = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
         schema = get_schema(image_type)
         img_b64 = self._encode_image(image)
 

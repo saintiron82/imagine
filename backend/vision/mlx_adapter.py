@@ -231,7 +231,8 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
 
         try:
             t0 = time.perf_counter()
-            prompt = get_stage2_prompt(image_type, context=context, domain=domain)
+            _use_concise = "Qwen3.5" in self.model_id or "qwen3.5" in self.model_id.lower()
+            prompt = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
             raw = self._generate_response(image, prompt, STAGE2_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(

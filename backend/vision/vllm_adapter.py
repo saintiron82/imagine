@@ -247,7 +247,8 @@ class VLLMAdapter(BaseVisionAnalyzer):
         """
         try:
             # Get type-specific prompt and schema
-            prompt_text = get_stage2_prompt(image_type, context=context, domain=domain)
+            _use_concise = "qwen3.5" in self.model_name.lower() if self.model_name else False
+            prompt_text = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
             schema = get_schema(image_type)
 
             # Prepare image
@@ -393,7 +394,8 @@ class VLLMAdapter(BaseVisionAnalyzer):
             indices, imgs = zip(*group)
 
             # Prepare batch
-            prompt_text = get_stage2_prompt(img_type)
+            _use_concise = "qwen3.5" in self.model_name.lower() if self.model_name else False
+            prompt_text = get_stage2_prompt(img_type, concise=_use_concise)
             prompts = [prompt_text for _ in imgs]
             img_base64_list = [self._image_to_base64(img) for img in imgs]
 

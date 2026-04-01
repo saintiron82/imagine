@@ -198,6 +198,7 @@ def get_stage2_prompt(
     image_type: str,
     context: dict = None,
     domain: "DomainProfile" = None,
+    concise: bool = False,
 ) -> str:
     """
     Build the full Stage 2 prompt with embedded schema.
@@ -207,10 +208,19 @@ def get_stage2_prompt(
         context: Optional file metadata context (v3.1: MC.raw)
                 Format: {"file_name": str, "folder_path": str, "layer_names": list, ...}
         domain: Optional DomainProfile for domain-specific hint injection (v3.7)
+        concise: Use concise prompt for Qwen3.5 (fewer tokens, faster generation)
 
     Returns:
         Stage 2 prompt string with schema, domain hints, and context
     """
+    # v4.1: Concise prompt for Qwen3.5 — reduces output tokens by ~60%
+    if concise:
+        prompt = STAGE2_USER_CONCISE
+        if context:
+            context_text = _build_context_text(context)
+            prompt = f"{prompt}\n\n{context_text}"
+        return prompt
+
     template = STAGE2_PROMPTS.get(image_type, STAGE2_PROMPTS["other"])
     schema = get_schema(image_type)
 
