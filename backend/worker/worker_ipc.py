@@ -424,50 +424,60 @@ class WorkerIPCController:
                         elapsed = data.get('elapsed_s', 0)
                         _emit_log(f"Batch complete — {data.get('count', 0)} files in {elapsed}s ({fpm:.1f}/min)", "success")
 
-                # Phase-level batch processing
-                results = daemon.process_batch_phased(
-                    jobs, progress_callback=_batch_progress_cb
-                )
-
-                # Batch result summary (always visible)
-                n_ok = sum(1 for r in results if len(r) > 1 and r[1])
-                n_fail = sum(1 for r in results if len(r) > 1 and not r[1])
-                # Collect first 3 error reasons for quick diagnosis
-                fail_samples = []
-                for r in results:
-                    if len(r) > 2 and not r[1] and r[2]:
-                        fail_samples.append(r[2][:80])
-                    if len(fail_samples) >= 3:
-                        break
-                fail_hint = f" | errors: {fail_samples}" if fail_samples else ""
-                if not results and len(jobs) > 0:
-                    fail_hint = " | WARNING: 0 results returned from process_batch_phased()"
-                _emit_log(
-                    f"[BATCH] {len(results)} results: {n_ok} ok, {n_fail} fail "
-                    f"(mode={daemon.processing_mode}, jobs_given={len(jobs)}){fail_hint}",
-                    "info" if n_fail == 0 else "warning"
-                )
-
-                # Emit individual job_done events (for compatibility)
-                for result_tuple in results:
-                    # Backward-compatible: 2-tuple (job_id, success) or 3-tuple (job_id, success, error)
-                    job_id = result_tuple[0]
-                    success = result_tuple[1]
-                    error_reason = result_tuple[2] if len(result_tuple) > 2 else ""
-                    job_info = next(
-                        (j for j in jobs if j.get("job_id") == job_id), {}
+                # Phase-level batch processing (crash-safe: skip batch on error, continue loop)
+                try:
+                    results = daemon.process_batch_phased(
+                        jobs, progress_callback=_batch_progress_cb
                     )
-                    file_name = job_info.get("file_path", "").rsplit("/", 1)[-1]
-                    _emit({
-                        "event": "job_done",
-                        "job_id": job_id,
-                        "file_path": job_info.get("file_path"),
-                        "file_name": file_name,
-                        "success": success,
-                    })
-                    if not success:
-                        detail = f": {error_reason}" if error_reason else ": (no error detail — check server logs)"
-                        _emit_log(f"Failed: {file_name}{detail}", "error")
+
+                    # Batch result summary (always visible)
+                    n_ok = sum(1 for r in results if len(r) > 1 and r[1])
+                    n_fail = sum(1 for r in results if len(r) > 1 and not r[1])
+                    fail_samples = []
+                    for r in results:
+                        if len(r) > 2 and not r[1] and r[2]:
+                            fail_samples.append(r[2][:80])
+                        if len(fail_samples) >= 3:
+                            break
+                    fail_hint = f" | errors: {fail_samples}" if fail_samples else ""
+                    if not results and len(jobs) > 0:
+                        fail_hint = " | WARNING: 0 results from process_batch_phased()"
+                    _emit_log(
+                        f"[BATCH] {len(results)} results: {n_ok} ok, {n_fail} fail "
+                        f"(mode={daemon.processing_mode}, jobs_given={len(jobs)}){fail_hint}",
+                        "info" if n_fail == 0 else "warning"
+                    )
+
+                    # Emit individual job_done events
+                    for result_tuple in results:
+                        job_id = result_tuple[0]
+                        success = result_tuple[1]
+                        error_reason = result_tuple[2] if len(result_tuple) > 2 else ""
+                        job_info = next(
+                            (j for j in jobs if j.get("job_id") == job_id), {}
+                        )
+                        file_name = job_info.get("file_path", "").rsplit("/", 1)[-1]
+                        _emit({
+                            "event": "job_done",
+                            "job_id": job_id,
+                            "file_path": job_info.get("file_path"),
+                            "file_name": file_name,
+                            "success": success,
+                        })
+                        if not success:
+                            detail = f": {error_reason}" if error_reason else ": (no error detail)"
+                            _emit_log(f"Failed: {file_name}{detail}", "error")
+
+                except Exception as batch_err:
+                    import traceback
+                    _emit_log(f"[BATCH-CRASH] {batch_err}", "error")
+                    _emit_log(f"[BATCH-CRASH] {traceback.format_exc()}", "error")
+                    # Fail all jobs in this batch so server releases them
+                    for j in jobs:
+                        try:
+                            daemon.uploader.fail_job(j["job_id"], f"Batch crash: {batch_err}")
+                        except Exception:
+                            pass
 
                 # Record job activity to reset idle timeout timer
                 daemon._state_machine.record_job_activity()
@@ -479,7 +489,7 @@ class WorkerIPCController:
                     _emit_log(f"Resting {rest_s}s after batch", "info")
                     time.sleep(rest_s)
                 else:
-                    time.sleep(1)  # Brief default pause
+                    time.sleep(1)
 
         except Exception as e:
             import traceback
