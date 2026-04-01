@@ -338,7 +338,7 @@ class WorkerIPCController:
                 if daemon.processing_mode != old_claim_mode:
                     _emit({"event": "processing_mode", "mode": daemon.processing_mode})
                     _emit_log(
-                        f"[MODE] {old_claim_mode} → {daemon.processing_mode}",
+                        f"[MODE] {old_claim_mode} -> {daemon.processing_mode}",
                         "info"
                     )
 
