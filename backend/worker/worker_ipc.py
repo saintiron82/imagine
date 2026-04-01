@@ -355,7 +355,13 @@ class WorkerIPCController:
                     time.sleep(poll_interval)
                     continue
 
-                _emit_log(f"[CLAIM] Got {len(jobs)} jobs — batch processing", "info")
+                # Log claim diagnostics: mode, vision_data presence
+                has_vision = sum(1 for j in jobs if j.get("vision_data"))
+                _emit_log(
+                    f"[CLAIM] Got {len(jobs)} jobs (mode={daemon.processing_mode}, "
+                    f"with_vision_data={has_vision}/{len(jobs)})",
+                    "info"
+                )
                 _emit({"event": "batch_start", "batch_size": len(jobs)})
 
                 # Start background downloads for this batch
@@ -428,7 +434,7 @@ class WorkerIPCController:
                         "success": success,
                     })
                     if not success:
-                        detail = f": {error_reason}" if error_reason else ""
+                        detail = f": {error_reason}" if error_reason else ": (no error detail — check server logs)"
                         _emit_log(f"Failed: {file_name}{detail}", "error")
 
                 # Record job activity to reset idle timeout timer
