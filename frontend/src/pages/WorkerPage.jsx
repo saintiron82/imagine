@@ -559,11 +559,29 @@ function WorkerPage({ appMode }) {
   const [logs, setLogs] = useState([]);
   const [currentJobs, setCurrentJobs] = useState([]);
   const [processingMode, setProcessingMode] = useState(null); // mc/vv/mv/parse/idle
-  const [myCompleted, setMyCompleted] = useState(0);
-  const [myFailed, setMyFailed] = useState(0);
   const [currentFile, setCurrentFile] = useState('');
   const [batchProgress, setBatchProgress] = useState(null); // {index, count, phase}
   const startTimeRef = useRef(null);
+  // Phase-level stats (persist throughout session)
+  const [phaseStats, setPhaseStats] = useState({
+    mc:  { completed: 0, failed: 0, startTime: null },
+    vv:  { completed: 0, failed: 0, startTime: null },
+    mv:  { completed: 0, failed: 0, startTime: null },
+    parse: { completed: 0, failed: 0, startTime: null },
+  });
+  const recordPhaseResult = useCallback((phase, success) => {
+    setPhaseStats(prev => {
+      const p = prev[phase] || { completed: 0, failed: 0, startTime: null };
+      return {
+        ...prev,
+        [phase]: {
+          completed: p.completed + (success ? 1 : 0),
+          failed: p.failed + (success ? 0 : 1),
+          startTime: p.startTime || Date.now(),
+        }
+      };
+    });
+  }, []);
   // logEndRef removed — using logContainerRef for scroll
   const pollRef = useRef(null);
 
@@ -625,21 +643,18 @@ function WorkerPage({ appMode }) {
     };
     const onLog = (data) => addLog(data.message, data.type);
     const onJobDone = (data) => {
-      if (data.success !== false) {
-        setMyCompleted(prev => prev + 1);
-      } else {
-        setMyFailed(prev => prev + 1);
-      }
+      // Phase from current processingMode (job_done doesn't carry phase)
+      const phase = processingMode || 'mc';
+      recordPhaseResult(phase, data.success !== false);
       setCurrentFile('');
     };
     const onBatchFileDone = (data) => {
       setCurrentFile(data.file_name || '');
       setBatchProgress({ index: data.index, count: data.count, phase: data.phase });
-      if (data.success) {
-        setMyCompleted(prev => prev + 1);
-      } else {
-        setMyFailed(prev => prev + 1);
-      }
+      // Map batch phase names to standard mode names
+      const phaseMap = { 'vision': 'mc', 'embed_vv': 'vv', 'embed_mv': 'mv', 'parse': 'parse' };
+      const phase = phaseMap[data.phase] || data.phase || processingMode || 'mc';
+      recordPhaseResult(phase, !!data.success);
     };
     const onMode = (data) => {
       setProcessingMode(data.mode);
@@ -658,7 +673,7 @@ function WorkerPage({ appMode }) {
       w.offBatchFileDone?.();
       w.offProcessingMode?.();
     };
-  }, [addLog]);
+  }, [addLog, recordPhaseResult, processingMode]);
 
   const handleStart = async () => {
     if (isElectron && window.electron?.worker?.start) {
@@ -683,8 +698,12 @@ function WorkerPage({ appMode }) {
           return;
         }
         setWorkerStatus('running');
-        setMyCompleted(0);
-        setMyFailed(0);
+        setPhaseStats({
+          mc:  { completed: 0, failed: 0, startTime: null },
+          vv:  { completed: 0, failed: 0, startTime: null },
+          mv:  { completed: 0, failed: 0, startTime: null },
+          parse: { completed: 0, failed: 0, startTime: null },
+        });
         startTimeRef.current = Date.now();
         addLog(t('worker.connecting'), 'info');
       } catch (e) {
@@ -846,39 +865,44 @@ function WorkerPage({ appMode }) {
               { id: 'mv', label: 'MV', color: 'green', icon: '📝' },
             ].map(phase => {
               const isActive = processingMode === phase.id;
+              const ps = phaseStats[phase.id] || { completed: 0, failed: 0, startTime: null };
+              const hasWork = ps.completed > 0 || ps.failed > 0;
+              const fpm = ps.startTime && ps.completed > 0
+                ? (ps.completed / ((Date.now() - ps.startTime) / 60000)).toFixed(1)
+                : null;
               return (
                 <div
                   key={phase.id}
                   className={`rounded-lg p-3 border transition-all ${
                     isActive
                       ? `border-${phase.color}-500/60 bg-${phase.color}-500/10 ring-1 ring-${phase.color}-500/30`
-                      : 'border-gray-700/50 bg-gray-900/30 opacity-40'
+                      : hasWork
+                        ? `border-${phase.color}-500/30 bg-${phase.color}-500/5`
+                        : 'border-gray-700/50 bg-gray-900/30 opacity-40'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <span className={`text-xs font-bold ${isActive ? `text-${phase.color}-300` : 'text-gray-500'}`}>
+                    <span className={`text-xs font-bold ${isActive || hasWork ? `text-${phase.color}-300` : 'text-gray-500'}`}>
                       {phase.icon} {phase.label}
                     </span>
                     {isActive && (
                       <span className={`w-2 h-2 rounded-full bg-${phase.color}-400 animate-pulse`} />
                     )}
                   </div>
-                  {isActive ? (
+                  {hasWork ? (
                     <div>
                       <div className="flex items-baseline gap-2">
-                        <span className="text-lg font-bold text-white">{myCompleted}</span>
-                        {myFailed > 0 && (
-                          <span className="text-xs text-red-400">+{myFailed} fail</span>
+                        <span className="text-lg font-bold text-white">{ps.completed}</span>
+                        {ps.failed > 0 && (
+                          <span className="text-xs text-red-400">+{ps.failed} fail</span>
                         )}
                       </div>
                       <div className="text-[11px] text-gray-400 mt-0.5">
-                        {startTimeRef.current && myCompleted > 0
-                          ? `${(myCompleted / ((Date.now() - startTimeRef.current) / 60000)).toFixed(1)} files/min`
-                          : 'starting...'}
+                        {fpm ? `${fpm} files/min` : isActive ? 'starting...' : ''}
                       </div>
                     </div>
                   ) : (
-                    <div className="text-xs text-gray-600">—</div>
+                    <div className="text-xs text-gray-600">{isActive ? 'starting...' : '\u2014'}</div>
                   )}
                 </div>
               );
