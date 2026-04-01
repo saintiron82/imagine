@@ -10,7 +10,7 @@ import {
   updateWorkerConfig,
   getAutoProcessing, updateAutoProcessing,
   getEmbeddedWorker,
-  runRecoveryScan,
+  forceRetryFailedJobs,
 } from '../../api/admin';
 import { getJobStats } from '../../api/worker';
 import {
@@ -453,13 +453,14 @@ export default function WorkersPanel() {
                       <div className="text-gray-600">|</div>
                       <div className="text-center cursor-pointer" onClick={async () => {
                         try {
-                          const data = await runRecoveryScan();
-                          alert(data.repaired_files > 0
-                            ? `Recovery: ${data.repaired_files} files → ${data.recovery_wrs_created || 0} WR(s) created`
-                            : 'No recoverable files found');
+                          const data = await forceRetryFailedJobs();
+                          const retried = data.retried || 0;
+                          alert(retried > 0
+                            ? `${retried}개 실패 파일을 작업큐에 재등록했습니다`
+                            : '복구 가능한 실패 파일이 없습니다');
                           load();
-                        } catch (e) { alert('Recovery scan failed'); }
-                      }} title="Click to retry failed files">
+                        } catch (e) { alert('복구 실패'); }
+                      }} title="실패 파일을 작업큐에 재등록">
                         <div className="text-2xl font-bold font-mono text-red-400 hover:text-red-300">{failed}</div>
                         <div className="text-[10px] text-red-400/60 hover:text-red-300">실패 (복구)</div>
                       </div>
