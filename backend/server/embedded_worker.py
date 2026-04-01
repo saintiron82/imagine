@@ -91,10 +91,10 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         mode = _qm._decide_worker_mode(_worker_daemon.session_id)
                         _worker_daemon.processing_mode = mode
                         # Phase-appropriate batch size (time-based)
-                        chunk = _qm.get_phase_batch_size(mode) if mode not in ("idle", "full") else 5
+                        chunk = _qm.get_phase_batch_size(mode) if mode != "idle" else 5
                     except Exception:
-                        _worker_daemon.processing_mode = "full"
-                        mode = "full"
+                        _worker_daemon.processing_mode = "mc"
+                        mode = "mc"
                         chunk = 5
 
                     if mode == "idle":

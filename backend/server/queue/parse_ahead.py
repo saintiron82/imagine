@@ -29,7 +29,7 @@ class ParseAheadPool(BaseAheadPool):
 
     def __init__(self, db):
         super().__init__(db)
-        self._processing_mode = "parse_only"  # Fixed: parse + thumbnail only
+        self._processing_mode = "parse"  # Fixed: parse + thumbnail only
         # Backfill (DINOv2) removed — AI models are worker-only
         self._last_retry_reset = 0.0  # Timestamp of last parse_status='failed' reset
         logger.info("ParseAheadPool initialized (parse + thumbnail only)")
@@ -196,7 +196,7 @@ class ParseAheadPool(BaseAheadPool):
         """Run one cycle of pre-parse buffer filling.
 
         Calculates target based on worker demand, finds unparsed jobs,
-        and pre-parses them (Phase P only, with VV in mc_only mode).
+        and pre-parses them (Phase P only).
 
         Returns True if at least one job was parsed.
         """

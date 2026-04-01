@@ -233,11 +233,11 @@ def complete_mc(
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """MC-only worker: store vision fields, mark MC done (not fully complete).
+    """MC worker: store vision fields, mark MC done (not fully complete).
 
-    In mc_only mode, workers only generate MC (VLM caption/tags).
-    Server handles VV (ParseAhead) and MV (EmbedAhead) separately.
-    Job stays in 'processing' status until EmbedAhead completes MV.
+    In mc mode, workers only generate MC (VLM caption/tags).
+    VV and MV are handled by separate workers.
+    Job stays in 'processing' status until all phases complete.
     """
     cursor = db.conn.cursor()
     cursor.execute(
@@ -318,10 +318,10 @@ def complete_embed(
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """Embed-only worker: store VV+MV vectors and mark job complete.
+    """Embed worker: store VV+MV vectors and mark job complete.
 
-    In embed_only mode, workers only generate VV (SigLIP2) and MV (Qwen3-Embedding).
-    Server or full workers handle Parse + Vision (MC). Job must already have vision=true.
+    Workers generate VV (SigLIP2) and MV (Qwen3-Embedding) vectors.
+    MC workers handle Vision (MC). Job must already have vision=true.
     """
     cursor = db.conn.cursor()
     cursor.execute(
@@ -596,7 +596,7 @@ def complete_parse(
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """parse_thumb worker: upload parse results (metadata + thumbnail) to server.
+    """Parse worker: upload parse results (metadata + thumbnail) to server.
 
     Worker has downloaded the file, parsed it, generated a thumbnail,
     and now uploads the results. Server stores metadata in files table

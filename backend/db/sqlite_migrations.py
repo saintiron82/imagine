@@ -313,7 +313,7 @@ def migrate_worker_resources_json(db):
 
 
 def migrate_mc_completed_at(db):
-    """Add mc_completed_at column to job_queue for mc_only throughput measurement."""
+    """Add mc_completed_at column to job_queue for MC throughput measurement."""
     if not db._table_exists('job_queue'):
         return
     try:

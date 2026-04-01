@@ -58,13 +58,13 @@ def _infer_error_code(error_message: str) -> str | None:
 def get_processing_mode() -> str:
     """Get effective processing mode for worker claim logic.
 
-    Tollgate architecture: server always does Phase P only (parse_only).
+    Tollgate architecture: server always does Phase P (parse).
     AI processing (V→VV→MV) is handled by workers (embedded or external).
     """
-    return "parse_only"
+    return "parse"
 
 
-_server_pool_mode = "parse_only"
+_server_pool_mode = "parse"
 
 def set_server_pool_mode(mode: str):
     """Set the current server pool mode (called by _recalculate_server_pools)."""
@@ -75,26 +75,26 @@ def _get_actual_server_mode() -> str:
     """Get the actual server processing mode.
 
     Priority:
-    1. Embedded worker running → "full" (server handles all phases)
+    1. Embedded worker running → "auto" (server assigns mc/vv/mv individually)
     2. ParseAheadPool mode from _recalculate_server_pools
     3. Config-based inference (for IPC subprocess)
     """
-    # Server auto-processing running = full pipeline
+    # Server auto-processing running = auto mode (assigns phases individually)
     ew = _get_embedded_worker_status()
     if ew.get("running"):
-        return "full"
+        return "auto"
 
-    if _server_pool_mode != "parse_only":
+    if _server_pool_mode != "parse":
         return _server_pool_mode
 
     # Fallback: config-based (IPC subprocess)
     try:
         from backend.utils.config import get_config
         if get_config().get("server.auto_processing.enabled", False):
-            return "full"
+            return "auto"
     except Exception:
         pass
-    return "parse_only"
+    return "parse"
 
 
 def _get_embedded_worker_status() -> dict:
@@ -212,12 +212,6 @@ class JobQueueManager:
         "mv": """AND json_extract(jq.phase_completed, '$.vision') = 1
                  AND (json_extract(jq.phase_completed, '$.mv') IS NULL
                       OR json_extract(jq.phase_completed, '$.mv') = 0)""",
-        "full": """AND (json_extract(jq.phase_completed, '$.vision') IS NULL
-                       OR json_extract(jq.phase_completed, '$.vision') = 0
-                       OR json_extract(jq.phase_completed, '$.vv') IS NULL
-                       OR json_extract(jq.phase_completed, '$.vv') = 0
-                       OR json_extract(jq.phase_completed, '$.mv') IS NULL
-                       OR json_extract(jq.phase_completed, '$.mv') = 0)""",
     }
 
     def _get_worker_gpu_class(self, worker_session_id: int) -> tuple:
@@ -511,9 +505,9 @@ class JobQueueManager:
                LEFT JOIN work_requests wr ON jq.work_request_id = wr.id"""
 
         # --- Determine processing mode ---
-        processing_mode = self._get_processing_mode()  # server default: "parse_only"
+        processing_mode = self._get_processing_mode()  # server default: "parse"
         gpu_class = "cpu"
-        phase_filter = self._PHASE_FILTERS["full"]  # fallback
+        phase_filter = self._PHASE_FILTERS["mc"]  # fallback: default to mc phase
 
         if worker_session_id is not None:
             cursor.execute(
@@ -549,7 +543,7 @@ class JobQueueManager:
             if mode_override:
                 # Admin pinned mode — use directly
                 processing_mode = mode_override
-                phase_filter = self._PHASE_FILTERS.get(mode_override, self._PHASE_FILTERS["full"])
+                phase_filter = self._PHASE_FILTERS.get(mode_override, self._PHASE_FILTERS["mc"])
             else:
                 # ── Claimable-based instant decision ──
                 gpu_class, _, assigned_mode, phase_job_count, is_embedded = \
@@ -1462,9 +1456,9 @@ class JobQueueManager:
                 parse_throughput = round((pt[0] or 0) / 5.0, 1)
             if "mc" in active_modes:
                 mc_throughput = round((pt[1] or 0) / 5.0, 1)
-            if "vv" in active_modes or "embed_only" in active_modes:
+            if "vv" in active_modes:
                 vv_throughput = round((pt[2] or 0) / 5.0, 1)
-            if "mv" in active_modes or "embed_only" in active_modes:
+            if "mv" in active_modes:
                 mv_throughput = round((pt[3] or 0) / 5.0, 1)
         except Exception:
             pass

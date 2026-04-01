@@ -27,8 +27,8 @@ def determine_worker_mode(resources: Dict[str, Any], server_tier: str) -> str:
         "mv"  - CPU만 → MV(Qwen3-Embedding 의미 벡터)만 반복
 
     Note:
-        "full" 모드는 서버 임베디드 워커 전용. 외부 워커에는 배정하지 않는다.
-        임베디드 워커는 모든 외부 워커가 안 하는 나머지 phase를 보완 처리한다.
+        임베디드 워커는 서버에서 _decide_worker_mode()로 mc/vv/mv 중 하나를 배정받는다.
+        외부 워커도 동일한 로직으로 개별 phase를 배정받는다.
 
     Decision logic:
         1. gpu_type이 None (CPU-only) → "mv" (텍스트 임베딩은 CPU로도 가능)

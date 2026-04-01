@@ -94,7 +94,7 @@ async def startup():
     _startup_integrity_check()
 
     # Parse-ahead pool: pre-parse pending jobs in background (server-side Phase P)
-    # In mc_only mode, ParseAhead also handles Phase VV (SigLIP2)
+    # ParseAhead handles Phase P (parse + thumbnail)
     try:
         from backend.utils.config import get_config
         cfg = get_config()
@@ -146,16 +146,16 @@ async def startup():
 
     # EmbedAheadPool removed — tollgate architecture: server does Phase P only,
     # workers (embedded or external) handle V→VV→MV.
-    logger.info("Processing mode: parse_only (tollgate architecture)")
+    logger.info("Processing mode: parse (tollgate architecture)")
 
     # Embedded worker: NEVER auto-start on server boot.
     # User must log in and explicitly enable via Admin UI.
     # Config "auto_processing.enabled" is remembered but only applied after login.
     logger.info("Embedded worker: standby (waiting for user login)")
 
-    # ParseAheadPool is always parse_only — no mode recalculation needed
+    # ParseAheadPool is always parse-only — no mode recalculation needed
     from backend.server.queue.manager import set_server_pool_mode
-    set_server_pool_mode("parse_only")
+    set_server_pool_mode("parse")
 
     # Heartbeat watchdog: periodically detect dead workers and reclaim their jobs
     try:

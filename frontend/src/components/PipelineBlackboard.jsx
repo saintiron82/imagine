@@ -74,7 +74,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
   const parsePending = s.ready_pending ?? 0;
   const parsing = s.parse_ahead_parsing ?? 0;
   const buffer = s.parse_ahead_parsed ?? 0;
-  const serverMode = s.server_mode || 'parse_only';
+  const serverMode = s.server_mode || 'parse';
   const ew = s.embedded_worker || {};
   const ewRunning = ew.running || false;
   const ewCompleted = ew.jobs_completed || 0;
@@ -181,7 +181,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
       throughput: w.throughput,
       batchSize: w.batch_capacity || 0,
       state: w.current_phase ? 'active' : 'idle',
-      mode: w.processing_mode_override || 'full',
+      mode: w.processing_mode_override || 'idle',
     }));
   // Embedded worker as WorkerLine-compatible object
   const embeddedWorker = {
@@ -192,7 +192,7 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
     batchSize: ew.batch_capacity || 5,
     enabled: ewRunning,
     state: ewRunning ? 'active' : 'offline',  // running = active (phase may be null between batches)
-    mode: 'full',
+    mode: 'mc',
     phaseCounts: ew.phase_counts || null,
     isEmbedded: true,
   };
@@ -544,21 +544,27 @@ function PhasePill({ label, active, current, done, color = 'teal' }) {
 
 // Which phases each mode can execute
 const MODE_PHASES = {
-  full:       ['vision', 'embed_vv', 'embed_mv'],
-  mc_only:    ['vision'],
-  embed_only: ['embed_vv', 'embed_mv'],
+  mc:  ['vision'],
+  vv:  ['embed_vv'],
+  mv:  ['embed_mv'],
+  idle: [],
+  parse: [],
 };
 
 const MODE_LABELS = {
-  full: 'FULL',
-  mc_only: 'MC ONLY',
-  embed_only: 'EMBED',
+  mc: 'MC',
+  vv: 'VV',
+  mv: 'MV',
+  idle: 'IDLE',
+  parse: 'PARSE',
 };
 
 const MODE_COLORS = {
-  full: 'text-gray-500',
-  mc_only: 'text-amber-500',
-  embed_only: 'text-orange-500',
+  mc: 'text-amber-500',
+  vv: 'text-cyan-500',
+  mv: 'text-emerald-500',
+  idle: 'text-gray-500',
+  parse: 'text-teal-500',
 };
 
 function WorkerLine({ worker, t }) {
@@ -566,8 +572,8 @@ function WorkerLine({ worker, t }) {
   const isEnabled = w.enabled !== false && w.state !== 'offline';  // ON/OFF
   const isProcessing = w.state === 'active' || !!w.phase;          // doing work right now
   const phaseIdx = w.phase ? PHASES.indexOf(w.phase) : -1;
-  const mode = w.mode || 'full';
-  const enabledPhases = MODE_PHASES[mode] || MODE_PHASES.full;
+  const mode = w.mode || 'idle';
+  const enabledPhases = MODE_PHASES[mode] || MODE_PHASES.idle;
 
   return (
     <div className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${isProcessing ? 'border-gray-600/30 bg-gray-800/20' : isEnabled ? 'border-gray-700/25 bg-gray-800/15' : 'border-gray-800/20 bg-gray-900/10'}`}>

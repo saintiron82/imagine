@@ -84,10 +84,10 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
     pending_command TEXT DEFAULT NULL
         CHECK (pending_command IN (NULL, 'stop', 'pause', 'block')),
     -- Dynamic mode tracking (server-assigned, reset on phase switch)
-    assigned_mode TEXT DEFAULT NULL,              -- Current server-assigned mode (mc/vv/mv/parse_thumb)
+    assigned_mode TEXT DEFAULT NULL,              -- Current server-assigned mode (mc/vv/mv/parse)
     phase_job_count INTEGER DEFAULT 0,            -- Jobs completed in current assigned_mode (reset on switch)
     -- Per-worker overrides (admin-controlled, applied via heartbeat)
-    processing_mode_override TEXT DEFAULT NULL,   -- NULL = global config, "full" | "mc_only"
+    processing_mode_override TEXT DEFAULT NULL,   -- NULL = global config, "mc" | "vv" | "mv"
     batch_capacity_override INTEGER DEFAULT NULL,  -- NULL = worker default
     -- Timestamps
     connected_at TEXT DEFAULT (datetime('now')),
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
     assigned_at TEXT,
     started_at TEXT,
     completed_at TEXT,
-    mc_completed_at TEXT,          -- MC(Vision) completion timestamp (mc_only throughput measurement)
+    mc_completed_at TEXT,          -- MC(Vision) completion timestamp (MC throughput measurement)
 
     -- Phase-level tracking (JSON)
     phase_completed TEXT DEFAULT '{"parse":false,"vision":false,"embed":false}',

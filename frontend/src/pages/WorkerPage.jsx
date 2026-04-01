@@ -558,7 +558,7 @@ function WorkerPage({ appMode }) {
   const [workerStatus, setWorkerStatus] = useState('idle'); // idle | running | stopping | error
   const [logs, setLogs] = useState([]);
   const [currentJobs, setCurrentJobs] = useState([]);
-  const [processingMode, setProcessingMode] = useState(null); // mc/vv/mv/parse_thumb/full
+  const [processingMode, setProcessingMode] = useState(null); // mc/vv/mv/parse/idle
   const [myCompleted, setMyCompleted] = useState(0);
   const [myFailed, setMyFailed] = useState(0);
   const [currentFile, setCurrentFile] = useState('');
@@ -840,7 +840,7 @@ function WorkerPage({ appMode }) {
           {/* Phase cards — all phases shown, active one highlighted */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
-              { id: 'parse_thumb', label: 'Parse', color: 'sky', icon: '📄' },
+              { id: 'parse', label: 'Parse', color: 'sky', icon: '📄' },
               { id: 'mc', label: 'MC', color: 'purple', icon: '🧠' },
               { id: 'vv', label: 'VV', color: 'blue', icon: '👁' },
               { id: 'mv', label: 'MV', color: 'green', icon: '📝' },

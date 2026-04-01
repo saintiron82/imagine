@@ -151,7 +151,7 @@ class ResultUploader:
             return False
 
     def complete_parse(self, job_id: int, metadata: dict, thumbnail_path: str = None) -> bool:
-        """parse_thumb mode: upload parse results + thumbnail to server."""
+        """Parse mode: upload parse results + thumbnail to server."""
         try:
             # 1. Upload metadata
             resp = self._request('patch',

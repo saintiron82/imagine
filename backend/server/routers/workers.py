@@ -54,7 +54,7 @@ class WorkerConfigUpdate(BaseModel):
 
 class AutoProcessingUpdate(BaseModel):
     enabled: Optional[bool] = None
-    mode: Optional[str] = None  # "full" | "parse_vv" | "parse_only"
+    mode: Optional[str] = None  # "auto" | "mc" | "vv" | "mv"
     rest_after_batch_s: Optional[int] = None
     batch_size: Optional[int] = None
     verbose_log: Optional[bool] = None
@@ -80,7 +80,7 @@ def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
     서버의 현재 활성 tier를 기준으로 워커가 VLM을 실행할 수 있는지 판단한다.
 
     Returns:
-        "full" or "embed_only", or None if detection fails
+        "mc" or "vv", or None if detection fails
     """
     try:
         from backend.utils.gpu_detect import determine_worker_mode
@@ -95,7 +95,7 @@ def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     """Recalculate server pool state when workers connect/disconnect.
 
-    ParseAheadPool is always parse_only (PSD parse + thumbnail).
+    ParseAheadPool is always parse-only (PSD parse + thumbnail).
     Embedded worker auto-management based on worker availability.
     """
     if not app:
@@ -109,12 +109,12 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
            WHERE status = 'online' AND worker_name != ?""",
         (BUILTIN_WORKER_NAME,),
     )
-    worker_modes = [r[0] or "full" for r in cursor.fetchall()]
+    worker_modes = [r[0] or "mc" for r in cursor.fetchall()]
     has_workers = len(worker_modes) > 0
 
     # Publish mode for stats API
     from backend.server.queue.manager import set_server_pool_mode
-    set_server_pool_mode("parse_only")
+    set_server_pool_mode("parse")
 
     # Seed demand for ParseAheadPool when workers are active
     if has_workers:
@@ -129,7 +129,7 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     from backend.server.embedded_worker import get_status as _ew_get_status
     ew_running = _ew_get_status().get("running", False)
 
-    logger.debug(f"Pool recalculated: mode=parse_only, workers={len(worker_modes)}, ew={ew_running}")
+    logger.debug(f"Pool recalculated: mode=parse, workers={len(worker_modes)}, ew={ew_running}")
 
 
 # ── Builtin worker virtual session ──────────────────────────
@@ -190,7 +190,7 @@ def _ensure_builtin_worker_session(db: "SQLiteDB") -> int:
         """INSERT INTO worker_sessions
            (user_id, worker_name, hostname, batch_capacity, status,
             processing_mode_override, connected_at, last_heartbeat)
-           VALUES (?, ?, 'server (built-in)', ?, 'online', 'full', ?, ?)""",
+           VALUES (?, ?, 'server (built-in)', ?, 'online', NULL, ?, ?)""",
         (admin_user_id, BUILTIN_WORKER_NAME, batch_size, now, now),
     )
     session_id = cursor.lastrowid
@@ -270,8 +270,8 @@ def worker_connect(
     _recalculate_server_pools(request.app, db)
 
     # Determine effective processing mode:
-    # - mc_only global → ALL workers get mc_only (regardless of GPU capability)
-    # - auto global → workers get their auto-detected mode (full/embed_only)
+    # - mc global → ALL workers get mc
+    # - auto global → workers get their auto-detected mode (mc/vv/mv)
     cursor.execute(
         "SELECT processing_mode_override, batch_capacity_override FROM worker_sessions WHERE id = ?",
         (session_id,)
@@ -280,8 +280,8 @@ def worker_connect(
     effective_batch = (ov[1] if ov and ov[1] else None) or req.batch_capacity
 
     global_mode = _get_global_processing_mode()
-    if global_mode == "mc_only":
-        processing_mode = "mc_only"
+    if global_mode == "mc":
+        processing_mode = "mc"
     elif ov and ov[0]:
         processing_mode = ov[0]  # Admin manual override
     else:
@@ -291,7 +291,7 @@ def worker_connect(
             _qm = JobQueueManager(db)
             processing_mode = _qm._decide_worker_mode(session_id)
         except Exception:
-            processing_mode = "full"
+            processing_mode = "mc"
 
     logger.info(f"Worker connected: {req.worker_name} (session={session_id}, user={user['username']}, mode={processing_mode})")
     return {
@@ -393,9 +393,8 @@ def worker_heartbeat(
 
     # Determine effective processing mode:
     # - builtin_worker → stop external workers
-    # - mc_only global → ALL workers get mc_only
-    # - parse_only global → ALL workers get full (V+VV+MV)
-    # - auto global → workers get their auto-detected mode (full/embed_only)
+    # - mc global → ALL workers get mc
+    # - auto global → workers get their auto-detected mode (mc/vv/mv)
     global_mode = _get_global_processing_mode()
 
     # In builtin_worker mode, tell external workers to stop
@@ -413,14 +412,14 @@ def worker_heartbeat(
                 "command": "stop",
                 "pool_hint": 0,
                 "batch_hint": 0,
-                "processing_mode": "full",
+                "processing_mode": "mc",
             }
 
     mode_reason = None
     queue_snapshot = None
-    if global_mode == "mc_only":
-        processing_mode = "mc_only"
-        mode_reason = "global_mode=mc_only"
+    if global_mode == "mc":
+        processing_mode = "mc"
+        mode_reason = "global_mode=mc"
     elif mode_override:
         processing_mode = mode_override  # Admin manual override
         mode_reason = f"admin_override={mode_override}"
@@ -433,7 +432,7 @@ def worker_heartbeat(
             mode_reason = mode_diag.get("reason", "unknown")
             queue_snapshot = mode_diag.get("pending", {})
         except Exception:
-            processing_mode = "full"
+            processing_mode = "mc"
             mode_reason = "fallback (decision error)"
     # For embedded worker: read live batch_size from config (Admin UI changes)
     cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
@@ -494,7 +493,7 @@ def worker_disconnect(
     db.conn.commit()
     logger.info(f"Worker disconnected: session={req.session_id}, reclaimed {reclaimed} jobs")
 
-    # Recalculate pools after worker leaves (may deactivate EmbedAhead if last mc_only)
+    # Recalculate pools after worker leaves
     _recalculate_server_pools(request.app, db)
 
     return {"ok": True, "reclaimed": reclaimed}
@@ -779,7 +778,7 @@ def admin_update_auto_processing(
 
     if req.enabled is not None:
         cfg.save_user_setting("server.auto_processing.enabled", req.enabled)
-    if req.mode is not None and req.mode in ("full", "parse_vv", "parse_only"):
+    if req.mode is not None and req.mode in ("auto", "mc", "vv", "mv"):
         cfg.save_user_setting("server.auto_processing.mode", req.mode)
     if req.rest_after_batch_s is not None:
         cfg.save_user_setting("server.auto_processing.rest_after_batch_s", req.rest_after_batch_s)
@@ -795,7 +794,7 @@ def admin_update_auto_processing(
         except Exception:
             pass
 
-    # ParseAheadPool is always parse_only — no mode switching needed
+    # ParseAheadPool is always parse-only — no mode switching needed
     if req.mode is not None:
         from backend.server.queue.manager import set_server_pool_mode
         set_server_pool_mode(req.mode)
