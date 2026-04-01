@@ -204,8 +204,8 @@ const SettingsModal = ({ onClose, onScanFolder, isBusy }) => {
                                         {/* Tier Descriptions */}
                                         <div className="text-xs text-gray-500 bg-gray-800/50 rounded p-2 space-y-1">
                                             <div><span className="font-bold">Standard:</span> Moondream2, SigLIP-base (fastest, ~6GB)</div>
-                                            <div><span className="font-bold">Pro:</span> Qwen3-VL-4B, SigLIP-so400m (balanced, 8-16GB)</div>
-                                            <div><span className="font-bold">Ultra:</span> Qwen3-VL-8B, SigLIP-giant (highest quality, 20GB+)</div>
+                                            <div><span className="font-bold">Pro:</span> Qwen3.5-9B, SigLIP-so400m (balanced, 8-16GB)</div>
+                                            <div><span className="font-bold">Ultra:</span> Qwen3.5-9B, SigLIP-giant (highest quality, 20GB+)</div>
                                         </div>
                                     </div>
                                 </div>

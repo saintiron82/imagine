@@ -22,17 +22,17 @@ from typing import List, Dict
 TIER_MODELS: Dict[str, List[str]] = {
     "standard": [
         # Standard tier: Lightweight models for ≤6GB VRAM
-        "qwen3-vl:2b",              # VLM: Qwen3-VL-2B-Instruct
+        "qwen3.5:4b",               # VLM: Qwen3.5-4B (native multimodal)
         "qwen3-embedding:0.6b",     # MV model: Qwen3-Embedding-0.6B
     ],
     "pro": [
         # Pro tier: Balanced models for 8-16GB VRAM
-        "qwen3-vl:4b",              # VLM: Qwen3-VL-4B-Instruct
+        "qwen3.5:9b",               # VLM: Qwen3.5-9B (native multimodal)
         "qwen3-embedding:0.6b",     # MV model: Qwen3-Embedding-0.6B
     ],
     "ultra": [
         # Ultra tier: High-end models for ≥20GB VRAM
-        "qwen3-vl:8b",              # VLM: Qwen3-VL-8B-Instruct
+        "qwen3.5:9b",               # VLM: Qwen3.5-9B (native multimodal)
         "qwen3-embedding:8b",       # MV model: Qwen3-Embedding-8B
     ]
 }
@@ -110,7 +110,7 @@ def pull_model(model: str, dry_run: bool = False) -> bool:
     Ollama 모델 다운로드.
 
     Args:
-        model: 모델 이름 (예: qwen3-vl:4b)
+        model: 모델 이름 (예: qwen3.5:9b)
         dry_run: True면 실제 다운로드 없이 시뮬레이션
 
     Returns:

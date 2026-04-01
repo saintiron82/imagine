@@ -24,7 +24,7 @@ from backend.utils.tier_config import get_active_tier
 def _is_hf_model_id(model_id: str) -> bool:
     if not model_id:
         return False
-    # Ollama tags are usually like "qwen3-vl:8b"
+    # Ollama tags are usually like "qwen3.5:9b"
     return "/" in model_id and ":" not in model_id
 
 

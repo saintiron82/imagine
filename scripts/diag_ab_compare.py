@@ -21,7 +21,7 @@ from transformers import AutoProcessor, AutoModelForImageTextToText
 from backend.utils.tier_config import get_active_tier
 
 _, tier_cfg = get_active_tier()
-model_id = tier_cfg.get("vlm", {}).get("model", "Qwen/Qwen3-VL-4B-Instruct")
+model_id = tier_cfg.get("vlm", {}).get("model", "Qwen/Qwen3.5-9B")
 print(f"Model: {model_id}\n")
 
 processor = AutoProcessor.from_pretrained(model_id)

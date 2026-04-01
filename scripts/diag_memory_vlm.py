@@ -1,5 +1,5 @@
 """
-VLM Memory Diagnostic: Qwen3-VL vs Pipeline memory attribution.
+VLM Memory Diagnostic: Qwen3.5 vs Pipeline memory attribution.
 
 Measures MPS driver allocation at each step to determine whether
 memory growth comes from model inference or pipeline accumulation.
@@ -46,7 +46,7 @@ from transformers import AutoProcessor, AutoModelForImageTextToText
 from backend.utils.tier_config import get_active_tier
 
 _, tier_cfg = get_active_tier()
-model_id = tier_cfg.get("vlm", {}).get("model", "Qwen/Qwen3-VL-4B-Instruct")
+model_id = tier_cfg.get("vlm", {}).get("model", "Qwen/Qwen3.5-9B")
 print(f"\nModel: {model_id}")
 
 processor = AutoProcessor.from_pretrained(model_id)
