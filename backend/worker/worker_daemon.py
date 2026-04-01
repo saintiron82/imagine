@@ -1441,26 +1441,30 @@ class WorkerDaemon:
 
         VLM is NOT unloaded between batches — stays resident for speed.
         """
+        def _log(msg, level="info"):
+            getattr(logger, level)(msg)
+            _notify(progress_callback, "diag_log", {"message": msg, "level": level})
+
+        _log(f"[MC] === START batch: {len(jobs)} jobs ===")
+
         # Build job contexts — all jobs should be pre-parsed in mc_only mode
         contexts = []
         for job in jobs:
             ctx = _JobContext(job=job)
             file_id = job.get("file_id")
+            file_name = Path(job.get("file_path", "")).name
             ctx.metadata = dict(job.get("metadata", {}))
 
             # Resolve thumbnail for VLM processing
             server_thumb = job.get("thumb_path")
 
             if self.storage_mode == "shared_fs":
-                # Shared FS: use server-generated thumbnail directly
                 if server_thumb and Path(server_thumb).exists():
                     ctx.thumb_path = server_thumb
                 else:
-                    # Fallback: try original file path
                     ctx.local_path = self._get_downloaded(job)
                     ctx.thumb_path = ctx.local_path
             else:
-                # server_upload: download thumbnail from server
                 if server_thumb and Path(server_thumb).exists():
                     ctx.thumb_path = server_thumb
                 else:
@@ -1468,25 +1472,31 @@ class WorkerDaemon:
                     if thumb:
                         ctx.thumb_path = thumb
                     else:
-                        # Fallback: try full file download
                         ctx.local_path = self._get_downloaded(job)
                         ctx.thumb_path = ctx.local_path
 
             if not ctx.thumb_path or not Path(ctx.thumb_path).exists():
                 ctx.failed = True
                 ctx.error_code = "THUMB_MISSING"
-                ctx.error = f"MC-only: thumbnail unavailable: {job['file_path']}"
-                logger.error(f"[RESOLVE] [THUMB_MISSING] {ctx.error}")
+                ctx.error = f"THUMB_MISSING: {file_name} (server_thumb={server_thumb})"
+                _log(f"[MC] FAIL {file_name}: {ctx.error}", "warning")
                 _notify(progress_callback, "file_error", {
-                    "file_name": Path(job["file_path"]).name,
-                    "error": ctx.error,
+                    "file_name": file_name, "error": ctx.error,
                 })
             contexts.append(ctx)
 
         active = [c for c in contexts if not c.failed]
+        _log(f"[MC] Validation: {len(active)} active, {len(contexts)-len(active)} failed / {len(contexts)} total")
 
         # ── Phase V: Vision/MC only (VLM, 1-by-1) ──
         elapsed_vision = self._run_vision_phase(active, progress_callback)
+        _log(f"[MC] Vision phase done: {elapsed_vision:.1f}s")
+
+        # Check how many succeeded in vision
+        vision_ok = sum(1 for c in active if not c.failed and c.vision_fields)
+        vision_fail = len(active) - vision_ok
+        if vision_fail > 0:
+            _log(f"[MC] Vision results: {vision_ok} ok, {vision_fail} fail", "warning")
 
         # NOTE: VLM is NOT unloaded in mc_only mode — stays resident
 
@@ -1495,19 +1505,32 @@ class WorkerDaemon:
         results = []
         for ctx in contexts:
             job_id = ctx.job["job_id"]
+            file_name = Path(ctx.job.get("file_path", "")).name
 
             if ctx.failed:
-                self.uploader.fail_job(job_id, ctx.error, ctx.error_code)
+                err = ctx.error or "unknown error"
+                self.uploader.fail_job(job_id, err, ctx.error_code)
                 self._total_failed += 1
-                results.append((job_id, False))
+                results.append((job_id, False, err))
+                continue
+
+            if not ctx.vision_fields:
+                err = f"VLM returned empty vision_fields for {file_name}"
+                _log(f"[MC] FAIL {file_name}: {err}", "warning")
+                self.uploader.fail_job(job_id, err, "VLM_EMPTY")
+                self._total_failed += 1
+                results.append((job_id, False, err))
                 continue
 
             success = self.uploader.complete_mc(job_id, ctx.vision_fields)
             if success:
                 self._total_completed += 1
+                results.append((job_id, True, ""))
             else:
+                err = f"MC upload failed for {file_name}"
+                _log(f"[MC] FAIL {file_name}: {err}", "warning")
                 self._total_failed += 1
-            results.append((job_id, success))
+                results.append((job_id, False, err))
 
             _notify(progress_callback, "job_upload", {
                 "job_id": job_id, "success": success,
@@ -1552,6 +1575,11 @@ class WorkerDaemon:
         Worker only runs Phase VV (SigLIP2) + Phase MV (Qwen3-Embedding).
         mc_caption for MV comes from job["vision_data"] (pre-fetched by server from files table).
         """
+        def _log(msg, level="info"):
+            getattr(logger, level)(msg)
+            _notify(progress_callback, "diag_log", {"message": msg, "level": level})
+
+        _log(f"[EMBED] === START batch: {len(jobs)} jobs ===")
         t_batch = time.perf_counter()
 
         # Build job contexts — all jobs should have thumbnail from ParseAhead
@@ -1608,6 +1636,7 @@ class WorkerDaemon:
             contexts.append(ctx)
 
         active = [c for c in contexts if not c.failed]
+        _log(f"[EMBED] Validation: {len(active)} active, {len(contexts)-len(active)} failed / {len(contexts)} total")
 
         # ── Phase VV: SigLIP2 batch ──────────────────────────
         t_vv = time.perf_counter()
@@ -2102,24 +2131,24 @@ class WorkerDaemon:
 
         _notify = lambda cb, evt, data: cb(evt, data) if cb else None
 
+        def _log(msg, level="info"):
+            getattr(logger, level)(msg)
+            _notify(progress_callback, "diag_log", {"message": msg, "level": level})
+
+        _log(f"[MV] === START batch: {len(jobs)} jobs ===")
+
         results = []
         active = []
         for job in jobs:
             vision_data = job.get("vision_data", {})
             mc_caption = vision_data.get("mc_caption", "")
             if not mc_caption:
-                err = (
-                    "MODE_MISMATCH: mv worker received job without vision_data.mc_caption "
-                    "(server assigned a non-MV-ready job)"
-                )
                 file_name = Path(job.get("file_path", "")).name
-                logger.warning(f"[MV-ONLY] {file_name}: {err}")
+                err = f"NO_MC_CAPTION: vision_data keys={list(vision_data.keys())}"
+                _log(f"[MV] FAIL {file_name}: {err}", "warning")
                 self.uploader.fail_job(job["job_id"], err, "MODE_MISMATCH")
                 results.append((job["job_id"], False, err))
-                _notify(progress_callback, "file_error", {
-                    "file_name": file_name,
-                    "error": err,
-                })
+                _notify(progress_callback, "file_error", {"file_name": file_name, "error": err})
                 continue
             ai_tags = vision_data.get("ai_tags", [])
             if isinstance(ai_tags, str):
@@ -2134,12 +2163,17 @@ class WorkerDaemon:
             })
             active.append({"job": job, "text": doc_text})
 
+        _log(f"[MV] Validation: {len(active)} active, {len(results)} failed / {len(jobs)} total")
+
         if not active:
+            _log(f"[MV] ALL jobs failed validation", "warning")
             return results
 
         _notify(progress_callback, "batch_phase_start", {"phase": "embed_mv", "count": len(active)})
 
+        _log("[MV] Loading Qwen3-Embedding...")
         provider = get_text_embedding_provider()
+        _log(f"[MV] Embedding provider ready: {type(provider).__name__}")
         mv_batch = 16
         for i in range(0, len(active), mv_batch):
             chunk = active[i:i + mv_batch]
@@ -2164,11 +2198,17 @@ class WorkerDaemon:
                     failed_items.append((job_id, False, err))
 
             if batch_items:
+                _log(f"[MV] Uploading {len(batch_items)} vectors...")
                 batch_results = self.uploader.complete_mv_batch(
                     [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
                 )
+                n_ok = sum(1 for r in batch_results if r)
+                _log(f"[MV] Upload: {n_ok}/{len(batch_results)} ok")
                 for it, ok in zip(batch_items, batch_results):
                     err = "" if ok else "MV upload failed (server rejected)"
+                    if not ok:
+                        fn = Path(it["ctx"]["job"].get("file_path", "")).name
+                        _log(f"[MV] UPLOAD FAIL {fn}", "warning")
                     results.append((it["job_id"], ok, err))
                     if ok:
                         self._phase_counts["mv"] += 1
