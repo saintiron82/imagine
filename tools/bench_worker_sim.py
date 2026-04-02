@@ -114,9 +114,13 @@ class PhaseResult:
     model_unload_s: float = 0.0
     gc_s: float = 0.0
     total_s: float = 0.0
-    # Derived
+    # Derived (actual = includes load/unload/GC)
     per_file_s: float = 0.0
     files_per_min: float = 0.0
+    # Theoretical (pure inference only, no load/unload/GC)
+    theoretical_per_file_s: float = 0.0
+    theoretical_files_per_min: float = 0.0
+    overhead_s: float = 0.0           # model_load + unload + gc
     # Memory
     mem_before_load: MemSnapshot = field(default_factory=MemSnapshot)
     mem_after_load: MemSnapshot = field(default_factory=MemSnapshot)
@@ -342,9 +346,13 @@ def bench_mc_phase(images: list, config: dict) -> PhaseResult:
 
     result.mem_peak = peak
     result.mem_after_unload = snapshot_memory()
-    result.total_s = result.model_load_s + result.processing_s + result.model_unload_s + result.gc_s
+    result.overhead_s = result.model_load_s + result.model_unload_s + result.gc_s
+    result.total_s = result.processing_s + result.overhead_s
     result.per_file_s = result.total_s / n if n > 0 else 0
     result.files_per_min = 60.0 / result.per_file_s if result.per_file_s > 0 else 0
+    # Theoretical = pure inference (model stays resident, no load/unload/GC)
+    result.theoretical_per_file_s = result.processing_s / n if n > 0 else 0
+    result.theoretical_files_per_min = 60.0 / result.theoretical_per_file_s if result.theoretical_per_file_s > 0 else 0
 
     return result
 
@@ -410,9 +418,13 @@ def bench_vv_phase(images: list, config: dict) -> PhaseResult:
 
     result.mem_peak = peak
     result.mem_after_unload = snapshot_memory()
-    result.total_s = result.model_load_s + result.processing_s + result.model_unload_s + result.gc_s
+    result.overhead_s = result.model_load_s + result.model_unload_s + result.gc_s
+    result.total_s = result.processing_s + result.overhead_s
     result.per_file_s = result.total_s / n if n > 0 else 0
     result.files_per_min = 60.0 / result.per_file_s if result.per_file_s > 0 else 0
+    # Theoretical = pure inference (model stays resident, no load/unload/GC)
+    result.theoretical_per_file_s = result.processing_s / n if n > 0 else 0
+    result.theoretical_files_per_min = 60.0 / result.theoretical_per_file_s if result.theoretical_per_file_s > 0 else 0
 
     return result
 
@@ -488,9 +500,13 @@ def bench_mv_phase(images: list, config: dict) -> PhaseResult:
 
     result.mem_peak = peak
     result.mem_after_unload = snapshot_memory()
-    result.total_s = result.model_load_s + result.processing_s + result.model_unload_s + result.gc_s
+    result.overhead_s = result.model_load_s + result.model_unload_s + result.gc_s
+    result.total_s = result.processing_s + result.overhead_s
     result.per_file_s = result.total_s / n if n > 0 else 0
     result.files_per_min = 60.0 / result.per_file_s if result.per_file_s > 0 else 0
+    # Theoretical = pure inference (model stays resident, no load/unload/GC)
+    result.theoretical_per_file_s = result.processing_s / n if n > 0 else 0
+    result.theoretical_files_per_min = 60.0 / result.theoretical_per_file_s if result.theoretical_per_file_s > 0 else 0
 
     return result
 
@@ -592,25 +608,26 @@ def format_console_table(phase_results: Dict[str, PhaseResult],
     print(sep)
 
     # Phase table
-    header = f"  {'Phase':<10} {'Model':<28} {'Load':>6} {'Proc':>7} {'Unload':>7} {'Total':>7} {'f/min':>7}"
+    header = (f"  {'Phase':<10} {'Model':<24} {'Load':>5} {'Proc':>6} "
+              f"{'Total':>6} {'f/min':>6} {'Theo':>7}")
     print(header)
-    print(f"  {'─'*10} {'─'*28} {'─'*6} {'─'*7} {'─'*7} {'─'*7} {'─'*7}")
+    print(f"  {'─'*10} {'─'*24} {'─'*5} {'─'*6} {'─'*6} {'─'*6} {'─'*7}")
 
     for name, pr in phase_results.items():
-        model_short = pr.model_id[:28] if pr.model_id else "?"
+        model_short = pr.model_id[:24] if pr.model_id else "?"
         print(
-            f"  {pr.phase:<10} {model_short:<28} "
-            f"{pr.model_load_s:>5.1f}s {pr.processing_s:>6.1f}s "
-            f"{pr.model_unload_s:>6.1f}s {pr.total_s:>6.1f}s "
-            f"{pr.files_per_min:>6.1f}"
+            f"  {pr.phase:<10} {model_short:<24} "
+            f"{pr.model_load_s:>4.1f}s {pr.processing_s:>5.1f}s "
+            f"{pr.total_s:>5.1f}s {pr.files_per_min:>5.1f} "
+            f"{pr.theoretical_files_per_min:>6.1f}"
         )
 
     if pipeline:
         print(f"  {'─'*10}")
         print(
-            f"  {'Full':.<10} {'(V->VV->MV via PhaseRunner)':<28} "
-            f"{'':>6} {'':>7} {'':>7} "
-            f"{pipeline.total_s:>6.1f}s {pipeline.files_per_min:>6.1f}"
+            f"  {'Full':.<10} {'(V->VV->MV PhaseRunner)':<24} "
+            f"{'':>5} {'':>6} "
+            f"{pipeline.total_s:>5.1f}s {pipeline.files_per_min:>5.1f}"
         )
 
     # Memory table
@@ -667,6 +684,9 @@ def build_json_report(phase_results: Dict[str, PhaseResult],
             "total_s": round(pr.total_s, 2),
             "per_file_s": round(pr.per_file_s, 3),
             "files_per_min": round(pr.files_per_min, 1),
+            "theoretical_per_file_s": round(pr.theoretical_per_file_s, 3),
+            "theoretical_files_per_min": round(pr.theoretical_files_per_min, 1),
+            "overhead_s": round(pr.overhead_s, 2),
             "success": pr.success_count,
             "failed": pr.fail_count,
             "memory": {
@@ -677,6 +697,7 @@ def build_json_report(phase_results: Dict[str, PhaseResult],
             },
         }
         report["reference_speeds"][f"{name}_files_per_min"] = round(pr.files_per_min, 1)
+        report["reference_speeds"][f"{name}_theoretical_fpm"] = round(pr.theoretical_files_per_min, 1)
 
     if pipeline:
         report["full_pipeline"] = {
@@ -833,6 +854,10 @@ def run_ab_comparison(args):
          _ab_delta(a.per_file_s, b.per_file_s, lower_better=True)),
         ("files/min", f"{a.files_per_min:.1f}", f"{b.files_per_min:.1f}",
          _ab_delta(a.files_per_min, b.files_per_min, lower_better=False)),
+        ("Theo f/min", f"{a.theoretical_files_per_min:.1f}", f"{b.theoretical_files_per_min:.1f}",
+         _ab_delta(a.theoretical_files_per_min, b.theoretical_files_per_min, lower_better=False)),
+        ("Overhead", f"{a.overhead_s:.1f}s", f"{b.overhead_s:.1f}s",
+         _ab_delta(a.overhead_s, b.overhead_s, lower_better=True)),
         ("Success", f"{a.success_count}/{a.file_count}",
          f"{b.success_count}/{b.file_count}", ""),
         ("Metal Peak", f"{a.mem_peak.metal_mb:.0f}MB", f"{b.mem_peak.metal_mb:.0f}MB",
@@ -856,28 +881,8 @@ def run_ab_comparison(args):
             "image_count": actual_count,
             "image_dir": str(args.images),
         },
-        "model_a": {
-            "model_id": a.model_id,
-            "model_load_s": round(a.model_load_s, 2),
-            "processing_s": round(a.processing_s, 2),
-            "per_file_s": round(a.per_file_s, 3),
-            "files_per_min": round(a.files_per_min, 1),
-            "success": a.success_count,
-            "failed": a.fail_count,
-            "metal_peak_mb": round(a.mem_peak.metal_mb, 0),
-            "rss_peak_mb": round(a.mem_peak.rss_mb, 0),
-        },
-        "model_b": {
-            "model_id": b.model_id,
-            "model_load_s": round(b.model_load_s, 2),
-            "processing_s": round(b.processing_s, 2),
-            "per_file_s": round(b.per_file_s, 3),
-            "files_per_min": round(b.files_per_min, 1),
-            "success": b.success_count,
-            "failed": b.fail_count,
-            "metal_peak_mb": round(b.mem_peak.metal_mb, 0),
-            "rss_peak_mb": round(b.mem_peak.rss_mb, 0),
-        },
+        "model_a": _ab_model_dict(a),
+        "model_b": _ab_model_dict(b),
     }
 
     output_path = args.output
@@ -891,6 +896,24 @@ def run_ab_comparison(args):
         json.dump(report, f, ensure_ascii=False, indent=2, default=str)
     print(f"\n  JSON saved: {output_path}")
     print()
+
+
+def _ab_model_dict(pr: PhaseResult) -> dict:
+    """Build JSON dict for one model in A/B comparison."""
+    return {
+        "model_id": pr.model_id,
+        "model_load_s": round(pr.model_load_s, 2),
+        "processing_s": round(pr.processing_s, 2),
+        "per_file_s": round(pr.per_file_s, 3),
+        "files_per_min": round(pr.files_per_min, 1),
+        "theoretical_per_file_s": round(pr.theoretical_per_file_s, 3),
+        "theoretical_files_per_min": round(pr.theoretical_files_per_min, 1),
+        "overhead_s": round(pr.overhead_s, 2),
+        "success": pr.success_count,
+        "failed": pr.fail_count,
+        "metal_peak_mb": round(pr.mem_peak.metal_mb, 0),
+        "rss_peak_mb": round(pr.mem_peak.rss_mb, 0),
+    }
 
 
 def _ab_delta(val_a: float, val_b: float, lower_better: bool = True) -> str:

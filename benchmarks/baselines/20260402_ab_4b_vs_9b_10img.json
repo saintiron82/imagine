@@ -1,6 +1,6 @@
 {
   "type": "ab_comparison",
-  "timestamp": "2026-04-02T12:11:26.457285",
+  "timestamp": "2026-04-02T13:28:57.031892",
   "system": {
     "platform": "Darwin",
     "machine": "arm64",
@@ -16,24 +16,30 @@
   },
   "model_a": {
     "model_id": "mlx-community/Qwen3.5-4B-MLX-4bit",
-    "model_load_s": 3.54,
-    "processing_s": 40.24,
-    "per_file_s": 4.42,
-    "files_per_min": 13.6,
+    "model_load_s": 3.7,
+    "processing_s": 41.1,
+    "per_file_s": 4.523,
+    "files_per_min": 13.3,
+    "theoretical_per_file_s": 4.11,
+    "theoretical_files_per_min": 14.6,
+    "overhead_s": 4.13,
     "success": 10,
     "failed": 0,
     "metal_peak_mb": 2894.0,
-    "rss_peak_mb": 4076.0
+    "rss_peak_mb": 4075.0
   },
   "model_b": {
     "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
-    "model_load_s": 2.18,
-    "processing_s": 70.87,
-    "per_file_s": 7.347,
-    "files_per_min": 8.2,
+    "model_load_s": 1.91,
+    "processing_s": 73.51,
+    "per_file_s": 7.585,
+    "files_per_min": 7.9,
+    "theoretical_per_file_s": 7.351,
+    "theoretical_files_per_min": 8.2,
+    "overhead_s": 2.34,
     "success": 10,
     "failed": 0,
     "metal_peak_mb": 5675.0,
-    "rss_peak_mb": 6939.0
+    "rss_peak_mb": 6964.0
   }
 }

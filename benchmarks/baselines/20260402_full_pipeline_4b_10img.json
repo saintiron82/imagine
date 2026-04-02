@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-04-02T13:09:20.674972",
+  "timestamp": "2026-04-02T13:34:29.290394",
   "system": {
     "platform": "Darwin",
     "machine": "arm64",
@@ -17,41 +17,44 @@
     "max_edge": 768
   },
   "psd_preprocess": {
-    "total_s": 1.41,
-    "per_file_s": 0.141
+    "total_s": 1.48,
+    "per_file_s": 0.148
   },
   "phases": {
     "mc": {
       "model_id": "mlx-community/Qwen3.5-4B-MLX-4bit",
       "file_count": 10,
       "batch_size": 1,
-      "model_load_s": 3.56,
-      "processing_s": 40.23,
-      "model_unload_s": 0.11,
-      "gc_s": 0.38,
-      "total_s": 44.27,
-      "per_file_s": 4.427,
-      "files_per_min": 13.6,
+      "model_load_s": 3.67,
+      "processing_s": 40.53,
+      "model_unload_s": 0.07,
+      "gc_s": 0.35,
+      "total_s": 44.62,
+      "per_file_s": 4.462,
+      "files_per_min": 13.4,
+      "theoretical_per_file_s": 4.053,
+      "theoretical_files_per_min": 14.8,
+      "overhead_s": 4.09,
       "success": 10,
       "failed": 0,
       "memory": {
         "before_load": {
-          "rss_mb": 608.3,
+          "rss_mb": 608.2,
           "metal_mb": 0.0,
           "mps_mb": 0.0
         },
         "after_load": {
-          "rss_mb": 4081.8,
+          "rss_mb": 4036.4,
           "metal_mb": 2894.0,
           "mps_mb": 0.0
         },
         "peak": {
-          "rss_mb": 4122.1,
+          "rss_mb": 4079.2,
           "metal_mb": 2894.0,
           "mps_mb": 0.0
         },
         "after_unload": {
-          "rss_mb": 1202.5,
+          "rss_mb": 1160.7,
           "metal_mb": 0.0,
           "mps_mb": 0.0
         }
@@ -61,33 +64,36 @@
       "model_id": "google/siglip2-so400m-patch14-384",
       "file_count": 10,
       "batch_size": 8,
-      "model_load_s": 0.01,
-      "processing_s": 5.47,
-      "model_unload_s": 0.13,
+      "model_load_s": 0.0,
+      "processing_s": 3.98,
+      "model_unload_s": 0.12,
       "gc_s": 0.35,
-      "total_s": 5.95,
-      "per_file_s": 0.595,
-      "files_per_min": 100.8,
+      "total_s": 4.46,
+      "per_file_s": 0.446,
+      "files_per_min": 134.6,
+      "theoretical_per_file_s": 0.398,
+      "theoretical_files_per_min": 150.7,
+      "overhead_s": 0.48,
       "success": 10,
       "failed": 0,
       "memory": {
         "before_load": {
-          "rss_mb": 1202.5,
+          "rss_mb": 1160.7,
           "metal_mb": 0.0,
           "mps_mb": 0.0
         },
         "after_load": {
-          "rss_mb": 1202.6,
+          "rss_mb": 1160.7,
           "metal_mb": 0.0,
           "mps_mb": 0.0
         },
         "peak": {
-          "rss_mb": 1433.9,
+          "rss_mb": 1194.5,
           "metal_mb": 0.0,
           "mps_mb": 2166.8
         },
         "after_unload": {
-          "rss_mb": 1433.9,
+          "rss_mb": 1194.5,
           "metal_mb": 0.0,
           "mps_mb": 0.0
         }
@@ -98,32 +104,35 @@
       "file_count": 10,
       "batch_size": 16,
       "model_load_s": 0.0,
-      "processing_s": 2.18,
+      "processing_s": 1.89,
       "model_unload_s": 0.16,
       "gc_s": 0.35,
-      "total_s": 2.69,
-      "per_file_s": 0.269,
-      "files_per_min": 223.1,
+      "total_s": 2.39,
+      "per_file_s": 0.239,
+      "files_per_min": 250.6,
+      "theoretical_per_file_s": 0.189,
+      "theoretical_files_per_min": 318.3,
+      "overhead_s": 0.51,
       "success": 10,
       "failed": 0,
       "memory": {
         "before_load": {
-          "rss_mb": 1433.9,
+          "rss_mb": 1194.5,
           "metal_mb": 0.0,
           "mps_mb": 0.0
         },
         "after_load": {
-          "rss_mb": 1433.9,
+          "rss_mb": 1194.5,
           "metal_mb": 0.0,
           "mps_mb": 0.0
         },
         "peak": {
-          "rss_mb": 1826.3,
+          "rss_mb": 1614.9,
           "metal_mb": 0.0,
           "mps_mb": 1136.4
         },
         "after_unload": {
-          "rss_mb": 1795.7,
+          "rss_mb": 1585.2,
           "metal_mb": 0.0,
           "mps_mb": 0.0
         }
@@ -131,18 +140,21 @@
     }
   },
   "reference_speeds": {
-    "mc_files_per_min": 13.6,
-    "vv_files_per_min": 100.8,
-    "mv_files_per_min": 223.1,
-    "full_files_per_min": 7.2
+    "mc_files_per_min": 13.4,
+    "mc_theoretical_fpm": 14.8,
+    "vv_files_per_min": 134.6,
+    "vv_theoretical_fpm": 150.7,
+    "mv_files_per_min": 250.6,
+    "mv_theoretical_fpm": 318.3,
+    "full_files_per_min": 7.4
   },
   "full_pipeline": {
-    "total_s": 82.95,
-    "files_per_min": 7.2,
+    "total_s": 81.23,
+    "files_per_min": 7.4,
     "file_count": 10,
     "phases": {
       "vision": {
-        "processing_s": 65.45,
+        "processing_s": 65.25,
         "file_count": 10
       },
       "vv": {
