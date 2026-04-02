@@ -1,0 +1,39 @@
+{
+  "type": "ab_comparison",
+  "timestamp": "2026-04-02T12:11:26.457285",
+  "system": {
+    "platform": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.12",
+    "mlx_version": "0.30.6",
+    "torch_version": "2.11.0.dev20260216",
+    "transformers_version": "5.4.0",
+    "memory_gb": 32.0
+  },
+  "config": {
+    "image_count": 10,
+    "image_dir": "/Users/saintiron/imageDB/마캬베리즈무/실내소품"
+  },
+  "model_a": {
+    "model_id": "mlx-community/Qwen3.5-4B-MLX-4bit",
+    "model_load_s": 3.54,
+    "processing_s": 40.24,
+    "per_file_s": 4.42,
+    "files_per_min": 13.6,
+    "success": 10,
+    "failed": 0,
+    "metal_peak_mb": 2894.0,
+    "rss_peak_mb": 4076.0
+  },
+  "model_b": {
+    "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+    "model_load_s": 2.18,
+    "processing_s": 70.87,
+    "per_file_s": 7.347,
+    "files_per_min": 8.2,
+    "success": 10,
+    "failed": 0,
+    "metal_peak_mb": 5675.0,
+    "rss_peak_mb": 6939.0
+  }
+}

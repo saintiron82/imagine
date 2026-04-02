@@ -242,22 +242,36 @@ def load_psd_images(image_dir: Path, n: int, max_edge: int = 768):
 # ── Phase Benchmarks (Standalone) ───────────────────────────────────────
 
 
+def _create_vlm_direct(model_id: str):
+    """Create a VLM adapter directly, bypassing the factory.
+
+    Used for A/B model comparison where we need to control which model loads.
+    """
+    from backend.vision.mlx_adapter import MLXVisionAdapter
+    return MLXVisionAdapter(model=model_id)
+
+
 def bench_mc_phase(images: list, config: dict) -> PhaseResult:
     """Benchmark MC (VLM) phase standalone with full model lifecycle."""
     from backend.pipeline.model_manager import ModelManager
 
     n = len(images)
+    vlm_override = config.get("vlm_model")
     result = PhaseResult(phase="mc", model_id="", file_count=n, batch_size=1)
-
-    models = ModelManager()
 
     # 1. Before load
     result.mem_before_load = snapshot_memory()
 
-    # 2. Load VLM
+    # 2. Load VLM (direct or via factory)
     t_load = time.perf_counter()
+    models = None
     try:
-        analyzer = models.get_vlm()
+        if vlm_override:
+            analyzer = _create_vlm_direct(vlm_override)
+            analyzer._load_model()
+        else:
+            models = ModelManager()
+            analyzer = models.get_vlm()
     except Exception as e:
         print(f"    VLM load failed: {e}")
         result.model_id = "FAILED"
@@ -302,7 +316,11 @@ def bench_mc_phase(images: list, config: dict) -> PhaseResult:
 
     # 5. Unload
     t_unload = time.perf_counter()
-    models.unload_vlm()
+    if models:
+        models.unload_vlm()
+    elif hasattr(analyzer, 'unload_model'):
+        analyzer.unload_model()
+        del analyzer
     result.model_unload_s = time.perf_counter() - t_unload
 
     # 6. GC
@@ -743,6 +761,151 @@ def compare_results(current: dict, previous: dict):
     print()
 
 
+# ── A/B Comparison ──────────────────────────────────────────────────────
+
+
+def run_ab_comparison(args):
+    """Run MC phase with two models back-to-back on identical images."""
+    model_a, model_b = args.ab
+    n = args.count
+
+    print()
+    print("=" * 78)
+    print("  A/B Model Comparison (MC Phase)")
+    print("=" * 78)
+    print(f"  Model A: {model_a}")
+    print(f"  Model B: {model_b}")
+    print(f"  Images:  {n}")
+    print()
+
+    # Load images once
+    images, preprocess_s, tmp_dir = load_psd_images(args.images, n, args.max_edge)
+    actual_count = len(images)
+    print(f"  Loaded {actual_count} images in {preprocess_s:.1f}s")
+    print()
+
+    results = {}
+    for label, model_id in [("A", model_a), ("B", model_b)]:
+        print(f"  ── Model {label}: {model_id}")
+        config = {
+            "vlm_model": model_id,
+            "count": actual_count,
+            "image_dir": args.images,
+        }
+        pr = bench_mc_phase(images, config)
+        results[label] = pr
+        print(f"     => {pr.files_per_min:.1f} files/min, "
+              f"{pr.success_count}/{actual_count} ok, "
+              f"Metal peak {pr.mem_peak.metal_mb:.0f}MB")
+        print()
+
+    # Close images + cleanup
+    for img, _, _ in images:
+        try:
+            img.close()
+        except Exception:
+            pass
+    try:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    # Comparison table
+    a = results["A"]
+    b = results["B"]
+    sep = "─" * 78
+
+    print()
+    print("=" * 78)
+    print("  A/B Comparison Results")
+    print("=" * 78)
+    print()
+
+    rows = [
+        ("Model", a.model_id, b.model_id, ""),
+        ("Files", str(a.file_count), str(b.file_count), ""),
+        ("Model Load", f"{a.model_load_s:.1f}s", f"{b.model_load_s:.1f}s",
+         _ab_delta(a.model_load_s, b.model_load_s, lower_better=True)),
+        ("Processing", f"{a.processing_s:.1f}s", f"{b.processing_s:.1f}s",
+         _ab_delta(a.processing_s, b.processing_s, lower_better=True)),
+        ("Per File", f"{a.per_file_s:.2f}s", f"{b.per_file_s:.2f}s",
+         _ab_delta(a.per_file_s, b.per_file_s, lower_better=True)),
+        ("files/min", f"{a.files_per_min:.1f}", f"{b.files_per_min:.1f}",
+         _ab_delta(a.files_per_min, b.files_per_min, lower_better=False)),
+        ("Success", f"{a.success_count}/{a.file_count}",
+         f"{b.success_count}/{b.file_count}", ""),
+        ("Metal Peak", f"{a.mem_peak.metal_mb:.0f}MB", f"{b.mem_peak.metal_mb:.0f}MB",
+         _ab_delta(a.mem_peak.metal_mb, b.mem_peak.metal_mb, lower_better=True)),
+        ("RSS Peak", f"{a.mem_peak.rss_mb:.0f}MB", f"{b.mem_peak.rss_mb:.0f}MB",
+         _ab_delta(a.mem_peak.rss_mb, b.mem_peak.rss_mb, lower_better=True)),
+    ]
+
+    print(f"  {'Metric':<16} {'Model A':>20} {'Model B':>20} {'Delta':>16}")
+    print(f"  {'─'*16} {'─'*20} {'─'*20} {'─'*16}")
+    for label, va, vb, delta in rows:
+        print(f"  {label:<16} {va:>20} {vb:>20} {delta:>16}")
+    print(sep)
+
+    # Save JSON
+    report = {
+        "type": "ab_comparison",
+        "timestamp": datetime.now().isoformat(),
+        "system": _get_system_info(),
+        "config": {
+            "image_count": actual_count,
+            "image_dir": str(args.images),
+        },
+        "model_a": {
+            "model_id": a.model_id,
+            "model_load_s": round(a.model_load_s, 2),
+            "processing_s": round(a.processing_s, 2),
+            "per_file_s": round(a.per_file_s, 3),
+            "files_per_min": round(a.files_per_min, 1),
+            "success": a.success_count,
+            "failed": a.fail_count,
+            "metal_peak_mb": round(a.mem_peak.metal_mb, 0),
+            "rss_peak_mb": round(a.mem_peak.rss_mb, 0),
+        },
+        "model_b": {
+            "model_id": b.model_id,
+            "model_load_s": round(b.model_load_s, 2),
+            "processing_s": round(b.processing_s, 2),
+            "per_file_s": round(b.per_file_s, 3),
+            "files_per_min": round(b.files_per_min, 1),
+            "success": b.success_count,
+            "failed": b.fail_count,
+            "metal_peak_mb": round(b.mem_peak.metal_mb, 0),
+            "rss_peak_mb": round(b.mem_peak.rss_mb, 0),
+        },
+    }
+
+    output_path = args.output
+    if output_path is None:
+        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = DEFAULT_OUTPUT_DIR / f"ab_comparison_{ts}.json"
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2, default=str)
+    print(f"\n  JSON saved: {output_path}")
+    print()
+
+
+def _ab_delta(val_a: float, val_b: float, lower_better: bool = True) -> str:
+    """Format delta for A/B comparison."""
+    if val_a <= 0 or val_b <= 0:
+        return ""
+    diff = val_b - val_a
+    pct = diff / val_a * 100
+    sign = "+" if diff >= 0 else ""
+    # Determine if this is better or worse
+    is_better = (diff < 0) if lower_better else (diff > 0)
+    marker = "<" if is_better else ">"
+    return f"{sign}{pct:.1f}% {marker}"
+
+
 # ── Main ────────────────────────────────────────────────────────────────
 
 
@@ -766,9 +929,18 @@ def main():
                         help="Skip full pipeline benchmark")
     parser.add_argument("--output", type=Path, default=None,
                         help="JSON output file path")
+    parser.add_argument("--vlm-model", type=str, default=None,
+                        help="Override VLM model ID (e.g. mlx-community/Qwen3.5-4B-MLX-4bit)")
+    parser.add_argument("--ab", nargs=2, metavar=("MODEL_A", "MODEL_B"),
+                        help="A/B comparison: run MC phase with two models back-to-back")
     parser.add_argument("--compare", type=Path, default=None,
                         help="Path to previous JSON result for comparison")
     args = parser.parse_args()
+
+    # ── A/B Comparison Mode ──
+    if args.ab:
+        run_ab_comparison(args)
+        return
 
     phases = [p.strip() for p in args.phases.split(",")]
     config = {
@@ -778,6 +950,8 @@ def main():
         "vv_batch": args.vv_batch,
         "mv_batch": args.mv_batch,
     }
+    if args.vlm_model:
+        config["vlm_model"] = args.vlm_model
 
     print()
     print("=" * 78)
