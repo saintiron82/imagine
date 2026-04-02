@@ -7,7 +7,7 @@
 | **발견 경로** | Qwen3.5 VLM 전환 테스트 중 발견 |
 | **환경** | Mac M5 32GB + Windows RTX 3060Ti, Electron 앱, 멀티워커(2대) |
 | **심각도** | 중간 — 기능 동작에는 영향 없으나 사용자에게 잘못된 정보 표시 |
-| **상태** | 6/7 Resolved (BUG-001 임시 수정) |
+| **상태** | **All Resolved** (2026-04-03) |
 
 ---
 
@@ -120,5 +120,5 @@ INFO 레벨 로그가 에러로 카운팅되어 StatusBar에 "오류 15개" 표�
 | 3 | BUG-004 남은시간 부정확 | 높음 | **Resolved** | `ba57e12` bottleneck Phase 기준 ETA |
 | 4 | BUG-002 카운터 불일치 | 중간 | **Resolved** | 2026-04-03 phase_counts 세션 단위 |
 | 5 | BUG-005 활성 Phase 표시 | 중간 | **Resolved** | 2026-04-03 임베디드 메모리 오버라이드 |
-| 6 | BUG-001 구조화 로그 전환 | 중간 | 임시 수정 | `390027f` 네거티브 패턴 (근본 해결 미적용) |
+| 6 | BUG-001 구조화 로그 전환 | 중간 | **Resolved** | 2026-04-03 JSON structured logging (json_log_formatter.py) |
 | 7 | BUG-006 워커 식별 | 낮음 | **Resolved** | 2026-04-03 _log_prefix 추가 |
