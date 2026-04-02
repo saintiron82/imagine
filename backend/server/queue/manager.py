@@ -885,6 +885,16 @@ class JobQueueManager:
                 "UPDATE job_queue SET phase_completed = ?, mc_completed_at = ?, updated_at = ? WHERE id = ?",
                 (json.dumps(pc), now, now, job_id)
             )
+        elif db_key == "vv":
+            cursor.execute(
+                "UPDATE job_queue SET phase_completed = ?, vv_completed_at = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(pc), now, now, job_id)
+            )
+        elif db_key == "mv":
+            cursor.execute(
+                "UPDATE job_queue SET phase_completed = ?, mv_completed_at = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(pc), now, now, job_id)
+            )
         else:
             cursor.execute(
                 "UPDATE job_queue SET phase_completed = ?, updated_at = ? WHERE id = ?",
@@ -1461,11 +1471,11 @@ class JobQueueManager:
                                      AND mc_completed_at IS NOT NULL
                                      AND datetime(mc_completed_at) > datetime('now', '-5 minutes')) AS mc_5m,
                     COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') = 1
-                                     AND updated_at IS NOT NULL
-                                     AND datetime(updated_at) > datetime('now', '-5 minutes')) AS vv_5m,
+                                     AND vv_completed_at IS NOT NULL
+                                     AND datetime(vv_completed_at) > datetime('now', '-5 minutes')) AS vv_5m,
                     COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mv') = 1
-                                     AND updated_at IS NOT NULL
-                                     AND datetime(updated_at) > datetime('now', '-5 minutes')) AS mv_5m
+                                     AND mv_completed_at IS NOT NULL
+                                     AND datetime(mv_completed_at) > datetime('now', '-5 minutes')) AS mv_5m
                 FROM job_queue WHERE archived_at IS NULL
             """)
             pt = cursor.fetchone()
@@ -1699,15 +1709,20 @@ class JobQueueManager:
         except Exception:
             pipeline = {}
 
+        # Queue-based completed: total files minus remaining jobs in queue
+        # (completed jobs are DELETEd from job_queue, so we infer from absence)
+        queue_remaining = pending + assigned + processing + status_counts.get("failed", 0)
+        queue_completed = max(0, total_files - queue_remaining)
+
         return {
             "total": total_files,  # all files in DB
             "total_files": total_files,
-            "complete_files": complete_files,
+            "complete_files": complete_files,  # files-based: 3-axis complete
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": complete_files,    # actual DB: mc+vv+mv all present
-            "failed": failed_files,         # actual DB: processing_status='failed'
+            "completed": queue_completed,       # queue-based: inferred from remaining
+            "failed": status_counts.get("failed", 0),  # queue-based: actual failed jobs
             "db_completed": complete_files, # files-based: total DB inventory (for reference)
             "db_failed": failed_files,      # files-based: total DB failures
             "throughput": throughput,

@@ -823,6 +823,19 @@ def migrate_phase_completed_vv_mv(db):
         logger.info(f"Synced {fixed} jobs vv/mv with actual DB data")
 
 
+def migrate_vv_mv_completed_at(db):
+    """Add vv_completed_at and mv_completed_at columns for phase-level throughput measurement."""
+    cursor = db.conn.cursor()
+    for col in ("vv_completed_at", "mv_completed_at"):
+        try:
+            cursor.execute(f"SELECT {col} FROM job_queue LIMIT 1")
+        except Exception:
+            logger.info(f"Migrating: adding {col} to job_queue...")
+            cursor.execute(f"ALTER TABLE job_queue ADD COLUMN {col} TEXT")
+            db.conn.commit()
+            logger.info(f"Added {col}")
+
+
 # ──────────────────────────────────────────────────────────────
 # Orchestrator: run all migrations in order
 # ──────────────────────────────────────────────────────────────
@@ -869,6 +882,7 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_search_logs(db)
         migrate_worker_phase_tracking(db)
         migrate_phase_completed_vv_mv(db)
+        migrate_vv_mv_completed_at(db)
     else:
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()

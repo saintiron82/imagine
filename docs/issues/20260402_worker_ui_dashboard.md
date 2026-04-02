@@ -7,7 +7,7 @@
 | **발견 경로** | Qwen3.5 VLM 전환 테스트 중 발견 |
 | **환경** | Mac M5 32GB + Windows RTX 3060Ti, Electron 앱, 멀티워커(2대) |
 | **심각도** | 중간 — 기능 동작에는 영향 없으나 사용자에게 잘못된 정보 표시 |
-| **상태** | **All Resolved** (2026-04-03) |
+| **상태** | 7/8 Resolved (BUG-008 Open) |
 
 ---
 
@@ -106,6 +106,21 @@ INFO 레벨 로그가 에러로 카운팅되어 StatusBar에 "오류 15개" 표�
 | **원인** | 각 Phase 대기 카운터가 동일 시점의 스냅샷이 아닌 독립 쿼리로 집계되어, 파일이 Phase 간 이동하는 중에 중복 카운팅되거나, Download 카운터가 별도 소스(WebDAV download-ahead pool)에서 읽혀서 큐 외부 상태를 포함 |
 | **근본 해결** | Phase별 카운터를 **단일 트랜잭션 스냅샷**으로 조회. `SELECT status, phase_completed, COUNT(*) FROM job_queue GROUP BY ...`를 한 번에 실행하여 모든 카운터가 동일 시점 기준이 되도록. Download 대기 수는 큐 외부(WebDAV pool)가 아닌 `job_queue`의 `file_ready=0` 기준으로 계산 |
 | **관련 파일** | `backend/server/routers/pipeline.py` (queue stats API), `frontend/src/components/PipelineBlackboard.jsx` (대시보드 표시) |
+
+---
+
+## BUG-008: 대시보드 완료 카운트가 큐 기준이 아닌 전체 DB 기준
+
+| 항목 | 내용 |
+|------|------|
+| **심각도** | **높음** |
+| **보고일** | 2026-04-03 |
+| **재현** | Pipeline 대시보드 확인 — "전체 큐 7848 → 완료 7172" |
+| **현상** | "완료" 카운트가 이번 큐(job_queue)에서 완료된 수가 아니라, files 테이블에서 3축(MC+VV+MV) 모두 존재하는 파일 수를 표시. 이전 큐에서 이미 처리된 파일도 포함 |
+| **원인** | `get_stats()`에서 `complete_files`를 `files` 테이블의 3축 완결 파일 수로 계산. `job_queue` 기준 완료 수(`status='completed'`)는 job 완료 시 DELETE되므로 항상 0에 가까움 |
+| **근본 해결** | 큐 기준 완료 = `전체 큐(등록 시점) - 현재 남은 pending/assigned/failed`. 또는 `job_completions` 테이블의 누적 카운트 사용 |
+| **관련 파일** | `backend/server/queue/manager.py:get_stats()`, `frontend/src/components/PipelineBlackboard.jsx` |
+| **상태** | Open |
 
 ---
 

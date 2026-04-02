@@ -109,7 +109,9 @@ CREATE TABLE IF NOT EXISTS job_queue (
     assigned_at TEXT,
     started_at TEXT,
     completed_at TEXT,
-    mc_completed_at TEXT,          -- MC(Vision) completion timestamp (MC throughput measurement)
+    mc_completed_at TEXT,          -- MC(Vision) completion timestamp (throughput measurement)
+    vv_completed_at TEXT,          -- VV(SigLIP2) completion timestamp
+    mv_completed_at TEXT,          -- MV(Qwen3-Embedding) completion timestamp
 
     -- Phase-level tracking (JSON)
     phase_completed TEXT DEFAULT '{"parse":false,"vision":false,"embed":false}',
