@@ -21,10 +21,14 @@ not overwritten, only new baselines are added when models change.
 
 | File | Description |
 |------|-------------|
-| `20260401_qwen35_eval_10img.json` | Qwen3.5 migration eval: 4 model configs (pure inference), tok/s, thinking mode, memory stability |
-| `20260401_windows_ollama_eval.json` | Windows RTX 3060Ti Ollama eval: 4 models compared, qwen3.5:4b selected |
-| `20260402_mc_only_3img.json` | Worker sim: MC phase only, 3 images (first valid MLX 4bit run) |
-| `20260402_full_pipeline_5img.json` | Worker sim: Full V→VV→MV pipeline, 5 images — **current design speed baseline** |
+| `20260401_qwen35_eval_10img.json` | Qwen3.5 migration eval: 4 model configs (pure inference), tok/s, thinking mode |
+| `20260401_windows_ollama_eval.json` | Windows RTX 3060Ti Ollama eval: 4 models compared |
+| `20260402_mc_4b_10img.json` | MC phase: Qwen3.5-**4B** MLX 4bit (actual + theoretical speed) |
+| `20260402_mc_9b_10img.json` | MC phase: Qwen3.5-**9B** MLX 4bit (actual + theoretical speed) |
+| `20260402_ab_4b_vs_9b_10img.json` | A/B comparison: 4B vs 9B MC phase (same 10 images) |
+| `20260402_embed_vv_mv_10img.json` | VV (SigLIP2) + MV (Qwen3-Embed) — VLM-independent |
+| `20260402_full_pipeline_5img.json` | Full V→VV→MV pipeline (early baseline, 5 images) |
+| `20260402_mc_only_3img.json` | MC phase first valid MLX 4bit run (3 images) |
 
 ### results/
 
@@ -33,14 +37,24 @@ diff against baselines.
 
 ## Current Design Speed (2026-04-02, M5 32GB)
 
-| Phase | Model | files/min | per-file | Memory Peak |
-|-------|-------|:---------:|:--------:|:-----------:|
-| MC (VLM) | Qwen3.5-9B MLX 4bit | 7.8 | 7.7s | Metal 5.7GB |
-| VV (SigLIP2) | SigLIP2-NaFlex | 81.1 | 0.74s | MPS 2.2GB |
-| MV (Embed) | Qwen3-Embed 0.6B | 119.3 | 0.5s | MPS 1.1GB |
-| **Full Pipeline** | V→VV→MV | **7.1** | **8.4s** | — |
+### MC (VLM) — Bottleneck Phase
 
-MC is the bottleneck. VV/MV are negligible.
+| Model | Actual f/min | Theoretical f/min | per-file | Metal Peak |
+|-------|:-----------:|:-----------------:|:--------:|:----------:|
+| Qwen3.5-**4B** MLX 4bit | 13.4 | **14.8** | 4.5s / 4.1s | 2.9GB |
+| Qwen3.5-**9B** MLX 4bit | 7.9 | **8.3** | 7.6s / 7.4s | 5.7GB |
+
+- Actual = model load + inference + unload + GC
+- Theoretical = pure inference only (model stays resident)
+
+### VV / MV — VLM-Independent
+
+| Phase | Model | Actual f/min | Theoretical f/min | Memory Peak |
+|-------|-------|:-----------:|:-----------------:|:-----------:|
+| VV | SigLIP2-NaFlex | 112.9 | 124.6 | MPS 2.2GB |
+| MV | Qwen3-Embed 0.6B | 224.0 | 277.0 | MPS 1.1GB |
+
+MC is the bottleneck. VV/MV are 15-35x faster — negligible in pipeline total.
 
 ## Running Benchmarks
 

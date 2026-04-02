@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-04-02T13:34:29.290394",
+  "system": {
+    "platform": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.12",
+    "mlx_version": "0.30.6",
+    "torch_version": "2.11.0.dev20260216",
+    "transformers_version": "5.4.0",
+    "memory_gb": 32.0
+  },
+  "config": {
+    "image_count": 10,
+    "image_dir": "/Users/saintiron/imageDB/마캬베리즈무/실내소품",
+    "vv_batch_size": 8,
+    "mv_batch_size": 16,
+    "max_edge": 768
+  },
+  "psd_preprocess": {
+    "total_s": 1.48,
+    "per_file_s": 0.148
+  },
+  "phases": {
+    "mc": {
+      "model_id": "mlx-community/Qwen3.5-4B-MLX-4bit",
+      "file_count": 10,
+      "batch_size": 1,
+      "model_load_s": 3.67,
+      "processing_s": 40.53,
+      "model_unload_s": 0.07,
+      "gc_s": 0.35,
+      "total_s": 44.62,
+      "per_file_s": 4.462,
+      "files_per_min": 13.4,
+      "theoretical_per_file_s": 4.053,
+      "theoretical_files_per_min": 14.8,
+      "overhead_s": 4.09,
+      "success": 10,
+      "failed": 0,
+      "memory": {
+        "before_load": {
+          "rss_mb": 608.2,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        },
+        "after_load": {
+          "rss_mb": 4036.4,
+          "metal_mb": 2894.0,
+          "mps_mb": 0.0
+        },
+        "peak": {
+          "rss_mb": 4079.2,
+          "metal_mb": 2894.0,
+          "mps_mb": 0.0
+        },
+        "after_unload": {
+          "rss_mb": 1160.7,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        }
+      }
+    }
+  },
+  "reference_speeds": {
+    "mc_files_per_min": 13.4,
+    "mc_theoretical_fpm": 14.8
+  },
+  "note": "MC phase only. VV/MV are VLM-independent — see embed_vv_mv_10img.json"
+}

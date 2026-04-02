@@ -966,6 +966,12 @@ def main():
         return
 
     phases = [p.strip() for p in args.phases.split(",")]
+
+    # --vlm-model implies MC-only (VV/MV are separate models, unaffected by VLM choice)
+    if args.vlm_model and args.phases == "mc,vv,mv":
+        phases = ["mc"]
+        args.no_full = True
+
     config = {
         "image_dir": args.images,
         "count": args.count,
