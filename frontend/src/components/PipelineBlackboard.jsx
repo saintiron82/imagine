@@ -36,8 +36,8 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
       const [sData, wrData, wData] = await Promise.all([
         useIPC ? window.electron.queue.getStats() : getJobStats(),
         useIPC
-          ? window.electron.queue.listWorkRequests(false).then(r => r?.work_requests || [])
-          : getWorkRequests(false).catch(() => []),
+          ? window.electron.queue.listWorkRequests(true).then(r => r?.work_requests || [])
+          : getWorkRequests(true).catch(() => []),
         // Only fetch worker sessions in web client mode (not Electron)
         // Server auto-processing status comes via stats.embedded_worker
         !useIPC
