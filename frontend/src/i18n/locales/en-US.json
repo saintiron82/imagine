@@ -317,6 +317,7 @@
   "admin.wr_status_completed": "Completed",
   "admin.wr_status_paused": "Paused",
   "admin.wr_status_cancelled": "Cancelled",
+  "admin.active_queue": "Active Queue",
   "admin.wr_pause": "Pause",
   "admin.wr_resume": "Resume",
   "admin.wr_cancel": "Cancel",

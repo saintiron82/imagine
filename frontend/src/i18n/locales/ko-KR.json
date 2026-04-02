@@ -317,6 +317,7 @@
   "admin.wr_status_completed": "완료",
   "admin.wr_status_paused": "일시정지",
   "admin.wr_status_cancelled": "취소됨",
+  "admin.active_queue": "활성 큐",
   "admin.wr_pause": "일시정지",
   "admin.wr_resume": "재개",
   "admin.wr_cancel": "취소",
