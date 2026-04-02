@@ -33,10 +33,16 @@ from backend.server.config import get_cors_origins, get_server_config
 from backend.server.deps import close_db
 
 # ── Logging ──────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+# JSON format when piped (Electron), plain text when terminal (dev)
+import os as _os
+if not _os.isatty(2):
+    from backend.utils.json_log_formatter import setup_json_logging
+    setup_json_logging()
+else:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 logger = logging.getLogger(__name__)
 
 # ── App ──────────────────────────────────────────────────────

@@ -62,14 +62,16 @@ from backend.parser.schema import AssetMeta
 # from backend.utils.auto_batch_calibrator import AutoBatchCalibrator
 
 
-# Configure Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+# Configure Logging — JSON when piped (Electron), plain text when terminal
+if not os.isatty(2):
+    from backend.utils.json_log_formatter import setup_json_logging
+    setup_json_logging()
+else:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
 logger = logging.getLogger("IngestEngine")
 
 SUPPORTED_EXTENSIONS = {'.psd', '.png', '.jpg', '.jpeg'}

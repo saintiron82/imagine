@@ -1899,11 +1899,25 @@ ipcMain.on('run-pipeline', (event, { filePaths }) => {
     });
 
     proc.stderr.on('data', (data) => {
-        const message = data.toString().trim();
-        if (!message) return;
-        const isError = /\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(message);
-        if (isError) {
-            event.reply('pipeline-log', { message, type: 'error' });
+        for (const line of data.toString().split('\n')) {
+            const msg = line.trim();
+            if (!msg) continue;
+            // Try JSON structured log first (from json_log_formatter)
+            try {
+                const parsed = JSON.parse(msg);
+                if (parsed.level) {
+                    const type = parsed.level === 'ERROR' || parsed.level === 'CRITICAL' ? 'error'
+                        : parsed.level === 'WARNING' ? 'warning' : 'info';
+                    if (type === 'error' || type === 'warning') {
+                        event.reply('pipeline-log', { message: parsed.message, type });
+                    }
+                    continue;
+                }
+            } catch { /* not JSON — fallback to regex */ }
+            // Fallback: regex for non-Python output (e.g. native libraries)
+            if (/\bERROR\b|Traceback|Exception:/i.test(msg)) {
+                event.reply('pipeline-log', { message: msg, type: 'error' });
+            }
         }
     });
 
@@ -2080,12 +2094,23 @@ ipcMain.on('run-discover', (event, { folderPath, noSkip }) => {
     proc.stderr.on('data', (data) => {
         const raw = data.toString();
         if (!raw.trim()) return;
-        // stderr: only forward errors (library output like transformers/torch is noisy)
-        const lines = raw.split('\n').filter(l => l.trim());
-        for (const line of lines) {
+        for (const line of raw.split('\n')) {
             const msg = line.trim();
             if (!msg) continue;
-            if (/\bERROR\b|Traceback|Exception:|raise\s|FAIL/i.test(msg)) {
+            // Try JSON structured log first
+            try {
+                const parsed = JSON.parse(msg);
+                if (parsed.level) {
+                    const type = parsed.level === 'ERROR' || parsed.level === 'CRITICAL' ? 'error'
+                        : parsed.level === 'WARNING' ? 'warning' : 'info';
+                    if (type === 'error' || type === 'warning') {
+                        event.reply('discover-log', { message: parsed.message, type });
+                    }
+                    continue;
+                }
+            } catch { /* not JSON */ }
+            // Fallback: regex for non-Python output
+            if (/\bERROR\b|Traceback|Exception:/i.test(msg)) {
                 event.reply('discover-log', { message: msg, type: 'error' });
             }
         }
@@ -2993,30 +3018,35 @@ async function startEmbeddedServer(port = 8000) {
     });
 
     serverProc.stderr.on('data', (chunk) => {
-        const msg = chunk.toString().trim();
-        if (msg) {
-            // uvicorn logs to stderr by default
+        for (const line of chunk.toString().split('\n')) {
+            const msg = line.trim();
+            if (!msg) continue;
+
+            // Try JSON structured log first (from json_log_formatter)
+            try {
+                const parsed = JSON.parse(msg);
+                if (parsed.level) {
+                    const type = parsed.level === 'ERROR' || parsed.level === 'CRITICAL' ? 'error'
+                        : parsed.level === 'WARNING' ? 'warning' : 'info';
+                    writeLog(type === 'error' ? 'ERROR' : 'INFO', '[Server]', parsed.message);
+                    if (type === 'error' || type === 'warning') {
+                        throttledServerLog(parsed.message, type);
+                    } else {
+                        const isImportant = /starting up|shutting down|processing mode|worker|License|Parse-ahead|Embed-ahead|builtin|Pool|startup cleanup|mDNS|Firebase/i.test(parsed.message);
+                        if (isImportant) throttledServerLog(parsed.message, 'info');
+                    }
+                    continue;
+                }
+            } catch { /* not JSON — fallback to regex */ }
+
+            // Fallback: regex for non-Python output (uvicorn startup, native libs)
             const isWarning = /\bWARN(?:ING)?\b/i.test(msg);
-            // Check isError only if not already a WARNING — prevents "permanently failed"
-            // in WARNING-level audit messages from being misclassified as errors.
-            const isError = !isWarning && /\bERROR\b|\bCRITICAL\b|Traceback|Exception:|\bFAIL(?:ED)?\b/i.test(msg)
-                && !/\b(?:pre-failed|0 failed|0 pre-failed)\b/i.test(msg);
+            const isError = !isWarning && /\bERROR\b|\bCRITICAL\b|Traceback|Exception:/i.test(msg);
             writeLog(isError ? 'ERROR' : 'INFO', '[Server:stderr]', msg);
-            if (isError) {
-                console.error('[Server:ERR]', msg);
-            } else {
-                console.log('[Server]', msg);
-            }
             if (isError) {
                 throttledServerLog(msg, 'error');
             } else if (isWarning) {
                 throttledServerLog(msg, 'warning');
-            } else {
-                // Only forward important info messages (not routine request logs)
-                const isImportant = /starting up|shutting down|processing mode|worker|License|Parse-ahead|Embed-ahead|builtin|Pool|startup cleanup|mDNS|Firebase/i.test(msg);
-                if (isImportant) {
-                    throttledServerLog(msg, 'info');
-                }
             }
         }
     });

@@ -51,10 +51,15 @@ from backend.worker.result_uploader import ResultUploader
 from backend.worker.schedule import is_active_now
 from backend.worker.worker_state import WorkerStateMachine, WorkerState
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+import os as _os
+if not _os.isatty(2):
+    from backend.utils.json_log_formatter import setup_json_logging
+    setup_json_logging()
+else:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 logger = logging.getLogger("ImagineWorker")
 
 # Graceful shutdown flag
