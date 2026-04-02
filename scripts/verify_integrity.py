@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-VV/MV Data Integrity Verification Script.
+DB Integrity Verification Script.
 
 Three-level verification:
+  Level 0 (Pipeline completeness): 3-axis completeness, data quality, counter sync
   Level 1 (DB-only): Cross-check content_hash vs vector fingerprints — no model loading
   Level 2 (Sample re-encode): Re-encode sample images with SigLIP2, compare cosine similarity
-  Level 3 (Full audit): Re-encode all images (slow but definitive)
 
 Usage:
-  python scripts/verify_integrity.py                    # Level 1 (fast, DB-only)
-  python scripts/verify_integrity.py --level 2          # Level 1 + sample re-encode
+  python scripts/verify_integrity.py                    # Level 0+1 (fast, DB-only)
+  python scripts/verify_integrity.py --level 2          # Level 0+1+2 (sample re-encode)
   python scripts/verify_integrity.py --level 2 --sample 10  # Sample 10 files
   python scripts/verify_integrity.py --folder /path/to  # Restrict to folder
 """
@@ -38,6 +38,200 @@ def get_db():
     """Get SQLiteDB instance."""
     from backend.db.sqlite_client import SQLiteDB
     return SQLiteDB()
+
+
+# ── Level 0: Pipeline Completeness + Data Quality ────────────────────
+
+
+def level0_verify(db) -> dict:
+    """
+    Pipeline completeness and data quality checks.
+
+    Checks:
+    0-1. 3-axis completeness: MC/VV/MV all present
+    0-2. Data quality: empty captions, empty tags, missing image_type
+    0-3. Counter sync: files vs vec_files vs vec_text vs files_fts
+    0-4. Job queue state: incomplete jobs, failed jobs, error distribution
+    0-5. Duplicates: file_path duplicates, content_hash duplicates
+    """
+    cursor = db.conn.cursor()
+
+    # --- 0-1: 3-axis completeness ---
+    cursor.execute("SELECT COUNT(*) FROM files")
+    total_files = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM files
+        WHERE mc_caption IS NOT NULL AND mc_caption != ''
+    """)
+    mc_complete = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM files f
+        WHERE EXISTS (SELECT 1 FROM vec_files WHERE file_id = f.id)
+    """)
+    vv_complete = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM files f
+        WHERE EXISTS (SELECT 1 FROM vec_text WHERE file_id = f.id)
+    """)
+    mv_complete = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM files f
+        WHERE (f.mc_caption IS NOT NULL AND f.mc_caption != '')
+          AND EXISTS (SELECT 1 FROM vec_files WHERE file_id = f.id)
+          AND EXISTS (SELECT 1 FROM vec_text WHERE file_id = f.id)
+    """)
+    all_3axis = cursor.fetchone()[0]
+
+    # MC but no VV
+    cursor.execute("""
+        SELECT COUNT(*) FROM files f
+        WHERE (f.mc_caption IS NOT NULL AND f.mc_caption != '')
+          AND NOT EXISTS (SELECT 1 FROM vec_files WHERE file_id = f.id)
+    """)
+    mc_no_vv = cursor.fetchone()[0]
+
+    # MC but no MV
+    cursor.execute("""
+        SELECT COUNT(*) FROM files f
+        WHERE (f.mc_caption IS NOT NULL AND f.mc_caption != '')
+          AND NOT EXISTS (SELECT 1 FROM vec_text WHERE file_id = f.id)
+    """)
+    mc_no_mv = cursor.fetchone()[0]
+
+    # --- 0-2: Data quality ---
+    cursor.execute("""
+        SELECT COUNT(*) FROM files
+        WHERE ai_tags IS NULL OR ai_tags = '' OR ai_tags = '[]'
+    """)
+    empty_tags = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM files
+        WHERE image_type IS NULL OR image_type = ''
+    """)
+    no_image_type = cursor.fetchone()[0]
+
+    # --- 0-3: Counter sync ---
+    cursor.execute("SELECT COUNT(*) FROM vec_files")
+    vv_count = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM vec_text")
+    mv_count = cursor.fetchone()[0]
+
+    fts_count = 0
+    try:
+        cursor.execute("SELECT COUNT(*) FROM files_fts")
+        fts_count = cursor.fetchone()[0]
+    except Exception:
+        fts_count = -1  # FTS table may not exist
+
+    fts_synced = (fts_count == total_files) if fts_count >= 0 else None
+
+    # --- 0-4: Job queue state ---
+    job_stats = {}
+    failed_errors = {}
+    try:
+        cursor.execute("""
+            SELECT status, COUNT(*) FROM job_queue
+            GROUP BY status
+        """)
+        job_stats = dict(cursor.fetchall())
+
+        cursor.execute("""
+            SELECT COALESCE(error_code, 'unknown'), COUNT(*) FROM job_queue
+            WHERE status = 'failed'
+            GROUP BY error_code
+        """)
+        failed_errors = dict(cursor.fetchall())
+    except Exception:
+        pass
+
+    # --- 0-5: Duplicates ---
+    cursor.execute("""
+        SELECT file_path, COUNT(*) FROM files
+        GROUP BY file_path HAVING COUNT(*) > 1
+    """)
+    dup_paths = cursor.fetchall()
+
+    cursor.execute("""
+        SELECT content_hash, COUNT(*) FROM files
+        WHERE content_hash IS NOT NULL
+        GROUP BY content_hash HAVING COUNT(*) > 1
+    """)
+    dup_hashes = cursor.fetchall()
+
+    return {
+        "total_files": total_files,
+        "mc_complete": mc_complete,
+        "vv_complete": vv_complete,
+        "mv_complete": mv_complete,
+        "all_3axis": all_3axis,
+        "mc_no_vv": mc_no_vv,
+        "mc_no_mv": mc_no_mv,
+        "empty_tags": empty_tags,
+        "no_image_type": no_image_type,
+        "vv_count": vv_count,
+        "mv_count": mv_count,
+        "fts_count": fts_count,
+        "fts_synced": fts_synced,
+        "job_stats": job_stats,
+        "failed_errors": failed_errors,
+        "dup_paths": len(dup_paths),
+        "dup_hashes": len(dup_hashes),
+    }
+
+
+def print_level0(r: dict):
+    """Pretty-print Level 0 results."""
+    total = r["total_files"] or 1
+
+    print("\n" + "=" * 60)
+    print("  Level 0: Pipeline Completeness + Data Quality")
+    print("=" * 60)
+
+    print(f"\n  3-Axis Completeness")
+    print(f"  ───────────────────")
+    print(f"  Total files:     {r['total_files']:,}")
+    print(f"  MC complete:     {r['mc_complete']:,} ({r['mc_complete']/total*100:.1f}%)")
+    print(f"  VV complete:     {r['vv_complete']:,} ({r['vv_complete']/total*100:.1f}%)")
+    print(f"  MV complete:     {r['mv_complete']:,} ({r['mv_complete']/total*100:.1f}%)")
+    print(f"  All 3-axis:      {r['all_3axis']:,} ({r['all_3axis']/total*100:.1f}%)")
+    if r["mc_no_vv"]:
+        print(f"  MC but no VV:    {r['mc_no_vv']:,}")
+    if r["mc_no_mv"]:
+        print(f"  MC but no MV:    {r['mc_no_mv']:,}")
+
+    print(f"\n  Data Quality")
+    print(f"  ────────────")
+    print(f"  Empty ai_tags:   {r['empty_tags']:,}" + ("" if r["empty_tags"] == 0 else "  ⚠"))
+    print(f"  No image_type:   {r['no_image_type']:,}" + ("" if r["no_image_type"] == 0 else "  ⚠"))
+
+    fts_label = f"{r['fts_count']:,}" if r["fts_count"] >= 0 else "N/A"
+    fts_ok = "  ✓" if r["fts_synced"] else "  ⚠ MISMATCH" if r["fts_synced"] is not None else ""
+    print(f"  FTS count:       {fts_label} vs files {r['total_files']:,}{fts_ok}")
+
+    if r["job_stats"]:
+        print(f"\n  Job Queue")
+        print(f"  ─────────")
+        for status, count in sorted(r["job_stats"].items()):
+            print(f"  {status:12}: {count:,}")
+        if r["failed_errors"]:
+            print(f"  Failed breakdown:")
+            for code, count in sorted(r["failed_errors"].items(), key=lambda x: -x[1]):
+                print(f"    {code}: {count}")
+
+    if r["dup_paths"] or r["dup_hashes"]:
+        print(f"\n  Duplicates")
+        print(f"  ──────────")
+        if r["dup_paths"]:
+            print(f"  Duplicate paths:  {r['dup_paths']}  ⚠")
+        if r["dup_hashes"]:
+            print(f"  Duplicate hashes: {r['dup_hashes']}  (same file, different path)")
+
+    print()
 
 
 # ── Level 1: DB-only Cross-checks ─────────────────────────────────────
@@ -441,18 +635,27 @@ def main():
 
     db = get_db()
 
+    # Level 0 always runs
+    logger.info("Running Level 0: Pipeline completeness + data quality...")
+    l0 = level0_verify(db)
+    print_level0(l0)
+
     # Level 1 always runs
     logger.info("Running Level 1: DB integrity checks...")
     l1 = level1_verify(db, folder=args.folder)
     print_level1(l1)
 
     # Level 2 if requested
+    l2 = {}
     if args.level >= 2:
         logger.info(f"Running Level 2: Sample re-encoding ({args.sample} files)...")
         l2 = level2_verify(db, folder=args.folder, sample_size=args.sample)
         print_level2(l2)
 
     # Summary
+    l0_issues = l0["mc_no_vv"] + l0["mc_no_mv"] + l0["empty_tags"] + l0["dup_paths"]
+    if l0["fts_synced"] is not None and not l0["fts_synced"]:
+        l0_issues += 1
     l1_issues = (
         len(l1["dangling_vv"]) + len(l1["dangling_mv"]) +
         len(l1["duplicate_vv_cross_hash"]) + len(l1["null_hash_with_vectors"])
@@ -461,11 +664,13 @@ def main():
     if args.level >= 2 and "results" in l2:
         l2_issues = sum(1 for r in l2["results"] if r["status"] == "CORRUPT")
 
-    total_issues = l1_issues + l2_issues
+    total_issues = l0_issues + l1_issues + l2_issues
+    print("=" * 60)
     if total_issues == 0:
-        print("  ✅ All checks passed — data integrity looks good.")
+        print("  All checks passed — data integrity OK.")
     else:
-        print(f"  ⚠ {total_issues} issue(s) found — review above for details.")
+        print(f"  {total_issues} issue(s) found — review above for details.")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

@@ -1713,6 +1713,68 @@ class JobQueueManager:
             **self.get_phase_stats(),
         }
 
+    def run_integrity_check(self) -> Dict[str, Any]:
+        """Quick integrity check (Level 0). Returns issue counts and summary."""
+        cursor = self.db.conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM files")
+        total = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM files WHERE mc_caption IS NOT NULL AND mc_caption != ''")
+        mc = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM files f WHERE EXISTS (SELECT 1 FROM vec_files WHERE file_id = f.id)")
+        vv = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM files f WHERE EXISTS (SELECT 1 FROM vec_text WHERE file_id = f.id)")
+        mv = cursor.fetchone()[0]
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM files f
+            WHERE (f.mc_caption IS NOT NULL AND f.mc_caption != '')
+              AND EXISTS (SELECT 1 FROM vec_files WHERE file_id = f.id)
+              AND EXISTS (SELECT 1 FROM vec_text WHERE file_id = f.id)
+        """)
+        all_3 = cursor.fetchone()[0]
+
+        # MC but missing VV or MV
+        cursor.execute("""
+            SELECT COUNT(*) FROM files f
+            WHERE (mc_caption IS NOT NULL AND mc_caption != '')
+              AND NOT EXISTS (SELECT 1 FROM vec_files WHERE file_id = f.id)
+        """)
+        mc_no_vv = cursor.fetchone()[0]
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM files f
+            WHERE (mc_caption IS NOT NULL AND mc_caption != '')
+              AND NOT EXISTS (SELECT 1 FROM vec_text WHERE file_id = f.id)
+        """)
+        mc_no_mv = cursor.fetchone()[0]
+
+        # Job queue remaining
+        job_remaining = {}
+        try:
+            cursor.execute("SELECT status, COUNT(*) FROM job_queue GROUP BY status")
+            job_remaining = dict(cursor.fetchall())
+        except Exception:
+            pass
+
+        issues = mc_no_vv + mc_no_mv
+        return {
+            "success": True,
+            "total_files": total,
+            "mc_complete": mc,
+            "vv_complete": vv,
+            "mv_complete": mv,
+            "all_3axis": all_3,
+            "mc_no_vv": mc_no_vv,
+            "mc_no_mv": mc_no_mv,
+            "job_remaining": job_remaining,
+            "issues": issues,
+            "status": "ok" if issues == 0 else "issues_found",
+        }
+
     def list_jobs(self, status: Optional[str] = None, limit: int = 50, offset: int = 0,
                   archived: bool = False) -> Dict[str, Any]:
         """List jobs with optional status filter and pagination.

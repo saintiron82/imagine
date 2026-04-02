@@ -107,6 +107,16 @@ def get_job_stats(
     return {"success": True, **stats}
 
 
+@router.post("/api/v1/admin/integrity-check")
+def run_integrity_check(
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Run DB integrity check (Level 0: pipeline completeness). Admin only."""
+    queue = _get_queue(db)
+    return queue.run_integrity_check()
+
+
 @router.patch("/api/v1/jobs/{job_id}/progress")
 def update_job_progress(
     job_id: int,
