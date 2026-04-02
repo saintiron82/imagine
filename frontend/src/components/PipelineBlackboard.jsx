@@ -160,10 +160,10 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
       load();
     } catch { /* ignore */ }
   }, [useIPC, load]);
-  // File-centric counts (from DB, not WR — survives job deletion)
-  const completed = s.complete_files ?? 0;
+  // Queue-based counts: completed = total - remaining (not DB 3-axis count)
+  const completed = s.completed ?? 0;
   const totalFiles = s.total_files ?? 0;
-  const dbFailed = s.db_failed ?? 0;
+  const dbFailed = s.failed ?? 0;
   const pct = totalFiles > 0 ? ((completed / totalFiles) * 100).toFixed(1) : '0.0';
   // WR-level counts for WR cards
   const wrCompleted = activeWRsAll.reduce((sum, wr) => sum + (wr.completed_count || 0), 0);
