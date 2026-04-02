@@ -160,15 +160,15 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
       load();
     } catch { /* ignore */ }
   }, [useIPC, load]);
-  // Queue-based counts: completed = total - remaining (not DB 3-axis count)
-  const completed = s.completed ?? 0;
-  const totalFiles = s.total_files ?? 0;
-  const dbFailed = s.failed ?? 0;
-  const pct = totalFiles > 0 ? ((completed / totalFiles) * 100).toFixed(1) : '0.0';
-  // WR-level counts for WR cards
+  // Active queue counts — all from active work_requests (queue-session scoped)
   const wrCompleted = activeWRsAll.reduce((sum, wr) => sum + (wr.completed_count || 0), 0);
   const wrFailed = activeWRsAll.reduce((sum, wr) => sum + (wr.failed_count || 0), 0);
   const wrTotal = activeWRsAll.reduce((sum, wr) => sum + (wr.total_files || 0), 0);
+  // Dashboard header uses active WR totals (not files table or job_queue)
+  const totalFiles = wrTotal || (s.total ?? 0);
+  const completed = wrCompleted;
+  const dbFailed = wrFailed || (s.failed ?? 0);
+  const pct = totalFiles > 0 ? ((completed / totalFiles) * 100).toFixed(1) : '0.0';
 
   // ── Workers (external only, embedded worker shown separately in Stage 5) ──
   const allWorkers = workers
