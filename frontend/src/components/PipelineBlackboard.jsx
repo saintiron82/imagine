@@ -87,8 +87,12 @@ export default function PipelineBlackboard({ reloadSignal, appMode }) {
   const remaining = (s.pending ?? 0) + (s.assigned ?? 0) + (s.processing ?? 0);
   const etaMin = throughput > 0 ? Math.ceil(remaining / throughput) : null;
 
-  // Active WRs completed/failed — from work_requests table (survives job deletion)
-  const activeWRsAll = workRequests.filter(wr => wr.status === 'queued' || wr.status === 'processing' || wr.status === 'paused');
+  // Active WRs — includes completed WRs that still have failures (need attention).
+  // Only cancelled WRs are excluded. User manually archives/dismisses when done.
+  const activeWRsAll = workRequests.filter(wr =>
+    wr.status !== 'cancelled' &&
+    (wr.status !== 'completed' || (wr.failed_count || 0) > 0)
+  );
 
   // Group WRs by path ancestry — if WR A's source_path is a prefix of WR B's,
   // they belong to the same tree. Display only top-level roots.
