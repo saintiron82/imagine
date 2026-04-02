@@ -355,6 +355,7 @@ class WorkerDaemon:
                     "resources": resources,
                     "throttle_level": throttle_level,
                     "worker_state": self._state_machine.state_name,
+                    "batch_throughput": self._batch_throughput,
                 },
             )
             if resp.status_code == 200:

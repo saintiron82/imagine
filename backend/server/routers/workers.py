@@ -42,6 +42,7 @@ class HeartbeatRequest(BaseModel):
     throttle_level: Optional[str] = None  # normal/warning/danger/critical
     worker_state: Optional[str] = None    # active/idle/resting
     phase_counts: Optional[dict] = None  # {"mc": N, "vv": N, "mv": N}
+    batch_throughput: Optional[float] = None  # Worker-measured files/min (actual)
 
 
 class DisconnectRequest(BaseModel):
@@ -342,6 +343,8 @@ def worker_heartbeat(
         resources_data["worker_state"] = req.worker_state
     if req.phase_counts:
         resources_data["phase_counts"] = req.phase_counts
+    if req.batch_throughput is not None:
+        resources_data["batch_throughput"] = req.batch_throughput
     # Track phase_job_count: increment by delta of jobs_completed since last heartbeat
     cursor.execute(
         "SELECT jobs_completed FROM worker_sessions WHERE id = ?",
@@ -632,6 +635,12 @@ def admin_list_workers(
         else:
             throughput = 0.0
 
+        # Prefer worker-measured throughput (from heartbeat) over SQL inference
+        resources = json.loads(row[17]) if row[17] else None
+        worker_measured = (resources or {}).get("batch_throughput")
+        if worker_measured and worker_measured > 0:
+            throughput = worker_measured
+
         workers.append({
             "id": session_id, "worker_name": row[1], "hostname": row[2],
             "status": row[3], "batch_capacity": row[4],
@@ -644,7 +653,7 @@ def admin_list_workers(
             "throughput_mode": assigned_mode or "full",
             "processing_mode_override": row[15],
             "batch_capacity_override": row[16],
-            "resources": json.loads(row[17]) if row[17] else None,
+            "resources": resources,
             "assigned_mode": row[18],
             "phase_job_count": row[19] or 0,
         })
