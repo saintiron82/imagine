@@ -1424,10 +1424,14 @@ class JobQueueManager:
         """)
         status_counts = dict(cursor.fetchall())
 
-        # Prune old completion records (> 1 hour) for housekeeping
-        cursor.execute(
-            "DELETE FROM job_completions WHERE datetime(completed_at) < datetime('now', '-1 hour')"
-        )
+        # Prune old completion records — only when queue is empty (no active work).
+        # While queue has jobs, keep all completions for accurate "completed" count.
+        cursor.execute("SELECT COUNT(*) FROM job_queue WHERE archived_at IS NULL")
+        queue_has_jobs = cursor.fetchone()[0] > 0
+        if not queue_has_jobs:
+            cursor.execute(
+                "DELETE FROM job_completions WHERE datetime(completed_at) < datetime('now', '-1 hour')"
+            )
 
         # Throughput from job_completions table (sliding windows)
         cursor.execute("""
@@ -1709,25 +1713,29 @@ class JobQueueManager:
         except Exception:
             pipeline = {}
 
-        # Queue-centric counts:
-        # - queue_total: current job_queue size (active work scope)
-        # - queue_completed: files in DB but NOT in queue (already processed & deleted)
-        # - total_files: all files in DB (queue + already done)
+        # Active queue counts — everything is queue-session scoped:
+        # - queue_remaining: jobs still in job_queue (pending + assigned + processing + failed)
+        # - queue_completed: jobs completed & deleted (from job_completions table)
+        # - queue_total: remaining + completed (original queue size)
         failed_count = status_counts.get("failed", 0)
-        queue_total = pending + assigned + processing + failed_count
-        queue_completed = max(0, total_files - queue_total)
+        queue_remaining = pending + assigned + processing + failed_count
+
+        cursor.execute("SELECT COUNT(*) FROM job_completions")
+        queue_completed = cursor.fetchone()[0]
+
+        queue_total = queue_remaining + queue_completed
 
         return {
-            "total": queue_total,            # current queue scope (not all files)
-            "total_files": total_files,      # all files in DB (for reference)
-            "complete_files": complete_files, # files-based: 3-axis complete (for reference)
+            "total": queue_total,             # active queue: remaining + completed
+            "total_files": total_files,       # all files in DB (reference)
+            "complete_files": complete_files,  # files-based: 3-axis complete (reference)
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": queue_completed,     # files done (not in queue anymore)
-            "failed": failed_count,           # queue-based: actual failed jobs
-            "db_completed": complete_files,   # files-based: total DB inventory (for reference)
-            "db_failed": failed_files,        # files-based: total DB failures
+            "completed": queue_completed,      # completed in this queue session
+            "failed": failed_count,            # failed in queue
+            "db_completed": complete_files,    # files-based (reference)
+            "db_failed": failed_files,         # files-based (reference)
             "throughput": throughput,
             "bottleneck": bottleneck_phase,
             "parse_throughput": parse_throughput,
