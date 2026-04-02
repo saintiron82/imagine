@@ -222,6 +222,56 @@ class DownloadAheadPool(BaseAheadPool):
             except Exception:
                 pass
 
+    def _mark_download_failed(self, job_id: int, file_path: str):
+        """Mark a job as download-failed (file_ready=-1).
+
+        The job won't be retried this cycle. The periodic recovery loop
+        (_recover_failed_downloads) resets them back to file_ready=0
+        after a cooldown, so they re-enter the download queue automatically.
+        """
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "UPDATE job_queue SET file_ready = -1 WHERE id = ?",
+                (job_id,),
+            )
+            self.db.conn.commit()
+            logger.info(f"DownloadAhead: marked job {job_id} as download-failed (-1)")
+        except Exception as e:
+            logger.warning(f"DownloadAhead: failed to mark job {job_id}: {e}")
+            try:
+                self.db.conn.commit()
+            except Exception:
+                pass
+
+    def _recover_failed_downloads(self):
+        """Reset file_ready=-1 → 0 for jobs that failed more than 5 minutes ago.
+
+        Called periodically from the download loop so failed jobs
+        get another chance after a cooldown.
+        """
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """UPDATE job_queue SET file_ready = 0
+                   WHERE file_ready = -1
+                     AND status IN ('pending', 'assigned')
+                     AND datetime(updated_at) < datetime('now', '-5 minutes')"""
+            )
+            recovered = cursor.rowcount
+            self.db.conn.commit()
+            if recovered > 0:
+                logger.info(
+                    f"DownloadAhead: recovered {recovered} failed downloads "
+                    f"(file_ready -1 → 0)"
+                )
+        except Exception as e:
+            logger.warning(f"DownloadAhead: recovery check failed: {e}")
+            try:
+                self.db.conn.commit()
+            except Exception:
+                pass
+
     def stop(self):
         """Stop downloads and clean up temp directory."""
         super().stop()
@@ -331,11 +381,17 @@ class DownloadAheadPool(BaseAheadPool):
         poll_interval = self._get_config_value(
             "server.parse_ahead.poll_interval_s", 2
         )
+        recovery_counter = 0
         while self._running:
             try:
                 downloaded = self._download_batch()
                 if downloaded == 0:
                     time.sleep(poll_interval)
+                # Periodically recover failed downloads (every ~30 iterations)
+                recovery_counter += 1
+                if recovery_counter >= 30:
+                    self._recover_failed_downloads()
+                    recovery_counter = 0
             except Exception as e:
                 logger.error(f"DownloadAhead loop error: {e}")
                 time.sleep(5)
@@ -450,6 +506,9 @@ class DownloadAheadPool(BaseAheadPool):
                 logger.error(
                     f"DownloadAhead: download failed for job {job_id}: {file_path}"
                 )
+                # Mark as download-failed (file_ready=-1) so we don't retry endlessly.
+                # Process only already-downloaded files; failed ones stay parked.
+                self._mark_download_failed(job_id, file_path)
                 self._buffer_sem.release()
                 return
 
@@ -490,6 +549,7 @@ class DownloadAheadPool(BaseAheadPool):
 
         except Exception as e:
             logger.error(f"DownloadAhead: error downloading job {job_id}: {e}")
+            self._mark_download_failed(job_id, file_path)
             self._buffer_sem.release()
             # Clean up partial file
             if local_path.exists():
