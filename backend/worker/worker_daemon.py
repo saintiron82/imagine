@@ -124,6 +124,10 @@ class WorkerDaemon:
         self._job_pool = collections.deque()
         self._pool_lock = threading.Lock()
 
+        # Worker identity — set before connect, used in log prefix
+        self.worker_name = None
+        self._log_prefix = ""  # "[worker_name]" for log identification (BUG-006)
+
         # Session tracking
         self.session_id = None
         self.processing_mode = "idle"  # "mc" | "vv" | "mv" | "parse" | "idle" — set by server on connect/heartbeat
@@ -301,7 +305,7 @@ class WorkerDaemon:
                 "post",
                 f"{self.server_url}/api/v1/workers/connect",
                 json={
-                    "worker_name": getattr(self, 'worker_name', None) or f"{socket.gethostname()}-worker",
+                    "worker_name": self.worker_name or f"{socket.gethostname()}-worker",
                     "hostname": socket.gethostname(),
                     "batch_capacity": self.batch_capacity,
                     "resources": connect_resources,
@@ -316,7 +320,11 @@ class WorkerDaemon:
                     self.batch_capacity = data["batch_hint"]
                 if data.get("processing_mode"):
                     self.processing_mode = data["processing_mode"]
-                logger.info(f"Session registered: id={self.session_id}, pool_hint={self.pool_size}, batch={self.batch_capacity}, mode={self.processing_mode}")
+                # Set log prefix for worker identification (BUG-006)
+                name = self.worker_name or f"{socket.gethostname()}-worker"
+                self.worker_name = name
+                self._log_prefix = f"[{name}]"
+                logger.info(f"{self._log_prefix} Session registered: id={self.session_id}, pool_hint={self.pool_size}, batch={self.batch_capacity}, mode={self.processing_mode}")
                 return True
             else:
                 logger.error(f"Session connect failed: {resp.status_code} {resp.text[:200]}")
@@ -1176,7 +1184,7 @@ class WorkerDaemon:
         # Phase P is always handled by the server (ParseAheadPool).
         if self.verbose_log:
             file_names = [Path(c.job.get("file_path","")).name for c in active]
-            logger.info(f"[WORKER] Batch START: {len(active)} files, chunk={self.batch_capacity}, mode={self.processing_mode}")
+            logger.info(f"{self._log_prefix} Batch START: {len(active)} files, chunk={self.batch_capacity}, mode={self.processing_mode}")
             logger.info(f"[WORKER] Files: {file_names}")
         logger.info(f"Phase P: {len(active)} jobs pre-parsed by server (worker skips parsing)")
         elapsed_parse = 0.0
@@ -1235,7 +1243,7 @@ class WorkerDaemon:
                 mapped = self._PHASE_MAP.get(phase, phase)
                 self._daemon._current_phase = mapped
                 if self._daemon.verbose_log:
-                    logger.info(f"[WORKER] Phase {mapped} START ({count} files, batch_capacity={self._daemon.batch_capacity})")
+                    logger.info(f"{self._daemon._log_prefix} Phase {mapped} START ({count} files, batch_capacity={self._daemon.batch_capacity})")
                 try:
                     self._daemon._heartbeat()
                 except Exception:
@@ -1258,7 +1266,7 @@ class WorkerDaemon:
                 mapped = self._PHASE_MAP.get(phase, phase)
                 pc = self._daemon._phase_counts
                 if self._daemon.verbose_log:
-                    logger.info(f"[WORKER] Phase {mapped} DONE in {elapsed_s:.1f}s (totals: MC:{pc['mc']} VV:{pc['vv']} MV:{pc['mv']})")
+                    logger.info(f"{self._daemon._log_prefix} Phase {mapped} DONE in {elapsed_s:.1f}s (totals: MC:{pc['mc']} VV:{pc['vv']} MV:{pc['mv']})")
                 try:
                     self._daemon._heartbeat()
                 except Exception:

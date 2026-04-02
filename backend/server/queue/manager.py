@@ -1358,43 +1358,47 @@ class JobQueueManager:
         return cursor.rowcount
 
     def get_phase_stats(self) -> Dict[str, int]:
-        """Get pending job counts per phase for embedded worker scheduling."""
+        """Get pending job counts per phase — single atomic snapshot.
+
+        All phases counted in one query to prevent double-counting when
+        files move between phases during independent queries (BUG-007).
+        """
         cursor = self.db.conn.cursor()
-
-        # Parse pending: file ready but not yet parsed
-        cursor.execute("""
-            SELECT COUNT(*) FROM job_queue
-            WHERE status = 'pending' AND file_ready = 1
-              AND (parse_status IS NULL OR parse_status = 'pending')
-        """)
-        parse_pending = cursor.fetchone()[0] or 0
-
-        # Vision(MC) / VV / MV pending: parsed but AI phases incomplete
         cursor.execute("""
             SELECT
-                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') IS NULL
-                                  OR json_extract(phase_completed, '$.vision') = 0) AS mc_pending,
-                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                COUNT(*) FILTER (WHERE file_ready <= 0) AS download_waiting,
+                COUNT(*) FILTER (WHERE file_ready = 1
+                                 AND (parse_status IS NULL OR parse_status = 'pending')) AS parse_pending,
+                COUNT(*) FILTER (WHERE parse_status = 'parsed'
+                                 AND (json_extract(phase_completed, '$.vision') IS NULL
+                                      OR json_extract(phase_completed, '$.vision') = 0)) AS mc_pending,
+                COUNT(*) FILTER (WHERE parse_status = 'parsed'
+                                 AND json_extract(phase_completed, '$.vision') = 1
                                  AND (json_extract(phase_completed, '$.vv') IS NULL
                                       OR json_extract(phase_completed, '$.vv') = 0)) AS vv_pending,
-                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
+                COUNT(*) FILTER (WHERE parse_status = 'parsed'
+                                 AND json_extract(phase_completed, '$.vision') = 1
+                                 AND (json_extract(phase_completed, '$.mv') IS NULL
+                                      OR json_extract(phase_completed, '$.mv') = 0)) AS mv_pending,
+                COUNT(*) FILTER (WHERE parse_status = 'parsed'
+                                 AND json_extract(phase_completed, '$.vision') = 1
                                  AND ((json_extract(phase_completed, '$.vv') IS NULL
                                        OR json_extract(phase_completed, '$.vv') = 0)
                                       OR (json_extract(phase_completed, '$.mv') IS NULL
                                           OR json_extract(phase_completed, '$.mv') = 0))) AS embed_pending,
-                COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vision') = 1
-                                 AND (json_extract(phase_completed, '$.mv') IS NULL
-                                      OR json_extract(phase_completed, '$.mv') = 0)) AS mv_pending
+                COUNT(*) AS phase_total
             FROM job_queue
-            WHERE status IN ('pending', 'assigned') AND parse_status = 'parsed'
+            WHERE status IN ('pending', 'assigned') AND archived_at IS NULL
         """)
-        row = cursor.fetchone()
+        r = cursor.fetchone()
         return {
-            "parse_pending": parse_pending,
-            "mc_pending": row[0] or 0,
-            "vv_pending": row[1] or 0,
-            "embed_pending": row[2] or 0,
-            "mv_pending": row[3] or 0,
+            "download_waiting": r[0] or 0,
+            "parse_pending": r[1] or 0,
+            "mc_pending": r[2] or 0,
+            "vv_pending": r[3] or 0,
+            "mv_pending": r[4] or 0,
+            "embed_pending": r[5] or 0,
+            "phase_total": r[6] or 0,
         }
 
     def get_stats(self) -> Dict[str, Any]:

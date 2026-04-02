@@ -641,6 +641,9 @@ def admin_list_workers(
         if worker_measured and worker_measured > 0:
             throughput = worker_measured
 
+        # BUG-002: use session-scoped phase_counts from heartbeat (memory-based)
+        phase_counts = (resources or {}).get("phase_counts")
+
         workers.append({
             "id": session_id, "worker_name": row[1], "hostname": row[2],
             "status": row[3], "batch_capacity": row[4],
@@ -655,8 +658,28 @@ def admin_list_workers(
             "batch_capacity_override": row[16],
             "resources": resources,
             "assigned_mode": row[18],
-            "phase_job_count": row[19] or 0,
+            "phase_counts": phase_counts,       # session-scoped (resets on restart)
+            "phase_job_count": row[19] or 0,    # DB cumulative (reference only)
         })
+
+    # BUG-005: override embedded worker's current_phase from live memory
+    try:
+        from backend.server.embedded_worker import get_status as _ew_status
+        ew = _ew_status()
+        if ew.get("running"):
+            for w in workers:
+                if w["worker_name"] == "__builtin__" and w["status"] == "online":
+                    w["current_phase"] = ew.get("current_phase") or w["current_phase"]
+                    w["current_file"] = ew.get("current_file") or w["current_file"]
+                    # Also override phase_counts and throughput from live daemon
+                    if ew.get("phase_counts"):
+                        w["phase_counts"] = ew["phase_counts"]
+                    if ew.get("throughput") and ew["throughput"] > 0:
+                        w["throughput"] = ew["throughput"]
+                    break
+    except Exception:
+        pass
+
     return {
         "workers": workers,
         "global_processing_mode": _get_global_processing_mode(),
