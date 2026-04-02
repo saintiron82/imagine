@@ -197,10 +197,22 @@ class JobQueueManager:
         """
         return get_processing_mode()
 
-    # Time cost per file (seconds) — based on bench_worker_sim.py measurements.
-    # MC: 7.4s/file (9B MLX 4bit), VV: 0.5s/file (SigLIP2 batch=8), MV: 0.25s/file (batch=16)
-    # Previous values (mc=50) were from Transformers fp16 era → batch_size=1 bottleneck.
-    _PHASE_TIME = {"mc": 8, "vv": 0.5, "mv": 0.25}
+    # Defaults — overridden by config.yaml > worker.phase_time_s.{mc,vv,mv}
+    _PHASE_TIME_DEFAULTS = {"mc": 8, "vv": 0.5, "mv": 0.25}
+
+    @property
+    def _PHASE_TIME(self):
+        """Per-file time cost (seconds). Read from config, fallback to defaults."""
+        try:
+            from backend.utils.config import get_config
+            cfg = get_config()
+            return {
+                "mc": cfg.get("worker.phase_time_s.mc", self._PHASE_TIME_DEFAULTS["mc"]),
+                "vv": cfg.get("worker.phase_time_s.vv", self._PHASE_TIME_DEFAULTS["vv"]),
+                "mv": cfg.get("worker.phase_time_s.mv", self._PHASE_TIME_DEFAULTS["mv"]),
+            }
+        except Exception:
+            return dict(self._PHASE_TIME_DEFAULTS)
     # GPU-Weak MC penalty: can do MC but slower (pressure / penalty)
     _MC_PENALTY = {"strong": 1.0, "weak": 2.0, "embedded": 1.0}
 
