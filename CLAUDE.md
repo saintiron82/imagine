@@ -899,6 +899,11 @@ for layer in psd.descendants():
 | `frontend/src/i18n/` | **프론트엔드 로컬라이제이션 시스템** |
 | `frontend/src/i18n/locales/en-US.json` | 영어 번역 파일 |
 | `frontend/src/i18n/locales/ko-KR.json` | 한국어 번역 파일 |
+| `tools/bench_worker_sim.py` | **워커 시뮬레이션 벤치마크** (Phase별 속도 + 메모리 + A/B 비교) |
+| `benchmarks/` | **벤치마크 결과 저장소** (baselines + results) |
+| `benchmarks/README.md` | 벤치마크 폴더 구조, 현재 설계 속도, 사용법 |
+| `benchmarks/baselines/` | 모델 결정 시점 동결 기준값 (JSON) |
+| `docs/issues/` | **버그 리포트** (YYYYMMDD_설명.md 형식) |
 
 **핵심 문서** (작업 시 반드시 참조):
 
@@ -911,6 +916,67 @@ for layer in psd.descendants():
 | `docs/future_roadmap.md` | **미래 계획 통합** — 클라우드 확장, DB 최적화, 벤치마크, ECM 설계 | 아키텍처 확장/최적화 논의 시 |
 | `docs/platform_optimization.md` | **플랫폼별 VLM 최적화** — MLX/vLLM/Ollama/Transformers 폴백 체인 | VLM 백엔드 관련 작업 시 |
 | `docs/troubleshooting.md` | **트러블슈팅 기록** — 알려진 문제와 해결책 | 에러 발생 시 |
+| `benchmarks/README.md` | **워커 성능 벤치마크** — 설계 속도 기준표, A/B 비교 결과, 실행 방법 | 모델 교체, 성능 회귀, 새 하드웨어 시 |
+
+## 워커 성능 벤치마크 (Worker Performance Benchmark)
+
+**모델 교체·설정 변경 시 반드시 벤치마크를 실행하여 baselines에 기록합니다.**
+
+### 현재 설계 속도 (2026-04-02, M5 32GB, MLX 4bit)
+
+| Phase | Model | files/min | per-file | Memory Peak |
+|-------|-------|:---------:|:--------:|:-----------:|
+| MC (VLM) | Qwen3.5-9B MLX 4bit | 7.8 | 7.7s | Metal 5.7GB |
+| VV (SigLIP2) | SigLIP2-NaFlex | 81.1 | 0.74s | MPS 2.2GB |
+| MV (Embed) | Qwen3-Embed 0.6B | 119.3 | 0.5s | MPS 1.1GB |
+| **Full Pipeline** | V→VV→MV | **7.1** | **8.4s** | — |
+
+MC가 bottleneck. VV/MV는 무시할 수준.
+
+### 4B vs 9B 비교 (2026-04-02, 동일 10장, 간결 프롬프트)
+
+| 항목 | Qwen3.5-**4B** | Qwen3.5-**9B** | 비고 |
+|------|:-:|:-:|------|
+| files/min | **13.6** | 8.2 | 4B가 1.7배 빠름 |
+| per-file | **4.4s** | 7.4s | |
+| Metal | **2.9GB** | 5.7GB | |
+| 성공률 | 10/10 | 10/10 | |
+
+**9B 선택 근거**: 속도보다 캡션 품질 우선 (MMMU-Pro 70.1 vs 66.3). 32GB Mac에서 메모리 여유 충분.
+
+### 실행 방법
+
+```bash
+# 전체 벤치마크 (Phase별 + Full pipeline)
+python tools/bench_worker_sim.py --count 10
+
+# MC Phase만 (빠른 확인)
+python tools/bench_worker_sim.py --phases mc --no-full
+
+# A/B 모델 비교
+python tools/bench_worker_sim.py --ab <MODEL_A> <MODEL_B> --count 10
+
+# 기존 baselines와 비교
+python tools/bench_worker_sim.py --compare benchmarks/baselines/<파일>.json
+
+# 특정 모델 지정
+python tools/bench_worker_sim.py --vlm-model mlx-community/Qwen3.5-4B-MLX-4bit
+```
+
+### 벤치마크 실행 시점
+
+- **모델 교체 후**: 새 모델 벤치마크 → baselines에 저장
+- **설정 변경 후**: 프롬프트, 배치 크기, 양자화 변경 시
+- **성능 회귀 시**: 실제 워커 throughput이 설계 속도보다 20% 이상 낮을 때
+- **새 하드웨어**: 첫 셋업 시
+
+### 설계 속도 vs 실제 속도 해석
+
+| Gap | 원인 |
+|-----|------|
+| < 20% | 정상 — 네트워크, DB, prefetch 오버헤드 |
+| 20-50% | 확인 필요 — 다운로드 병목, DB 경합, prefetch 풀 설정 |
+| > 50% | 버그 — 잘못된 모델 로드, GPU 경합, 메모리 압박 |
 
 ## 테스트 전략
 
