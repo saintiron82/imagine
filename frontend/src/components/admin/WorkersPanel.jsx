@@ -11,6 +11,7 @@ import {
   getAutoProcessing, updateAutoProcessing,
   getEmbeddedWorker,
   forceRetryFailedJobs,
+  getWorkRequests,
 } from '../../api/admin';
 import { getJobStats } from '../../api/worker';
 import {
@@ -162,12 +163,27 @@ export default function WorkersPanel() {
 
   const load = useCallback(async () => {
     try {
-      const [workerData, statsData] = await Promise.all([
+      const [workerData, statsData, wrData] = await Promise.all([
         listWorkerSessions(),
         getJobStats().catch(() => null),
+        getWorkRequests(true).catch(() => ({ work_requests: [] })),
       ]);
       const all = workerData.workers || [];
       setWorkers(all.filter(w => w.status === 'online'));
+
+      // Override stats with WR-based counts (active queue scope)
+      const wrs = (wrData.work_requests || []).filter(wr =>
+        wr.status !== 'cancelled' &&
+        (wr.status !== 'completed' || (wr.failed_count || 0) > 0)
+      );
+      if (statsData && wrs.length > 0) {
+        const wrTotal = wrs.reduce((s, wr) => s + (wr.total_files || 0), 0);
+        const wrDone = wrs.reduce((s, wr) => s + (wr.completed_count || 0), 0);
+        const wrFail = wrs.reduce((s, wr) => s + (wr.failed_count || 0), 0);
+        statsData.total = wrTotal;
+        statsData.completed = wrDone;
+        statsData.failed = wrFail;
+      }
       if (statsData) setQueueStats(statsData);
     } catch (e) {
       console.error('Failed to load workers:', e);
