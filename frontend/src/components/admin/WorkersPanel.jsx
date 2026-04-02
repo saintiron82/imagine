@@ -12,7 +12,9 @@ import {
   getEmbeddedWorker,
   forceRetryFailedJobs,
   getWorkRequests,
+  pauseWorkRequest, resumeWorkRequest, cancelWorkRequest,
 } from '../../api/admin';
+import { WRCard, WRGroupCard } from '../WRCards';
 import { getJobStats } from '../../api/worker';
 import {
   RefreshCw, Square, Ban, Pencil, AlertOctagon, Loader2,
@@ -160,6 +162,7 @@ export default function WorkersPanel() {
   const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
   const [dbStats, setDbStats] = useState(null);
   const [queueStats, setQueueStats] = useState(null);
+  const [activeWRs, setActiveWRs] = useState([]);
 
   const load = useCallback(async () => {
     try {
@@ -176,6 +179,7 @@ export default function WorkersPanel() {
         wr.status !== 'cancelled' &&
         (wr.status !== 'completed' || (wr.failed_count || 0) > 0)
       );
+      setActiveWRs(wrs);
       if (statsData && wrs.length > 0) {
         const wrTotal = wrs.reduce((s, wr) => s + (wr.total_files || 0), 0);
         const wrDone = wrs.reduce((s, wr) => s + (wr.completed_count || 0), 0);
@@ -420,6 +424,27 @@ export default function WorkersPanel() {
           </div>
         )}
       </div>
+
+      {/* Active Work Requests */}
+      {activeWRs.length > 0 && (
+        <div className="mb-4 p-4 rounded-xl bg-gray-800/40 border border-gray-700/30">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            {t('admin.active_queue') || '활성 큐'} ({activeWRs.length})
+          </h3>
+          <div className="space-y-2">
+            {activeWRs.map(wr => (
+              <WRCard key={wr.id} wr={wr} onAction={async (id, action) => {
+                try {
+                  if (action === 'pause') await pauseWorkRequest(id);
+                  else if (action === 'resume') await resumeWorkRequest(id);
+                  else if (action === 'cancel') await cancelWorkRequest(id);
+                  load();
+                } catch (e) { console.error(`WR ${action} failed:`, e); }
+              }} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Pipeline phase dashboard */}
       {onlineCount > 0 && (

@@ -3,13 +3,13 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Activity, Server, BarChart3, FileText, RefreshCw, Monitor } from 'lucide-react';
+import { Activity, Server, BarChart3, FileText, RefreshCw } from 'lucide-react';
 import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
 import { WorkersPanel, DashboardPanel } from './AdminPage';
 import WorkerPage, { MyWorkersSection, ConnectMyPC } from './WorkerPage';
-import PipelineBlackboard from '../components/PipelineBlackboard';
+
 
 export default function FactoryPage({
   isAdmin,
@@ -17,7 +17,7 @@ export default function FactoryPage({
   queueReloadSignal,
 }) {
   const { t } = useLocale();
-  const [activeTab, setActiveTab] = useState(isAdmin ? 'pipeline' : 'workers');
+  const [activeTab, setActiveTab] = useState('workers');
   const [stats, setStats] = useState(null);
 
   // Fetch queue stats for summary bar
@@ -45,7 +45,6 @@ export default function FactoryPage({
   const failed = stats?.failed ?? 0;
 
   const allTabs = [
-    { id: 'pipeline', label: t('factory.tab_pipeline'), icon: Monitor, adminOnly: true },
     { id: 'workers', label: t('factory.tab_workers'), icon: Server, adminOnly: false },
     { id: 'dashboard', label: t('factory.tab_dashboard'), icon: BarChart3, adminOnly: true },
     { id: 'logs', label: t('factory.tab_logs'), icon: FileText, adminOnly: true },
@@ -145,9 +144,6 @@ export default function FactoryPage({
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
-        {activeTab === 'pipeline' && (
-          <PipelineBlackboard reloadSignal={queueReloadSignal} appMode={appMode} />
-        )}
         {activeTab === 'workers' && (
           isAdmin ? (
             <div className="p-4 space-y-6">
