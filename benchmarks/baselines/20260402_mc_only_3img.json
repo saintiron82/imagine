@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-04-02T11:40:59.299781",
+  "system": {
+    "platform": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.12",
+    "mlx_version": "0.30.6",
+    "torch_version": "2.11.0.dev20260216",
+    "transformers_version": "5.4.0",
+    "memory_gb": 32.0
+  },
+  "config": {
+    "image_count": 3,
+    "image_dir": "/Users/saintiron/imageDB/마캬베리즈무/실내소품",
+    "vv_batch_size": 8,
+    "mv_batch_size": 16,
+    "max_edge": 768
+  },
+  "psd_preprocess": {
+    "total_s": 0.44,
+    "per_file_s": 0.148
+  },
+  "phases": {
+    "mc": {
+      "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+      "file_count": 3,
+      "batch_size": 1,
+      "model_load_s": 3.54,
+      "processing_s": 21.92,
+      "model_unload_s": 0.16,
+      "gc_s": 0.35,
+      "total_s": 25.97,
+      "per_file_s": 8.656,
+      "files_per_min": 6.9,
+      "success": 3,
+      "failed": 0,
+      "memory": {
+        "before_load": {
+          "rss_mb": 358.8,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        },
+        "after_load": {
+          "rss_mb": 6657.3,
+          "metal_mb": 5675.1,
+          "mps_mb": 0.0
+        },
+        "peak": {
+          "rss_mb": 6690.2,
+          "metal_mb": 5675.1,
+          "mps_mb": 0.0
+        },
+        "after_unload": {
+          "rss_mb": 758.2,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        }
+      }
+    }
+  },
+  "reference_speeds": {
+    "mc_files_per_min": 6.9
+  }
+}

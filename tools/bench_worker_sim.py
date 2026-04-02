@@ -41,7 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 DEFAULT_IMAGE_DIR = Path("/Users/saintiron/imageDB/마캬베리즈무/실내소품")
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmarks"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmarks" / "results"
 
 # ── Memory Helpers ──────────────────────────────────────────────────────
 

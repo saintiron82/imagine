@@ -1,0 +1,158 @@
+{
+  "timestamp": "2026-04-02T11:42:34.400303",
+  "system": {
+    "platform": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.12",
+    "mlx_version": "0.30.6",
+    "torch_version": "2.11.0.dev20260216",
+    "transformers_version": "5.4.0",
+    "memory_gb": 32.0
+  },
+  "config": {
+    "image_count": 5,
+    "image_dir": "/Users/saintiron/imageDB/마캬베리즈무/실내소품",
+    "vv_batch_size": 8,
+    "mv_batch_size": 16,
+    "max_edge": 768
+  },
+  "psd_preprocess": {
+    "total_s": 0.84,
+    "per_file_s": 0.167
+  },
+  "phases": {
+    "mc": {
+      "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+      "file_count": 5,
+      "batch_size": 1,
+      "model_load_s": 2.93,
+      "processing_s": 34.75,
+      "model_unload_s": 0.21,
+      "gc_s": 0.35,
+      "total_s": 38.23,
+      "per_file_s": 7.647,
+      "files_per_min": 7.8,
+      "success": 5,
+      "failed": 0,
+      "memory": {
+        "before_load": {
+          "rss_mb": 455.9,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        },
+        "after_load": {
+          "rss_mb": 6744.9,
+          "metal_mb": 5675.1,
+          "mps_mb": 0.0
+        },
+        "peak": {
+          "rss_mb": 6783.8,
+          "metal_mb": 5675.1,
+          "mps_mb": 0.0
+        },
+        "after_unload": {
+          "rss_mb": 804.4,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        }
+      }
+    },
+    "vv": {
+      "model_id": "google/siglip2-so400m-patch14-384",
+      "file_count": 5,
+      "batch_size": 8,
+      "model_load_s": 0.01,
+      "processing_s": 3.23,
+      "model_unload_s": 0.12,
+      "gc_s": 0.35,
+      "total_s": 3.7,
+      "per_file_s": 0.74,
+      "files_per_min": 81.1,
+      "success": 5,
+      "failed": 0,
+      "memory": {
+        "before_load": {
+          "rss_mb": 804.4,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        },
+        "after_load": {
+          "rss_mb": 804.4,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        },
+        "peak": {
+          "rss_mb": 1780.0,
+          "metal_mb": 0.0,
+          "mps_mb": 2166.8
+        },
+        "after_unload": {
+          "rss_mb": 1780.0,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        }
+      }
+    },
+    "mv": {
+      "model_id": "TransformersEmbeddingProvider",
+      "file_count": 5,
+      "batch_size": 16,
+      "model_load_s": 0.0,
+      "processing_s": 2.0,
+      "model_unload_s": 0.16,
+      "gc_s": 0.35,
+      "total_s": 2.51,
+      "per_file_s": 0.503,
+      "files_per_min": 119.3,
+      "success": 5,
+      "failed": 0,
+      "memory": {
+        "before_load": {
+          "rss_mb": 1780.0,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        },
+        "after_load": {
+          "rss_mb": 1780.0,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        },
+        "peak": {
+          "rss_mb": 1855.5,
+          "metal_mb": 0.0,
+          "mps_mb": 1136.4
+        },
+        "after_unload": {
+          "rss_mb": 1827.2,
+          "metal_mb": 0.0,
+          "mps_mb": 0.0
+        }
+      }
+    }
+  },
+  "reference_speeds": {
+    "mc_files_per_min": 7.8,
+    "vv_files_per_min": 81.1,
+    "mv_files_per_min": 119.3,
+    "full_files_per_min": 7.1
+  },
+  "full_pipeline": {
+    "total_s": 42.22,
+    "files_per_min": 7.1,
+    "file_count": 5,
+    "phases": {
+      "vision": {
+        "processing_s": 27.31,
+        "file_count": 5
+      },
+      "vv": {
+        "processing_s": 0.0,
+        "file_count": 5
+      },
+      "mv": {
+        "processing_s": 0.0,
+        "file_count": 5
+      }
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "timestamp": "2026-04-01T00:00:00",
+  "source": "tools/test_qwen35_eval.py Phase 6-8 (pure inference, no pipeline overhead)",
+  "system": {
+    "platform": "Darwin",
+    "machine": "Apple M5",
+    "memory_gb": 32.0,
+    "backend": "MLX 4bit"
+  },
+  "note": "Pure inference benchmark (model stays loaded, no load/unload/GC overhead). Measured via test_qwen35_eval.py during Qwen3.5 migration evaluation.",
+  "models_compared": {
+    "qwen3_vl_4b_mlx": {
+      "model_id": "mlx-community/Qwen3-VL-4B-Instruct-4bit",
+      "files_per_min": 6.8,
+      "avg_stage1_s": 1.4,
+      "avg_stage2_s": 7.4,
+      "avg_total_s": 8.8,
+      "metal_peak_gb": 3.8,
+      "success_rate": "10/10",
+      "status": "retired"
+    },
+    "qwen35_4b_mlx": {
+      "model_id": "mlx-community/Qwen3.5-4B-MLX-4bit",
+      "files_per_min": 2.5,
+      "avg_stage1_s": 2.6,
+      "avg_stage2_s": 21.0,
+      "avg_total_s": 23.6,
+      "metal_peak_gb": 3.9,
+      "success_rate": "9/10",
+      "note": "Verbose output without concise prompt"
+    },
+    "qwen35_9b_mlx_verbose": {
+      "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+      "files_per_min": 2.3,
+      "avg_stage1_s": 3.1,
+      "avg_stage2_s": 23.1,
+      "avg_total_s": 26.3,
+      "metal_peak_gb": 6.6,
+      "success_rate": "10/10",
+      "note": "Verbose prompt (before optimization)"
+    },
+    "qwen35_9b_mlx_concise": {
+      "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+      "files_per_min": 6.4,
+      "avg_stage1_s": "1.6-3.6",
+      "avg_stage2_s": "3.7-8.9",
+      "avg_total_s": "5.2-12.5",
+      "metal_peak_gb": 6.6,
+      "success_rate": "10/10",
+      "note": "Concise prompt (max 20 words, max 8 tags) — CURRENT PRODUCTION"
+    }
+  },
+  "tok_per_s": {
+    "qwen3_vl_4b": {"prefill": 419, "generation": 47.4, "gen_tokens": 58},
+    "qwen35_4b": {"prefill": 588, "generation": 45.9, "gen_tokens": 100},
+    "qwen35_9b": {"prefill": 290, "generation": 24.8, "gen_tokens_verbose": 201, "gen_tokens_concise": 80}
+  },
+  "thinking_mode_comparison": {
+    "thinking_on": {"gen_time_s": 11.8, "json_parse": "FAIL", "note": "Natural language output"},
+    "thinking_off": {"gen_time_s": 0.9, "json_parse": "OK (Tier 1)", "speedup": "12.7x"}
+  },
+  "batch_memory_stability": {
+    "images": 5,
+    "rss_growth_mb": 48,
+    "metal_growth_mb": 0,
+    "verdict": "STABLE"
+  }
+}

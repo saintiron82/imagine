@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-04-01T00:00:00",
+  "source": "Manual evaluation during Qwen3.5 migration (Windows worker)",
+  "system": {
+    "platform": "Windows",
+    "gpu": "RTX 3060 Ti 8GB",
+    "backend": "Ollama"
+  },
+  "note": "Windows worker VLM evaluation. 3 images x 3 repeats per model.",
+  "models_compared": {
+    "qwen3_vl_4b_ollama": {
+      "model_id": "qwen3-vl:4b",
+      "avg_time_s": "~10",
+      "vram_gb": 7.0,
+      "caption_quality": "unstable (0/3 empty)",
+      "stability": "FAIL",
+      "status": "retired"
+    },
+    "qwen3_vl_8b_q4km_ollama": {
+      "model_id": "qwen3-vl:8b-q4_K_M",
+      "avg_time_s": 7.2,
+      "vram_gb": 7.2,
+      "caption_length": "347-434 chars",
+      "stability": "3/3 OK"
+    },
+    "qwen35_4b_ollama": {
+      "model_id": "qwen3.5:4b",
+      "avg_time_s": 6.2,
+      "avg_warm_s": 4.7,
+      "vram_gb": 7.5,
+      "caption_length": "392-620 chars",
+      "stability": "3/3 OK",
+      "note": "CURRENT PRODUCTION (Windows) — fastest + stable"
+    },
+    "qwen35_9b_ollama": {
+      "model_id": "qwen3.5:9b",
+      "avg_time_s": 13.2,
+      "vram_gb": 7.5,
+      "caption_length": "450-599 chars",
+      "stability": "3/3 OK",
+      "note": "Too slow for 8GB GPU — 2x slower than 4b"
+    }
+  },
+  "decision": "qwen3.5:4b selected for Windows worker (fastest + stable + 7.5GB fits 8GB GPU)"
+}
