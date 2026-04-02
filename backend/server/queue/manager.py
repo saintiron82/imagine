@@ -197,8 +197,10 @@ class JobQueueManager:
         """
         return get_processing_mode()
 
-    # Time cost per file (seconds) — MC dominates, so GPU stays on MC
-    _PHASE_TIME = {"mc": 50, "vv": 2, "mv": 0.5}
+    # Time cost per file (seconds) — based on bench_worker_sim.py measurements.
+    # MC: 7.4s/file (9B MLX 4bit), VV: 0.5s/file (SigLIP2 batch=8), MV: 0.25s/file (batch=16)
+    # Previous values (mc=50) were from Transformers fp16 era → batch_size=1 bottleneck.
+    _PHASE_TIME = {"mc": 8, "vv": 0.5, "mv": 0.25}
     # GPU-Weak MC penalty: can do MC but slower (pressure / penalty)
     _MC_PENALTY = {"strong": 1.0, "weak": 2.0, "embedded": 1.0}
 
