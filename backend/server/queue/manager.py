@@ -1622,57 +1622,9 @@ class JobQueueManager:
         """)
         complete_files = cursor.fetchone()[0]
 
-        # Phase progress: only incomplete files (exclude fully done files)
-        # Shows remaining work, not total inventory
-        incomplete = total_files - complete_files
-        if incomplete > 0:
-            cursor.execute("""
-                SELECT
-                    SUM(CASE WHEN f.mc_caption IS NOT NULL AND f.mc_caption != ''
-                        THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
-                        THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
-                        THEN 1 ELSE 0 END)
-                FROM files f
-                WHERE NOT (
-                    (f.mc_caption IS NOT NULL AND f.mc_caption != '')
-                    AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
-                    AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)
-                )
-            """)
-            inc_row = cursor.fetchone()
-            mc_done = inc_row[0] or 0
-            vv_done = inc_row[1] or 0
-            mv_done = inc_row[2] or 0
-        else:
-            mc_done = vv_done = mv_done = 0
-
-        phase_stats = {
-            "phase_total": incomplete,  # denominator: incomplete files only
-            "phase_parse_done": max(0, incomplete - download_waiting),  # exclude files awaiting download
-            "phase_vision_done": mc_done,
-            "phase_embed_done": min(vv_done, mv_done),
-        }
-
-        # Failed files count (from files table, not job_queue)
-        cursor.execute(
-            "SELECT COUNT(*) FROM files WHERE processing_status = 'failed'"
-        )
-        failed_files = cursor.fetchone()[0]
-
         self.db.conn.commit()  # commit the pruning DELETE above
 
         # Job-queue-based counts (current session work)
-        queue_completed = status_counts.get("completed", 0)
-        queue_failed = status_counts.get("failed", 0)
-        queue_total = pending + assigned + processing + queue_completed + queue_failed
-
-        # Counts from actual DB state (not counters — always accurate)
-        # total = active queue + complete files + failed files in scope
-        # completed = files with mc+vv+mv all present
-        # failed = files.processing_status='failed'
-
         # Pipeline position: each file is in exactly ONE stage (no overlap)
         # Stage = the FIRST incomplete step in the pipeline
         try:
@@ -1727,25 +1679,19 @@ class JobQueueManager:
 
         return {
             "total": queue_total,             # active queue: remaining + completed
-            "total_files": total_files,       # all files in DB (reference)
-            "complete_files": complete_files,  # files-based: 3-axis complete (reference)
+            "total_files": total_files,       # all files in DB (StatusBar reference)
+            "complete_files": complete_files,  # files 3-axis complete (StatusBar reference)
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
             "completed": queue_completed,      # completed in this queue session
             "failed": failed_count,            # failed in queue
-            "db_completed": complete_files,    # files-based (reference)
-            "db_failed": failed_files,         # files-based (reference)
             "throughput": throughput,
             "bottleneck": bottleneck_phase,
-            "parse_throughput": parse_throughput,
             "mc_throughput": mc_throughput,
             "vv_throughput": vv_throughput,
             "mv_throughput": mv_throughput,
-            "recent_1min": recent_1min,
-            "recent_5min": recent_5min,
             "eta_seconds": eta_seconds,
-            **phase_stats,
             **parse_ahead_stats,
             **file_ready_stats,
             "download_buffer": download_buffer,
