@@ -575,72 +575,56 @@ def admin_list_workers(
     )
     rows = cursor.fetchall()
 
-    # Per-worker throughput: count any phase completion in last 5min/1min
-    # Uses mc_completed_at (MC phase) as primary — most common worker activity.
-    # Falls back to completed_at for VV/MV phases.
-    # Per-worker throughput: count any phase completion (mc_completed_at or updated_at)
+    # Per-worker throughput: count ONLY the phase matching the worker's assigned_mode.
+    # Previous bug: OR condition counted MC+VV+MV for same job → inflated numbers.
+    # Now: each phase counted separately, worker gets only its mode's count.
     cursor.execute(
-        """SELECT worker_session_id, COUNT(*) FROM job_queue
+        """SELECT
+               worker_session_id,
+               COUNT(*) FILTER (WHERE mc_completed_at IS NOT NULL
+                                AND datetime(mc_completed_at) > datetime('now', '-5 minutes')) AS mc_5m,
+               COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') = 1
+                                AND updated_at IS NOT NULL
+                                AND datetime(updated_at) > datetime('now', '-5 minutes')) AS vv_5m,
+               COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mv') = 1
+                                AND updated_at IS NOT NULL
+                                AND datetime(updated_at) > datetime('now', '-5 minutes')) AS mv_5m,
+               COUNT(*) FILTER (WHERE mc_completed_at IS NOT NULL
+                                AND datetime(mc_completed_at) > datetime('now', '-1 minute')) AS mc_1m,
+               COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') = 1
+                                AND updated_at IS NOT NULL
+                                AND datetime(updated_at) > datetime('now', '-1 minute')) AS vv_1m,
+               COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mv') = 1
+                                AND updated_at IS NOT NULL
+                                AND datetime(updated_at) > datetime('now', '-1 minute')) AS mv_1m
+           FROM job_queue
            WHERE worker_session_id IS NOT NULL
-             AND (
-               (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-5 minutes'))
-               OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-5 minutes')
-                                     AND (json_extract(phase_completed, '$.vv') = 1
-                                                OR json_extract(phase_completed, '$.mv') = 1))
-             )
            GROUP BY worker_session_id"""
     )
-    session_recent_5m = dict(cursor.fetchall())
-
-    cursor.execute(
-        """SELECT worker_session_id, COUNT(*) FROM job_queue
-           WHERE worker_session_id IS NOT NULL
-             AND (
-               (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-1 minute'))
-               OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-1 minute')
-                                     AND (json_extract(phase_completed, '$.vv') = 1
-                                                OR json_extract(phase_completed, '$.mv') = 1))
-             )
-           GROUP BY worker_session_id"""
-    )
-    session_recent_1m = dict(cursor.fetchall())
-
-    # Fallback: per-user throughput
-    cursor.execute(
-        """SELECT assigned_to, COUNT(*) FROM job_queue
-           WHERE worker_session_id IS NULL
-             AND (
-               (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-5 minutes'))
-               OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-5 minutes')
-                                     AND (json_extract(phase_completed, '$.vv') = 1
-                                                OR json_extract(phase_completed, '$.mv') = 1))
-             )
-           GROUP BY assigned_to"""
-    )
-    user_recent_5m = dict(cursor.fetchall())
-
-    cursor.execute(
-        """SELECT assigned_to, COUNT(*) FROM job_queue
-           WHERE worker_session_id IS NULL
-             AND (
-               (mc_completed_at IS NOT NULL AND datetime(mc_completed_at) > datetime('now', '-1 minute'))
-               OR (updated_at IS NOT NULL AND datetime(updated_at) > datetime('now', '-1 minute')
-                                     AND (json_extract(phase_completed, '$.vv') = 1
-                                                OR json_extract(phase_completed, '$.mv') = 1))
-             )
-           GROUP BY assigned_to"""
-    )
-    user_recent_1m = dict(cursor.fetchall())
+    # {session_id: {mc_5m, vv_5m, mv_5m, mc_1m, vv_1m, mv_1m}}
+    session_phase_counts = {}
+    for r in cursor.fetchall():
+        session_phase_counts[r[0]] = {
+            "mc_5m": r[1], "vv_5m": r[2], "mv_5m": r[3],
+            "mc_1m": r[4], "vv_1m": r[5], "mv_1m": r[6],
+        }
 
     workers = []
     for row in rows:
         session_id = row[0]
-        user_id = row[14]
+        assigned_mode = row[18]  # "mc", "vv", "mv", or None (full pipeline)
 
-        # Prefer per-session throughput; fall back to per-user for legacy jobs
-        r1 = session_recent_1m.get(session_id, 0) or user_recent_1m.get(user_id, 0)
-        r5 = session_recent_5m.get(session_id, 0) or user_recent_5m.get(user_id, 0)
-        # Use 1-min if active, otherwise 5-min average
+        # Pick the count matching this worker's assigned mode
+        pc = session_phase_counts.get(session_id, {})
+        if assigned_mode == "vv":
+            r1, r5 = pc.get("vv_1m", 0), pc.get("vv_5m", 0)
+        elif assigned_mode == "mv":
+            r1, r5 = pc.get("mv_1m", 0), pc.get("mv_5m", 0)
+        else:
+            # "mc" mode or full pipeline — MC is the bottleneck, use MC count
+            r1, r5 = pc.get("mc_1m", 0), pc.get("mc_5m", 0)
+
+        # 1-min if active, otherwise 5-min average
         if r1 > 0:
             throughput = float(r1)
         elif r5 > 0:
@@ -657,6 +641,7 @@ def admin_list_workers(
             "disconnected_at": row[11], "pending_command": row[12],
             "username": row[13],
             "throughput": throughput,
+            "throughput_mode": assigned_mode or "full",
             "processing_mode_override": row[15],
             "batch_capacity_override": row[16],
             "resources": json.loads(row[17]) if row[17] else None,

@@ -1463,10 +1463,22 @@ class JobQueueManager:
         except Exception:
             pass
 
-        # Primary throughput: use whichever phase is actively producing
-        active_speeds = [s for s in [mc_throughput, vv_throughput, mv_throughput] if s and s > 0]
-        if throughput == 0 and active_speeds:
-            throughput = max(active_speeds)
+        # Primary throughput: use BOTTLENECK (slowest active phase).
+        # Previous bug: used max() which picked the fastest phase → inflated throughput.
+        # Pipeline speed is limited by its slowest stage.
+        bottleneck_phase = None
+        active_speeds = {
+            "mc": mc_throughput, "vv": vv_throughput, "mv": mv_throughput,
+        }
+        active = {k: v for k, v in active_speeds.items() if v and v > 0}
+        if active:
+            bottleneck_phase = min(active, key=active.get)
+            # Use bottleneck as primary throughput when job_completions is empty
+            if throughput == 0:
+                throughput = active[bottleneck_phase]
+            # Even when job_completions has data, cap at bottleneck to avoid inflation
+            elif throughput > active[bottleneck_phase] * 1.5:
+                throughput = active[bottleneck_phase]
 
         # Phase-level progress counts — deferred to file-centric block below
         phase_stats = {}
@@ -1537,15 +1549,32 @@ class JobQueueManager:
         dl_pool = _get_download_pool()
         download_buffer = dl_pool.get_stats() if dl_pool else None
 
-        # ETA: estimated seconds to complete remaining jobs
+        # ETA: estimated seconds to complete remaining jobs.
+        # Uses bottleneck phase (slowest) for realistic estimate.
+        # Previous bug: used inflated total throughput → ETA far too short.
         pending = status_counts.get("pending", 0)
         assigned = status_counts.get("assigned", 0)
         processing = status_counts.get("processing", 0)
-        # Exclude download_waiting from remaining (can't be processed yet)
         download_waiting = file_ready_stats.get("download_waiting", 0)
         remaining = pending - download_waiting + assigned + processing
-        if throughput > 0 and remaining > 0:
-            eta_seconds = round((remaining / throughput) * 60)
+
+        # Phase-level ETA: max(per-phase remaining / per-phase throughput)
+        mc_pending = parse_ahead_stats.get("buffer_need_mc", 0)
+        vv_pending = parse_ahead_stats.get("buffer_need_vv", 0)
+        mv_pending = parse_ahead_stats.get("buffer_need_mv", 0)
+
+        phase_etas = []  # in minutes
+        if mc_throughput and mc_throughput > 0 and mc_pending > 0:
+            phase_etas.append(mc_pending / mc_throughput)
+        if vv_throughput and vv_throughput > 0 and vv_pending > 0:
+            phase_etas.append(vv_pending / vv_throughput)
+        if mv_throughput and mv_throughput > 0 and mv_pending > 0:
+            phase_etas.append(mv_pending / mv_throughput)
+
+        if phase_etas:
+            eta_seconds = round(max(phase_etas) * 60)  # bottleneck phase
+        elif throughput > 0 and remaining > 0:
+            eta_seconds = round((remaining / throughput) * 60)  # fallback
         else:
             eta_seconds = None
 
@@ -1664,6 +1693,7 @@ class JobQueueManager:
             "db_completed": complete_files, # files-based: total DB inventory (for reference)
             "db_failed": failed_files,      # files-based: total DB failures
             "throughput": throughput,
+            "bottleneck": bottleneck_phase,
             "parse_throughput": parse_throughput,
             "mc_throughput": mc_throughput,
             "vv_throughput": vv_throughput,
