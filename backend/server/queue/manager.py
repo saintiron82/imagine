@@ -1709,22 +1709,25 @@ class JobQueueManager:
         except Exception:
             pipeline = {}
 
-        # Queue-based completed: total files minus remaining jobs in queue
-        # (completed jobs are DELETEd from job_queue, so we infer from absence)
-        queue_remaining = pending + assigned + processing + status_counts.get("failed", 0)
-        queue_completed = max(0, total_files - queue_remaining)
+        # Queue-centric counts:
+        # - queue_total: current job_queue size (active work scope)
+        # - queue_completed: files in DB but NOT in queue (already processed & deleted)
+        # - total_files: all files in DB (queue + already done)
+        failed_count = status_counts.get("failed", 0)
+        queue_total = pending + assigned + processing + failed_count
+        queue_completed = max(0, total_files - queue_total)
 
         return {
-            "total": total_files,  # all files in DB
-            "total_files": total_files,
-            "complete_files": complete_files,  # files-based: 3-axis complete
+            "total": queue_total,            # current queue scope (not all files)
+            "total_files": total_files,      # all files in DB (for reference)
+            "complete_files": complete_files, # files-based: 3-axis complete (for reference)
             "pending": pending,
             "assigned": assigned,
             "processing": processing,
-            "completed": queue_completed,       # queue-based: inferred from remaining
-            "failed": status_counts.get("failed", 0),  # queue-based: actual failed jobs
-            "db_completed": complete_files, # files-based: total DB inventory (for reference)
-            "db_failed": failed_files,      # files-based: total DB failures
+            "completed": queue_completed,     # files done (not in queue anymore)
+            "failed": failed_count,           # queue-based: actual failed jobs
+            "db_completed": complete_files,   # files-based: total DB inventory (for reference)
+            "db_failed": failed_files,        # files-based: total DB failures
             "throughput": throughput,
             "bottleneck": bottleneck_phase,
             "parse_throughput": parse_throughput,
