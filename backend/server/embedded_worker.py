@@ -118,6 +118,17 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                     _worker_daemon.processing_mode = mode
 
                     if mode == "idle":
+                        # Unload all models when queue is empty
+                        prev = getattr(_worker_daemon, '_prev_mode', None)
+                        if prev:
+                            logger.info(f"[EW] Queue empty — unloading {prev} model")
+                            if prev == "mc":
+                                _worker_daemon._unload_vlm()
+                            elif prev == "vv":
+                                _worker_daemon._unload_vv()
+                            elif prev == "mv":
+                                _worker_daemon._unload_mv()
+                            _worker_daemon._prev_mode = None
                         time.sleep(10)
                         continue
 
@@ -145,30 +156,29 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         continue
 
                     consecutive_empty = 0
+                    prev_mode = getattr(_worker_daemon, '_prev_mode', None)
 
-                    # Batch processing with dynamically chosen mode
+                    # Unload previous model if mode changed
+                    if prev_mode and prev_mode != mode:
+                        logger.info(f"[EW] Mode switch: {prev_mode} → {mode}")
+                        if prev_mode == "mc":
+                            _worker_daemon._unload_vlm()
+                        elif prev_mode == "vv":
+                            _worker_daemon._unload_vv()
+                        elif prev_mode == "mv":
+                            _worker_daemon._unload_mv()
+                    _worker_daemon._prev_mode = mode
+
+                    # Batch processing
                     try:
                         results = _worker_daemon.process_batch_phased(jobs)
-                        # results = [(job_id, success_bool), ...]
                         for item in results:
                             if isinstance(item, tuple) and len(item) >= 2 and item[1]:
                                 _jobs_completed += 1
                     except Exception as e:
                         logger.error(f"Embedded worker batch failed: {e}", exc_info=True)
 
-                    # Cleanup GPU memory between batches
-                    gc.collect()
-                    try:
-                        import torch
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                            torch.mps.empty_cache()
-                    except ImportError:
-                        pass
-
-                    # Rest after MC batch only (GPU thermal cooldown).
-                    # VV/MV are fast — no rest needed.
+                    # Rest only if enabled AND MC mode (GPU thermal cooldown)
                     if mode == "mc":
                         try:
                             rest_s = get_config().get("server.auto_processing.rest_after_batch_s", 0)
