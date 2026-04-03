@@ -477,26 +477,17 @@ export default function WorkersPanel() {
                 <span className="text-green-400">{onlineCount} workers</span>
               </div>
             </div>
-            {/* Queue list */}
-            <div className="border-t border-gray-700/30 px-4 py-2 space-y-1">
-              {allJobs.map(job => {
-                const p = job.progress || {};
-                const jTotal = p.total || 0;
-                const jDone = p.complete || 0;
-                const jPct = jTotal > 0 ? (jDone / jTotal * 100).toFixed(0) : 0;
-                const isActive = job.status === 'active' || job.status === 'paused';
-                return (
-                  <div key={job.id} className="flex items-center gap-2 py-0.5 text-xs font-mono group">
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
-                    <span className="text-gray-300 truncate flex-1">{job.name}</span>
-                    <span className="text-gray-500 tabular-nums">{jDone}/{jTotal}</span>
-                    <div className="w-16 h-1 bg-gray-700/50 rounded-full overflow-hidden flex-shrink-0">
-                      <div className={`h-full rounded-full ${isActive ? 'bg-blue-500' : 'bg-emerald-500'}`} style={{ width: `${jPct}%` }} />
-                    </div>
-                    <span className="text-gray-500 w-8 text-right">{jPct}%</span>
-                  </div>
-                );
-              })}
+            {/* Queue list — click to expand details */}
+            <div className="border-t border-gray-700/30 px-4 py-2 space-y-0.5">
+              {allJobs.map(job => <QueueRow key={job.id} job={job} onAction={async (id, action) => {
+                try {
+                  if (action === 'pause') await pauseAnalysisJob(id);
+                  else if (action === 'resume') await resumeAnalysisJob(id);
+                  else if (action === 'cancel') await cancelAnalysisJob(id);
+                  else if (action === 'retry') await retryFailedTasks(id);
+                  load();
+                } catch (e) { console.error(`Job ${action} failed:`, e); }
+              }} />)}
             </div>
           </div>
         );
@@ -774,6 +765,86 @@ export default function WorkersPanel() {
       </div>
 
       </div>{/* end scrollable content */}
+    </div>
+  );
+}
+
+
+// ── Queue Row (expandable) ─────────────────────────────────
+
+function QueueRow({ job, onAction }) {
+  const [expanded, setExpanded] = useState(false);
+  const p = job.progress || {};
+  const total = p.total || 0;
+  const done = p.complete || 0;
+  const pct = total > 0 ? (done / total * 100).toFixed(0) : 0;
+  const isActive = job.status === 'active' || job.status === 'paused';
+  const isPaused = job.status === 'paused';
+  const failed = p.failed || {};
+  const totalFailed = Object.values(failed).reduce((s, v) => s + (v || 0), 0);
+
+  return (
+    <div>
+      {/* Summary row — click to expand */}
+      <div className="flex items-center gap-2 py-1 text-xs font-mono cursor-pointer hover:bg-gray-700/20 rounded px-1 -mx-1"
+           onClick={() => setExpanded(!expanded)}>
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
+        <span className="text-gray-300 truncate flex-1">{job.name}</span>
+        <span className="text-gray-500 tabular-nums">{done}/{total}</span>
+        <div className="w-16 h-1 bg-gray-700/50 rounded-full overflow-hidden flex-shrink-0">
+          <div className={`h-full rounded-full ${isActive ? 'bg-blue-500' : 'bg-emerald-500'}`} style={{ width: `${pct}%` }} />
+        </div>
+        <span className="text-gray-500 w-8 text-right">{pct}%</span>
+      </div>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div className="ml-4 pl-3 border-l border-gray-700/30 py-2 space-y-1.5 text-[10px] font-mono">
+          <div className="text-gray-600 truncate" title={job.source_path}>{job.source_path}</div>
+          {/* MC / VV / MV fractions */}
+          <div className="flex items-center gap-4">
+            <span className="text-purple-400">MC: {p.mc_done || 0}/{total}</span>
+            <span className="text-cyan-400">VV: {p.vv_done || 0}/{total}</span>
+            <span className="text-green-400">MV: {p.mv_done || 0}/{total}</span>
+          </div>
+          {/* Failures */}
+          {totalFailed > 0 && (
+            <div className="text-red-400">
+              실패: {Object.entries(failed).filter(([,v]) => v > 0).map(([k,v]) => `${k}:${v}`).join(' · ')}
+            </div>
+          )}
+          {/* Controls */}
+          {isActive && onAction && (
+            <div className="flex items-center gap-2 pt-1">
+              {!isPaused && (
+                <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'pause'); }}
+                  className="px-2 py-0.5 rounded bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50 text-[9px]">
+                  일시정지
+                </button>
+              )}
+              {isPaused && (
+                <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'resume'); }}
+                  className="px-2 py-0.5 rounded bg-green-900/30 text-green-400 hover:bg-green-900/50 text-[9px]">
+                  재개
+                </button>
+              )}
+              {totalFailed > 0 && (
+                <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'retry'); }}
+                  className="px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 text-[9px]">
+                  재시도
+                </button>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'cancel'); }}
+                className="px-2 py-0.5 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 text-[9px]">
+                취소
+              </button>
+            </div>
+          )}
+          {job.created_at && (
+            <div className="text-gray-700">생성: {new Date(job.created_at).toLocaleString()}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
