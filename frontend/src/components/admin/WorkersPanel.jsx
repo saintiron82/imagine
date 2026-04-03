@@ -452,29 +452,35 @@ export default function WorkersPanel() {
           <div className="mb-4 rounded-xl bg-gray-800/60 border border-gray-700/40 overflow-hidden">
             {/* Summary header */}
             <div className="px-4 py-3 space-y-2">
-              {/* Row 1: counts + progress */}
-              <div className="flex items-center gap-4">
+              {/* Row 1: counts + progress + speed */}
+              <div className="flex items-center gap-3">
                 <span className="text-2xl font-bold font-mono text-emerald-400">{totals.complete}</span>
                 <span className="text-gray-600 text-lg">/</span>
                 <span className="text-2xl font-mono text-gray-300">{totals.total}</span>
-                <div className="flex-1 mx-2 h-2 bg-gray-700 rounded-full overflow-hidden">
+                <div className="flex-1 mx-2 h-2.5 bg-gray-700 rounded-full overflow-hidden">
                   <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                 </div>
                 <span className="text-lg font-bold font-mono text-blue-400">{pct}%</span>
+                {speed > 0 && <span className="text-sm font-bold font-mono text-emerald-400">{speed.toFixed(1)}/m</span>}
+                {secPer && <span className="text-sm font-bold font-mono text-amber-400">{secPer}s</span>}
+                {etaStr && <span className="text-sm font-bold font-mono text-white">~{etaStr}</span>}
+                <span className="text-xs font-mono text-green-400">{onlineCount}w</span>
               </div>
-              {/* Row 2: MC/VV/MV fractions */}
-              <div className="flex items-center gap-4 text-xs font-mono">
-                <span className="text-purple-400">MC:{totals.mc}/{totals.total}</span>
-                <span className="text-cyan-400">VV:{totals.vv}/{totals.total}</span>
-                <span className="text-green-400">MV:{totals.mv}/{totals.total}</span>
-                {remaining > 0 && <span className="text-yellow-400">남은:{remaining}</span>}
-              </div>
-              {/* Row 3: speed / ETA */}
-              <div className="flex items-center gap-4 text-xs font-mono text-gray-500">
-                {speed > 0 && <span className="text-emerald-400">{speed.toFixed(1)} files/min</span>}
-                {secPer && <span className="text-amber-400">{secPer}s/file</span>}
-                {etaStr && <span className="text-white">~{etaStr}</span>}
-                <span className="text-green-400">{onlineCount} workers</span>
+              {/* Row 2: MC/VV/MV progress percentages + small counts */}
+              <div className="flex items-center gap-5 text-xs font-mono">
+                {[
+                  ['MC', totals.mc, 'text-purple-400'],
+                  ['VV', totals.vv, 'text-cyan-400'],
+                  ['MV', totals.mv, 'text-green-400'],
+                ].map(([label, done, color]) => {
+                  const p = totals.total > 0 ? (done / totals.total * 100).toFixed(1) : 0;
+                  return (
+                    <span key={label} className={color}>
+                      {label} <span className="font-bold">{p}%</span>
+                      <span className="text-gray-600 ml-1">{done}/{totals.total}</span>
+                    </span>
+                  );
+                })}
               </div>
             </div>
             {/* Queue list — click to expand details */}
