@@ -35,6 +35,7 @@ class AnalysisJobManager:
         self.db = db
         self._ensure_tables()
         self._reclaim_stale_assigned()
+        self._sync_with_files_db()
 
     def _reclaim_stale_assigned(self):
         """Reset assigned tasks back to pending on startup.
@@ -56,6 +57,42 @@ class AnalysisJobManager:
         if total > 0:
             self.db.conn.commit()
             logger.info(f"Reclaimed {total} stale assigned tasks → pending")
+
+    def _sync_with_files_db(self):
+        """Sync file_tasks status with actual files DB state.
+
+        Handles cases where legacy pipeline processed files but
+        file_tasks wasn't updated (e.g. legacy system ran first).
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            UPDATE file_tasks SET
+                download_status = CASE
+                    WHEN download_status IN ('pending', 'assigned') AND
+                         (SELECT thumbnail_url FROM files WHERE id = file_tasks.file_id) IS NOT NULL
+                    THEN 'done' ELSE download_status END,
+                parse_status = CASE
+                    WHEN parse_status IN ('pending', 'assigned') AND
+                         (SELECT thumbnail_url FROM files WHERE id = file_tasks.file_id) IS NOT NULL
+                    THEN 'done' ELSE parse_status END,
+                mc_status = CASE
+                    WHEN mc_status IN ('pending', 'assigned') AND
+                         (SELECT mc_caption FROM files WHERE id = file_tasks.file_id) IS NOT NULL AND
+                         (SELECT mc_caption FROM files WHERE id = file_tasks.file_id) != ''
+                    THEN 'done' ELSE mc_status END,
+                vv_status = CASE
+                    WHEN vv_status IN ('pending', 'assigned') AND
+                         EXISTS(SELECT 1 FROM vec_files WHERE file_id = file_tasks.file_id)
+                    THEN 'done' ELSE vv_status END,
+                mv_status = CASE
+                    WHEN mv_status IN ('pending', 'assigned') AND
+                         EXISTS(SELECT 1 FROM vec_text WHERE file_id = file_tasks.file_id)
+                    THEN 'done' ELSE mv_status END
+        """)
+        synced = cursor.rowcount
+        if synced > 0:
+            self.db.conn.commit()
+            logger.info(f"Synced {synced} file_tasks with files DB")
 
     def _ensure_tables(self):
         """Create tables if they don't exist."""
