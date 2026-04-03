@@ -82,20 +82,41 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         _worker_daemon._heartbeat()
                         last_heartbeat = now
 
-                    # 1. Decide mode FIRST (determines batch size)
+                    # 1. Decide mode — check new file_tasks first, fallback to legacy
                     try:
-                        from backend.server.queue.manager import JobQueueManager
                         from backend.db.sqlite_client import SQLiteDB
                         _qdb = SQLiteDB()
-                        _qm = JobQueueManager(_qdb)
-                        mode = _qm._decide_worker_mode(_worker_daemon.session_id)
-                        _worker_daemon.processing_mode = mode
-                        # Phase-appropriate batch size (time-based)
-                        chunk = _qm.get_phase_batch_size(mode) if mode != "idle" else 5
+                        _cursor = _qdb.conn.cursor()
+
+                        # New system: find phase with most pending tasks
+                        _cursor.execute("""
+                            SELECT
+                                SUM(CASE WHEN parse_status='done' AND mc_status='pending' THEN 1 ELSE 0 END) AS mc,
+                                SUM(CASE WHEN parse_status='done' AND vv_status='pending' THEN 1 ELSE 0 END) AS vv,
+                                SUM(CASE WHEN mc_status='done' AND mv_status='pending' THEN 1 ELSE 0 END) AS mv
+                            FROM file_tasks ft
+                            JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                            WHERE aj.status = 'active'
+                        """)
+                        row = _cursor.fetchone()
+                        mc_p, vv_p, mv_p = (row[0] or 0), (row[1] or 0), (row[2] or 0)
+
+                        if mc_p + vv_p + mv_p > 0:
+                            # Pick phase with most pending (= bottleneck)
+                            candidates = {"mc": mc_p, "vv": vv_p, "mv": mv_p}
+                            mode = max(candidates, key=candidates.get)
+                            chunk = 7 if mode == "mc" else 20
+                        else:
+                            # Fallback to legacy queue
+                            from backend.server.queue.manager import JobQueueManager
+                            _qm = JobQueueManager(_qdb)
+                            mode = _qm._decide_worker_mode(_worker_daemon.session_id)
+                            chunk = _qm.get_phase_batch_size(mode) if mode != "idle" else 5
                     except Exception:
-                        _worker_daemon.processing_mode = "mc"
                         mode = "mc"
                         chunk = 5
+
+                    _worker_daemon.processing_mode = mode
 
                     if mode == "idle":
                         time.sleep(10)
