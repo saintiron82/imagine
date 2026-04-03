@@ -1804,25 +1804,17 @@ class WorkerDaemon:
             self._current_file = file_name
             self._current_job_id = job_id
 
-            vision_data = job.get("vision_data") or {}
-            mc_caption = str(vision_data.get("mc_caption") or "").strip()
+            # VV is MC-independent — only needs thumbnail, not mc_caption
             has_thumb_path = bool(job.get("thumb_path"))
-
-            if not mc_caption:
-                err = (
-                    f"NO_MC_CAPTION: vision_data keys={list(vision_data.keys())}, "
-                    f"raw={repr(vision_data.get('mc_caption'))!s:.60}"
-                )
-                _log(f"[VV] FAIL {file_name}: {err}", "warning")
-                self.uploader.fail_job(job_id, err, "MODE_MISMATCH")
-                results.append((job_id, False, err))
-                _notify(progress_callback, "file_error", {"file_name": file_name, "error": err})
-                continue
             thumb = self._resolve_thumbnail(job)
             if not thumb:
                 err = f"THUMB_FAIL: file_id={file_id}, thumb_path={job.get('thumb_path')}"
                 _log(f"[VV] FAIL {file_name}: {err}", "warning")
-                self.uploader.fail_job(job_id, err)
+                task_id = job.get("task_id")
+                if task_id:
+                    self._report_task_phase(task_id, "vv", False, err)
+                else:
+                    self.uploader.fail_job(job_id, err)
                 results.append((job_id, False, err))
                 _notify(progress_callback, "file_error", {"file_name": file_name, "error": err})
                 continue
