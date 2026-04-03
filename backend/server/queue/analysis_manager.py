@@ -195,8 +195,8 @@ class AnalysisJobManager:
         # Create minimal file record
         try:
             cursor.execute(
-                "INSERT INTO files (file_path, file_name, created_at) VALUES (?, ?, ?)",
-                (file_path, PurePosixPath(file_path).name, _now()),
+                "INSERT INTO files (file_path, file_name, relative_path, created_at) VALUES (?, ?, ?, ?)",
+                (file_path, PurePosixPath(file_path).name, file_path, _now()),
             )
             return cursor.lastrowid
         except Exception:
