@@ -16,7 +16,7 @@ const PHASE_COLORS = {
   done: 'text-emerald-400',
 };
 
-export default function AnalysisJobCard({ job, onAction }) {
+export default function AnalysisJobCard({ job, onAction, stats }) {
   const [expanded, setExpanded] = useState(false);
   const p = job.progress || {};
   const total = p.total || 0;
@@ -25,6 +25,13 @@ export default function AnalysisJobCard({ job, onAction }) {
   const phases = p.phases || {};
   const failed = p.failed || {};
   const totalFailed = Object.values(failed).reduce((s, v) => s + (v || 0), 0);
+  const remaining = total - complete;
+
+  // Speed from stats (shared across all jobs)
+  const speed = stats?.throughput || 0;
+  const secPerFile = speed > 0 ? Math.round(60 / speed) : null;
+  const etaSec = stats?.eta_seconds;
+  const etaStr = etaSec ? (etaSec >= 3600 ? `${Math.floor(etaSec/3600)}h${Math.floor((etaSec%3600)/60)}m` : `${Math.floor(etaSec/60)}m`) : null;
 
   const isActive = job.status === 'active';
   const isPaused = job.status === 'paused';
@@ -98,7 +105,19 @@ export default function AnalysisJobCard({ job, onAction }) {
           {totalFailed > 0 && (
             <span className="text-red-400">Fail:{totalFailed}</span>
           )}
+          {remaining > 0 && (
+            <span className="text-gray-500">남은:{remaining}</span>
+          )}
         </div>
+
+        {/* Speed / ETA — only for active jobs */}
+        {isActive && (speed > 0 || etaStr) && (
+          <div className="flex items-center gap-4 mt-1 text-[10px] font-mono text-gray-500">
+            {speed > 0 && <span className="text-emerald-400">{speed.toFixed(1)} f/min</span>}
+            {secPerFile && <span className="text-amber-400">{secPerFile}s/file</span>}
+            {etaStr && <span className="text-white">~{etaStr}</span>}
+          </div>
+        )}
       </div>
 
       {/* Expanded: detailed metrics */}

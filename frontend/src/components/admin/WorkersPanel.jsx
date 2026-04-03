@@ -449,7 +449,7 @@ export default function WorkersPanel() {
               </h3>
               <div className="space-y-2">
                 {activeJobs.map(job => (
-                  <AnalysisJobCard key={job.id} job={job} onAction={jobAction} />
+                  <AnalysisJobCard key={job.id} job={job} onAction={jobAction} stats={queueStats} />
                 ))}
               </div>
             </div>
@@ -462,7 +462,7 @@ export default function WorkersPanel() {
               </summary>
               <div className="p-4 rounded-xl bg-gray-800/20 border border-gray-700/20 space-y-2">
                 {completedJobs.map(job => (
-                  <AnalysisJobCard key={job.id} job={job} onAction={jobAction} />
+                  <AnalysisJobCard key={job.id} job={job} onAction={jobAction} stats={queueStats} />
                 ))}
               </div>
             </details>
