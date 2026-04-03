@@ -764,6 +764,8 @@ export default function WorkersPanel() {
         )}
       </div>
 
+      {/* Bottom spacer — prevent StatusBar from hiding last row */}
+      <div className="h-16" />
       </div>{/* end scrollable content */}
     </div>
   );
