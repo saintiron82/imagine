@@ -2751,15 +2751,51 @@ class JobQueueManager:
                 "FROM work_requests WHERE status NOT IN ('completed', 'cancelled') "
                 "ORDER BY sort_order ASC, created_at DESC"
             )
-        return [
-            {
-                "id": r[0], "name": r[1], "source_path": r[2],
+        rows = cursor.fetchall()
+
+        # Compute file-based completion for each WR (3-axis: MC+VV+MV all present)
+        results = []
+        for r in rows:
+            wr_id, name, source_path = r[0], r[1], r[2]
+            is_recovery = (name or "").startswith("[Recovery]")
+
+            # File-based progress: count files under this source_path
+            files_total = files_done = files_remaining = 0
+            if source_path:
+                # Normalize path for LIKE query
+                like_path = source_path.replace("webdav:/", "webdav://").rstrip("/") + "%"
+                try:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM files WHERE file_path LIKE ?",
+                        (like_path,),
+                    )
+                    files_total = cursor.fetchone()[0]
+
+                    cursor.execute(
+                        """SELECT COUNT(*) FROM files f
+                           WHERE f.file_path LIKE ?
+                             AND (f.mc_caption IS NOT NULL AND f.mc_caption != '')
+                             AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = f.id)
+                             AND EXISTS(SELECT 1 FROM vec_text WHERE file_id = f.id)""",
+                        (like_path,),
+                    )
+                    files_done = cursor.fetchone()[0]
+                    files_remaining = files_total - files_done
+                except Exception:
+                    pass
+
+            results.append({
+                "id": wr_id, "name": name, "source_path": source_path,
                 "status": r[3], "sort_order": r[4],
-                "total_files": r[5], "completed_count": r[6], "failed_count": r[7],
+                "total_files": files_total or r[5],  # prefer file-based count
+                "completed_count": files_done,        # file-based (3-axis complete)
+                "failed_count": files_remaining,      # file-based (not yet complete)
                 "created_at": r[8], "started_at": r[9], "completed_at": r[10],
-            }
-            for r in cursor.fetchall()
-        ]
+                "is_recovery": is_recovery,
+                # Keep original WR counters for reference
+                "wr_total": r[5], "wr_completed": r[6], "wr_failed": r[7],
+            })
+        return results
 
     def get_work_request_detail(self, wr_id: int) -> Optional[Dict[str, Any]]:
         """Get work request with sub-tasks."""

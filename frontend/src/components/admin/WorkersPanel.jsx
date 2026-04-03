@@ -181,9 +181,12 @@ export default function WorkersPanel() {
       );
       setActiveWRs(wrs);
       if (statsData && wrs.length > 0) {
-        const wrTotal = wrs.reduce((s, wr) => s + (wr.total_files || 0), 0);
-        const wrDone = wrs.reduce((s, wr) => s + (wr.completed_count || 0), 0);
-        const wrFail = wrs.reduce((s, wr) => s + (wr.failed_count || 0), 0);
+        // Use only user-created WRs for header counts (Recovery is subset, avoid double-count)
+        const userWRs = wrs.filter(wr => !wr.is_recovery);
+        const source = userWRs.length > 0 ? userWRs : wrs;
+        const wrTotal = source.reduce((s, wr) => s + (wr.total_files || 0), 0);
+        const wrDone = source.reduce((s, wr) => s + (wr.completed_count || 0), 0);
+        const wrFail = source.reduce((s, wr) => s + (wr.failed_count || 0), 0);
         statsData.total = wrTotal;
         statsData.completed = wrDone;
         statsData.failed = wrFail;
@@ -425,26 +428,48 @@ export default function WorkersPanel() {
         )}
       </div>
 
-      {/* Active Work Requests */}
-      {activeWRs.length > 0 && (
-        <div className="mb-4 p-4 rounded-xl bg-gray-800/40 border border-gray-700/30">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            {t('admin.active_queue') || '활성 큐'} ({activeWRs.length})
-          </h3>
-          <div className="space-y-2">
-            {activeWRs.map(wr => (
-              <WRCard key={wr.id} wr={wr} onAction={async (id, action) => {
-                try {
-                  if (action === 'pause') await pauseWorkRequest(id);
-                  else if (action === 'resume') await resumeWorkRequest(id);
-                  else if (action === 'cancel') await cancelWorkRequest(id);
-                  load();
-                } catch (e) { console.error(`WR ${action} failed:`, e); }
-              }} />
-            ))}
+      {/* Active Work Requests — user-created only, Recovery hidden */}
+      {activeWRs.length > 0 && (() => {
+        const userWRs = activeWRs.filter(wr => !wr.is_recovery);
+        const recoveryWRs = activeWRs.filter(wr => wr.is_recovery);
+        if (userWRs.length === 0 && recoveryWRs.length === 0) return null;
+
+        const wrAction = async (id, action) => {
+          try {
+            if (action === 'pause') await pauseWorkRequest(id);
+            else if (action === 'resume') await resumeWorkRequest(id);
+            else if (action === 'cancel') await cancelWorkRequest(id);
+            load();
+          } catch (e) { console.error(`WR ${action} failed:`, e); }
+        };
+
+        return (
+          <div className="mb-4 p-4 rounded-xl bg-gray-800/40 border border-gray-700/30">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+              {t('admin.active_queue') || '활성 큐'}
+            </h3>
+            <div className="space-y-2">
+              {/* User-created queues — always visible */}
+              {userWRs.map(wr => (
+                <WRCard key={wr.id} wr={wr} onAction={wrAction} />
+              ))}
+              {/* Recovery queues — collapsed by default */}
+              {recoveryWRs.length > 0 && (
+                <details className="mt-2">
+                  <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400">
+                    자동 복구 큐 ({recoveryWRs.length}개)
+                  </summary>
+                  <div className="mt-1 space-y-1 pl-2 border-l border-gray-700/30">
+                    {recoveryWRs.map(wr => (
+                      <WRCard key={wr.id} wr={wr} onAction={wrAction} />
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Pipeline phase dashboard */}
       {onlineCount > 0 && (
