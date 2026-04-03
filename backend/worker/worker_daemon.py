@@ -448,29 +448,11 @@ class WorkerDaemon:
                         logger.info(f"{self._log_prefix} Claimed {len(jobs)} {phase} tasks (new API)")
                         return jobs
             except Exception as e:
-                logger.debug(f"New task claim failed, trying legacy: {e}")
-
-        # Fallback: legacy /api/v1/jobs/claim
-        try:
-            resp = self._authed_request(
-                "post",
-                f"{self.server_url}/api/v1/jobs/claim",
-                json={"count": count, "session_id": self.session_id},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                jobs = data.get("jobs", [])
-                if jobs:
-                    server_mode = data.get("processing_mode")
-                    if server_mode and server_mode != self.processing_mode:
-                        self.processing_mode = server_mode
-                    logger.info(f"{self._log_prefix} Claimed {len(jobs)} jobs (legacy, mode={self.processing_mode})")
-                return jobs
-            else:
+                logger.warning(f"Task claim failed: {e}")
                 return []
-        except Exception as e:
-            logger.error(f"Claim request failed: {e}")
-            return []
+
+        # No valid phase — nothing to claim
+        return []
 
     def _report_task_start(self, task_id: int, phase: str):
         """Report actual processing start to new Analysis Job system."""

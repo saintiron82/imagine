@@ -53,76 +53,7 @@ export default function FactoryPage({
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white">
-      {/* Summary bar with live stats — admin only */}
-      {isAdmin && <div className="px-4 py-2.5 bg-gray-800 border-b border-gray-700">
-        <div className="flex items-center gap-4 text-sm">
-          <span className="text-gray-400">
-            {t('factory.summary_pending')}:{' '}
-            <span className={`font-bold ${pending > 0 ? 'text-yellow-400' : 'text-gray-500'}`}>{pending}</span>
-          </span>
-          <span className="text-gray-400">
-            {t('factory.summary_processing')}:{' '}
-            <span className={`font-bold ${processing > 0 ? 'text-blue-400' : 'text-gray-500'}`}>{processing}</span>
-          </span>
-          <span className="text-gray-400">
-            {t('factory.summary_completed')}:{' '}
-            <span className={`font-bold ${completed > 0 ? 'text-green-400' : 'text-gray-500'}`}>{completed}</span>
-          </span>
-          <span className="text-gray-400">
-            {t('factory.summary_failed')}:{' '}
-            <span className={`font-bold ${failed > 0 ? 'text-red-400' : 'text-gray-500'}`}>{failed}</span>
-          </span>
-
-          {(pending + processing) > 0 && (completed + pending + processing) > 0 && (
-            <div className="flex items-center gap-2 flex-1 max-w-xs">
-              <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-green-500 rounded-full transition-all duration-500"
-                  style={{ width: `${(completed / (completed + pending + processing)) * 100}%` }}
-                />
-              </div>
-              <span className="text-[11px] text-gray-500 font-mono tabular-nums">
-                {completed}/{completed + pending + processing}
-              </span>
-            </div>
-          )}
-
-          <button
-            onClick={fetchStats}
-            className="ml-auto text-gray-500 hover:text-gray-300 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw size={12} />
-          </button>
-        </div>
-
-        {/* Phase breakdown */}
-        {(stats?.parse_pending > 0 || stats?.mc_pending > 0 || stats?.vv_pending > 0 || stats?.mv_pending > 0) && (
-          <div className="flex items-center gap-3 mt-1.5 text-[11px]">
-            <span className="text-gray-500">{t('factory.phase_breakdown')}:</span>
-            {stats.parse_pending > 0 && (
-              <span className="px-1.5 py-0.5 rounded bg-sky-900/40 text-sky-400 font-medium">
-                Parse {stats.parse_pending}
-              </span>
-            )}
-            {stats.mc_pending > 0 && (
-              <span className="px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-400 font-medium">
-                MC {stats.mc_pending}
-              </span>
-            )}
-            {stats.vv_pending > 0 && (
-              <span className="px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 font-medium">
-                VV {stats.vv_pending}
-              </span>
-            )}
-            {stats.mv_pending > 0 && (
-              <span className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 font-medium">
-                MV {stats.mv_pending}
-              </span>
-            )}
-          </div>
-        )}
-      </div>}
+      {/* Legacy summary bar removed — WorkersPanel has unified dashboard */}
 
       {/* Sub-tabs */}
       <div className="flex overflow-x-auto border-b border-gray-700 px-4 pt-2">

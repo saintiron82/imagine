@@ -17,7 +17,7 @@ import {
   cancelAnalysisJob, retryFailedTasks, getAnalysisMetrics,
 } from '../../api/analysis';
 import AnalysisJobCard from '../AnalysisJobCard';
-import { getJobStats } from '../../api/worker';
+// Legacy getJobStats removed — using analysis metrics API
 import {
   RefreshCw, Square, Ban, Pencil, AlertOctagon, Loader2,
 } from 'lucide-react';
@@ -168,11 +168,11 @@ export default function WorkersPanel() {
 
   const load = useCallback(async () => {
     try {
-      const [workerData, statsData, jobsData] = await Promise.all([
+      const [workerData, jobsData] = await Promise.all([
         listWorkerSessions(),
-        getJobStats().catch(() => null),
         listAnalysisJobs(true).catch(() => ({ jobs: [] })),
       ]);
+      let statsData = {};
       const all = workerData.workers || [];
       setWorkers(all.filter(w => w.status === 'online'));
       const jobs = (jobsData.jobs || []).filter(j => j.status !== 'cancelled');

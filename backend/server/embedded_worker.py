@@ -107,11 +107,9 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                             mode = max(candidates, key=candidates.get)
                             chunk = 7 if mode == "mc" else 20
                         else:
-                            # Fallback to legacy queue
-                            from backend.server.queue.manager import JobQueueManager
-                            _qm = JobQueueManager(_qdb)
-                            mode = _qm._decide_worker_mode(_worker_daemon.session_id)
-                            chunk = _qm.get_phase_batch_size(mode) if mode != "idle" else 5
+                            # No pending tasks in new system
+                            mode = "idle"
+                            chunk = 5
                     except Exception as _mode_err:
                         logger.error(f"Mode decision failed: {_mode_err}")
                         mode = "mc"
