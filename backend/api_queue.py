@@ -161,11 +161,15 @@ def scan_folder(folder_path, priority=0, webdav_configs=None):
         db.conn.commit()
 
         if file_groups:
-            result = queue.create_work_request(
+            # New Analysis Job system
+            from backend.server.queue.analysis_manager import AnalysisJobManager
+            amgr = AnalysisJobManager(db)
+            all_paths = [fp for paths in file_groups.values() for _, fp in paths]
+            result = amgr.create_job(
                 name=folder.name,
                 source_path=str(folder),
-                file_groups=dict(file_groups),
-                priority=priority,
+                file_paths=all_paths,
+                created_by=None,
             )
             jobs_created = result.get("jobs_created", 0)
         else:
@@ -344,13 +348,17 @@ def scan_folders(folder_paths, priority=0, webdav_configs=None):
             if len(folder_paths) > 3:
                 name += f" +{len(folder_paths) - 3}"
 
-            result = queue.create_work_request(
+            # New Analysis Job system
+            from backend.server.queue.analysis_manager import AnalysisJobManager
+            amgr = AnalysisJobManager(db)
+            all_paths = [fp for paths in all_file_groups.values() for _, fp in paths]
+            result = amgr.create_job(
                 name=name,
                 source_path=folder_paths[0],
-                file_groups=dict(all_file_groups),
-                priority=priority,
+                file_paths=all_paths,
+                created_by=None,
             )
-            jobs_created = result.get("jobs_created", 0)
+            jobs_created = result.get("total_files", 0)
         else:
             jobs_created = 0
 

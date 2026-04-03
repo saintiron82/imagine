@@ -785,18 +785,19 @@ def scan_folder(
 
     db.conn.commit()
 
-    # Create work request with sub-tasks
-    queue = _get_queue(db)
+    # Create analysis job (new system)
+    from backend.server.queue.analysis_manager import AnalysisJobManager
+    amgr = AnalysisJobManager(db)
     if file_groups:
-        result = queue.create_work_request(
+        all_paths = [fp for paths in file_groups.values() for _, fp in paths]
+        result = amgr.create_job(
             name=folder.name,
             source_path=str(folder),
-            file_groups=file_groups,
-            priority=req.priority,
+            file_paths=all_paths,
             created_by=admin["id"],
         )
-        jobs_created = result.get("jobs_created", 0)
-        work_request_id = result.get("work_request_id", 0)
+        jobs_created = result.get("total_files", 0)
+        work_request_id = result.get("job_id", 0)
     else:
         jobs_created = 0
         work_request_id = 0
