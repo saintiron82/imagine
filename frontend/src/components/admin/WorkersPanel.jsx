@@ -467,17 +467,18 @@ export default function WorkersPanel() {
               {/* Row 2: MC/VV/MV progress percentages + small counts */}
               <div className="flex items-center gap-4 text-xs font-mono">
                 {[
-                  ['DL', totals.dl, 'text-yellow-400'],
-                  ['Parse', totals.parse, 'text-sky-400'],
-                  ['MC', totals.mc, 'text-purple-400'],
-                  ['VV', totals.vv, 'text-cyan-400'],
-                  ['MV', totals.mv, 'text-green-400'],
-                ].map(([label, done, color]) => {
+                  ['DL', totals.dl, 'text-yellow-400', s.download_throughput],
+                  ['Parse', totals.parse, 'text-sky-400', s.parse_throughput],
+                  ['MC', totals.mc, 'text-purple-400', s.mc_throughput],
+                  ['VV', totals.vv, 'text-cyan-400', s.vv_throughput],
+                  ['MV', totals.mv, 'text-green-400', s.mv_throughput],
+                ].map(([label, done, color, phaseSpeed]) => {
                   const p = totals.total > 0 ? (done / totals.total * 100).toFixed(1) : 0;
                   return (
                     <span key={label} className={color}>
                       {label} <span className="font-bold">{p}%</span>
                       <span className="text-gray-600 ml-1">{done}/{totals.total}</span>
+                      {phaseSpeed > 0 && <span className="text-gray-500 ml-1">{phaseSpeed}/m</span>}
                     </span>
                   );
                 })}
