@@ -1,15 +1,14 @@
 """
 Download-ahead pool — pre-downloads WebDAV files to a temp folder.
 
-Monitors job_queue for pending WebDAV jobs and downloads original files
-to a bounded temp folder. ParseAhead then uses these local copies for
+Monitors file_tasks for pending WebDAV downloads and downloads originals
+to a bounded temp folder. Workers then use these local copies for
 Phase P (parsing + thumbnail generation).
 
 Producer-Consumer pattern:
   - Producer: This pool downloads WebDAV originals (parallel threads)
   - Buffer:   Temp folder with max_files limit (semaphore-controlled)
-  - Consumer: ParseAhead reads from temp folder, pipeline processes,
-              complete_job() deletes temp file and releases slot
+  - Consumer: Workers (embedded or external) access temp files via get_temp_path()
 """
 
 import json
@@ -85,8 +84,8 @@ class DownloadAheadPool(BaseAheadPool):
     Downloaded files are stored as:
         {temp_dir}/{file_id}_{filename}
 
-    The temp_local_path is recorded in job_queue.parsed_metadata so
-    ParseAhead can find the local copy for Phase P.
+    Workers access downloads via get_temp_path(file_id).
+    Scans file_tasks (Analysis Job System v1) for download_status='pending'.
     """
 
     def __init__(self, db: SQLiteDB):
@@ -173,101 +172,96 @@ class DownloadAheadPool(BaseAheadPool):
             logger.warning(f"DownloadAhead: old temp cleanup failed: {e}")
 
     def _reset_stale_file_ready(self):
-        """Reset file_ready=1 → 0 for WebDAV jobs where temp file is gone.
+        """Reset download_status='done' → 'pending' for tasks where temp file is gone.
 
-        ONLY resets jobs that haven't been parsed yet. Already-parsed jobs
-        don't need the original file (worker uses thumbnail from server).
-        This prevents re-downloading files that were already processed.
+        On server restart, temp files are deleted. Tasks that were marked 'done'
+        but not yet parsed need to be re-downloaded.
+        Only resets unparsed tasks — parsed tasks already have thumbnails.
         """
         try:
             cursor = self.db.conn.cursor()
+            # Find file_tasks that claim download is done but parse hasn't started
             cursor.execute(
-                """SELECT id, parsed_metadata, parse_status FROM job_queue
-                   WHERE file_path LIKE 'webdav://%'
-                     AND file_ready = 1
-                     AND status IN ('pending', 'assigned')"""
+                """SELECT ft.id, ft.file_id FROM file_tasks ft
+                   JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                   WHERE ft.file_path LIKE 'webdav://%'
+                     AND ft.download_status = 'done'
+                     AND ft.parse_status = 'pending'
+                     AND aj.status = 'active'"""
             )
             rows = cursor.fetchall()
             reset_ids = []
-            for job_id, pm_str, parse_status in rows:
-                # Already parsed → original file not needed, skip
-                if parse_status == 'parsed':
-                    continue
-
-                needs_reset = True
-                if pm_str:
-                    try:
-                        pm = json.loads(pm_str)
-                        tlp = pm.get("temp_local_path")
-                        if tlp and Path(tlp).exists():
-                            needs_reset = False  # temp file still exists
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                if needs_reset:
-                    reset_ids.append(job_id)
+            for task_id, file_id in rows:
+                # Check if temp file still exists
+                with self._active_lock:
+                    temp = self._active_files.get(file_id)
+                if temp and Path(temp).exists():
+                    continue  # temp file still exists
+                reset_ids.append(task_id)
 
             if reset_ids:
                 placeholders = ",".join("?" * len(reset_ids))
                 cursor.execute(
-                    f"UPDATE job_queue SET file_ready = 0 WHERE id IN ({placeholders})",
-                    reset_ids,
+                    f"""UPDATE file_tasks SET download_status = 'pending', updated_at = ?
+                        WHERE id IN ({placeholders})""",
+                    [time.strftime("%Y-%m-%d %H:%M:%S")] + reset_ids,
                 )
                 self.db.conn.commit()
                 logger.info(
-                    f"DownloadAhead: reset file_ready for {len(reset_ids)} "
-                    f"stale WebDAV jobs (temp files missing)"
+                    f"DownloadAhead: reset {len(reset_ids)} stale download tasks → pending"
                 )
             else:
                 self.db.conn.commit()
         except Exception as e:
-            logger.warning(f"DownloadAhead: failed to reset stale file_ready: {e}")
+            logger.warning(f"DownloadAhead: failed to reset stale downloads: {e}")
             try:
                 self.db.conn.rollback()
             except Exception:
                 pass
 
-    def _mark_download_failed(self, job_id: int, file_path: str):
-        """Mark a job as download-failed (file_ready=-1).
+    def _mark_download_failed(self, task_id: int, file_path: str):
+        """Mark a file_task download as failed.
 
-        The job won't be retried this cycle. The periodic recovery loop
-        (_recover_failed_downloads) resets them back to file_ready=0
-        after a cooldown, so they re-enter the download queue automatically.
+        The periodic recovery loop resets them back to 'pending'
+        after a cooldown, so they re-enter the download queue.
         """
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(
-                "UPDATE job_queue SET file_ready = -1 WHERE id = ?",
-                (job_id,),
+                """UPDATE file_tasks SET download_status = 'failed',
+                   error_message = 'download failed', updated_at = ?
+                   WHERE id = ?""",
+                (time.strftime("%Y-%m-%d %H:%M:%S"), task_id),
             )
             self.db.conn.commit()
-            logger.info(f"DownloadAhead: marked job {job_id} as download-failed (-1)")
+            logger.info(f"DownloadAhead: marked task {task_id} as download-failed")
         except Exception as e:
-            logger.warning(f"DownloadAhead: failed to mark job {job_id}: {e}")
+            logger.warning(f"DownloadAhead: failed to mark task {task_id}: {e}")
             try:
                 self.db.conn.commit()
             except Exception:
                 pass
 
     def _recover_failed_downloads(self):
-        """Reset file_ready=-1 → 0 for jobs that failed more than 5 minutes ago.
+        """Reset failed download tasks back to pending after 5 min cooldown.
 
-        Called periodically from the download loop so failed jobs
+        Called periodically from the download loop so failed tasks
         get another chance after a cooldown.
         """
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(
-                """UPDATE job_queue SET file_ready = 0
-                   WHERE file_ready = -1
-                     AND status IN ('pending', 'assigned')
-                     AND datetime(updated_at) < datetime('now', '-5 minutes')"""
+                """UPDATE file_tasks SET download_status = 'pending',
+                   error_message = NULL, updated_at = ?
+                   WHERE download_status = 'failed'
+                     AND datetime(updated_at) < datetime('now', '-5 minutes')""",
+                (time.strftime("%Y-%m-%d %H:%M:%S"),),
             )
             recovered = cursor.rowcount
             self.db.conn.commit()
             if recovered > 0:
                 logger.info(
-                    f"DownloadAhead: recovered {recovered} failed downloads "
-                    f"(file_ready -1 → 0)"
+                    f"DownloadAhead: recovered {recovered} failed downloads → pending"
                 )
         except Exception as e:
             logger.warning(f"DownloadAhead: recovery check failed: {e}")
@@ -277,10 +271,10 @@ class DownloadAheadPool(BaseAheadPool):
                 pass
 
     def _cleanup_stale_temp_files(self):
-        """Remove temp files for jobs that are no longer file_ready=1.
+        """Remove temp files for tasks that no longer need originals.
 
-        Fixes buffer starvation: parse-failed files stay in temp forever,
-        blocking active_files count and preventing new downloads.
+        Frees buffer slots for: parsed files (only thumbnail needed),
+        failed tasks, cancelled/archived jobs.
         """
         if not self._temp_dir or not self._temp_dir.exists():
             return
@@ -291,20 +285,20 @@ class DownloadAheadPool(BaseAheadPool):
 
         try:
             cursor = self.db.conn.cursor()
-            # Find active files whose jobs are no longer file_ready=1
             placeholders = ",".join("?" * len(active_ids))
             cursor.execute(
-                f"""SELECT file_id, file_ready, parse_status, status
-                    FROM job_queue
-                    WHERE file_id IN ({placeholders})""",
+                f"""SELECT ft.file_id, ft.parse_status, ft.download_status, aj.status
+                    FROM file_tasks ft
+                    JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                    WHERE ft.file_id IN ({placeholders})""",
                 list(active_ids),
             )
-            stale = []
+            stale = set()
             for row in cursor.fetchall():
-                fid, ready, parse_st, status = row
-                # Remove if: parse failed, job failed/cancelled, or file_ready reset to 0
-                if parse_st == "failed" or status in ("failed", "cancelled") or ready != 1:
-                    stale.append(fid)
+                fid, parse_st, dl_st, job_st = row
+                # Remove if: already parsed, download failed, or job done/cancelled
+                if parse_st == "done" or dl_st == "failed" or job_st in ("cancelled", "archived", "completed"):
+                    stale.add(fid)
 
             for fid in stale:
                 with self._active_lock:
@@ -319,7 +313,7 @@ class DownloadAheadPool(BaseAheadPool):
             if stale:
                 logger.info(
                     f"DownloadAhead: cleaned {len(stale)} stale temp files "
-                    f"(parse-failed/job-failed)"
+                    f"(parsed/failed/job-done)"
                 )
         except Exception as e:
             logger.warning(f"DownloadAhead: stale cleanup failed: {e}")
@@ -349,17 +343,19 @@ class DownloadAheadPool(BaseAheadPool):
         return False
 
     def recover_all_failed(self) -> int:
-        """Force-recover all file_ready=-1 jobs immediately. Called by API button."""
+        """Force-recover all failed download tasks immediately. Called by API button."""
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(
-                "UPDATE job_queue SET file_ready = 0 WHERE file_ready = -1"
+                """UPDATE file_tasks SET download_status = 'pending',
+                   error_message = NULL, updated_at = ?
+                   WHERE download_status = 'failed'""",
+                (time.strftime("%Y-%m-%d %H:%M:%S"),),
             )
             recovered = cursor.rowcount
             self.db.conn.commit()
             if recovered > 0:
                 logger.info(f"DownloadAhead: force-recovered {recovered} failed downloads")
-            # Also cleanup stale temp files
             self._cleanup_stale_temp_files()
             return recovered
         except Exception as e:
@@ -416,29 +412,29 @@ class DownloadAheadPool(BaseAheadPool):
             return self._active_files.get(file_id)
 
     def request_redownload(self, file_id: int, file_path: str):
-        """Request re-download of a WebDAV file (Recovery Factory support).
+        """Request re-download of a WebDAV file.
 
         If the file is already cached locally, reuses it.
-        Otherwise, resets file_ready=0 so the download loop picks it up.
+        Otherwise, resets download_status to pending for the download loop.
         """
         if not file_path or not file_path.startswith("webdav://"):
             return
 
-        # Check if we already have a cached copy
         with self._active_lock:
             existing = self._active_files.get(file_id)
             if existing and Path(existing).exists():
                 logger.debug(f"Re-download: cache hit for file_id={file_id}")
                 return
 
-        # Reset file_ready so the download loop picks it up
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(
-                """UPDATE job_queue SET file_ready = 0, parse_status = NULL
-                   WHERE file_id = ? AND file_path = ?
-                     AND status IN ('pending', 'failed')""",
-                (file_id, file_path)
+                """UPDATE file_tasks SET download_status = 'pending',
+                   error_message = NULL, updated_at = ?
+                   WHERE file_id = ?
+                     AND file_path LIKE 'webdav://%'
+                     AND download_status IN ('failed', 'done')""",
+                (time.strftime("%Y-%m-%d %H:%M:%S"), file_id),
             )
             self.db.conn.commit()
             if cursor.rowcount > 0:
@@ -511,54 +507,47 @@ class DownloadAheadPool(BaseAheadPool):
                 time.sleep(5)
 
     def _download_batch(self) -> int:
-        """Find pending WebDAV jobs without temp files and start downloads.
+        """Find pending WebDAV files and start downloads.
 
+        Scans file_tasks (Analysis Job System v1) for download_status='pending'.
         Returns number of downloads started.
         """
         cursor = self.db.conn.cursor()
 
-        # Find WebDAV jobs needing download:
-        # - file_ready=0 (not yet downloaded)
-        # - parse_status is NOT 'parsed' (already parsed = original not needed)
-        cursor.execute(
-            """SELECT jq.id, jq.file_id, jq.file_path, jq.parsed_metadata
-               FROM job_queue jq
-               WHERE jq.status IN ('pending', 'assigned')
-                 AND jq.file_path LIKE 'webdav://%'
-                 AND jq.file_ready = 0
-                 AND (jq.parse_status IS NULL OR jq.parse_status != 'parsed')
-               ORDER BY jq.priority DESC, jq.created_at ASC
-               LIMIT ?""",
-            (self._max_files,),
-        )
-        rows = cursor.fetchall()
+        # Query file_tasks for pending WebDAV downloads
+        try:
+            cursor.execute(
+                """SELECT ft.id, ft.file_id, ft.file_path
+                   FROM file_tasks ft
+                   JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                   WHERE aj.status = 'active'
+                     AND ft.download_status = 'pending'
+                     AND ft.file_path LIKE 'webdav://%'
+                   ORDER BY ft.priority DESC, ft.created_at ASC
+                   LIMIT ?""",
+                (self._max_files,),
+            )
+            rows = cursor.fetchall()
+        except Exception as e:
+            logger.warning(f"DownloadAhead: file_tasks query failed: {e}")
+            rows = []
+
         if not rows:
             return 0
 
         started = 0
-        for job_id, file_id, file_path, parsed_metadata_str in rows:
+        for task_id, file_id, file_path in rows:
             if not self._running:
                 break
 
             # Skip if already downloaded or in-flight
             with self._active_lock:
                 if file_id in self._active_files:
+                    # Already downloaded — mark task as done
+                    self._mark_task_downloaded(task_id)
                     continue
             if file_id in self._in_flight:
                 continue
-
-            # Check if parsed_metadata already has temp_local_path
-            if parsed_metadata_str:
-                try:
-                    pm = json.loads(parsed_metadata_str)
-                    tlp = pm.get("temp_local_path")
-                    if tlp and Path(tlp).exists():
-                        # Already downloaded (maybe from previous session recovery)
-                        with self._active_lock:
-                            self._active_files[file_id] = tlp
-                        continue
-                except (json.JSONDecodeError, TypeError):
-                    pass
 
             # Try to acquire buffer slot (non-blocking)
             if not self._buffer_sem.acquire(blocking=False):
@@ -583,7 +572,7 @@ class DownloadAheadPool(BaseAheadPool):
 
             # Submit download to thread pool
             future = self._executor.submit(
-                self._download_one, job_id, file_id, file_path,
+                self._download_one, task_id, file_id, file_path,
                 source_config, remote_path,
             )
             self._in_flight[file_id] = future
@@ -594,11 +583,35 @@ class DownloadAheadPool(BaseAheadPool):
 
         return started
 
+    def _mark_task_downloaded(self, task_id: int):
+        """Mark a file_task download as done (file already in active_files)."""
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "UPDATE file_tasks SET download_status = 'done', updated_at = ? WHERE id = ?",
+                (time.strftime("%Y-%m-%d %H:%M:%S"), task_id),
+            )
+            self.db.conn.commit()
+        except Exception as e:
+            logger.warning(f"DownloadAhead: mark task {task_id} done failed: {e}")
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+
     def _download_one(
-        self, job_id: int, file_id: int, file_path: str,
+        self, task_id: int, file_id: int, file_path: str,
         source_config: dict, remote_path: str,
     ):
-        """Download a single WebDAV file to temp folder (runs in thread pool)."""
+        """Download a single WebDAV file to temp folder (runs in thread pool).
+
+        Args:
+            task_id: file_tasks.id
+            file_id: files.id
+            file_path: webdav://source-id/remote/path
+            source_config: WebDAV connection config
+            remote_path: Remote path on WebDAV server
+        """
         from backend.remote.webdav_client import WebDAVClient
 
         filename = PurePosixPath(remote_path).name
@@ -618,12 +631,11 @@ class DownloadAheadPool(BaseAheadPool):
 
             if not success:
                 logger.error(
-                    f"DownloadAhead: download failed for job {job_id}: {file_path}"
+                    f"DownloadAhead: download failed for task {task_id}: {file_path}"
                 )
-                self._mark_download_failed(job_id, file_path)
+                self._mark_download_failed(task_id, file_path)
                 self._dl_fail_streak += 1
                 self._dl_success_streak = 0
-                # 3 consecutive failures → trigger network check in main loop
                 if self._dl_fail_streak >= 3 and not self._network_paused:
                     if not self._check_network_health():
                         logger.warning("DownloadAhead: network unreachable — pausing")
@@ -639,42 +651,29 @@ class DownloadAheadPool(BaseAheadPool):
             with self._active_lock:
                 self._active_files[file_id] = str(local_path)
 
-            # Update job_queue.parsed_metadata with temp_local_path
+            # Mark file_task download as done
             try:
                 cursor = self.db.conn.cursor()
                 cursor.execute(
-                    "SELECT parsed_metadata FROM job_queue WHERE id = ?",
-                    (job_id,),
-                )
-                row = cursor.fetchone()
-                pm = {}
-                if row and row[0]:
-                    try:
-                        pm = json.loads(row[0])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                pm["temp_local_path"] = str(local_path)
-                cursor.execute(
-                    "UPDATE job_queue SET parsed_metadata = ?, file_ready = 1, priority = priority + 10 WHERE id = ?",
-                    (json.dumps(pm, ensure_ascii=False, default=str), job_id),
+                    "UPDATE file_tasks SET download_status = 'done', updated_at = ? WHERE id = ?",
+                    (time.strftime("%Y-%m-%d %H:%M:%S"), task_id),
                 )
                 self.db.conn.commit()
             except Exception as e:
                 logger.warning(
-                    f"DownloadAhead: failed to update parsed_metadata "
-                    f"for job {job_id}: {e}"
+                    f"DownloadAhead: failed to update file_tasks "
+                    f"for task {task_id}: {e}"
                 )
 
             logger.info(
                 f"DownloadAhead: downloaded {filename} "
-                f"({local_path.stat().st_size} bytes) for job {job_id}"
+                f"({local_path.stat().st_size} bytes) for task {task_id}"
             )
 
         except Exception as e:
-            logger.error(f"DownloadAhead: error downloading job {job_id}: {e}")
-            self._mark_download_failed(job_id, file_path)
+            logger.error(f"DownloadAhead: error downloading task {task_id}: {e}")
+            self._mark_download_failed(task_id, file_path)
             self._buffer_sem.release()
-            # Clean up partial file
             if local_path.exists():
                 try:
                     local_path.unlink()

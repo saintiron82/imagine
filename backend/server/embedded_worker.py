@@ -91,6 +91,8 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         # New system: find phase with most pending tasks
                         _cursor.execute("""
                             SELECT
+                                SUM(CASE WHEN download_status='pending' THEN 1 ELSE 0 END) AS dl,
+                                SUM(CASE WHEN download_status IN ('done','n/a') AND parse_status='pending' THEN 1 ELSE 0 END) AS parse,
                                 SUM(CASE WHEN parse_status='done' AND mc_status='pending' THEN 1 ELSE 0 END) AS mc,
                                 SUM(CASE WHEN parse_status='done' AND vv_status='pending' THEN 1 ELSE 0 END) AS vv,
                                 SUM(CASE WHEN mc_status='done' AND mv_status='pending' THEN 1 ELSE 0 END) AS mv
@@ -99,13 +101,15 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                             WHERE aj.status = 'active'
                         """)
                         row = _cursor.fetchone()
-                        mc_p, vv_p, mv_p = (row[0] or 0), (row[1] or 0), (row[2] or 0)
+                        dl_p, parse_p = (row[0] or 0), (row[1] or 0)
+                        mc_p, vv_p, mv_p = (row[2] or 0), (row[3] or 0), (row[4] or 0)
 
-                        if mc_p + vv_p + mv_p > 0:
-                            # Pick phase with most pending — batch = all pending
-                            candidates = {"mc": mc_p, "vv": vv_p, "mv": mv_p}
+                        # Download handled by DownloadAheadPool — only parse/mc/vv/mv for worker
+                        candidates = {"parse": parse_p, "mc": mc_p, "vv": vv_p, "mv": mv_p}
+                        total_workable = parse_p + mc_p + vv_p + mv_p
+                        if total_workable > 0:
                             mode = max(candidates, key=candidates.get)
-                            chunk = candidates[mode]  # claim all pending for this phase
+                            chunk = candidates[mode]
                         else:
                             mode = "idle"
                             chunk = 0

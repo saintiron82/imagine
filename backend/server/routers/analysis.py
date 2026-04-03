@@ -312,6 +312,56 @@ async def save_vision_fields(
     return {"success": True}
 
 
+@router.patch("/api/v1/files/{file_id}/parse")
+async def save_parse_results(
+    file_id: int,
+    request: Request,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Save parse results (metadata) to files table.
+
+    Called by workers after Phase P (parsing + thumbnail generation).
+    Updates file metadata columns and thumbnail URL.
+    """
+    import json as _json
+    body = await request.json()
+    metadata = body.get("metadata", {})
+    if not metadata:
+        raise HTTPException(status_code=400, detail="No metadata provided")
+
+    cursor = db.conn.cursor()
+
+    # Build dynamic UPDATE from provided metadata fields
+    safe_fields = [
+        "file_name", "file_type", "file_size", "width", "height",
+        "color_mode", "bit_depth", "dpi", "has_alpha", "layer_count",
+        "text_content", "layer_tree", "semantic_tags", "translated_tags",
+        "translated_text", "translated_layer_tree", "thumbnail_url",
+        "relative_path", "folder_path", "folder_depth", "folder_tags",
+        "content_hash", "mode_tier", "embedding_model", "embedding_dim",
+    ]
+    updates = []
+    values = []
+    for f in safe_fields:
+        if f in metadata:
+            val = metadata[f]
+            if isinstance(val, (list, dict)):
+                val = _json.dumps(val, ensure_ascii=False)
+            updates.append(f"{f} = ?")
+            values.append(val)
+
+    if updates:
+        values.append(file_id)
+        cursor.execute(
+            f"UPDATE files SET {', '.join(updates)} WHERE id = ?",
+            values,
+        )
+        db.conn.commit()
+
+    return {"success": True, "file_id": file_id}
+
+
 class StartPhaseRequest(BaseModel):
     task_id: int
     phase: str

@@ -99,7 +99,7 @@ class AnalysisJobManager:
     def _ensure_elapsed_columns(self):
         """Add elapsed_s columns if missing."""
         cursor = self.db.conn.cursor()
-        for col in ("mc_elapsed_s", "vv_elapsed_s", "mv_elapsed_s"):
+        for col in ("parse_elapsed_s", "mc_elapsed_s", "vv_elapsed_s", "mv_elapsed_s"):
             try:
                 cursor.execute(f"SELECT {col} FROM file_tasks LIMIT 1")
             except Exception:
@@ -551,6 +551,7 @@ class AnalysisJobManager:
         file_id = row[0]
 
         checks = {
+            "parse": "SELECT thumbnail_url FROM files WHERE id = ? AND thumbnail_url IS NOT NULL AND thumbnail_url != ''",
             "mc": "SELECT mc_caption FROM files WHERE id = ? AND mc_caption IS NOT NULL AND mc_caption != ''",
             "vv": "SELECT 1 FROM vec_files WHERE file_id = ?",
             "mv": "SELECT 1 FROM vec_text WHERE file_id = ?",
