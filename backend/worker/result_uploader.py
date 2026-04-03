@@ -99,6 +99,9 @@ class ResultUploader:
                 f"{self.base}/api/v1/jobs/{job_id}/fail",
                 json=payload,
             )
+            # 404 = new system task_id, not in legacy job_queue — silently ignore
+            if resp.status_code == 404:
+                return False
             return resp.status_code == 200
         except Exception as e:
             logger.warning(f"Fail report failed for job {job_id}: {e}")
