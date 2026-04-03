@@ -94,74 +94,15 @@ async def startup():
     except Exception as e:
         logger.warning(f"Parent watchdog failed to start: {e}")
 
-    # DB will be lazily initialized on first request via get_db()
+    # DB + admin setup
     _create_default_admin()
-    _cleanup_stale_jobs()
-    _startup_integrity_check()
 
-    # Parse-ahead pool: pre-parse pending jobs in background (server-side Phase P)
-    # ParseAhead handles Phase P (parse + thumbnail)
-    try:
-        from backend.utils.config import get_config
-        cfg = get_config()
-        pa_enabled = cfg.get("server.parse_ahead.enabled", True)
-        if pa_enabled:
-            from backend.server.queue.parse_ahead import ParseAheadPool
-            from backend.server.deps import get_db
-            db = get_db()
-            app.state.parse_ahead = ParseAheadPool(db)
-            app.state.parse_ahead.start()
-            logger.info("Parse-ahead pool started")
-        else:
-            logger.info("Parse-ahead pool disabled via config")
-    except Exception as e:
-        logger.warning(f"Parse-ahead pool failed to start: {e}")
+    # Legacy ParseAhead/DownloadAhead/audit REMOVED — Analysis Job System v1
+    # Workers handle all phases (DL/Parse/MC/VV/MV) via file_tasks.
+    logger.info("Analysis Job System v1 — no legacy pools")
 
-    # Download-ahead pool: pre-download WebDAV files to temp folder for Phase P
-    try:
-        if pa_enabled:
-            from backend.server.queue.download_ahead import (
-                DownloadAheadPool, register_webdav_source,
-            )
-            from backend.server.deps import get_db
-            db = get_db()
-            app.state.download_ahead = DownloadAheadPool(db)
-            app.state.download_ahead.start()
-            logger.info("Download-ahead pool started")
-            # Wire references for ParseAhead ↔ DownloadAhead communication
-            if hasattr(app.state, 'parse_ahead') and app.state.parse_ahead:
-                app.state.parse_ahead._download_pool = app.state.download_ahead
-            # Wire reference for JobQueueManager cleanup
-            from backend.server.queue.manager import set_download_pool
-            set_download_pool(app.state.download_ahead)
-            # Pre-register WebDAV sources from environment (Electron startup)
-            webdav_env = os.environ.get("IMAGINE_WEBDAV_SOURCES")
-            if webdav_env:
-                import json as _json
-                try:
-                    sources = _json.loads(webdav_env)
-                    for src in sources:
-                        register_webdav_source(src)
-                    logger.info(
-                        f"Registered {len(sources)} WebDAV source(s) from environment"
-                    )
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Failed to parse IMAGINE_WEBDAV_SOURCES: {e}")
-    except Exception as e:
-        logger.error(f"Download-ahead pool failed to start: {e}", exc_info=True)
-
-    # EmbedAheadPool removed — tollgate architecture: server does Phase P only,
-    # workers (embedded or external) handle V→VV→MV.
-    logger.info("Processing mode: parse (tollgate architecture)")
-
-    # Embedded worker: NEVER auto-start on server boot.
-    # User must log in and explicitly enable via Admin UI.
-    # Config "auto_processing.enabled" is remembered but only applied after login.
+    # Embedded worker: standby until user enables via Admin UI
     logger.info("Embedded worker: standby (waiting for user login)")
-
-    # ParseAheadPool is always parse-only — no mode recalculation needed
-    from backend.server.queue.manager import set_server_pool_mode
-    set_server_pool_mode("parse")
 
     # Heartbeat watchdog: periodically detect dead workers and reclaim their jobs
     try:
@@ -236,12 +177,7 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Imagine Server shutting down...")
-    if hasattr(app.state, "download_ahead") and app.state.download_ahead:
-        app.state.download_ahead.stop()
-        logger.info("Download-ahead pool stopped")
-    if hasattr(app.state, "parse_ahead") and app.state.parse_ahead:
-        app.state.parse_ahead.stop()
-        logger.info("Parse-ahead pool stopped")
+    # Legacy pools removed (Analysis Job System v1)
     # Embedded worker shutdown
     try:
         from backend.server.embedded_worker import get_status as _ew_status, stop_worker as _ew_stop
