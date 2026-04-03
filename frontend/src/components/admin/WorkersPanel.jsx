@@ -470,8 +470,9 @@ export default function WorkersPanel() {
         </>);
       })()}
 
-      {/* Pipeline phase dashboard */}
-      {onlineCount > 0 && (
+      {/* Legacy pipeline phase dashboard — replaced by AnalysisJobCard.
+          Keeping only the worker table below. */}
+      {false && onlineCount > 0 && (
         <div className="mb-4 space-y-3">
           {/* System performance dashboard */}
           {queueStats && (() => {
