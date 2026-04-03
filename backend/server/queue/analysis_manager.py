@@ -34,6 +34,28 @@ class AnalysisJobManager:
     def __init__(self, db):
         self.db = db
         self._ensure_tables()
+        self._reclaim_stale_assigned()
+
+    def _reclaim_stale_assigned(self):
+        """Reset assigned tasks back to pending on startup.
+
+        Prevents tasks from being permanently stuck in 'assigned' state
+        after worker crashes or server restarts.
+        """
+        cursor = self.db.conn.cursor()
+        total = 0
+        for phase in ("download", "parse", "mc", "vv", "mv"):
+            col = f"{phase}_status"
+            assigned_col = f"{phase}_assigned_to"
+            cursor.execute(f"""
+                UPDATE file_tasks
+                SET {col} = 'pending', {assigned_col} = NULL
+                WHERE {col} = 'assigned'
+            """)
+            total += cursor.rowcount
+        if total > 0:
+            self.db.conn.commit()
+            logger.info(f"Reclaimed {total} stale assigned tasks → pending")
 
     def _ensure_tables(self):
         """Create tables if they don't exist."""
