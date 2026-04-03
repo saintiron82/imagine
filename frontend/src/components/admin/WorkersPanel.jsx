@@ -463,10 +463,6 @@ export default function WorkersPanel() {
                   <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                 </div>
                 <span className="text-lg font-bold font-mono text-blue-400">{pct}%</span>
-                {speed > 0 && <span className="text-sm font-bold font-mono text-emerald-400">{speed.toFixed(1)}/m</span>}
-                {secPer && <span className="text-sm font-bold font-mono text-amber-400">{secPer}s</span>}
-                {etaStr && <span className="text-sm font-bold font-mono text-white">~{etaStr}</span>}
-                <span className="text-xs font-mono text-green-400">{onlineCount}w</span>
               </div>
               {/* Row 2: MC/VV/MV progress percentages + small counts */}
               <div className="flex items-center gap-4 text-xs font-mono">
@@ -485,6 +481,51 @@ export default function WorkersPanel() {
                     </span>
                   );
                 })}
+              </div>
+              {/* Row 3: speed detail + action buttons */}
+              <div className="flex items-center gap-3 pt-1 border-t border-gray-700/20">
+                {/* Speed metrics */}
+                <div className="flex items-center gap-4 flex-1 text-xs font-mono">
+                  {speed > 0 ? (
+                    <>
+                      <span className="text-emerald-400 font-bold">{speed.toFixed(1)} files/min</span>
+                      {secPer && <span className="text-amber-400">{secPer}s/file</span>}
+                      {etaStr && <span className="text-white">ETA ~{etaStr}</span>}
+                    </>
+                  ) : (
+                    <span className="text-gray-600">대기 중...</span>
+                  )}
+                  <span className="text-green-400">{onlineCount} workers</span>
+                </div>
+                {/* Action buttons */}
+                <div className="flex items-center gap-2">
+                  {remaining > 0 && (
+                    <button onClick={async () => {
+                      try {
+                        for (const j of allJobs.filter(j => j.status === 'active')) {
+                          await retryFailedTasks(j.id);
+                        }
+                        load();
+                        alert('실패 파일 재시도 요청 완료');
+                      } catch { alert('재시도 실패'); }
+                    }}
+                      className="px-3 py-1 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 text-[10px] font-medium">
+                      실패 재시도
+                    </button>
+                  )}
+                  <button onClick={async () => {
+                    if (!confirm('모든 활성 분석작업을 일시정지하시겠습니까?')) return;
+                    try {
+                      for (const j of allJobs.filter(j => j.status === 'active')) {
+                        await pauseAnalysisJob(j.id);
+                      }
+                      load();
+                    } catch { alert('중지 실패'); }
+                  }}
+                    className="px-3 py-1 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 text-[10px] font-medium">
+                    전체 중지
+                  </button>
+                </div>
               </div>
             </div>
             {/* Queue list — click to expand details */}
