@@ -405,7 +405,7 @@ export default function WorkersPanel() {
             <div className="flex items-center gap-2">
               <div className="text-xs text-gray-400">{t('label.chunk_size')}</div>
               <input
-                type="number" min="1" max="20" value={batchSize}
+                type="number" min="1" max="999" value={batchSize}
                 onChange={(e) => setBatchSize(parseInt(e.target.value) || 5)}
                 className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
               />
@@ -422,7 +422,7 @@ export default function WorkersPanel() {
             </div>
             <button
               onClick={async () => {
-                const bs = Math.max(1, Math.min(20, batchSize));
+                const bs = Math.max(1, batchSize);
                 const rest = Math.max(0, Math.min(300, restAfterBatch));
                 setBatchSize(bs);
                 setRestAfterBatch(rest);
