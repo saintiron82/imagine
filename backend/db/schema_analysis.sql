@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
     name TEXT NOT NULL,                      -- display name ("크랑베르무")
     source_path TEXT NOT NULL,               -- folder path ("webdav://..." or local)
     status TEXT DEFAULT 'active'
-        CHECK (status IN ('active', 'paused', 'completed', 'cancelled')),
+        CHECK (status IN ('active', 'paused', 'completed', 'cancelled', 'archived')),
     network_status TEXT DEFAULT 'ok'
         CHECK (network_status IN ('ok', 'degraded', 'paused')),
     total_files INTEGER NOT NULL DEFAULT 0,
