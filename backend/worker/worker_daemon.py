@@ -1622,13 +1622,16 @@ class WorkerDaemon:
                 results.append((job_id, False, err))
                 continue
 
-            upload_result = self.uploader.complete_mc(job_id, ctx.vision_fields)
-            # Report to new Analysis Job system
-            task_id = ctx.job.get("task_id") if hasattr(ctx, 'job') and isinstance(ctx.job, dict) else None
-            if not task_id:
-                task_id = job_id  # fallback
-            self._report_task_phase(task_id, "mc", upload_result is True,
-                                    None if upload_result is True else str(upload_result))
+            # New system (task_id) vs legacy (job_id)
+            task_id = ctx.job.get("task_id") if isinstance(getattr(ctx, 'job', None), dict) else None
+            if task_id:
+                # New Analysis Job system: save MC to files DB directly + report
+                upload_result = self.uploader.save_vision_fields(ctx.job.get("file_id"), ctx.vision_fields)
+                self._report_task_phase(task_id, "mc", upload_result is True,
+                                        None if upload_result is True else str(upload_result))
+            else:
+                # Legacy: use job_queue-based complete_mc
+                upload_result = self.uploader.complete_mc(job_id, ctx.vision_fields)
             if upload_result is True:
                 self._total_completed += 1
                 results.append((job_id, True, ""))

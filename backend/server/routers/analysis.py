@@ -185,6 +185,42 @@ def claim_tasks(
     return {"success": True, "tasks": tasks, "count": len(tasks)}
 
 
+@router.patch("/api/v1/files/{file_id}/vision")
+async def save_vision_fields(
+    file_id: int,
+    request: Request,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Save MC vision fields directly to files table."""
+    body = await request.json()
+    cursor = db.conn.cursor()
+    # Update vision fields
+    fields = ["mc_caption", "ai_tags", "image_type", "art_style", "color_palette",
+              "scene_type", "time_of_day", "weather", "character_type", "item_type",
+              "ui_type", "structured_meta"]
+    updates = []
+    values = []
+    for f in fields:
+        if f in body:
+            import json as _json
+            val = body[f]
+            if isinstance(val, (list, dict)):
+                val = _json.dumps(val, ensure_ascii=False)
+            updates.append(f"{f} = ?")
+            values.append(val)
+
+    if updates:
+        values.append(file_id)
+        cursor.execute(
+            f"UPDATE files SET {', '.join(updates)} WHERE id = ?",
+            values,
+        )
+        db.conn.commit()
+
+    return {"success": True}
+
+
 @router.post("/api/v1/tasks/complete")
 def complete_task_phase(
     req: CompletePhaseRequest,
