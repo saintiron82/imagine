@@ -935,7 +935,7 @@ class JobQueueManager:
         )
 
         # Update work request/subtask counters
-        self._update_wr_counters(cursor, wr_id, ws_id, 'completed')
+        self._update_wr_counters(cursor, wr_id, ws_id, 'completed', job_id=job_id)
 
         # Keep completed job in queue for history (user archives manually)
         cursor.execute(
@@ -960,14 +960,28 @@ class JobQueueManager:
 
     # ── Work Request helpers ──────────────────────────────────────
 
-    def _update_wr_counters(self, cursor, wr_id, ws_id, event: str):
+    def _update_wr_counters(self, cursor, wr_id, ws_id, event: str, job_id: int = None):
         """Update work_request/subtask counters on job completion or failure.
+
+        Guards against double-counting: checks if this job was already
+        counted (status already completed/failed) before incrementing.
 
         Args:
             event: 'completed' or 'failed'
+            job_id: optional — if provided, checks current status to prevent double-count
         """
         if not wr_id:
             return
+
+        # Guard: don't double-count if job is already in terminal state
+        if job_id is not None:
+            cursor.execute(
+                "SELECT status FROM job_queue WHERE id = ?", (job_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0] in ('completed', 'failed'):
+                return  # Already counted — skip
+
         col = 'completed_count' if event == 'completed' else 'failed_count'
         cursor.execute(
             f"UPDATE work_requests SET {col} = {col} + 1 WHERE id = ?",
@@ -1218,7 +1232,7 @@ class JobQueueManager:
                     (error_msg, file_id)
                 )
                 # Update work request/subtask counters
-                self._update_wr_counters(cursor, wr_id, ws_id, 'failed')
+                self._update_wr_counters(cursor, wr_id, ws_id, 'failed', job_id=job_id)
                 # Keep failed job in queue for history (user archives manually)
                 cursor.execute(
                     "UPDATE job_queue SET status = 'failed', completed_at = COALESCE(completed_at, datetime('now')) WHERE id = ?",
