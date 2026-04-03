@@ -24,8 +24,26 @@
 
 ---
 
+---
+
+## BUG-002: Parse 실패 파일이 다운로드 버퍼를 영구 점유 → 워커 무한 대기
+
+| 항목 | 내용 |
+|------|------|
+| **심각도** | **높음** |
+| **재현** | Parse 실패 파일이 다수 발생한 후 워커 상태 확인 |
+| **현상** | 워커가 resting/대기 상태에서 무한 멈춤. pending 589개 있으나 MC claimable 0. NAS 접속은 정상 |
+| **원인** | Parse 실패한 파일이 `file_ready=1`로 남으면서 temp 디렉토리에 PSD 원본이 유지됨. DownloadAheadPool의 `active_files`(59) > `max_files`(10) → 새 다운로드 차단 → 처리 가능한 job 0 → 워커 무한 대기 |
+| **임시 해결** | `UPDATE job_queue SET file_ready=0, parse_status=NULL WHERE file_ready=1 AND parse_status='failed'` + `status='failed'` → `'pending'` 리셋 |
+| **근본 해결** | DownloadAheadPool에서 parse 실패/job 실패한 파일의 temp 자동 정리. `_reset_stale_file_ready()`에 parse_status='failed' 케이스 추가. 또는 parse 실패 시 즉시 temp 삭제 + file_ready=0 리셋 |
+| **관련 파일** | `backend/server/queue/download_ahead.py` (_reset_stale_file_ready, _download_batch), `backend/server/queue/manager.py` (parse 실패 처리) |
+| **상태** | Open |
+
+---
+
 ## 우선순위
 
 | 순위 | 버그 | 사용자 영향 | 구현 난이도 |
 |:----:|------|:---------:|:---------:|
-| 1 | BUG-001 하단 잘림 | 중간 | 낮음 |
+| 1 | BUG-002 다운로드 버퍼 점유 | **높음** (워커 멈춤) | 중간 |
+| 2 | BUG-001 하단 잘림 | 중간 | 낮음 |
