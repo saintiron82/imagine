@@ -401,39 +401,7 @@ export default function WorkersPanel() {
           </div>
         </div>
         {autoProcessing && (
-          <div className="flex items-center gap-6 mt-3 pt-3 border-t border-gray-700/50">
-            <div className="flex items-center gap-2">
-              <div className="text-xs text-gray-400">{t('label.chunk_size')}</div>
-              <input
-                type="number" min="1" max="999" value={batchSize}
-                onChange={(e) => setBatchSize(parseInt(e.target.value) || 5)}
-                className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
-              />
-              <span className="text-xs text-gray-500">files</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="text-xs text-gray-400">{t('worker.rest_title')}</div>
-              <input
-                type="number" min="0" max="300" value={restAfterBatch}
-                onChange={(e) => setRestAfterBatch(parseInt(e.target.value) || 0)}
-                className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
-              />
-              <span className="text-xs text-gray-500">{t('worker.rest_unit')}</span>
-            </div>
-            <button
-              onClick={async () => {
-                const bs = Math.max(1, batchSize);
-                const rest = Math.max(0, Math.min(300, restAfterBatch));
-                setBatchSize(bs);
-                setRestAfterBatch(rest);
-                try {
-                  await updateAutoProcessing({ batch_size: bs, rest_after_batch_s: rest });
-                } catch (err) { console.error(err); }
-              }}
-              className="px-3 py-1 text-xs font-medium rounded bg-purple-600 text-white hover:bg-purple-500 transition-colors"
-            >
-              {t('action.apply')}
-            </button>
+          <div className="flex items-center gap-4 mt-3 pt-3 border-t border-gray-700/50">
             <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
               <input
                 type="checkbox" checked={verboseLog}

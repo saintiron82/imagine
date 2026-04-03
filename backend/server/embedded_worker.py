@@ -102,23 +102,22 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         mc_p, vv_p, mv_p = (row[0] or 0), (row[1] or 0), (row[2] or 0)
 
                         if mc_p + vv_p + mv_p > 0:
-                            # Pick phase with most pending (= bottleneck)
+                            # Pick phase with most pending — batch = all pending
                             candidates = {"mc": mc_p, "vv": vv_p, "mv": mv_p}
                             mode = max(candidates, key=candidates.get)
-                            chunk = 7 if mode == "mc" else 20
+                            chunk = candidates[mode]  # claim all pending for this phase
                         else:
-                            # No pending tasks in new system
                             mode = "idle"
-                            chunk = 5
+                            chunk = 0
                     except Exception as _mode_err:
                         logger.error(f"Mode decision failed: {_mode_err}")
                         mode = "mc"
-                        chunk = 5
+                        chunk = 10
 
                     _worker_daemon.processing_mode = mode
 
                     if mode == "idle":
-                        # Unload all models when queue is empty
+                        # Unload model when queue is empty
                         prev = getattr(_worker_daemon, '_prev_mode', None)
                         if prev:
                             logger.info(f"[EW] Queue empty — unloading {prev} model")
@@ -132,14 +131,6 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         time.sleep(10)
                         continue
 
-                    # 2. Cap by server config (0 or unset = unlimited)
-                    try:
-                        from backend.utils.config import get_config
-                        max_chunk = get_config().get("server.auto_processing.batch_size", 0)
-                        if max_chunk > 0:
-                            chunk = min(chunk, max_chunk)
-                    except Exception:
-                        pass
                     _worker_daemon.batch_capacity = chunk
 
                     # 3. Claim jobs
