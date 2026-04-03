@@ -112,7 +112,8 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                             _qm = JobQueueManager(_qdb)
                             mode = _qm._decide_worker_mode(_worker_daemon.session_id)
                             chunk = _qm.get_phase_batch_size(mode) if mode != "idle" else 5
-                    except Exception:
+                    except Exception as _mode_err:
+                        logger.error(f"Mode decision failed: {_mode_err}")
                         mode = "mc"
                         chunk = 5
 
@@ -132,7 +133,9 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                     _worker_daemon.batch_capacity = chunk
 
                     # 3. Claim jobs
+                    logger.info(f"[EW] Claiming: mode={mode}, chunk={chunk}")
                     jobs = _worker_daemon.claim_jobs_count(chunk)
+                    logger.info(f"[EW] Claimed: {len(jobs)} jobs")
 
                     if not jobs:
                         consecutive_empty += 1
