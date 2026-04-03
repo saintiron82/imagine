@@ -141,6 +141,7 @@ class WorkerDaemon:
         self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
         self._last_claim_diag = None  # Last empty-claim diagnostic from server
         self._batch_throughput = 0.0  # files/min from last completed batch
+        self._phase_throughput = {"mc": 0.0, "vv": 0.0, "mv": 0.0}  # per-phase speed (persists across mode switches)
         self._current_job_id = None
         self._current_file = None
         self._current_phase = None
@@ -369,6 +370,7 @@ class WorkerDaemon:
                     "throttle_level": throttle_level,
                     "worker_state": self._state_machine.state_name,
                     "batch_throughput": self._batch_throughput,
+                    "phase_throughput": self._phase_throughput,
                 },
             )
             if resp.status_code == 200:
@@ -1336,7 +1338,9 @@ class WorkerDaemon:
         fpm_vision = (n / elapsed_vision * 60) if elapsed_vision > 0 else 0
         self._phase_counts["mc"] += n
         # Update throughput: files / elapsed since batch start
-        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
+        _fpm = round(n / (time.perf_counter() - t_batch) * 60, 1)
+        self._batch_throughput = _fpm
+        self._phase_throughput["mc"] = _fpm
 
         # Emit VLM model info + per-file error diagnostics to IPC
         vision_errors = [
@@ -1365,6 +1369,7 @@ class WorkerDaemon:
         fpm_vv = (n / elapsed_vv * 60) if elapsed_vv > 0 else 0
         self._phase_counts["vv"] += n
         self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
+        self._phase_throughput["vv"] = round(fpm_vv, 1)
 
         if self._stop_requested:
             logger.info("Stop requested after VV phase — aborting batch")
@@ -1377,6 +1382,7 @@ class WorkerDaemon:
         self._phase_counts["mv"] += n
         fpm_mv = (n / elapsed_mv * 60) if elapsed_mv > 0 else 0
         self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
+        self._phase_throughput["mv"] = round(fpm_mv, 1)
 
         # Map PhaseItem results back to _JobContext for upload
         for i, item in enumerate(phase_items):

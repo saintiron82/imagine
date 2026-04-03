@@ -771,15 +771,14 @@ export default function WorkersPanel() {
 
               const phaseLabel = cur === 'mc' ? 'MC' : cur === 'vv' ? 'VV' : cur === 'mv' ? 'MV' : cur === 'parse' ? 'Parse' : null;
 
+              const pt = w.resources?.phase_throughput || {};
               const phaseCell = (key, color) => {
                 const isCurrent = cur === key;
+                const speed = pt[key] || 0;
                 return (
                   <td className={`text-center px-2 py-2 ${isCurrent ? `bg-${color}-900/30` : ''}`}>
-                    <div className={`text-sm font-bold font-mono ${isCurrent ? `text-${color}-400` : 'text-gray-700'}`}>
-                      {isCurrent ? (batchSize || '-') : '-'}
-                    </div>
-                    {isCurrent && w.throughput > 0 && (
-                      <div className="text-[9px] text-emerald-400 font-mono">{w.throughput.toFixed(1)}/m</div>
+                    {speed > 0 && (
+                      <div className={`text-[9px] font-mono ${isCurrent ? 'text-emerald-400' : 'text-gray-600'}`}>{speed}/m</div>
                     )}
                     {isCurrent && fileName && (
                       <div className={`text-[9px] text-${color}-300 truncate max-w-[120px] mx-auto`} title={w.current_file}>
