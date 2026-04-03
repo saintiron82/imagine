@@ -14,7 +14,7 @@ import {
 } from '../../api/admin';
 import {
   listAnalysisJobs, pauseAnalysisJob, resumeAnalysisJob,
-  cancelAnalysisJob, retryFailedTasks,
+  cancelAnalysisJob, retryFailedTasks, getAnalysisMetrics,
 } from '../../api/analysis';
 import AnalysisJobCard from '../AnalysisJobCard';
 import { getJobStats } from '../../api/worker';
@@ -175,10 +175,33 @@ export default function WorkersPanel() {
       ]);
       const all = workerData.workers || [];
       setWorkers(all.filter(w => w.status === 'online'));
-      setAnalysisJobs((jobsData.jobs || []).filter(j => j.status !== 'cancelled'));
+      const jobs = (jobsData.jobs || []).filter(j => j.status !== 'cancelled');
+      setAnalysisJobs(jobs);
 
-      // Override stats with analysis job totals
-      const activeJobs = (jobsData.jobs || []).filter(j => j.status === 'active' || j.status === 'paused');
+      // Fetch metrics for active jobs (phase-level throughput)
+      const activeJobs = jobs.filter(j => j.status === 'active' || j.status === 'paused');
+      if (activeJobs.length > 0) {
+        try {
+          const metricsResults = await Promise.all(
+            activeJobs.map(j => getAnalysisMetrics(j.id).catch(() => null))
+          );
+          // Merge phase_metrics into statsData for display
+          if (statsData) {
+            for (const m of metricsResults) {
+              if (!m) continue;
+              const t = m.throughput || {};
+              if (t.files_per_min > 0) statsData.throughput = t.files_per_min;
+              if (t.eta_seconds) statsData.eta_seconds = t.eta_seconds;
+              const pm = m.phase_metrics || {};
+              // Convert avg_s to files/min for display
+              if (pm.mc?.avg_s > 0) statsData.mc_throughput = Math.round(60 / pm.mc.avg_s * 10) / 10;
+              if (pm.vv?.avg_s > 0) statsData.vv_throughput = Math.round(60 / pm.vv.avg_s * 10) / 10;
+              if (pm.mv?.avg_s > 0) statsData.mv_throughput = Math.round(60 / pm.mv.avg_s * 10) / 10;
+            }
+          }
+        } catch {}
+      }
+
       if (statsData && activeJobs.length > 0) {
         const totals = activeJobs.reduce((acc, j) => {
           const p = j.progress || {};
