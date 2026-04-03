@@ -169,20 +169,22 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                     except ImportError:
                         pass
 
-                    # Rest after batch (cooldown for GPU thermal management)
-                    try:
-                        rest_s = get_config().get("server.auto_processing.rest_after_batch_s", 0)
-                        if rest_s > 0:
-                            _worker_daemon._current_phase = "resting"
-                            _worker_daemon._current_file = f"{rest_s}s"
-                            for _ in range(int(rest_s)):
-                                if _shutdown_flag:
-                                    break
-                                time.sleep(1)
-                            _worker_daemon._current_phase = None
-                            _worker_daemon._current_file = None
-                    except Exception:
-                        pass
+                    # Rest after MC batch only (GPU thermal cooldown).
+                    # VV/MV are fast — no rest needed.
+                    if mode == "mc":
+                        try:
+                            rest_s = get_config().get("server.auto_processing.rest_after_batch_s", 0)
+                            if rest_s > 0:
+                                _worker_daemon._current_phase = "resting"
+                                _worker_daemon._current_file = f"{rest_s}s"
+                                for _ in range(int(rest_s)):
+                                    if _shutdown_flag:
+                                        break
+                                    time.sleep(1)
+                                _worker_daemon._current_phase = None
+                                _worker_daemon._current_file = None
+                        except Exception:
+                            pass
 
                 except Exception as e:
                     logger.error(f"Embedded worker loop error: {e}", exc_info=True)
