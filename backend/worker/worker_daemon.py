@@ -2027,16 +2027,37 @@ class WorkerDaemon:
         results = []
         active = []
         for job in jobs:
+            file_name = Path(job.get("file_path", "")).name
+            job_id = job.get("job_id") or job.get("task_id")
+            task_id = job.get("task_id")
+
+            # Get MC data: from vision_data (legacy) or fetch from server (new system)
             vision_data = job.get("vision_data", {})
             mc_caption = vision_data.get("mc_caption", "")
+
+            # New system: no vision_data in claim — fetch from files DB via API
+            if not mc_caption and task_id:
+                try:
+                    file_id = job.get("file_id")
+                    resp = self._authed_request("get", f"{self.server_url}/api/v1/files/{file_id}/mc")
+                    if resp.status_code == 200:
+                        mc_data = resp.json()
+                        mc_caption = mc_data.get("mc_caption", "")
+                        vision_data = mc_data
+                except Exception as e:
+                    _log(f"[MV] Failed to fetch MC for {file_name}: {e}", "warning")
+
             if not mc_caption:
-                file_name = Path(job.get("file_path", "")).name
-                err = f"NO_MC_CAPTION: vision_data keys={list(vision_data.keys())}"
+                err = f"NO_MC_CAPTION: file has no MC data"
                 _log(f"[MV] FAIL {file_name}: {err}", "warning")
-                self.uploader.fail_job(job["job_id"], err, "MODE_MISMATCH")
-                results.append((job["job_id"], False, err))
+                if task_id:
+                    self._report_task_phase(task_id, "mv", False, err)
+                else:
+                    self.uploader.fail_job(job_id, err, "MODE_MISMATCH")
+                results.append((job_id, False, err))
                 _notify(progress_callback, "file_error", {"file_name": file_name, "error": err})
                 continue
+
             ai_tags = vision_data.get("ai_tags", [])
             if isinstance(ai_tags, str):
                 try:
@@ -2048,6 +2069,9 @@ class WorkerDaemon:
                 "scene_type": vision_data.get("scene_type", ""),
                 "art_style": vision_data.get("art_style", ""),
             })
+
+            if task_id:
+                self._report_task_start(task_id, "mv")
             active.append({"job": job, "text": doc_text})
 
         _log(f"[MV] Validation: {len(active)} active, {len(results)} failed / {len(jobs)} total")
@@ -2086,9 +2110,17 @@ class WorkerDaemon:
 
             if batch_items:
                 _log(f"[MV] Uploading {len(batch_items)} vectors...")
-                batch_results = self.uploader.complete_mv_batch(
-                    [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
-                )
+                has_task_ids = any(it["ctx"]["job"].get("task_id") for it in batch_items)
+                if has_task_ids:
+                    batch_results = []
+                    for it in batch_items:
+                        file_id = it["ctx"]["job"].get("file_id")
+                        ok = self.uploader.save_mv_vector(file_id, it["vec"])
+                        batch_results.append(ok is True)
+                else:
+                    batch_results = self.uploader.complete_mv_batch(
+                        [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
+                    )
                 n_ok = sum(1 for r in batch_results if r)
                 _log(f"[MV] Upload: {n_ok}/{len(batch_results)} ok")
                 for it, ok in zip(batch_items, batch_results):

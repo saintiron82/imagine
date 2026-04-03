@@ -185,6 +185,38 @@ def claim_tasks(
     return {"success": True, "tasks": tasks, "count": len(tasks)}
 
 
+@router.get("/api/v1/files/{file_id}/mc")
+def get_file_mc(
+    file_id: int,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Get MC (vision) fields for a file — used by MV workers."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """SELECT mc_caption, ai_tags, image_type, scene_type, art_style
+           FROM files WHERE id = ?""",
+        (file_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="File not found")
+    import json as _json
+    ai_tags = row[1]
+    if isinstance(ai_tags, str):
+        try:
+            ai_tags = _json.loads(ai_tags)
+        except Exception:
+            ai_tags = []
+    return {
+        "mc_caption": row[0] or "",
+        "ai_tags": ai_tags or [],
+        "image_type": row[2] or "",
+        "scene_type": row[3] or "",
+        "art_style": row[4] or "",
+    }
+
+
 @router.patch("/api/v1/files/{file_id}/vv")
 async def save_vv_vector(
     file_id: int,
@@ -205,6 +237,27 @@ async def save_vv_vector(
     # Upsert into vec_files
     cursor.execute("DELETE FROM vec_files WHERE file_id = ?", (file_id,))
     cursor.execute("INSERT INTO vec_files (file_id, embedding) VALUES (?, ?)", (file_id, blob))
+    db.conn.commit()
+    return {"success": True}
+
+
+@router.patch("/api/v1/files/{file_id}/mv")
+async def save_mv_vector(
+    file_id: int,
+    request: Request,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Save MV vector directly to vec_text table."""
+    import struct
+    body = await request.json()
+    vec = body.get("vector", [])
+    if not vec:
+        raise HTTPException(status_code=400, detail="No vector provided")
+    blob = struct.pack(f"<{len(vec)}f", *vec)
+    cursor = db.conn.cursor()
+    cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (file_id,))
+    cursor.execute("INSERT INTO vec_text (file_id, embedding) VALUES (?, ?)", (file_id, blob))
     db.conn.commit()
     return {"success": True}
 
