@@ -8,13 +8,7 @@
 import { useState } from 'react';
 import { Pause, Play, X, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 
-const PHASE_COLORS = {
-  download: 'text-yellow-400',
-  parse: 'text-sky-400',
-  ai: 'text-purple-400',
-  mv: 'text-green-400',
-  done: 'text-emerald-400',
-};
+// Phase colors inline (MC/VV/MV shown as fractions, not phase counts)
 
 export default function AnalysisJobCard({ job, onAction, stats }) {
   const [expanded, setExpanded] = useState(false);
@@ -89,19 +83,22 @@ export default function AnalysisJobCard({ job, onAction, stats }) {
           <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
         </div>
 
-        {/* Phase breakdown — always visible */}
+        {/* Phase breakdown — MC/VV/MV as fractions of total */}
         <div className="flex items-center gap-3 mt-2 text-[10px] font-mono">
-          {[
-            ['DL', phases.download, 'download'],
-            ['Parse', phases.parse, 'parse'],
-            ['AI', phases.ai, 'ai'],
-            ['MV', phases.mv, 'mv'],
-            ['Done', phases.done, 'done'],
-          ].map(([label, count, key]) => (
-            <span key={key} className={`${PHASE_COLORS[key]} ${count > 0 ? 'opacity-100' : 'opacity-30'}`}>
-              {label}:{count || 0}
-            </span>
-          ))}
+          {(phases.download > 0 || phases.parse > 0) && <>
+            {phases.download > 0 && <span className="text-yellow-400">DL:{phases.download}</span>}
+            {phases.parse > 0 && <span className="text-sky-400">Parse:{phases.parse}</span>}
+          </>}
+          <span className={`text-purple-400 ${(p.mc_done || 0) < total ? 'opacity-100' : 'opacity-30'}`}>
+            MC:{p.mc_done || 0}/{total}
+          </span>
+          <span className={`text-cyan-400 ${(p.vv_done || 0) < total ? 'opacity-100' : 'opacity-30'}`}>
+            VV:{p.vv_done || 0}/{total}
+          </span>
+          <span className={`text-green-400 ${(p.mv_done || 0) < total ? 'opacity-100' : 'opacity-30'}`}>
+            MV:{p.mv_done || 0}/{total}
+          </span>
+          <span className="text-emerald-400">Done:{complete}</span>
           {totalFailed > 0 && (
             <span className="text-red-400">Fail:{totalFailed}</span>
           )}
