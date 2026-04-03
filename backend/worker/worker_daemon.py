@@ -1927,9 +1927,19 @@ class WorkerDaemon:
 
             if batch_items:
                 _log(f"[VV] Uploading {len(batch_items)} vectors...")
-                batch_results = self.uploader.complete_vv_batch(
-                    [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
-                )
+                # Check if new system tasks (have task_id)
+                has_task_ids = any(it["ctx"]["job"].get("task_id") for it in batch_items)
+                if has_task_ids:
+                    # New system: save vectors via /api/v1/files/{id}/vv
+                    batch_results = []
+                    for it in batch_items:
+                        file_id = it["ctx"]["job"].get("file_id")
+                        ok = self.uploader.save_vv_vector(file_id, it["vec"])
+                        batch_results.append({"ok": ok is True})
+                else:
+                    batch_results = self.uploader.complete_vv_batch(
+                        [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
+                    )
                 n_upload_ok = sum(1 for r in batch_results if (r.get("ok") if isinstance(r, dict) else bool(r)))
                 _log(f"[VV] Upload: {n_upload_ok}/{len(batch_results)} ok")
                 for it, batch_result in zip(batch_items, batch_results):

@@ -174,6 +174,25 @@ class ResultUploader:
             logger.error(f"save_vision_fields file {file_id}: {err}")
             return err
 
+    def save_vv_vector(self, file_id: int, vec):
+        """Save VV vector directly to vec_files (new Analysis Job system)."""
+        import numpy as np
+        try:
+            vec_list = vec.tolist() if isinstance(vec, np.ndarray) else list(vec)
+            resp = self._request('patch',
+                f"{self.base}/api/v1/files/{file_id}/vv",
+                json={"vector": vec_list},
+            )
+            if resp.status_code == 200:
+                return True
+            else:
+                err = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                logger.error(f"save_vv_vector file {file_id} failed: {err}")
+                return err
+        except Exception as e:
+            logger.error(f"save_vv_vector file {file_id}: {e}")
+            return str(e)
+
     def complete_parse(self, job_id: int, metadata: dict, thumbnail_path: str = None) -> bool:
         """Parse mode: upload parse results + thumbnail to server."""
         try:

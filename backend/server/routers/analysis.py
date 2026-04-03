@@ -185,6 +185,30 @@ def claim_tasks(
     return {"success": True, "tasks": tasks, "count": len(tasks)}
 
 
+@router.patch("/api/v1/files/{file_id}/vv")
+async def save_vv_vector(
+    file_id: int,
+    request: Request,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Save VV vector directly to vec_files table."""
+    import struct
+    body = await request.json()
+    vec = body.get("vector", [])
+    if not vec:
+        raise HTTPException(status_code=400, detail="No vector provided")
+
+    # Encode as binary float32
+    blob = struct.pack(f"<{len(vec)}f", *vec)
+    cursor = db.conn.cursor()
+    # Upsert into vec_files
+    cursor.execute("DELETE FROM vec_files WHERE file_id = ?", (file_id,))
+    cursor.execute("INSERT INTO vec_files (file_id, embedding) VALUES (?, ?)", (file_id, blob))
+    db.conn.commit()
+    return {"success": True}
+
+
 @router.patch("/api/v1/files/{file_id}/vision")
 async def save_vision_fields(
     file_id: int,
