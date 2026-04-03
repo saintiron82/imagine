@@ -427,27 +427,48 @@ export default function WorkersPanel() {
         )}
       </div>
 
-      {/* Analysis Jobs */}
-      {analysisJobs.length > 0 && (
-        <div className="mb-4 p-4 rounded-xl bg-gray-800/40 border border-gray-700/30">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            {t('admin.active_queue') || '분석작업'}
-          </h3>
-          <div className="space-y-2">
-            {analysisJobs.map(job => (
-              <AnalysisJobCard key={job.id} job={job} onAction={async (id, action) => {
-                try {
-                  if (action === 'pause') await pauseAnalysisJob(id);
-                  else if (action === 'resume') await resumeAnalysisJob(id);
-                  else if (action === 'cancel') await cancelAnalysisJob(id);
-                  else if (action === 'retry') await retryFailedTasks(id);
-                  load();
-                } catch (e) { console.error(`Job ${action} failed:`, e); }
-              }} />
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Analysis Jobs — active vs completed */}
+      {analysisJobs.length > 0 && (() => {
+        const activeJobs = analysisJobs.filter(j => j.status === 'active' || j.status === 'paused');
+        const completedJobs = analysisJobs.filter(j => j.status === 'completed');
+        const jobAction = async (id, action) => {
+          try {
+            if (action === 'pause') await pauseAnalysisJob(id);
+            else if (action === 'resume') await resumeAnalysisJob(id);
+            else if (action === 'cancel') await cancelAnalysisJob(id);
+            else if (action === 'retry') await retryFailedTasks(id);
+            load();
+          } catch (e) { console.error(`Job ${action} failed:`, e); }
+        };
+        return (<>
+          {/* Active */}
+          {activeJobs.length > 0 && (
+            <div className="mb-4 p-4 rounded-xl bg-gray-800/40 border border-blue-700/30">
+              <h3 className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-3">
+                진행 중 ({activeJobs.length})
+              </h3>
+              <div className="space-y-2">
+                {activeJobs.map(job => (
+                  <AnalysisJobCard key={job.id} job={job} onAction={jobAction} />
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Completed */}
+          {completedJobs.length > 0 && (
+            <details className="mb-4">
+              <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400 mb-2">
+                완료된 분석작업 ({completedJobs.length})
+              </summary>
+              <div className="p-4 rounded-xl bg-gray-800/20 border border-gray-700/20 space-y-2">
+                {completedJobs.map(job => (
+                  <AnalysisJobCard key={job.id} job={job} onAction={jobAction} />
+                ))}
+              </div>
+            </details>
+          )}
+        </>);
+      })()}
 
       {/* Pipeline phase dashboard */}
       {onlineCount > 0 && (
