@@ -34,6 +34,7 @@ class AnalysisJobManager:
     def __init__(self, db):
         self.db = db
         self._ensure_tables()
+        self._ensure_elapsed_columns()
         self._fix_check_constraint()
         self._reclaim_stale_assigned()
         self._sync_with_files_db()
@@ -94,6 +95,16 @@ class AnalysisJobManager:
         if synced > 0:
             self.db.conn.commit()
             logger.info(f"Synced {synced} file_tasks with files DB")
+
+    def _ensure_elapsed_columns(self):
+        """Add elapsed_s columns if missing."""
+        cursor = self.db.conn.cursor()
+        for col in ("mc_elapsed_s", "vv_elapsed_s", "mv_elapsed_s"):
+            try:
+                cursor.execute(f"SELECT {col} FROM file_tasks LIMIT 1")
+            except Exception:
+                cursor.execute(f"ALTER TABLE file_tasks ADD COLUMN {col} REAL")
+                self.db.conn.commit()
 
     def _fix_check_constraint(self):
         """Ensure analysis_jobs CHECK includes 'archived'."""
@@ -341,28 +352,22 @@ class AnalysisJobManager:
         cursor = self.db.conn.cursor()
         progress = self.get_progress(job_id)
 
-        # Phase-level average times (each phase independently)
+        # Phase-level times from worker-measured elapsed_s (precise, not datetime)
         cursor.execute("""
-            SELECT
-                AVG(julianday(mc_completed_at) - julianday(mc_started_at)) * 86400,
-                MAX(julianday(mc_completed_at) - julianday(mc_started_at)) * 86400
-            FROM file_tasks WHERE analysis_job_id = ? AND mc_status = 'done' AND mc_started_at IS NOT NULL
+            SELECT AVG(mc_elapsed_s), MAX(mc_elapsed_s)
+            FROM file_tasks WHERE analysis_job_id = ? AND mc_status = 'done' AND mc_elapsed_s IS NOT NULL
         """, (job_id,))
         mc_times = cursor.fetchone() or (0, 0)
 
         cursor.execute("""
-            SELECT
-                AVG(julianday(vv_completed_at) - julianday(vv_started_at)) * 86400,
-                MAX(julianday(vv_completed_at) - julianday(vv_started_at)) * 86400
-            FROM file_tasks WHERE analysis_job_id = ? AND vv_status = 'done' AND vv_started_at IS NOT NULL
+            SELECT AVG(vv_elapsed_s), MAX(vv_elapsed_s)
+            FROM file_tasks WHERE analysis_job_id = ? AND vv_status = 'done' AND vv_elapsed_s IS NOT NULL
         """, (job_id,))
         vv_times = cursor.fetchone() or (0, 0)
 
         cursor.execute("""
-            SELECT
-                AVG(julianday(mv_completed_at) - julianday(mv_started_at)) * 86400,
-                MAX(julianday(mv_completed_at) - julianday(mv_started_at)) * 86400
-            FROM file_tasks WHERE analysis_job_id = ? AND mv_status = 'done' AND mv_started_at IS NOT NULL
+            SELECT AVG(mv_elapsed_s), MAX(mv_elapsed_s)
+            FROM file_tasks WHERE analysis_job_id = ? AND mv_status = 'done' AND mv_elapsed_s IS NOT NULL
         """, (job_id,))
         mv_times = cursor.fetchone() or (0, 0)
 
@@ -511,38 +516,20 @@ class AnalysisJobManager:
         """
         cursor = self.db.conn.cursor()
         now = _now()
-        started_col = f"{phase}_started_at"
         completed_col = f"{phase}_completed_at"
         status_col = f"{phase}_status"
 
-        # If worker reported elapsed_s, set started_at = now - elapsed
-        started_at = None
-        if elapsed_s is not None and elapsed_s > 0:
-            from datetime import datetime, timedelta
-            completed_dt = datetime.utcnow()
-            started_dt = completed_dt - timedelta(seconds=elapsed_s)
-            started_at = started_dt.strftime("%Y-%m-%d %H:%M:%S")
-
         new_status = "done" if success else "failed"
-        if started_at:
-            cursor.execute(f"""
-                UPDATE file_tasks
-                SET {status_col} = ?,
-                    {started_col} = COALESCE({started_col}, ?),
-                    {completed_col} = ?,
-                    error_message = CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END,
-                    updated_at = ?
-                WHERE id = ?
-            """, (new_status, started_at, now, error_message, error_message, now, task_id))
-        else:
-            cursor.execute(f"""
-                UPDATE file_tasks
-                SET {status_col} = ?,
-                    {completed_col} = ?,
-                    error_message = CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END,
-                    updated_at = ?
-                WHERE id = ?
-            """, (new_status, now, error_message, error_message, now, task_id))
+        elapsed_col = f"{phase}_elapsed_s"
+        cursor.execute(f"""
+            UPDATE file_tasks
+            SET {status_col} = ?,
+                {completed_col} = ?,
+                {elapsed_col} = ?,
+                error_message = CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END,
+                updated_at = ?
+            WHERE id = ?
+        """, (new_status, now, elapsed_s, error_message, error_message, now, task_id))
         self.db.conn.commit()
 
         # Verify result if successful

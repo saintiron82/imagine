@@ -48,18 +48,21 @@ CREATE TABLE IF NOT EXISTS file_tasks (
     mc_assigned_to INTEGER,
     mc_started_at TEXT,
     mc_completed_at TEXT,
+    mc_elapsed_s REAL,              -- actual inference time (worker-measured)
 
     vv_status TEXT DEFAULT 'pending'
         CHECK (vv_status IN ('pending', 'assigned', 'done', 'failed')),
     vv_assigned_to INTEGER,
     vv_started_at TEXT,
     vv_completed_at TEXT,
+    vv_elapsed_s REAL,              -- actual inference time (worker-measured)
 
     mv_status TEXT DEFAULT 'pending'
         CHECK (mv_status IN ('pending', 'assigned', 'done', 'failed')),
     mv_assigned_to INTEGER,
     mv_started_at TEXT,
     mv_completed_at TEXT,
+    mv_elapsed_s REAL,              -- actual inference time (worker-measured)
 
     -- Error / retry
     error_message TEXT,
