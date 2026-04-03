@@ -109,7 +109,14 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         total_workable = parse_p + mc_p + vv_p + mv_p
                         if total_workable > 0:
                             mode = max(candidates, key=candidates.get)
-                            chunk = candidates[mode]
+                            # Per-phase batch size limits — claim reasonable batches, loop handles the rest
+                            phase_batch_limit = {
+                                "parse": 50,   # CPU-only, fast (~1s/file)
+                                "mc": 20,      # VLM inference (~8s/file), keep batches manageable
+                                "vv": 50,      # SigLIP2 batch (~0.7s/file)
+                                "mv": 50,      # Qwen3-Embedding batch (~0.5s/file)
+                            }
+                            chunk = min(candidates[mode], phase_batch_limit.get(mode, 20))
                         else:
                             mode = "idle"
                             chunk = 0

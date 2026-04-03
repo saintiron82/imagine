@@ -377,7 +377,9 @@ class WorkerDaemon:
                 data = resp.json()
                 if data.get("pool_hint"):
                     self.pool_size = data["pool_hint"]
-                if data.get("batch_hint"):
+                # Embedded worker (__builtin__) decides its own batch size per-phase.
+                # Only external workers take batch_hint from server.
+                if data.get("batch_hint") and self.worker_name != "__builtin__":
                     old_cap = self.batch_capacity
                     self.batch_capacity = data["batch_hint"]
                     if old_cap != self.batch_capacity:

@@ -286,11 +286,24 @@ def worker_connect(
     elif ov and ov[0]:
         processing_mode = ov[0]  # Admin manual override
     else:
-        # Dynamic mode: server decides based on queue state
-        from backend.server.queue.manager import JobQueueManager
+        # Dynamic mode: decide from file_tasks pending counts
         try:
-            _qm = JobQueueManager(db)
-            processing_mode = _qm._decide_worker_mode(session_id)
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN parse_status='done' AND mc_status='pending' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN parse_status='done' AND vv_status='pending' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN mc_status='done' AND mv_status='pending' THEN 1 ELSE 0 END)
+                FROM file_tasks ft
+                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                WHERE aj.status = 'active'
+            """)
+            r = cursor.fetchone()
+            mc_p, vv_p, mv_p = (r[0] or 0), (r[1] or 0), (r[2] or 0)
+            if mc_p + vv_p + mv_p > 0:
+                cands = {"mc": mc_p, "vv": vv_p, "mv": mv_p}
+                processing_mode = max(cands, key=cands.get)
+            else:
+                processing_mode = "mc"
         except Exception:
             processing_mode = "mc"
 
@@ -420,33 +433,50 @@ def worker_heartbeat(
 
     mode_reason = None
     queue_snapshot = None
-    if global_mode == "mc":
+
+    # Check if this is the embedded worker
+    cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
+    wn_row = cursor.fetchone()
+    is_builtin = wn_row and wn_row[0] == BUILTIN_WORKER_NAME
+
+    if is_builtin:
+        # Embedded worker decides its own mode from file_tasks — heartbeat is report-only.
+        # Just echo back current_phase from the worker's heartbeat.
+        processing_mode = req.current_phase or "mc"
+        mode_reason = "self_managed"
+        effective_batch = 0  # Not used — embedded worker sets its own batch size
+    elif global_mode == "mc":
         processing_mode = "mc"
         mode_reason = "global_mode=mc"
+        effective_batch = batch_override or batch_capacity
     elif mode_override:
-        processing_mode = mode_override  # Admin manual override
+        processing_mode = mode_override
         mode_reason = f"admin_override={mode_override}"
+        effective_batch = batch_override or batch_capacity
     else:
-        # Dynamic mode: server decides based on queue state + worker's current phase
-        from backend.server.queue.manager import JobQueueManager
+        # Dynamic mode for external workers: decide from file_tasks
         try:
-            _qm = JobQueueManager(db)
-            processing_mode, mode_diag = _qm._decide_worker_mode(req.session_id, return_diag=True)
-            mode_reason = mode_diag.get("reason", "unknown")
-            queue_snapshot = mode_diag.get("pending", {})
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN parse_status='done' AND mc_status='pending' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN parse_status='done' AND vv_status='pending' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN mc_status='done' AND mv_status='pending' THEN 1 ELSE 0 END)
+                FROM file_tasks ft
+                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                WHERE aj.status = 'active'
+            """)
+            r = cursor.fetchone()
+            mc_p, vv_p, mv_p = (r[0] or 0), (r[1] or 0), (r[2] or 0)
+            if mc_p + vv_p + mv_p > 0:
+                cands = {"mc": mc_p, "vv": vv_p, "mv": mv_p}
+                processing_mode = max(cands, key=cands.get)
+                mode_reason = f"file_tasks({cands})"
+            else:
+                processing_mode = "mc"
+                mode_reason = "idle_default"
         except Exception:
             processing_mode = "mc"
             mode_reason = "fallback (decision error)"
-    # For embedded worker: read live batch_size from config (Admin UI changes)
-    cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
-    wn_row = cursor.fetchone()
-    if wn_row and wn_row[0] == BUILTIN_WORKER_NAME:
-        try:
-            from backend.utils.config import get_config
-            effective_batch = get_config().get("server.auto_processing.batch_size", 5)
-        except Exception:
-            effective_batch = batch_override or batch_capacity
-    else:
         effective_batch = batch_override or batch_capacity
 
     # Resource-aware batch_hint: throttle down based on worker resource pressure
