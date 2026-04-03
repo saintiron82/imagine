@@ -2042,12 +2042,12 @@ class JobQueueManager:
             )
             legacy_ids = [r[0] for r in cursor.fetchall() if r[0]]
             if legacy_ids:
-                # Clean up legacy: delete those jobs
+                # Only remove cancelled (user-initiated), keep failed for tracking
                 cursor.execute(
-                    f"DELETE FROM job_queue WHERE status IN ('failed', 'cancelled')"
+                    "DELETE FROM job_queue WHERE status = 'cancelled'"
                 )
                 self.db.conn.commit()
-                logger.info(f"Cleaned up {cursor.rowcount} legacy failed/cancelled jobs")
+                logger.info(f"Cleaned up {cursor.rowcount} cancelled jobs")
             return 0
 
         placeholders = ",".join("?" * len(file_ids))
@@ -2163,9 +2163,10 @@ class JobQueueManager:
 
             if has_mc and has_vv and has_mv and thumbnail_url:
                 complete_files += 1
-                # Delete any residual jobs for this file
+                # Mark job as completed (keep in queue for progress tracking)
                 cursor.execute(
-                    "DELETE FROM job_queue WHERE file_id = ?", (file_id,)
+                    "UPDATE job_queue SET status = 'completed', completed_at = COALESCE(completed_at, datetime('now')) WHERE file_id = ? AND status != 'completed'",
+                    (file_id,)
                 )
                 # Clear processing_status if somehow set on a complete file
                 if proc_status_col:
@@ -2183,9 +2184,10 @@ class JobQueueManager:
                     "file_path": file_path,
                     "error": proc_error or "unknown",
                 })
-                # Ensure no jobs exist for permanently failed files
+                # Mark job as failed (keep in queue for progress tracking)
                 cursor.execute(
-                    "DELETE FROM job_queue WHERE file_id = ?", (file_id,)
+                    "UPDATE job_queue SET status = 'failed' WHERE file_id = ? AND status NOT IN ('completed', 'failed')",
+                    (file_id,)
                 )
                 continue
 
@@ -2414,9 +2416,10 @@ class JobQueueManager:
         """)
         dangling_removed = cursor.rowcount
 
-        # Also clean up any legacy completed/failed jobs still in queue
+        # Keep completed/failed jobs in queue until entire WR is done.
+        # Only remove cancelled jobs (user explicitly cancelled).
         cursor.execute(
-            "DELETE FROM job_queue WHERE status IN ('completed', 'failed', 'cancelled')"
+            "DELETE FROM job_queue WHERE status = 'cancelled'"
         )
         legacy_removed = cursor.rowcount
 
