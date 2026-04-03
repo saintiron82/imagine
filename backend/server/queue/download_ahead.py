@@ -103,6 +103,10 @@ class DownloadAheadPool(BaseAheadPool):
         # Track active temp files: file_id -> temp_local_path
         self._active_files: Dict[int, str] = {}
         self._active_lock = threading.Lock()
+        # Consecutive download failure counter for network detection
+        self._dl_fail_streak = 0
+        self._dl_success_streak = 0
+        self._network_paused = False
 
         # Temp directory — created on start, cleaned on stop
         self._temp_dir: Optional[Path] = None
@@ -272,6 +276,100 @@ class DownloadAheadPool(BaseAheadPool):
             except Exception:
                 pass
 
+    def _cleanup_stale_temp_files(self):
+        """Remove temp files for jobs that are no longer file_ready=1.
+
+        Fixes buffer starvation: parse-failed files stay in temp forever,
+        blocking active_files count and preventing new downloads.
+        """
+        if not self._temp_dir or not self._temp_dir.exists():
+            return
+        with self._active_lock:
+            active_ids = set(self._active_files.keys())
+        if not active_ids:
+            return
+
+        try:
+            cursor = self.db.conn.cursor()
+            # Find active files whose jobs are no longer file_ready=1
+            placeholders = ",".join("?" * len(active_ids))
+            cursor.execute(
+                f"""SELECT file_id, file_ready, parse_status, status
+                    FROM job_queue
+                    WHERE file_id IN ({placeholders})""",
+                list(active_ids),
+            )
+            stale = []
+            for row in cursor.fetchall():
+                fid, ready, parse_st, status = row
+                # Remove if: parse failed, job failed/cancelled, or file_ready reset to 0
+                if parse_st == "failed" or status in ("failed", "cancelled") or ready != 1:
+                    stale.append(fid)
+
+            for fid in stale:
+                with self._active_lock:
+                    path = self._active_files.pop(fid, None)
+                if path:
+                    try:
+                        Path(path).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    self._buffer_sem.release()
+
+            if stale:
+                logger.info(
+                    f"DownloadAhead: cleaned {len(stale)} stale temp files "
+                    f"(parse-failed/job-failed)"
+                )
+        except Exception as e:
+            logger.warning(f"DownloadAhead: stale cleanup failed: {e}")
+
+    def _check_network_health(self) -> bool:
+        """Quick health check on all registered WebDAV sources.
+
+        Returns True if at least one source is reachable.
+        """
+        import requests as _req
+        with _sources_lock:
+            sources = dict(_webdav_sources)
+        if not sources:
+            return True  # No sources = nothing to check
+
+        for sid, cfg in sources.items():
+            try:
+                r = _req.request(
+                    "HEAD", cfg["url"] + "/",
+                    timeout=5,
+                    verify=cfg.get("verify_ssl", True),
+                )
+                # Any HTTP response = network OK (even 401/404)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def recover_all_failed(self) -> int:
+        """Force-recover all file_ready=-1 jobs immediately. Called by API button."""
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "UPDATE job_queue SET file_ready = 0 WHERE file_ready = -1"
+            )
+            recovered = cursor.rowcount
+            self.db.conn.commit()
+            if recovered > 0:
+                logger.info(f"DownloadAhead: force-recovered {recovered} failed downloads")
+            # Also cleanup stale temp files
+            self._cleanup_stale_temp_files()
+            return recovered
+        except Exception as e:
+            logger.warning(f"DownloadAhead: force recovery failed: {e}")
+            try:
+                self.db.conn.commit()
+            except Exception:
+                pass
+            return 0
+
     def stop(self):
         """Stop downloads and clean up temp directory."""
         super().stop()
@@ -382,16 +480,32 @@ class DownloadAheadPool(BaseAheadPool):
             "server.parse_ahead.poll_interval_s", 2
         )
         recovery_counter = 0
+
         while self._running:
             try:
+                # Network pause: wait for recovery (set by _download_one on 3+ failures)
+                if self._network_paused:
+                    if self._check_network_health():
+                        logger.info("DownloadAhead: network recovered — resuming")
+                        self._network_paused = False
+                        self._dl_fail_streak = 0
+                        self._recover_failed_downloads()
+                        self._cleanup_stale_temp_files()
+                    else:
+                        time.sleep(30)
+                        continue
+
                 downloaded = self._download_batch()
                 if downloaded == 0:
                     time.sleep(poll_interval)
-                # Periodically recover failed downloads (every ~30 iterations)
+
+                # Periodic maintenance
                 recovery_counter += 1
                 if recovery_counter >= 30:
                     self._recover_failed_downloads()
+                    self._cleanup_stale_temp_files()
                     recovery_counter = 0
+
             except Exception as e:
                 logger.error(f"DownloadAhead loop error: {e}")
                 time.sleep(5)
@@ -506,11 +620,20 @@ class DownloadAheadPool(BaseAheadPool):
                 logger.error(
                     f"DownloadAhead: download failed for job {job_id}: {file_path}"
                 )
-                # Mark as download-failed (file_ready=-1) so we don't retry endlessly.
-                # Process only already-downloaded files; failed ones stay parked.
                 self._mark_download_failed(job_id, file_path)
+                self._dl_fail_streak += 1
+                self._dl_success_streak = 0
+                # 3 consecutive failures → trigger network check in main loop
+                if self._dl_fail_streak >= 3 and not self._network_paused:
+                    if not self._check_network_health():
+                        logger.warning("DownloadAhead: network unreachable — pausing")
+                        self._network_paused = True
                 self._buffer_sem.release()
                 return
+
+            # Success — reset failure streak
+            self._dl_fail_streak = 0
+            self._dl_success_streak += 1
 
             # Record temp path in active files
             with self._active_lock:
@@ -584,4 +707,6 @@ class DownloadAheadPool(BaseAheadPool):
             "temp_dir": str(self._temp_dir) if self._temp_dir else None,
             "disk_usage_mb": round(temp_size_bytes / (1024 * 1024), 1),
             "disk_file_count": temp_file_count,
+            "network_paused": self._network_paused,
+            "fail_streak": self._dl_fail_streak,
         }

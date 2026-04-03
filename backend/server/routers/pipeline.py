@@ -907,10 +907,19 @@ def retry_failed_jobs(
     _admin: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """Retry all failed jobs by resetting them to pending (admin only)."""
+    """Retry all failed jobs + recover failed downloads (admin only)."""
     queue = _get_queue(db)
     count = queue.retry_failed_jobs()
-    return {"success": True, "retried": count}
+    # Also recover download-failed jobs and cleanup stale temp
+    dl_recovered = 0
+    try:
+        from backend.server.queue.download_ahead import _get_download_pool
+        dl_pool = _get_download_pool()
+        if dl_pool:
+            dl_recovered = dl_pool.recover_all_failed()
+    except Exception:
+        pass
+    return {"success": True, "retried": count, "downloads_recovered": dl_recovered}
 
 
 @router.post("/api/v1/admin/jobs/force-retry-failed")

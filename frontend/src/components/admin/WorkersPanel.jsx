@@ -499,8 +499,13 @@ export default function WorkersPanel() {
                         try {
                           const data = await forceRetryFailedJobs();
                           const retried = data.retried || 0;
-                          alert(retried > 0
-                            ? `${retried}개 실패 파일을 작업큐에 재등록했습니다`
+                          const dlRecovered = data.downloads_recovered || 0;
+                          const msg = [
+                            retried > 0 ? `${retried}개 실패 작업 재등록` : null,
+                            dlRecovered > 0 ? `${dlRecovered}개 다운로드 복원` : null,
+                          ].filter(Boolean).join(', ');
+                          alert(msg
+                            ? msg
                             : '복구 가능한 실패 파일이 없습니다');
                           load();
                         } catch (e) { alert('복구 실패'); }
