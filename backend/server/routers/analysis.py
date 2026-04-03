@@ -143,6 +143,19 @@ def resume_analysis_job(
     return {"success": True}
 
 
+@router.post("/api/v1/analysis-jobs/{job_id}/archive")
+def archive_analysis_job(
+    job_id: int,
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Archive a job — hidden from dashboard, visible in history."""
+    mgr = _get_manager(db)
+    if not mgr.archive_job(job_id):
+        raise HTTPException(status_code=400, detail="Cannot archive")
+    return {"success": True}
+
+
 @router.post("/api/v1/analysis-jobs/{job_id}/cancel")
 def cancel_analysis_job(
     job_id: int,

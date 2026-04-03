@@ -190,7 +190,7 @@ class AnalysisJobManager:
         cursor = self.db.conn.cursor()
         if include_completed:
             cursor.execute(
-                "SELECT * FROM analysis_jobs ORDER BY created_at DESC"
+                "SELECT * FROM analysis_jobs WHERE status != 'archived' ORDER BY created_at DESC"
             )
         else:
             cursor.execute(
@@ -218,6 +218,16 @@ class AnalysisJobManager:
         cursor = self.db.conn.cursor()
         cursor.execute(
             "UPDATE analysis_jobs SET status = 'active' WHERE id = ? AND status = 'paused'",
+            (job_id,),
+        )
+        self.db.conn.commit()
+        return cursor.rowcount > 0
+
+    def archive_job(self, job_id: int) -> bool:
+        """Archive a job — hidden from worker dashboard, visible in history."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "UPDATE analysis_jobs SET status = 'archived' WHERE id = ?",
             (job_id,),
         )
         self.db.conn.commit()

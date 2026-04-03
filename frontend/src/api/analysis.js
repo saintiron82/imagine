@@ -41,3 +41,7 @@ export async function cancelAnalysisJob(jobId) {
 export async function retryFailedTasks(jobId, phase = null) {
   return apiClient.post(`/api/v1/analysis-jobs/${jobId}/retry`, { phase });
 }
+
+export async function archiveAnalysisJob(jobId) {
+  return apiClient.post(`/api/v1/analysis-jobs/${jobId}/archive`);
+}

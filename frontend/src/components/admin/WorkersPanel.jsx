@@ -14,7 +14,7 @@ import {
 } from '../../api/admin';
 import {
   listAnalysisJobs, pauseAnalysisJob, resumeAnalysisJob,
-  cancelAnalysisJob, retryFailedTasks, getAnalysisMetrics,
+  cancelAnalysisJob, retryFailedTasks, getAnalysisMetrics, archiveAnalysisJob,
 } from '../../api/analysis';
 import AnalysisJobCard from '../AnalysisJobCard';
 // Legacy getJobStats removed — using analysis metrics API
@@ -572,6 +572,7 @@ export default function WorkersPanel() {
                   else if (action === 'resume') await resumeAnalysisJob(id);
                   else if (action === 'cancel') await cancelAnalysisJob(id);
                   else if (action === 'retry') await retryFailedTasks(id);
+                  else if (action === 'archive') await archiveAnalysisJob(id);
                   load();
                 } catch (e) { console.error(`Job ${action} failed:`, e); }
               }} />)}
@@ -875,7 +876,7 @@ function QueueRow({ job, onAction }) {
   return (
     <div>
       {/* Summary row — click to expand */}
-      <div className="flex items-center gap-2 py-1 text-xs font-mono cursor-pointer hover:bg-gray-700/20 rounded px-1 -mx-1"
+      <div className="flex items-center gap-2 py-1 text-xs font-mono cursor-pointer hover:bg-gray-700/20 rounded px-1 -mx-1 group"
            onClick={() => setExpanded(!expanded)}>
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
         <span className="text-gray-300 truncate flex-1">{job.name}</span>
@@ -884,14 +885,23 @@ function QueueRow({ job, onAction }) {
           <div className={`h-full rounded-full ${isActive ? 'bg-blue-500' : 'bg-emerald-500'}`} style={{ width: `${pct}%` }} />
         </div>
         <span className="text-gray-500 w-8 text-right">{pct}%</span>
+        {!isActive && onAction && (
+          <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'archive'); }}
+            className="p-0.5 rounded hover:bg-red-900/30 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+            title="삭제">
+            <X size={10} />
+          </button>
+        )}
       </div>
 
       {/* Expanded detail */}
       {expanded && (
         <div className="ml-4 pl-3 border-l border-gray-700/30 py-2 space-y-1.5 text-[10px] font-mono">
           <div className="text-gray-600 truncate" title={job.source_path}>{job.source_path}</div>
-          {/* MC / VV / MV fractions */}
+          {/* All phases */}
           <div className="flex items-center gap-4">
+            <span className="text-yellow-400">DL: {p.downloaded || 0}/{total}</span>
+            <span className="text-sky-400">Parse: {p.parsed || 0}/{total}</span>
             <span className="text-purple-400">MC: {p.mc_done || 0}/{total}</span>
             <span className="text-cyan-400">VV: {p.vv_done || 0}/{total}</span>
             <span className="text-green-400">MV: {p.mv_done || 0}/{total}</span>
