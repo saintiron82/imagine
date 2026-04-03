@@ -471,26 +471,48 @@ class AnalysisJobManager:
         self.db.conn.commit()
 
     def complete_task_phase(self, task_id: int, phase: str,
-                           success: bool, error_message: str = None):
+                           success: bool, error_message: str = None,
+                           elapsed_s: float = None):
         """Mark a phase as done or failed for a task.
 
-        On success, triggers verification and next-phase notification.
+        Args:
+            elapsed_s: Actual processing time measured by worker (seconds).
+                       If provided, started_at is back-calculated from now - elapsed_s.
         """
         cursor = self.db.conn.cursor()
         now = _now()
-
-        status_col = f"{phase}_status"
+        started_col = f"{phase}_started_at"
         completed_col = f"{phase}_completed_at"
+        status_col = f"{phase}_status"
+
+        # If worker reported elapsed_s, set started_at = now - elapsed
+        started_at = None
+        if elapsed_s is not None and elapsed_s > 0:
+            from datetime import datetime, timedelta
+            completed_dt = datetime.utcnow()
+            started_dt = completed_dt - timedelta(seconds=elapsed_s)
+            started_at = started_dt.strftime("%Y-%m-%d %H:%M:%S")
 
         new_status = "done" if success else "failed"
-        cursor.execute(f"""
-            UPDATE file_tasks
-            SET {status_col} = ?,
-                {completed_col} = ?,
-                error_message = CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END,
-                updated_at = ?
-            WHERE id = ?
-        """, (new_status, now, error_message, error_message, now, task_id))
+        if started_at:
+            cursor.execute(f"""
+                UPDATE file_tasks
+                SET {status_col} = ?,
+                    {started_col} = COALESCE({started_col}, ?),
+                    {completed_col} = ?,
+                    error_message = CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END,
+                    updated_at = ?
+                WHERE id = ?
+            """, (new_status, started_at, now, error_message, error_message, now, task_id))
+        else:
+            cursor.execute(f"""
+                UPDATE file_tasks
+                SET {status_col} = ?,
+                    {completed_col} = ?,
+                    error_message = CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END,
+                    updated_at = ?
+                WHERE id = ?
+            """, (new_status, now, error_message, error_message, now, task_id))
         self.db.conn.commit()
 
         # Verify result if successful

@@ -41,6 +41,7 @@ class CompletePhaseRequest(BaseModel):
     phase: str       # download, parse, mc, vv, mv
     success: bool
     error_message: Optional[str] = None
+    elapsed_s: Optional[float] = None  # actual processing time (worker-measured)
 
 
 class RetryRequest(BaseModel):
@@ -328,5 +329,6 @@ def complete_task_phase(
         phase=req.phase,
         success=req.success,
         error_message=req.error_message,
+        elapsed_s=req.elapsed_s,
     )
     return {"success": True}

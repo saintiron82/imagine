@@ -467,20 +467,24 @@ class WorkerDaemon:
         except Exception:
             pass
 
-    def _report_task_phase(self, task_id: int, phase: str, success: bool, error: str = None):
+    def _report_task_phase(self, task_id: int, phase: str, success: bool,
+                           error: str = None, elapsed_s: float = None):
         """Report phase completion to new Analysis Job system."""
         if not task_id:
             return
         try:
+            payload = {
+                "task_id": task_id,
+                "phase": phase,
+                "success": success,
+                "error_message": error,
+            }
+            if elapsed_s is not None:
+                payload["elapsed_s"] = round(elapsed_s, 3)
             self._authed_request(
                 "post",
                 f"{self.server_url}/api/v1/tasks/complete",
-                json={
-                    "task_id": task_id,
-                    "phase": phase,
-                    "success": success,
-                    "error_message": error,
-                },
+                json=payload,
             )
         except Exception as e:
             logger.debug(f"Task phase report failed: {e}")
@@ -1071,10 +1075,14 @@ class WorkerDaemon:
                     })
 
             mc_raw_override = ctx.job.get("mc_raw") if ctx.job.get("pre_parsed") else None
+            # Measure actual inference time per file
+            _t_file = time.perf_counter()
             vision_fields = self._run_vision(
                 Path(ctx.job["file_path"]), ctx.thumb_path, ctx.meta_obj,
                 mc_raw_override=mc_raw_override,
             )
+            _file_elapsed = time.perf_counter() - _t_file
+            ctx._inference_elapsed = _file_elapsed  # store for reporting
 
             if not vlm_loaded:
                 elapsed_first = time.perf_counter() - t_phase
@@ -1629,7 +1637,8 @@ class WorkerDaemon:
                 # New Analysis Job system: save MC to files DB directly + report
                 upload_result = self.uploader.save_vision_fields(ctx.job.get("file_id"), ctx.vision_fields)
                 self._report_task_phase(task_id, "mc", upload_result is True,
-                                        None if upload_result is True else str(upload_result))
+                                        None if upload_result is True else str(upload_result),
+                                        elapsed_s=getattr(ctx, '_inference_elapsed', None))
             else:
                 # Legacy: use job_queue-based complete_mc
                 upload_result = self.uploader.complete_mc(job_id, ctx.vision_fields)
@@ -1887,7 +1896,10 @@ class WorkerDaemon:
                 continue
 
             try:
+                _t_vv_batch = time.perf_counter()
                 vv_vectors = encoder.encode_image_batch(images)
+                _vv_batch_elapsed = time.perf_counter() - _t_vv_batch
+                _vv_per_file = _vv_batch_elapsed / len(images) if images else 0
             except Exception as e:
                 err = f"SigLIP2 batch encode failed: {e}"
                 logger.error(f"[VV-ONLY] {err}", exc_info=True)
@@ -1960,9 +1972,10 @@ class WorkerDaemon:
                     if not ok:
                         _log(f"[VV] UPLOAD FAIL {file_name}: {batch_result!r}", "warning")
                     results.append((it["job_id"], ok, err))
-                    # Report to Analysis Job system
+                    # Report to Analysis Job system (with per-file inference time)
                     t_id = it["ctx"]["job"].get("task_id") or it["job_id"]
-                    self._report_task_phase(t_id, "vv", ok, err if not ok else None)
+                    self._report_task_phase(t_id, "vv", ok, err if not ok else None,
+                                            elapsed_s=_vv_per_file if ok else None)
                     if ok:
                         self._phase_counts["vv"] += 1
                     _notify(progress_callback, "file_done", {
@@ -2073,9 +2086,15 @@ class WorkerDaemon:
             texts = [ctx["text"] for ctx in chunk]
 
             try:
+                _t_mv_batch = time.perf_counter()
                 vecs = provider.encode_batch(texts)
+                _mv_batch_elapsed = time.perf_counter() - _t_mv_batch
+                _mv_per_file = _mv_batch_elapsed / len(texts) if texts else 0
             except Exception:
+                _t_mv_batch = time.perf_counter()
                 vecs = [provider.encode(t) for t in texts]
+                _mv_batch_elapsed = time.perf_counter() - _t_mv_batch
+                _mv_per_file = _mv_batch_elapsed / len(texts) if texts else 0
 
             # Batch upload
             batch_items = []
@@ -2111,9 +2130,10 @@ class WorkerDaemon:
                         fn = Path(it["ctx"]["job"].get("file_path", "")).name
                         _log(f"[MV] UPLOAD FAIL {fn}", "warning")
                     results.append((it["job_id"], ok, err))
-                    # Report to Analysis Job system
+                    # Report to Analysis Job system (with per-file inference time)
                     t_id = it["ctx"]["job"].get("task_id") or it["job_id"]
-                    self._report_task_phase(t_id, "mv", ok, err if not ok else None)
+                    self._report_task_phase(t_id, "mv", ok, err if not ok else None,
+                                            elapsed_s=_mv_per_file if ok else None)
                     if ok:
                         self._phase_counts["mv"] += 1
 
