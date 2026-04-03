@@ -418,9 +418,39 @@ class WorkerDaemon:
     # ── Job Pool Management ────────────────────────────────────
 
     def claim_jobs_count(self, count: int) -> list:
-        """Claim up to N jobs from the server."""
+        """Claim tasks from new Analysis Job system, fallback to legacy."""
         if count <= 0:
             return []
+
+        # Try new /api/v1/tasks/claim first
+        phase = self.processing_mode
+        if phase in ("mc", "vv", "mv", "parse", "download"):
+            try:
+                resp = self._authed_request(
+                    "post",
+                    f"{self.server_url}/api/v1/tasks/claim",
+                    json={"phase": phase, "worker_id": self.session_id or 0, "count": count},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    tasks = data.get("tasks", [])
+                    if tasks:
+                        # Convert to legacy job format for compatibility
+                        jobs = []
+                        for t in tasks:
+                            jobs.append({
+                                "job_id": t["task_id"],
+                                "file_id": t["file_id"],
+                                "file_path": t["file_path"],
+                                "task_id": t["task_id"],  # new system ID
+                                "analysis_job_id": t.get("job_id"),
+                            })
+                        logger.info(f"{self._log_prefix} Claimed {len(jobs)} {phase} tasks (new API)")
+                        return jobs
+            except Exception as e:
+                logger.debug(f"New task claim failed, trying legacy: {e}")
+
+        # Fallback: legacy /api/v1/jobs/claim
         try:
             resp = self._authed_request(
                 "post",
@@ -431,34 +461,34 @@ class WorkerDaemon:
                 data = resp.json()
                 jobs = data.get("jobs", [])
                 if jobs:
-                    # Server tells us what phase these jobs are for
                     server_mode = data.get("processing_mode")
                     if server_mode and server_mode != self.processing_mode:
-                        logger.info(
-                            f"[CLAIM-MODE] Server assigned {server_mode} jobs "
-                            f"(worker was {self.processing_mode})"
-                        )
                         self.processing_mode = server_mode
-                    logger.info(f"Claimed {len(jobs)} jobs (requested {count}, mode={self.processing_mode})")
-                    self._last_claim_diag = None
-                elif data.get("diag"):
-                    # Server returned structured diagnostics for empty claim
-                    diag = data["diag"]
-                    self._last_claim_diag = diag
-                    phase = diag.get("phase_pending", {})
-                    logger.info(
-                        f"[CLAIM-EMPTY] mode={diag.get('mode','?')} | "
-                        f"phase: mc={phase.get('mc',0)} vv={phase.get('vv',0)} mv={phase.get('mv',0)} | "
-                        f"total_pending={diag.get('pending_total',0)} parsed={diag.get('pending_parsed',0)} | "
-                        f"reason: {diag.get('reason','unknown')}"
-                    )
+                    logger.info(f"{self._log_prefix} Claimed {len(jobs)} jobs (legacy, mode={self.processing_mode})")
                 return jobs
             else:
-                logger.warning(f"Claim failed: {resp.status_code}")
                 return []
         except Exception as e:
             logger.error(f"Claim request failed: {e}")
             return []
+
+    def _report_task_phase(self, task_id: int, phase: str, success: bool, error: str = None):
+        """Report phase completion to new Analysis Job system."""
+        if not task_id:
+            return
+        try:
+            self._authed_request(
+                "post",
+                f"{self.server_url}/api/v1/tasks/complete",
+                json={
+                    "task_id": task_id,
+                    "phase": phase,
+                    "success": success,
+                    "error_message": error,
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Task phase report failed: {e}")
 
     def claim_jobs(self) -> list:
         """Claim jobs using legacy batch size (for embedded worker compatibility)."""
@@ -1593,6 +1623,12 @@ class WorkerDaemon:
                 continue
 
             upload_result = self.uploader.complete_mc(job_id, ctx.vision_fields)
+            # Report to new Analysis Job system
+            task_id = ctx.job.get("task_id") if hasattr(ctx, 'job') and isinstance(ctx.job, dict) else None
+            if not task_id:
+                task_id = job_id  # fallback
+            self._report_task_phase(task_id, "mc", upload_result is True,
+                                    None if upload_result is True else str(upload_result))
             if upload_result is True:
                 self._total_completed += 1
                 results.append((job_id, True, ""))
@@ -1912,6 +1948,9 @@ class WorkerDaemon:
                     if not ok:
                         _log(f"[VV] UPLOAD FAIL {file_name}: {batch_result!r}", "warning")
                     results.append((it["job_id"], ok, err))
+                    # Report to Analysis Job system
+                    t_id = it["ctx"]["job"].get("task_id") or it["job_id"]
+                    self._report_task_phase(t_id, "vv", ok, err if not ok else None)
                     if ok:
                         self._phase_counts["vv"] += 1
                     _notify(progress_callback, "file_done", {
@@ -2028,6 +2067,9 @@ class WorkerDaemon:
                         fn = Path(it["ctx"]["job"].get("file_path", "")).name
                         _log(f"[MV] UPLOAD FAIL {fn}", "warning")
                     results.append((it["job_id"], ok, err))
+                    # Report to Analysis Job system
+                    t_id = it["ctx"]["job"].get("task_id") or it["job_id"]
+                    self._report_task_phase(t_id, "mv", ok, err if not ok else None)
                     if ok:
                         self._phase_counts["mv"] += 1
 
