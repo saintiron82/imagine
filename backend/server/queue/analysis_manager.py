@@ -274,35 +274,53 @@ class AnalysisJobManager:
         cursor = self.db.conn.cursor()
         progress = self.get_progress(job_id)
 
-        # Phase-level average times
+        # Phase-level average times (each phase independently)
         cursor.execute("""
             SELECT
                 AVG(julianday(mc_completed_at) - julianday(mc_started_at)) * 86400,
-                AVG(julianday(vv_completed_at) - julianday(vv_started_at)) * 86400,
-                AVG(julianday(mv_completed_at) - julianday(mv_started_at)) * 86400,
-                MAX(julianday(mc_completed_at) - julianday(mc_started_at)) * 86400,
-                MAX(julianday(vv_completed_at) - julianday(vv_started_at)) * 86400,
-                MAX(julianday(mv_completed_at) - julianday(mv_started_at)) * 86400
-            FROM file_tasks
-            WHERE analysis_job_id = ?
-              AND mc_status = 'done' AND vv_status = 'done' AND mv_status = 'done'
+                MAX(julianday(mc_completed_at) - julianday(mc_started_at)) * 86400
+            FROM file_tasks WHERE analysis_job_id = ? AND mc_status = 'done' AND mc_started_at IS NOT NULL
         """, (job_id,))
-        times = cursor.fetchone()
+        mc_times = cursor.fetchone() or (0, 0)
 
-        # Recent throughput (5-min window — files fully completed)
         cursor.execute("""
-            SELECT COUNT(*) FROM file_tasks
-            WHERE analysis_job_id = ?
-              AND mc_status = 'done' AND vv_status = 'done' AND mv_status = 'done'
-              AND mv_completed_at > datetime('now', '-5 minutes')
+            SELECT
+                AVG(julianday(vv_completed_at) - julianday(vv_started_at)) * 86400,
+                MAX(julianday(vv_completed_at) - julianday(vv_started_at)) * 86400
+            FROM file_tasks WHERE analysis_job_id = ? AND vv_status = 'done' AND vv_started_at IS NOT NULL
         """, (job_id,))
-        recent_5m = cursor.fetchone()[0]
-        throughput = round(recent_5m / 5.0, 1) if recent_5m > 0 else 0
+        vv_times = cursor.fetchone() or (0, 0)
+
+        cursor.execute("""
+            SELECT
+                AVG(julianday(mv_completed_at) - julianday(mv_started_at)) * 86400,
+                MAX(julianday(mv_completed_at) - julianday(mv_started_at)) * 86400
+            FROM file_tasks WHERE analysis_job_id = ? AND mv_status = 'done' AND mv_started_at IS NOT NULL
+        """, (job_id,))
+        mv_times = cursor.fetchone() or (0, 0)
+
+        # Per-phase recent throughput (5-min window)
+        phase_tput = {}
+        for phase, col in [("mc", "mc_completed_at"), ("vv", "vv_completed_at"), ("mv", "mv_completed_at")]:
+            cursor.execute(f"""
+                SELECT COUNT(*) FROM file_tasks
+                WHERE analysis_job_id = ? AND {phase}_status = 'done'
+                  AND {col} > datetime('now', '-5 minutes')
+            """, (job_id,))
+            cnt = cursor.fetchone()[0]
+            phase_tput[phase] = round(cnt / 5.0, 1) if cnt > 0 else 0
+
+        # Overall throughput = bottleneck phase speed (slowest active)
+        active_speeds = {k: v for k, v in phase_tput.items() if v > 0}
+        if active_speeds:
+            throughput = min(active_speeds.values())
+        else:
+            throughput = 0
 
         remaining = progress["total"] - progress["complete"]
         eta_seconds = round(remaining / throughput * 60) if throughput > 0 else None
 
-        # Bottleneck: phase with most pending items
+        # Bottleneck
         phases = progress.get("phases", {})
         bottleneck = max(
             [(k, v) for k, v in phases.items() if k != "done" and v > 0],
@@ -316,9 +334,9 @@ class AnalysisJobManager:
                 "eta_seconds": eta_seconds,
             },
             "phase_metrics": {
-                "mc": {"avg_s": round(times[0] or 0, 2), "max_s": round(times[3] or 0, 2)},
-                "vv": {"avg_s": round(times[1] or 0, 2), "max_s": round(times[4] or 0, 2)},
-                "mv": {"avg_s": round(times[2] or 0, 2), "max_s": round(times[5] or 0, 2)},
+                "mc": {"avg_s": round(mc_times[0] or 0, 2), "max_s": round(mc_times[1] or 0, 2), "fpm": phase_tput.get("mc", 0)},
+                "vv": {"avg_s": round(vv_times[0] or 0, 2), "max_s": round(vv_times[1] or 0, 2), "fpm": phase_tput.get("vv", 0)},
+                "mv": {"avg_s": round(mv_times[0] or 0, 2), "max_s": round(mv_times[1] or 0, 2), "fpm": phase_tput.get("mv", 0)},
             },
             "bottleneck": bottleneck,
         }

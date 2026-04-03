@@ -193,10 +193,10 @@ export default function WorkersPanel() {
               if (t.files_per_min > 0) statsData.throughput = t.files_per_min;
               if (t.eta_seconds) statsData.eta_seconds = t.eta_seconds;
               const pm = m.phase_metrics || {};
-              // Convert avg_s to files/min for display
-              if (pm.mc?.avg_s > 0) statsData.mc_throughput = Math.round(60 / pm.mc.avg_s * 10) / 10;
-              if (pm.vv?.avg_s > 0) statsData.vv_throughput = Math.round(60 / pm.vv.avg_s * 10) / 10;
-              if (pm.mv?.avg_s > 0) statsData.mv_throughput = Math.round(60 / pm.mv.avg_s * 10) / 10;
+              // Use fpm (direct) or convert avg_s to files/min
+              statsData.mc_throughput = pm.mc?.fpm || (pm.mc?.avg_s > 0 ? Math.round(60 / pm.mc.avg_s * 10) / 10 : 0);
+              statsData.vv_throughput = pm.vv?.fpm || (pm.vv?.avg_s > 0 ? Math.round(60 / pm.vv.avg_s * 10) / 10 : 0);
+              statsData.mv_throughput = pm.mv?.fpm || (pm.mv?.avg_s > 0 ? Math.round(60 / pm.mv.avg_s * 10) / 10 : 0);
             }
           }
         } catch {}
@@ -487,24 +487,36 @@ export default function WorkersPanel() {
                 </div>
                 <span className="text-lg font-bold font-mono text-blue-400">{pct}%</span>
               </div>
-              {/* Row 2: MC/VV/MV progress percentages + small counts */}
-              <div className="flex items-center gap-4 text-xs font-mono">
+              {/* Row 2: Phase table — 항목 / 처리량 / 속도 (세로 3단) */}
+              <div className="grid grid-cols-5 gap-1 text-[10px] font-mono text-center">
+                {/* Header */}
+                {['DL', 'Parse', 'MC', 'VV', 'MV'].map(h => (
+                  <span key={h} className="text-gray-500 font-semibold">{h}</span>
+                ))}
+                {/* 처리량 (done/total) */}
                 {[
-                  ['DL', totals.dl, 'text-yellow-400', s.download_throughput],
-                  ['Parse', totals.parse, 'text-sky-400', s.parse_throughput],
-                  ['MC', totals.mc, 'text-purple-400', s.mc_throughput],
-                  ['VV', totals.vv, 'text-cyan-400', s.vv_throughput],
-                  ['MV', totals.mv, 'text-green-400', s.mv_throughput],
-                ].map(([label, done, color, phaseSpeed]) => {
-                  const p = totals.total > 0 ? (done / totals.total * 100).toFixed(1) : 0;
-                  return (
-                    <span key={label} className={color}>
-                      {label} <span className="font-bold">{p}%</span>
-                      <span className="text-gray-600 ml-1">{done}/{totals.total}</span>
-                      {phaseSpeed > 0 && <span className="text-gray-500 ml-1">{phaseSpeed}/m</span>}
-                    </span>
-                  );
-                })}
+                  [totals.dl, 'text-yellow-400'],
+                  [totals.parse, 'text-sky-400'],
+                  [totals.mc, 'text-purple-400'],
+                  [totals.vv, 'text-cyan-400'],
+                  [totals.mv, 'text-green-400'],
+                ].map(([done, color], i) => (
+                  <span key={i} className={color}>
+                    {done}<span className="text-gray-600">/{totals.total}</span>
+                  </span>
+                ))}
+                {/* 속도 (files/min) */}
+                {[
+                  s.download_throughput,
+                  s.parse_throughput,
+                  s.mc_throughput,
+                  s.vv_throughput,
+                  s.mv_throughput,
+                ].map((spd, i) => (
+                  <span key={i} className={spd > 0 ? 'text-emerald-400' : 'text-gray-700'}>
+                    {spd > 0 ? `${spd}/m` : '-'}
+                  </span>
+                ))}
               </div>
               {/* Row 3: speed detail + action buttons */}
               <div className="flex items-center gap-3 pt-1 border-t border-gray-700/20">
