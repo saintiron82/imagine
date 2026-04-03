@@ -19,7 +19,7 @@ import {
 import AnalysisJobCard from '../AnalysisJobCard';
 // Legacy getJobStats removed — using analysis metrics API
 import {
-  RefreshCw, Square, Ban, Pencil, AlertOctagon, Loader2,
+  RefreshCw, Square, Ban, Pencil, AlertOctagon, Loader2, X,
 } from 'lucide-react';
 
 
