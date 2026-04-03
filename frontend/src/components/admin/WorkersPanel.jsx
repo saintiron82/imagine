@@ -435,11 +435,13 @@ export default function WorkersPanel() {
           const p = j.progress || {};
           acc.total += p.total || 0;
           acc.complete += p.complete || 0;
+          acc.dl += p.downloaded || 0;
+          acc.parse += p.parsed || 0;
           acc.mc += p.mc_done || 0;
           acc.vv += p.vv_done || 0;
           acc.mv += p.mv_done || 0;
           return acc;
-        }, { total: 0, complete: 0, mc: 0, vv: 0, mv: 0 });
+        }, { total: 0, complete: 0, dl: 0, parse: 0, mc: 0, vv: 0, mv: 0 });
         const remaining = totals.total - totals.complete;
         const pct = totals.total > 0 ? (totals.complete / totals.total * 100).toFixed(1) : 0;
         const s = queueStats || {};
@@ -467,8 +469,10 @@ export default function WorkersPanel() {
                 <span className="text-xs font-mono text-green-400">{onlineCount}w</span>
               </div>
               {/* Row 2: MC/VV/MV progress percentages + small counts */}
-              <div className="flex items-center gap-5 text-xs font-mono">
+              <div className="flex items-center gap-4 text-xs font-mono">
                 {[
+                  ['DL', totals.dl, 'text-yellow-400'],
+                  ['Parse', totals.parse, 'text-sky-400'],
                   ['MC', totals.mc, 'text-purple-400'],
                   ['VV', totals.vv, 'text-cyan-400'],
                   ['MV', totals.mv, 'text-green-400'],
