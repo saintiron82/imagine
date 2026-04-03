@@ -245,6 +245,23 @@ async def save_vision_fields(
     return {"success": True}
 
 
+class StartPhaseRequest(BaseModel):
+    task_id: int
+    phase: str
+
+
+@router.post("/api/v1/tasks/start")
+def start_task_phase(
+    req: StartPhaseRequest,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Worker reports actual processing start (not claim time)."""
+    mgr = _get_manager(db)
+    mgr.start_task_phase(req.task_id, req.phase)
+    return {"success": True}
+
+
 @router.post("/api/v1/tasks/complete")
 def complete_task_phase(
     req: CompletePhaseRequest,

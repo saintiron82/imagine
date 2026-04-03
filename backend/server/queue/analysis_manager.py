@@ -407,23 +407,31 @@ class AnalysisJobManager:
         if not rows:
             return []
 
-        # Assign to worker
+        # Assign to worker (started_at is NOT set here — set when worker actually starts processing)
         task_ids = [r[0] for r in rows]
         placeholders = ",".join("?" * len(task_ids))
         cursor.execute(f"""
             UPDATE file_tasks
             SET {status_col} = 'assigned',
                 {assigned_col} = ?,
-                {started_col} = ?,
                 updated_at = ?
             WHERE id IN ({placeholders})
-        """, [worker_id, now, now] + task_ids)
+        """, [worker_id, now] + task_ids)
         self.db.conn.commit()
 
         return [
             {"task_id": r[0], "file_id": r[1], "file_path": r[2], "job_id": r[3]}
             for r in rows
         ]
+
+    def start_task_phase(self, task_id: int, phase: str):
+        """Record actual processing start time (not claim time)."""
+        cursor = self.db.conn.cursor()
+        started_col = f"{phase}_started_at"
+        cursor.execute(f"""
+            UPDATE file_tasks SET {started_col} = ? WHERE id = ? AND {started_col} IS NULL
+        """, (_now(), task_id))
+        self.db.conn.commit()
 
     def complete_task_phase(self, task_id: int, phase: str,
                            success: bool, error_message: str = None):

@@ -472,6 +472,19 @@ class WorkerDaemon:
             logger.error(f"Claim request failed: {e}")
             return []
 
+    def _report_task_start(self, task_id: int, phase: str):
+        """Report actual processing start to new Analysis Job system."""
+        if not task_id:
+            return
+        try:
+            self._authed_request(
+                "post",
+                f"{self.server_url}/api/v1/tasks/start",
+                json={"task_id": task_id, "phase": phase},
+            )
+        except Exception:
+            pass
+
     def _report_task_phase(self, task_id: int, phase: str, success: bool, error: str = None):
         """Report phase completion to new Analysis Job system."""
         if not task_id:
@@ -1588,6 +1601,12 @@ class WorkerDaemon:
         active = [c for c in contexts if not c.failed]
         _log(f"[MC] Validation: {len(active)} active, {len(contexts)-len(active)} failed / {len(contexts)} total")
 
+        # Report actual processing start for new system tasks
+        for c in active:
+            t_id = c.job.get("task_id") if isinstance(getattr(c, 'job', None), dict) else None
+            if t_id:
+                self._report_task_start(t_id, "mc")
+
         # ── Phase V: Vision/MC only (VLM, 1-by-1) ──
         elapsed_vision = self._run_vision_phase(active, progress_callback)
         _log(f"[MC] Vision phase done: {elapsed_vision:.1f}s")
@@ -1848,6 +1867,12 @@ class WorkerDaemon:
                 "errors": [{"file": Path(c["job"].get("file_path","")).name, "error": err} for c in active[:5]],
             })
             return results
+
+        # Report actual processing start for new system tasks
+        for ctx in active:
+            t_id = ctx["job"].get("task_id")
+            if t_id:
+                self._report_task_start(t_id, "vv")
 
         import time as _time
         t_phase = _time.perf_counter()
