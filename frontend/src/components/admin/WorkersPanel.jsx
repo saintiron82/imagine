@@ -427,59 +427,19 @@ export default function WorkersPanel() {
         )}
       </div>
 
-      {/* Analysis Jobs — active vs completed */}
+      {/* Unified dashboard: summary + queue list */}
       {analysisJobs.length > 0 && (() => {
-        const activeJobs = analysisJobs.filter(j => j.status === 'active' || j.status === 'paused');
-        const completedJobs = analysisJobs.filter(j => j.status === 'completed');
-        const jobAction = async (id, action) => {
-          try {
-            if (action === 'pause') await pauseAnalysisJob(id);
-            else if (action === 'resume') await resumeAnalysisJob(id);
-            else if (action === 'cancel') await cancelAnalysisJob(id);
-            else if (action === 'retry') await retryFailedTasks(id);
-            load();
-          } catch (e) { console.error(`Job ${action} failed:`, e); }
-        };
-        return (<>
-          {/* Active */}
-          {activeJobs.length > 0 && (
-            <div className="mb-4 p-4 rounded-xl bg-gray-800/40 border border-blue-700/30">
-              <h3 className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-3">
-                진행 중 ({activeJobs.length})
-              </h3>
-              <div className="space-y-2">
-                {activeJobs.map(job => (
-                  <AnalysisJobCard key={job.id} job={job} onAction={jobAction} stats={queueStats} />
-                ))}
-              </div>
-            </div>
-          )}
-          {/* Completed */}
-          {completedJobs.length > 0 && (
-            <details className="mb-4">
-              <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400 mb-2">
-                완료된 분석작업 ({completedJobs.length})
-              </summary>
-              <div className="p-4 rounded-xl bg-gray-800/20 border border-gray-700/20 space-y-2">
-                {completedJobs.map(job => (
-                  <AnalysisJobCard key={job.id} job={job} onAction={jobAction} stats={queueStats} />
-                ))}
-              </div>
-            </details>
-          )}
-        </>);
-      })()}
-
-      {/* Summary bar: total progress across all active jobs */}
-      {analysisJobs.length > 0 && (() => {
-        const active = analysisJobs.filter(j => j.status === 'active' || j.status === 'paused');
-        if (active.length === 0) return null;
-        const totals = active.reduce((acc, j) => {
+        const allJobs = analysisJobs;
+        // Totals across all jobs
+        const totals = allJobs.reduce((acc, j) => {
           const p = j.progress || {};
           acc.total += p.total || 0;
           acc.complete += p.complete || 0;
+          acc.mc += p.mc_done || 0;
+          acc.vv += p.vv_done || 0;
+          acc.mv += p.mv_done || 0;
           return acc;
-        }, { total: 0, complete: 0 });
+        }, { total: 0, complete: 0, mc: 0, vv: 0, mv: 0 });
         const remaining = totals.total - totals.complete;
         const pct = totals.total > 0 ? (totals.complete / totals.total * 100).toFixed(1) : 0;
         const s = queueStats || {};
@@ -489,22 +449,55 @@ export default function WorkersPanel() {
         const secPer = speed > 0 ? Math.round(60 / speed) : null;
 
         return (
-          <div className="mb-4 px-4 py-3 rounded-lg bg-gray-800 border border-gray-700 flex items-center gap-6">
-            <div className="flex items-center gap-2 flex-1">
-              <span className="text-sm text-gray-400">종합</span>
-              <span className="text-lg font-bold font-mono text-emerald-400">{totals.complete}</span>
-              <span className="text-gray-600">/</span>
-              <span className="text-lg font-mono text-gray-300">{totals.total}</span>
-              <div className="flex-1 mx-3 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+          <div className="mb-4 rounded-xl bg-gray-800/60 border border-gray-700/40 overflow-hidden">
+            {/* Summary header */}
+            <div className="px-4 py-3 space-y-2">
+              {/* Row 1: counts + progress */}
+              <div className="flex items-center gap-4">
+                <span className="text-2xl font-bold font-mono text-emerald-400">{totals.complete}</span>
+                <span className="text-gray-600 text-lg">/</span>
+                <span className="text-2xl font-mono text-gray-300">{totals.total}</span>
+                <div className="flex-1 mx-2 h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="text-lg font-bold font-mono text-blue-400">{pct}%</span>
               </div>
-              <span className="text-sm font-mono text-blue-400">{pct}%</span>
+              {/* Row 2: MC/VV/MV fractions */}
+              <div className="flex items-center gap-4 text-xs font-mono">
+                <span className="text-purple-400">MC:{totals.mc}/{totals.total}</span>
+                <span className="text-cyan-400">VV:{totals.vv}/{totals.total}</span>
+                <span className="text-green-400">MV:{totals.mv}/{totals.total}</span>
+                {remaining > 0 && <span className="text-yellow-400">남은:{remaining}</span>}
+              </div>
+              {/* Row 3: speed / ETA */}
+              <div className="flex items-center gap-4 text-xs font-mono text-gray-500">
+                {speed > 0 && <span className="text-emerald-400">{speed.toFixed(1)} files/min</span>}
+                {secPer && <span className="text-amber-400">{secPer}s/file</span>}
+                {etaStr && <span className="text-white">~{etaStr}</span>}
+                <span className="text-green-400">{onlineCount} workers</span>
+              </div>
             </div>
-            {remaining > 0 && <span className="text-sm font-mono text-yellow-400">남은: {remaining}</span>}
-            {speed > 0 && <span className="text-sm font-mono text-emerald-400">{speed.toFixed(1)}/m</span>}
-            {secPer && <span className="text-sm font-mono text-amber-400">{secPer}s</span>}
-            {etaStr && <span className="text-sm font-mono text-white">~{etaStr}</span>}
-            <span className="text-sm font-mono text-green-400">{onlineCount}w</span>
+            {/* Queue list */}
+            <div className="border-t border-gray-700/30 px-4 py-2 space-y-1">
+              {allJobs.map(job => {
+                const p = job.progress || {};
+                const jTotal = p.total || 0;
+                const jDone = p.complete || 0;
+                const jPct = jTotal > 0 ? (jDone / jTotal * 100).toFixed(0) : 0;
+                const isActive = job.status === 'active' || job.status === 'paused';
+                return (
+                  <div key={job.id} className="flex items-center gap-2 py-0.5 text-xs font-mono group">
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
+                    <span className="text-gray-300 truncate flex-1">{job.name}</span>
+                    <span className="text-gray-500 tabular-nums">{jDone}/{jTotal}</span>
+                    <div className="w-16 h-1 bg-gray-700/50 rounded-full overflow-hidden flex-shrink-0">
+                      <div className={`h-full rounded-full ${isActive ? 'bg-blue-500' : 'bg-emerald-500'}`} style={{ width: `${jPct}%` }} />
+                    </div>
+                    <span className="text-gray-500 w-8 text-right">{jPct}%</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         );
       })()}
