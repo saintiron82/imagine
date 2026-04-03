@@ -836,6 +836,14 @@ def migrate_vv_mv_completed_at(db):
             logger.info(f"Added {col}")
 
 
+def _ensure_analysis_tables(db):
+    """Create analysis_jobs + file_tasks if they don't exist."""
+    schema_path = Path(__file__).parent / "schema_analysis.sql"
+    if schema_path.exists():
+        db.conn.executescript(schema_path.read_text())
+        logger.info("Analysis Job tables verified")
+
+
 # ──────────────────────────────────────────────────────────────
 # Orchestrator: run all migrations in order
 # ──────────────────────────────────────────────────────────────
@@ -883,6 +891,8 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_worker_phase_tracking(db)
         migrate_phase_completed_vv_mv(db)
         migrate_vv_mv_completed_at(db)
+        # Analysis Job System v1 tables
+        _ensure_analysis_tables(db)
     else:
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()
