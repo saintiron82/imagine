@@ -312,20 +312,28 @@ class AnalysisJobManager:
 
         # Overall throughput = bottleneck phase speed (slowest active)
         active_speeds = {k: v for k, v in phase_tput.items() if v > 0}
-        if active_speeds:
-            throughput = min(active_speeds.values())
+        # Phase-level ETA: remaining per phase / phase speed
+        total = progress.get("total", 0)
+        mc_remaining = total - progress.get("mc_done", 0)
+        vv_remaining = total - progress.get("vv_done", 0)
+        mv_remaining = total - progress.get("mv_done", 0)
+
+        phase_etas = {}  # minutes
+        if phase_tput.get("mc", 0) > 0 and mc_remaining > 0:
+            phase_etas["mc"] = mc_remaining / phase_tput["mc"]
+        if phase_tput.get("vv", 0) > 0 and vv_remaining > 0:
+            phase_etas["vv"] = vv_remaining / phase_tput["vv"]
+        if phase_tput.get("mv", 0) > 0 and mv_remaining > 0:
+            phase_etas["mv"] = mv_remaining / phase_tput["mv"]
+
+        if phase_etas:
+            bottleneck = max(phase_etas, key=phase_etas.get)
+            eta_seconds = round(phase_etas[bottleneck] * 60)
+            throughput = phase_tput.get(bottleneck, 0)
         else:
-            throughput = 0
-
-        remaining = progress["total"] - progress["complete"]
-        eta_seconds = round(remaining / throughput * 60) if throughput > 0 else None
-
-        # Bottleneck
-        phases = progress.get("phases", {})
-        bottleneck = max(
-            [(k, v) for k, v in phases.items() if k != "done" and v > 0],
-            key=lambda x: x[1], default=("none", 0)
-        )[0]
+            bottleneck = "none"
+            eta_seconds = None
+            throughput = min(active_speeds.values()) if active_speeds else 0
 
         return {
             "progress": progress,
