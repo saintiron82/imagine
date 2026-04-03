@@ -772,12 +772,11 @@ export default function WorkersPanel() {
               const phaseLabel = cur === 'mc' ? 'MC' : cur === 'vv' ? 'VV' : cur === 'mv' ? 'MV' : cur === 'parse' ? 'Parse' : null;
 
               const phaseCell = (key, color) => {
-                const count = pc[key] || 0;
                 const isCurrent = cur === key;
                 return (
                   <td className={`text-center px-2 py-2 ${isCurrent ? `bg-${color}-900/30` : ''}`}>
-                    <div className={`text-sm font-bold font-mono ${count > 0 ? `text-${color}-400` : 'text-gray-700'}`}>
-                      {count || '-'}
+                    <div className={`text-sm font-bold font-mono ${isCurrent ? `text-${color}-400` : 'text-gray-700'}`}>
+                      {isCurrent ? (batchSize || '-') : '-'}
                     </div>
                     {isCurrent && w.throughput > 0 && (
                       <div className="text-[9px] text-emerald-400 font-mono">{w.throughput.toFixed(1)}/m</div>
