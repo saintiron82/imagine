@@ -11,10 +11,12 @@ import {
   getAutoProcessing, updateAutoProcessing,
   getEmbeddedWorker,
   forceRetryFailedJobs,
-  getWorkRequests,
-  pauseWorkRequest, resumeWorkRequest, cancelWorkRequest,
 } from '../../api/admin';
-import { WRCard, WRGroupCard } from '../WRCards';
+import {
+  listAnalysisJobs, pauseAnalysisJob, resumeAnalysisJob,
+  cancelAnalysisJob, retryFailedTasks,
+} from '../../api/analysis';
+import AnalysisJobCard from '../AnalysisJobCard';
 import { getJobStats } from '../../api/worker';
 import {
   RefreshCw, Square, Ban, Pencil, AlertOctagon, Loader2,
@@ -162,34 +164,31 @@ export default function WorkersPanel() {
   const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
   const [dbStats, setDbStats] = useState(null);
   const [queueStats, setQueueStats] = useState(null);
-  const [activeWRs, setActiveWRs] = useState([]);
+  const [analysisJobs, setAnalysisJobs] = useState([]);
 
   const load = useCallback(async () => {
     try {
-      const [workerData, statsData, wrData] = await Promise.all([
+      const [workerData, statsData, jobsData] = await Promise.all([
         listWorkerSessions(),
         getJobStats().catch(() => null),
-        getWorkRequests(true).catch(() => ({ work_requests: [] })),
+        listAnalysisJobs(true).catch(() => ({ jobs: [] })),
       ]);
       const all = workerData.workers || [];
       setWorkers(all.filter(w => w.status === 'online'));
+      setAnalysisJobs((jobsData.jobs || []).filter(j => j.status !== 'cancelled'));
 
-      // Override stats with WR-based counts (active queue scope)
-      const wrs = (wrData.work_requests || []).filter(wr =>
-        wr.status !== 'cancelled' &&
-        (wr.status !== 'completed' || (wr.failed_count || 0) > 0)
-      );
-      setActiveWRs(wrs);
-      if (statsData && wrs.length > 0) {
-        // Use only user-created WRs for header counts (Recovery is subset, avoid double-count)
-        const userWRs = wrs.filter(wr => !wr.is_recovery);
-        const source = userWRs.length > 0 ? userWRs : wrs;
-        const wrTotal = source.reduce((s, wr) => s + (wr.total_files || 0), 0);
-        const wrDone = source.reduce((s, wr) => s + (wr.completed_count || 0), 0);
-        const wrFail = source.reduce((s, wr) => s + (wr.failed_count || 0), 0);
-        statsData.total = wrTotal;
-        statsData.completed = wrDone;
-        statsData.failed = wrFail;
+      // Override stats with analysis job totals
+      const activeJobs = (jobsData.jobs || []).filter(j => j.status === 'active' || j.status === 'paused');
+      if (statsData && activeJobs.length > 0) {
+        const totals = activeJobs.reduce((acc, j) => {
+          const p = j.progress || {};
+          acc.total += p.total || 0;
+          acc.complete += p.complete || 0;
+          return acc;
+        }, { total: 0, complete: 0 });
+        statsData.total = totals.total;
+        statsData.completed = totals.complete;
+        statsData.failed = totals.total - totals.complete;
       }
       if (statsData) setQueueStats(statsData);
     } catch (e) {
@@ -428,48 +427,27 @@ export default function WorkersPanel() {
         )}
       </div>
 
-      {/* Active Work Requests — user-created only, Recovery hidden */}
-      {activeWRs.length > 0 && (() => {
-        const userWRs = activeWRs.filter(wr => !wr.is_recovery);
-        const recoveryWRs = activeWRs.filter(wr => wr.is_recovery);
-        if (userWRs.length === 0 && recoveryWRs.length === 0) return null;
-
-        const wrAction = async (id, action) => {
-          try {
-            if (action === 'pause') await pauseWorkRequest(id);
-            else if (action === 'resume') await resumeWorkRequest(id);
-            else if (action === 'cancel') await cancelWorkRequest(id);
-            load();
-          } catch (e) { console.error(`WR ${action} failed:`, e); }
-        };
-
-        return (
-          <div className="mb-4 p-4 rounded-xl bg-gray-800/40 border border-gray-700/30">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-              {t('admin.active_queue') || '활성 큐'}
-            </h3>
-            <div className="space-y-2">
-              {/* User-created queues — always visible */}
-              {userWRs.map(wr => (
-                <WRCard key={wr.id} wr={wr} onAction={wrAction} />
-              ))}
-              {/* Recovery queues — collapsed by default */}
-              {recoveryWRs.length > 0 && (
-                <details className="mt-2">
-                  <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400">
-                    자동 복구 큐 ({recoveryWRs.length}개)
-                  </summary>
-                  <div className="mt-1 space-y-1 pl-2 border-l border-gray-700/30">
-                    {recoveryWRs.map(wr => (
-                      <WRCard key={wr.id} wr={wr} onAction={wrAction} />
-                    ))}
-                  </div>
-                </details>
-              )}
-            </div>
+      {/* Analysis Jobs */}
+      {analysisJobs.length > 0 && (
+        <div className="mb-4 p-4 rounded-xl bg-gray-800/40 border border-gray-700/30">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            {t('admin.active_queue') || '분석작업'}
+          </h3>
+          <div className="space-y-2">
+            {analysisJobs.map(job => (
+              <AnalysisJobCard key={job.id} job={job} onAction={async (id, action) => {
+                try {
+                  if (action === 'pause') await pauseAnalysisJob(id);
+                  else if (action === 'resume') await resumeAnalysisJob(id);
+                  else if (action === 'cancel') await cancelAnalysisJob(id);
+                  else if (action === 'retry') await retryFailedTasks(id);
+                  load();
+                } catch (e) { console.error(`Job ${action} failed:`, e); }
+              }} />
+            ))}
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {/* Pipeline phase dashboard */}
       {onlineCount > 0 && (
