@@ -470,8 +470,46 @@ export default function WorkersPanel() {
         </>);
       })()}
 
-      {/* Legacy pipeline phase dashboard — replaced by AnalysisJobCard.
-          Keeping only the worker table below. */}
+      {/* Summary bar: total progress across all active jobs */}
+      {analysisJobs.length > 0 && (() => {
+        const active = analysisJobs.filter(j => j.status === 'active' || j.status === 'paused');
+        if (active.length === 0) return null;
+        const totals = active.reduce((acc, j) => {
+          const p = j.progress || {};
+          acc.total += p.total || 0;
+          acc.complete += p.complete || 0;
+          return acc;
+        }, { total: 0, complete: 0 });
+        const remaining = totals.total - totals.complete;
+        const pct = totals.total > 0 ? (totals.complete / totals.total * 100).toFixed(1) : 0;
+        const s = queueStats || {};
+        const speed = s.throughput || 0;
+        const eta = s.eta_seconds;
+        const etaStr = eta ? (eta >= 3600 ? `${Math.floor(eta/3600)}h${Math.floor((eta%3600)/60)}m` : `${Math.floor(eta/60)}m`) : null;
+        const secPer = speed > 0 ? Math.round(60 / speed) : null;
+
+        return (
+          <div className="mb-4 px-4 py-3 rounded-lg bg-gray-800 border border-gray-700 flex items-center gap-6">
+            <div className="flex items-center gap-2 flex-1">
+              <span className="text-sm text-gray-400">종합</span>
+              <span className="text-lg font-bold font-mono text-emerald-400">{totals.complete}</span>
+              <span className="text-gray-600">/</span>
+              <span className="text-lg font-mono text-gray-300">{totals.total}</span>
+              <div className="flex-1 mx-3 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="text-sm font-mono text-blue-400">{pct}%</span>
+            </div>
+            {remaining > 0 && <span className="text-sm font-mono text-yellow-400">남은: {remaining}</span>}
+            {speed > 0 && <span className="text-sm font-mono text-emerald-400">{speed.toFixed(1)}/m</span>}
+            {secPer && <span className="text-sm font-mono text-amber-400">{secPer}s</span>}
+            {etaStr && <span className="text-sm font-mono text-white">~{etaStr}</span>}
+            <span className="text-sm font-mono text-green-400">{onlineCount}w</span>
+          </div>
+        );
+      })()}
+
+      {/* Legacy pipeline phase dashboard — disabled */}
       {false && onlineCount > 0 && (
         <div className="mb-4 space-y-3">
           {/* System performance dashboard */}
