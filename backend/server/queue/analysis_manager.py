@@ -34,6 +34,7 @@ class AnalysisJobManager:
     def __init__(self, db):
         self.db = db
         self._ensure_tables()
+        self._fix_check_constraint()
         self._reclaim_stale_assigned()
         self._sync_with_files_db()
 
@@ -93,6 +94,25 @@ class AnalysisJobManager:
         if synced > 0:
             self.db.conn.commit()
             logger.info(f"Synced {synced} file_tasks with files DB")
+
+    def _fix_check_constraint(self):
+        """Ensure analysis_jobs CHECK includes 'archived'."""
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute("SELECT sql FROM sqlite_master WHERE name='analysis_jobs'")
+            row = cursor.fetchone()
+            if row and "'archived'" not in (row[0] or ""):
+                cursor.execute("PRAGMA writable_schema = ON")
+                cursor.execute("""
+                    UPDATE sqlite_master SET sql = REPLACE(sql,
+                        "status IN ('active', 'paused', 'completed', 'cancelled')",
+                        "status IN ('active', 'paused', 'completed', 'cancelled', 'archived')")
+                    WHERE name = 'analysis_jobs'
+                """)
+                cursor.execute("PRAGMA writable_schema = OFF")
+                self.db.conn.commit()
+        except Exception:
+            pass
 
     def _ensure_tables(self):
         """Create tables if they don't exist."""
