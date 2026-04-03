@@ -1605,7 +1605,10 @@ class WorkerDaemon:
 
         # ── Phase V: Vision/MC only (VLM, 1-by-1) ──
         elapsed_vision = self._run_vision_phase(active, progress_callback)
-        _log(f"[MC] Vision phase done: {elapsed_vision:.1f}s")
+        mc_fpm = round(len(active) / elapsed_vision * 60, 1) if elapsed_vision > 0 else 0
+        self._batch_throughput = mc_fpm
+        self._phase_throughput["mc"] = mc_fpm
+        _log(f"[MC] Vision phase done: {elapsed_vision:.1f}s ({mc_fpm}/m)")
 
         # Check how many succeeded in vision
         vision_ok = sum(1 for c in active if not c.failed and c.vision_fields)
@@ -2006,6 +2009,8 @@ class WorkerDaemon:
             })
 
         # Do NOT unload — SigLIP2 stays resident for next batch
+        self._batch_throughput = round(fpm, 1)
+        self._phase_throughput["vv"] = round(fpm, 1)
         _notify(progress_callback, "phase_complete", {
             "phase": "embed_vv", "count": len(active),
             "elapsed_s": round(elapsed, 2), "files_per_min": round(fpm, 1),
@@ -2154,6 +2159,15 @@ class WorkerDaemon:
                 })
 
         # Do NOT unload — Qwen3-Embedding stays resident for next batch
+        if active:
+            total_elapsed = sum(getattr(a.get('_mv_elapsed', 0), '__float__', lambda: 0)() for a in active) if False else 0
+            # Use batch time for throughput
+            try:
+                mv_fpm = round(len(active) / (_mv_batch_elapsed or 1) * 60, 1)
+            except Exception:
+                mv_fpm = 0
+            self._batch_throughput = mv_fpm
+            self._phase_throughput["mv"] = mv_fpm
         _notify(progress_callback, "batch_phase_complete", {"phase": "embed_mv", "count": len(active)})
         return results
 
