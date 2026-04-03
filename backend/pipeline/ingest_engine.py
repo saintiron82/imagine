@@ -16,6 +16,7 @@ v3.5: Throughput-driven adaptive batch + NFC path normalization.
 
 import argparse
 import logging
+import os
 import sys
 import time
 import io
