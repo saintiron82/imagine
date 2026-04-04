@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Profile cache location
 PROFILE_DIR = Path.home() / ".imagine"
 PROFILE_FILE = PROFILE_DIR / "worker_profile.json"
-BENCH_IMAGE_FILE = PROFILE_DIR / "bench_test.png"
+BENCH_SAMPLE_FILE = PROFILE_DIR / "sample.png"
 
 
 def collect_capability(include_speed: bool = True) -> Dict[str, Any]:
@@ -182,33 +182,48 @@ def save_speed_profile(profile: Dict[str, Any]):
         logger.warning(f"Failed to save speed profile: {e}")
 
 
-def ensure_bench_image() -> Optional[str]:
-    """Ensure a test image exists for benchmarking.
+def ensure_sample_image() -> Optional[str]:
+    """Ensure a sample image exists for benchmarking.
 
-    Creates a simple 1024x1024 test PNG if not present.
+    Looks for sample.png in ~/.imagine/. If not present, copies from:
+    1. Project thumbnails directory (real content, best for VLM benchmark)
+    2. Fallback: generates a simple test image
+
     Returns path to the image, or None on failure.
     """
-    if BENCH_IMAGE_FILE.exists():
-        return str(BENCH_IMAGE_FILE)
+    if BENCH_SAMPLE_FILE.exists():
+        return str(BENCH_SAMPLE_FILE)
 
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Try 1: Copy an existing thumbnail from project
+    try:
+        import shutil
+        project_root = Path(__file__).parent.parent.parent
+        thumb_dir = project_root / "output" / "thumbnails"
+        if thumb_dir.exists():
+            # Pick the first real thumbnail
+            for f in sorted(thumb_dir.glob("*_thumb.png")):
+                if f.stat().st_size > 10000:  # skip tiny files
+                    shutil.copy2(str(f), str(BENCH_SAMPLE_FILE))
+                    logger.info(f"Sample image: copied {f.name} → {BENCH_SAMPLE_FILE}")
+                    return str(BENCH_SAMPLE_FILE)
+    except Exception:
+        pass
+
+    # Try 2: Generate a simple test image
     try:
         from PIL import Image, ImageDraw
-        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-
-        # Create a colorful test image (not blank — VLM needs content)
         img = Image.new("RGB", (1024, 1024), (30, 30, 50))
         draw = ImageDraw.Draw(img)
-        # Draw some shapes for VLM to describe
         draw.rectangle([100, 100, 400, 400], fill=(200, 50, 50))
         draw.ellipse([500, 200, 800, 500], fill=(50, 150, 200))
         draw.rectangle([300, 600, 700, 900], fill=(50, 200, 100))
-        draw.text((200, 50), "BENCHMARK", fill=(255, 255, 255))
-
-        img.save(str(BENCH_IMAGE_FILE), "PNG")
-        logger.info(f"Bench test image created: {BENCH_IMAGE_FILE}")
-        return str(BENCH_IMAGE_FILE)
+        img.save(str(BENCH_SAMPLE_FILE), "PNG")
+        logger.info(f"Sample image: generated → {BENCH_SAMPLE_FILE}")
+        return str(BENCH_SAMPLE_FILE)
     except Exception as e:
-        logger.warning(f"Failed to create bench image: {e}")
+        logger.warning(f"Failed to create sample image: {e}")
         return None
 
 
@@ -218,7 +233,7 @@ def run_benchmark() -> Dict[str, Any]:
     Returns speed profile dict with measured files/min per phase.
     Results are saved to disk for reuse.
     """
-    bench_image = ensure_bench_image()
+    bench_image = ensure_sample_image()
     if not bench_image:
         logger.warning("No bench image available, skipping benchmark")
         return {}
