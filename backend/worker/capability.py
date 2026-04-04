@@ -297,7 +297,8 @@ def calculate_scores(profile: Dict[str, Any]) -> Dict[str, Any]:
       C: ≥10   (very slow, CPU/Ollama level)
       F: 0     (incapable)
     """
-    BASELINE = {"mc": 8, "vv": 80, "mv": 120}  # files/min design speed
+    # Reference: M5 32GB MLX 4bit (2026-04-04 실측)
+    BASELINE = {"mc": 8.6, "vv": 347, "mv": 3412}  # files/min single-file speed
     WEIGHT = {"mc": 0.7, "vv": 0.15, "mv": 0.15}  # MC dominates throughput
 
     scores = {}
