@@ -97,50 +97,8 @@ async def startup():
     except Exception as e:
         logger.warning(f"Parent watchdog failed to start: {e}")
 
-    # Minimal startup — pools/workers start after login via POST /api/v1/server/activate
-    logger.info("Server waiting for login")
-
-    # License manager (runs before login — needed for plan enforcement)
-    try:
-        from backend.server.deps import get_db
-        from backend.server.licensing.license_manager import LicenseManager
-        from backend.server.licensing.enforcement import set_license_manager
-        db = get_db()
-        lm = LicenseManager(db)
-        set_license_manager(lm)
-        app.state.license_manager = lm
-        info = await lm.verify()
-        logger.info(f"License: {info.plan_id} / {info.status} (users={info.current_users}/{info.max_users})")
-
-        app.state.license_check_stop = threading.Event()
-        def _license_check():
-            import asyncio
-            stop = app.state.license_check_stop
-            while not stop.is_set():
-                stop.wait(3600)
-                if stop.is_set():
-                    break
-                try:
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(lm.verify())
-                    loop.close()
-                except Exception as e:
-                    logger.warning(f"Periodic license check failed: {e}")
-        threading.Thread(target=_license_check, daemon=True, name="license-check").start()
-    except Exception as e:
-        logger.warning(f"License manager failed: {e}")
-
-    # mDNS (optional)
-    try:
-        from backend.server.mdns import ImagineServiceAnnouncer
-        cfg = get_server_config()
-        port = cfg.get("port", 8000)
-        app.state.mdns = ImagineServiceAnnouncer(port)
-        app.state.mdns.start()
-    except ImportError:
-        pass
-    except Exception as e:
-        logger.warning(f"mDNS failed: {e}")
+    # Nothing touches DB at startup — ALL DB work happens in /server/activate after login
+    logger.info("Server waiting for login (no DB access until activate)")
 
 
 def _activate_server(app_instance):
@@ -227,8 +185,42 @@ def _activate_server(app_instance):
     except Exception as e:
         logger.warning(f"Heartbeat watchdog failed: {e}")
 
+    # Phase 5: License + mDNS
+    try:
+        from backend.server.licensing.license_manager import LicenseManager
+        from backend.server.licensing.enforcement import set_license_manager
+        lm = LicenseManager(db)
+        set_license_manager(lm)
+        app_instance.state.license_manager = lm
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Running inside async context (FastAPI) — schedule as task
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    info = pool.submit(lambda: asyncio.run(lm.verify())).result(timeout=10)
+            else:
+                info = loop.run_until_complete(lm.verify())
+            _log(f"License: {info.plan_id} / {info.status}")
+        except Exception:
+            _log("License: verification deferred")
+    except Exception as e:
+        _log(f"License manager failed: {e}")
+
+    try:
+        from backend.server.mdns import ImagineServiceAnnouncer
+        cfg = get_server_config()
+        port = cfg.get("port", 8000)
+        app_instance.state.mdns = ImagineServiceAnnouncer(port)
+        app_instance.state.mdns.start()
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
     app_instance.state.ready = True
-    logger.info("Server activated — all subsystems running")
+    _log("Server activated — all subsystems running")
 
     # Firebase re-registration on restart (best-effort, non-blocking)
     try:
