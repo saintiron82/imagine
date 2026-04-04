@@ -184,20 +184,26 @@ class FileTaskParsePool(BaseAheadPool):
                 logger.warning(f"FileTaskParse: file not found: {file_path}")
                 return False
 
-        # 2. Parse
+        # 2. Parse (fallback to thumbnail-only on failure)
         parser = ParserFactory.get_parser(file_p)
         if not parser:
             logger.warning(f"FileTaskParse: no parser for {file_path}")
             return False
 
         result = parser.parse(file_p)
-        if not result.success:
+        if result.success:
+            meta = result.asset_meta
+        else:
+            # Parse failed (unsupported compression, corrupt layers, etc.)
+            # → still generate thumbnail via PIL and continue to MC/VV/MV
             logger.warning(
-                f"FileTaskParse: parse failed: {file_path}: {result.errors}"
+                f"FileTaskParse: parse failed, falling back to thumbnail-only: "
+                f"{file_path}: {result.errors}"
             )
-            return False
-
-        meta = result.asset_meta
+            meta = self._fallback_thumbnail(file_p, file_path)
+            if meta is None:
+                logger.error(f"FileTaskParse: fallback also failed: {file_path}")
+                return False
 
         # 3. Content hash
         try:
@@ -259,6 +265,46 @@ class FileTaskParsePool(BaseAheadPool):
             self._download_pool.release_slot(file_id, file_path)
 
         return True
+
+    def _fallback_thumbnail(self, file_p: Path, file_path: str):
+        """Generate minimal AssetMeta with thumbnail when full parse fails.
+
+        Opens the file as a flat image (PIL), generates thumbnail,
+        and creates basic metadata. Layer info will be empty.
+        """
+        try:
+            from PIL import Image as PILImage
+            from backend.parser.schema import AssetMeta
+
+            img = PILImage.open(file_p)
+            img = img.convert("RGB")
+
+            # Generate thumbnail
+            thumb_size = (512, 512)
+            thumb = img.copy()
+            thumb.thumbnail(thumb_size, PILImage.LANCZOS)
+            thumb_path = file_p.parent / f"{file_p.stem}_thumb.png"
+            thumb.save(str(thumb_path), "PNG")
+
+            meta = AssetMeta()
+            meta.file_path = file_path
+            meta.file_name = file_p.name
+            meta.file_type = file_p.suffix.lower().lstrip(".")
+            meta.width = img.width
+            meta.height = img.height
+            meta.file_size = file_p.stat().st_size
+            meta.thumbnail_url = str(thumb_path)
+            meta.layer_count = 0
+            meta.semantic_tags = []
+
+            logger.info(
+                f"FileTaskParse: fallback OK ({file_p.name}, "
+                f"{img.width}x{img.height}, thumbnail generated)"
+            )
+            return meta
+        except Exception as e:
+            logger.error(f"FileTaskParse: fallback thumbnail failed: {e}")
+            return None
 
     def _get_webdav_temp(self, file_id: int) -> Optional[str]:
         """Look up downloaded temp file from DownloadAheadPool."""
