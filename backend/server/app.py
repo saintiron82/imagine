@@ -141,8 +141,20 @@ async def startup():
 
     logger.info("Analysis Job System v1")
 
-    # Embedded worker: standby until user enables via Admin UI
-    logger.info("Embedded worker: standby (waiting for user login)")
+    # Embedded worker: auto-start if enabled in config
+    try:
+        from backend.utils.config import get_config as _get_cfg
+        if _get_cfg().get("server.auto_processing.enabled", False):
+            from backend.server.embedded_worker import start_worker
+            result = start_worker(server_url="", access_token="")
+            if result.get("success"):
+                logger.info("Embedded worker auto-started (config: auto_processing.enabled=true)")
+            else:
+                logger.warning(f"Embedded worker auto-start failed: {result.get('error')}")
+        else:
+            logger.info("Embedded worker: standby (auto_processing.enabled=false)")
+    except Exception as e:
+        logger.warning(f"Embedded worker auto-start check failed: {e}")
 
     # Heartbeat watchdog: periodically detect dead workers and reclaim their jobs
     try:
