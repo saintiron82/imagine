@@ -25,6 +25,7 @@ _shutdown_flag = False
 _status = "idle"  # idle | running | stopping | error
 _last_error = None
 _jobs_completed = 0
+_start_lock = threading.Lock()
 
 
 def start_worker(server_url: str, access_token: str, refresh_token: str = "") -> dict:
@@ -35,8 +36,11 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
     """
     global _worker_thread, _worker_daemon, _transport, _shutdown_flag, _status, _last_error, _jobs_completed
 
-    if _worker_thread and _worker_thread.is_alive():
-        return {"success": False, "error": "Worker already running"}
+    with _start_lock:
+        if _worker_thread and _worker_thread.is_alive():
+            return {"success": False, "error": "Worker already running"}
+        if _status == "running":
+            return {"success": False, "error": "Worker already starting"}
 
     _shutdown_flag = False
     _status = "running"
@@ -50,7 +54,7 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
         from backend.worker.transport import LocalTransport
         from backend.worker.worker_daemon import WorkerDaemon
 
-        db = get_db()  # shared singleton — no duplicate migrations
+        db = get_db()
         manager = AnalysisJobManager(db)
         scheduler = WorkerScheduler(db)
 

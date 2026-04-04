@@ -176,19 +176,11 @@ function App() {
         if (status?.primaryLanUrl) setServerLanUrl(status.primaryLanUrl);
       } catch { /* ignore */ }
 
-      // Activate server subsystems (DB, pools, scheduler) after login
+      // Activate server subsystems (DB, pools, scheduler, worker) after login
+      // Worker auto-starts inside activate if pending tasks exist — no separate call needed
       try {
         const { apiClient } = await import('./api/client');
         await apiClient.post('/api/v1/server/activate');
-
-        // Start embedded worker if active work exists
-        const { updateAutoProcessing } = await import('./api/admin');
-        const { listAnalysisJobs } = await import('./api/analysis');
-        const jobs = await listAnalysisJobs();
-        const hasActiveWork = (jobs?.jobs || []).some(j => j.status === 'active');
-        if (hasActiveWork) {
-          await updateAutoProcessing({ enabled: true });
-        }
       } catch (e) {
         console.warn('Server activation failed:', e);
       }
