@@ -218,9 +218,9 @@ class WorkerScheduler:
             # CPU can do VV (SigLIP2 supports CPU) but not MC
             capable["vv"] = vv_p
 
-        # 6. Algorithm E' — pressure-based selection
+        # 6. Algorithm E' — pressure × speed_factor selection
         phase = self._pick_best_phase(
-            capable, workers_on, current_phase, gpu_class
+            capable, workers_on, current_phase, profile
         )
 
         if not phase:
@@ -250,16 +250,41 @@ class WorkerScheduler:
 
         return {"phase": phase, "count": count}
 
+    # Design speed baselines (files/min) — used to normalize speed_factor
+    SPEED_BASELINE = {"mc": 8, "vv": 80, "mv": 120}
+
+    def _speed_factor(self, profile: dict, phase: str) -> float:
+        """How much does this worker contribute to this phase?
+
+        Measured speed → normalize against baseline.
+        No measurement → fall back to GPU class estimation.
+
+        Returns: >1 = faster than baseline, <1 = slower, 0 = cannot do this phase.
+        """
+        speed = profile.get(f"{phase}_speed")
+        if speed and speed > 0:
+            return speed / self.SPEED_BASELINE.get(phase, 1)
+
+        # No measurement: GPU class based estimation
+        gpu_class = profile.get("gpu_class", "cpu")
+        if phase == "mc":
+            penalty = MC_PENALTY.get(gpu_class)
+            return (1.0 / penalty) if penalty else 0  # cpu → 0
+        return 1.0  # VV/MV: all workers can do, assume baseline
+
     def _pick_best_phase(
         self, claimable: Dict[str, int], workers_on: Dict[str, int],
-        current_phase: Optional[str], gpu_class: str,
+        current_phase: Optional[str], profile: dict,
     ) -> Optional[str]:
-        """Algorithm E' — pressure-based phase selection.
+        """Algorithm E' — pressure × speed_factor phase selection.
 
-        pressure = (pending / (workers_on + 1)) × phase_time_weight
+        pressure = (pending / (workers+1)) × phase_time × speed_factor
+
+        speed_factor uses MEASURED speed when available (from benchmark or
+        runtime). Falls back to GPU class estimation for unmeasured workers.
 
         Factors:
-        - MC penalty by GPU class (weak=2x, cpu=excluded)
+        - speed_factor: this worker's actual throughput for this phase
         - MV completion bonus (+10 per pending, finishing = file complete)
         - Unserved phase boost (×1.5 if no worker on this phase)
         - Phase stability (stay in current unless better has 2× pressure)
@@ -270,17 +295,15 @@ class WorkerScheduler:
             if pending <= 0:
                 continue
 
+            # Speed factor: how fast is THIS worker at THIS phase?
+            sf = self._speed_factor(profile, phase)
+            if sf <= 0:
+                continue  # Cannot do this phase (e.g., CPU + MC)
+
             # Base pressure: pending work per available worker, weighted by time
             w = PHASE_TIME.get(phase, 1)
             n = workers_on.get(phase, 0)
-            p = (pending / (n + 1)) * w
-
-            # MC penalty by GPU class
-            if phase == "mc":
-                penalty = MC_PENALTY.get(gpu_class)
-                if penalty is None:
-                    continue  # CPU cannot do MC at all
-                p /= penalty
+            p = (pending / (n + 1)) * w * sf
 
             # Unserved phase boost: no worker assigned → 1.5× priority
             if n == 0 and pending > 0:
