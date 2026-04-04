@@ -82,6 +82,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 # ── Lifecycle ────────────────────────────────────────────────
 
+# Server readiness flag — False until all initialization is complete
+app.state.ready = False
+
 @app.on_event("startup")
 async def startup():
     logger.info("Imagine Server starting up...")
@@ -143,6 +146,10 @@ async def startup():
 
     # Embedded worker: starts after user login (triggered by frontend)
     logger.info("Embedded worker: standby (starts after login)")
+
+    # Mark server as ready — all initialization complete
+    app.state.ready = True
+    logger.info("Server ready")
 
     # Heartbeat watchdog: periodically detect dead workers and reclaim their jobs
     try:
@@ -283,6 +290,7 @@ def health():
     from backend.server.firebase_auth import is_firebase_available
     return {
         "status": "ok",
+        "ready": getattr(app.state, 'ready', False),
         "version": "4.0.0",
         "server_name": socket.gethostname(),
         "firebase_auth": is_firebase_available(),

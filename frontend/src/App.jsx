@@ -176,8 +176,18 @@ function App() {
         if (status?.primaryLanUrl) setServerLanUrl(status.primaryLanUrl);
       } catch { /* ignore */ }
 
-      // Restore embedded worker after login if active work exists
+      // Wait for server initialization to complete before any operations
       try {
+        const { apiClient } = await import('./api/client');
+        let ready = false;
+        for (let i = 0; i < 30; i++) {
+          const health = await apiClient.get('/api/v1/health');
+          if (health?.ready) { ready = true; break; }
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        if (!ready) console.warn('Server initialization timed out');
+
+        // Start embedded worker if active work exists
         const { updateAutoProcessing } = await import('./api/admin');
         const { listAnalysisJobs } = await import('./api/analysis');
         const jobs = await listAnalysisJobs();
