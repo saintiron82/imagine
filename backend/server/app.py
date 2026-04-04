@@ -96,6 +96,7 @@ async def startup():
 
     # DB + admin setup
     _create_default_admin()
+    _cleanup_stale_sessions()
 
     # Analysis Job System v1 — ParseAhead removed, but DownloadAhead needed
     # for WebDAV file downloads (workers can't download directly yet).
@@ -338,14 +339,11 @@ def _create_default_admin():
     pass
 
 
-def _cleanup_stale_jobs():
-    """Reset stale assigned/processing jobs and offline worker sessions on startup."""
+def _cleanup_stale_sessions():
+    """Reset stale worker sessions on startup (no legacy dependency)."""
     try:
         from backend.server.deps import get_db
-        from backend.server.queue.manager import JobQueueManager
         db = get_db()
-        queue = JobQueueManager(db)
-        # Mark all online worker sessions as offline (stale from previous run)
         cursor = db.conn.cursor()
         cursor.execute(
             """UPDATE worker_sessions
@@ -360,112 +358,11 @@ def _cleanup_stale_jobs():
         )
         if cursor.rowcount > 0:
             logger.info(f"Startup cleanup: marked {cursor.rowcount} stale worker sessions offline")
-
-        # Reclaim ALL assigned/processing jobs — server restart means
-        # no worker is actively processing, so all in-flight jobs are invalid
-        cursor.execute(
-            """UPDATE job_queue
-               SET status = 'pending',
-                   assigned_to = NULL, assigned_at = NULL,
-                   worker_session_id = NULL
-               WHERE status IN ('assigned', 'processing')"""
-        )
-        if cursor.rowcount > 0:
-            logger.info(f"Startup cleanup: reclaimed {cursor.rowcount} in-flight jobs to pending")
-
-        # Reset stuck 'parsing' parse-ahead jobs from previous server run
-        try:
-            cursor.execute(
-                "UPDATE job_queue SET parse_status = NULL WHERE parse_status = 'parsing'"
-            )
-            if cursor.rowcount > 0:
-                logger.info(f"Startup cleanup: reset {cursor.rowcount} stuck parsing jobs")
-        except Exception:
-            pass  # Column may not exist yet (pre-migration)
-
-        # Self-repair: parsed jobs must have file_ready=1 (invariant)
-        try:
-            cursor.execute(
-                "UPDATE job_queue SET file_ready = 1 WHERE parse_status = 'parsed' AND file_ready = 0"
-            )
-            if cursor.rowcount > 0:
-                logger.info(f"Startup fix: {cursor.rowcount} parsed jobs had file_ready=0 → fixed")
-        except Exception:
-            pass
-
-        # Self-repair: WR counter mismatch (no jobs but completed_count < total)
-        try:
-            cursor.execute("""
-                SELECT wr.id, wr.name, wr.total_files, wr.completed_count
-                FROM work_requests wr
-                WHERE wr.status IN ('queued', 'processing')
-                  AND wr.completed_count < wr.total_files
-                  AND NOT EXISTS (
-                    SELECT 1 FROM job_queue jq WHERE jq.work_request_id = wr.id
-                  )
-            """)
-            for wr_id, wr_name, wr_total, wr_done in cursor.fetchall():
-                cursor.execute(
-                    "UPDATE work_requests SET completed_count = total_files, status = 'completed', completed_at = datetime('now') WHERE id = ?",
-                    (wr_id,)
-                )
-                cursor.execute(
-                    "UPDATE work_subtasks SET completed_count = total_files WHERE work_request_id = ?",
-                    (wr_id,)
-                )
-                logger.info(f"Startup fix: WR '{wr_name}' {wr_done}/{wr_total} → completed (no pending jobs)")
-        except Exception:
-            pass
-
-        # Auto-recover: retry failed files that can be reprocessed
-        # (files with processing_status='failed' and no job in queue)
-        try:
-            recovered = queue.retry_failed_jobs()
-            if recovered > 0:
-                logger.info(f"Startup auto-recovery: {recovered} failed files returned to queue")
-        except Exception as e:
-            logger.warning(f"Startup auto-recovery failed: {e}")
-
         db.conn.commit()
+
+        # AnalysisJobManager handles file_tasks reclaim on __init__
     except Exception as e:
-        logger.warning(f"Startup job cleanup failed: {e}")
-        try:
-            db.conn.rollback()
-        except Exception:
-            pass
-
-
-def _startup_integrity_check():
-    """Run full integrity check on startup: fix metadata, audit files, cleanup queue."""
-    try:
-        from backend.server.deps import get_db
-        from backend.server.queue.manager import JobQueueManager
-        db = get_db()
-
-        # 1. Auto-fix: relative_path etc. metadata correction (no reprocessing)
-        fixed = db.fix_missing_relative_paths()
-        if fixed > 0:
-            logger.info(f"Startup auto-fix: filled relative_path for {fixed} files")
-
-        # 2. Audit: full repair — re-queue incomplete files, attach to existing WRs
-        queue = JobQueueManager(db)
-        result = queue.audit_completed_jobs(repair=True)
-        incomplete = result['incomplete_files']
-        repaired = result['repaired_files']
-        if repaired > 0:
-            logger.warning(
-                f"Startup audit: {result['total_files']} files, "
-                f"{incomplete} incomplete, {repaired} re-queued"
-            )
-        else:
-            logger.info(
-                f"Startup audit: {result['total_files']} files, "
-                f"{result['complete_files']} complete"
-            )
-        # Store for embedded worker decision
-        app.state.startup_pending_jobs = incomplete
-    except Exception as e:
-        logger.warning(f"Startup integrity check failed: {e}")
+        logger.warning(f"Startup session cleanup failed: {e}")
 
 
 def _start_heartbeat_watchdog():
@@ -485,18 +382,17 @@ def _start_heartbeat_watchdog():
             if _stop_event.is_set():
                 break
             try:
+                from datetime import datetime as _dt
                 from backend.server.deps import get_db
-                from backend.server.queue.manager import JobQueueManager, _utcnow_sql
-                from backend.server.routers.workers import _recalculate_server_pools
+                from backend.server.queue.analysis_manager import AnalysisJobManager
 
                 db = get_db()
                 cursor = db.conn.cursor()
-                now = _utcnow_sql()
+                now = _dt.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
                 cursor.execute(
                     """SELECT id, worker_name FROM worker_sessions
                        WHERE status = 'online'
-                         AND worker_name != '__builtin__'
                          AND last_heartbeat IS NOT NULL
                          AND datetime(last_heartbeat, '+' || ? || ' minutes') < datetime('now')""",
                     (TIMEOUT,)
@@ -506,10 +402,10 @@ def _start_heartbeat_watchdog():
                 if not stale_sessions:
                     continue
 
-                queue = JobQueueManager(db)
+                mgr = AnalysisJobManager(db)
                 total_reclaimed = 0
                 for session_id, worker_name in stale_sessions:
-                    reclaimed = queue.reclaim_worker_jobs(session_id)
+                    reclaimed = mgr.reclaim_worker_tasks(session_id)
                     total_reclaimed += reclaimed
                     cursor.execute(
                         "UPDATE worker_sessions SET status = 'offline', disconnected_at = ? WHERE id = ?",
@@ -517,13 +413,10 @@ def _start_heartbeat_watchdog():
                     )
                     logger.warning(
                         f"Heartbeat timeout: worker '{worker_name}' (session={session_id}) "
-                        f"marked offline, reclaimed {reclaimed} jobs"
+                        f"marked offline, reclaimed {reclaimed} tasks"
                     )
 
                 db.conn.commit()
-
-                if total_reclaimed > 0:
-                    _recalculate_server_pools(app, db)
 
             except Exception as e:
                 logger.error(f"Heartbeat watchdog error: {e}")

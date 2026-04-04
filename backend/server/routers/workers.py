@@ -12,9 +12,15 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from datetime import datetime
+
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
-from backend.server.queue.manager import _utcnow_sql, JobQueueManager
+
+
+def _utcnow_sql() -> str:
+    """UTC timestamp string for SQLite."""
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +72,20 @@ class EmbeddedWorkerUpdate(BaseModel):
 
 
 def _get_global_processing_mode() -> str:
-    """Read global processing_mode from config (cached singleton).
+    """Read global processing_mode from config.
 
-    Checks server.processing_mode first (Admin API), then falls back
-    to worker.processing_mode (WorkerPage UI in user-settings.yaml).
+    Returns 'auto' by default — scheduler handles assignment.
     """
-    from backend.server.queue.manager import get_processing_mode
-    return get_processing_mode()
+    try:
+        from backend.utils.config import get_config
+        cfg = get_config()
+        mode = cfg.get("server.processing_mode", None)
+        if mode:
+            return mode
+        mode = cfg.get("worker.processing_mode", None)
+        return mode or "auto"
+    except Exception:
+        return "auto"
 
 
 def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
@@ -94,48 +107,16 @@ def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
 
 
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
-    """Recalculate server pool state when workers connect/disconnect.
+    """No-op in new architecture. Scheduler handles all assignment.
 
-    ParseAheadPool is always parse-only (PSD parse + thumbnail).
-    Embedded worker auto-management based on worker availability.
+    Kept as stub for any remaining callers during migration.
     """
-    if not app:
-        return
-
-    cursor = db.conn.cursor()
-
-    # Survey online worker modes (exclude builtin embedded worker)
-    cursor.execute(
-        """SELECT processing_mode_override FROM worker_sessions
-           WHERE status = 'online' AND worker_name != ?""",
-        (BUILTIN_WORKER_NAME,),
-    )
-    worker_modes = [r[0] or "mc" for r in cursor.fetchall()]
-    has_workers = len(worker_modes) > 0
-
-    # Publish mode for stats API
-    from backend.server.queue.manager import set_server_pool_mode
-    set_server_pool_mode("parse")
-
-    # Seed demand for ParseAheadPool when workers are active
-    if has_workers:
-        try:
-            from backend.server.queue.base_ahead_pool import BaseAheadPool
-            BaseAheadPool.record_claim(session_id=-1, count=10)
-        except Exception:
-            pass
-
-    # Embedded worker stays running regardless of external workers.
-    # External workers ADD capacity (1+1=2x), not replace embedded.
-    from backend.server.embedded_worker import get_status as _ew_get_status
-    ew_running = _ew_get_status().get("running", False)
-
-    logger.debug(f"Pool recalculated: mode=parse, workers={len(worker_modes)}, ew={ew_running}")
+    pass
 
 
 # ── Builtin worker virtual session ──────────────────────────
 
-BUILTIN_WORKER_NAME = "__builtin__"
+BUILTIN_WORKER_NAME = "embedded"
 
 
 def _ensure_builtin_worker_session(db: "SQLiteDB") -> int:
@@ -511,10 +492,10 @@ def worker_disconnect(
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """Worker graceful disconnect. Reclaims assigned jobs back to pending."""
-    # Reclaim jobs assigned to this worker (phase_completed preserved)
-    queue = JobQueueManager(db)
-    reclaimed = queue.reclaim_worker_jobs(req.session_id)
+    """Worker graceful disconnect. Reclaims assigned tasks back to pending."""
+    from backend.server.queue.analysis_manager import AnalysisJobManager
+    mgr = AnalysisJobManager(db)
+    reclaimed = mgr.reclaim_worker_tasks(req.session_id)
 
     now = _utcnow_sql()
     cursor = db.conn.cursor()
@@ -698,7 +679,7 @@ def admin_list_workers(
         ew = _ew_status()
         if ew.get("running"):
             for w in workers:
-                if w["worker_name"] == "__builtin__" and w["status"] == "online":
+                if w["worker_name"] == "embedded" and w["status"] == "online":
                     w["current_phase"] = ew.get("current_phase") or w["current_phase"]
                     w["current_file"] = ew.get("current_file") or w["current_file"]
                     # Also override phase_counts and throughput from live daemon
@@ -745,11 +726,11 @@ def admin_block_worker(
 ):
     """Block a worker — it will be forced to disconnect (admin only).
 
-    Immediately reclaims all jobs assigned to this worker back to pending.
+    Immediately reclaims all tasks assigned to this worker back to pending.
     """
-    # Reclaim jobs before blocking (phase_completed preserved)
-    queue = JobQueueManager(db)
-    reclaimed = queue.reclaim_worker_jobs(session_id)
+    from backend.server.queue.analysis_manager import AnalysisJobManager
+    mgr = AnalysisJobManager(db)
+    reclaimed = mgr.reclaim_worker_tasks(session_id)
 
     now = _utcnow_sql()
     cursor = db.conn.cursor()
@@ -841,10 +822,7 @@ def admin_update_auto_processing(
         except Exception:
             pass
 
-    # ParseAheadPool is always parse-only — no mode switching needed
-    if req.mode is not None:
-        from backend.server.queue.manager import set_server_pool_mode
-        set_server_pool_mode(req.mode)
+    # Scheduler handles mode assignment — no global mode switching needed
 
     # Start/stop embedded worker based on auto_processing toggle
     if req.enabled is not None:
@@ -860,20 +838,14 @@ def admin_update_auto_processing(
 # ── Embedded Worker ──────────────────────────────────────────
 
 def _start_embedded_worker(app):
-    """Start the embedded worker — no JWT needed (localhost auto-admin).
-
-    Embedded worker connects to 127.0.0.1 → get_current_user() returns
-    localhost admin automatically. No JWT token required.
-    """
+    """Start the embedded worker using LocalTransport (no HTTP needed)."""
     from backend.server.embedded_worker import start_worker, get_status
 
     if get_status()["running"]:
         return
 
-    port = getattr(app.state, "port", 8000)
-
-    # No token needed — localhost requests get auto-admin via get_current_user
-    result = start_worker(f"http://127.0.0.1:{port}", access_token="")
+    # server_url and access_token are unused by LocalTransport but kept for API compat
+    result = start_worker(server_url="", access_token="")
     if result.get("success"):
         logger.info(f"Embedded worker started (port={port})")
     else:

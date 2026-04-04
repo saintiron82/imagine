@@ -60,6 +60,29 @@ class AnalysisJobManager:
             self.db.conn.commit()
             logger.info(f"Reclaimed {total} stale assigned tasks → pending")
 
+    def reclaim_worker_tasks(self, worker_id: int) -> int:
+        """Reclaim tasks assigned to a specific worker back to pending.
+
+        Called when a worker disconnects or is blocked.
+        """
+        cursor = self.db.conn.cursor()
+        total = 0
+        for phase in ("mc", "vv", "mv"):
+            col = f"{phase}_status"
+            assigned_col = f"{phase}_assigned_to"
+            cursor.execute(f"""
+                UPDATE file_tasks
+                SET {col} = 'pending', {assigned_col} = NULL
+                WHERE {col} = 'assigned' AND {assigned_col} = ?
+            """, (worker_id,))
+            total += cursor.rowcount
+        if total > 0:
+            self.db.conn.commit()
+            logger.info(f"Reclaimed {total} tasks from worker {worker_id} → pending")
+        else:
+            self.db.conn.commit()
+        return total
+
     def _sync_with_files_db(self):
         """Sync file_tasks status with actual files DB state.
 
