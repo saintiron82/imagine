@@ -157,7 +157,12 @@ def scan_and_create_job(
                 file_paths.append(str(f))
 
     if not file_paths:
-        return {"success": False, "error": "No supported files found", "jobs_created": 0}
+        return {
+            "success": False,
+            "error": f"No supported files (.psd/.png/.jpg) found in '{PurePosixPath(folder_path).name}'",
+            "jobs_created": 0,
+            "scanned_path": folder_path,
+        }
 
     # Create analysis job
     mgr = _get_manager(db)
