@@ -38,6 +38,12 @@ export function AuthProvider({ children }) {
   // Track if we should skip Firebase (Electron localhost auto-admin)
   const skipFirebase = useRef(false);
 
+  // ── On mount: clear server tokens (require fresh login every session) ──
+  useEffect(() => {
+    clearTokens();
+    clearWorkerCredentials();
+  }, []);
+
   // ── Layer 1: Firebase Auth state listener ──────────────────
   useEffect(() => {
     const unsub = onAuthStateChanged((fbUser) => {
@@ -45,7 +51,6 @@ export function AuthProvider({ children }) {
       setFirebaseLoading(false);
 
       if (!fbUser) {
-        // Firebase signed out — clear server session too
         clearTokens();
         clearWorkerCredentials();
         setUser(null);
@@ -54,7 +59,8 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // Auto-reconnect removed — user must login every session
+      // Firebase signed in but server connection required separately
+      setUser(null);
       setLoading(false);
     });
 
