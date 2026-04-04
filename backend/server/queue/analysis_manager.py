@@ -35,6 +35,7 @@ class AnalysisJobManager:
         self.db = db
         self._ensure_tables()
         self._ensure_elapsed_columns()
+        self._ensure_snapshot_columns()
         self._fix_check_constraint()
         self._reclaim_stale_assigned()
         self._sync_with_files_db()
@@ -118,6 +119,30 @@ class AnalysisJobManager:
         if synced > 0:
             self.db.conn.commit()
             logger.info(f"Synced {synced} file_tasks with files DB")
+
+    def _ensure_snapshot_columns(self):
+        """Add completion snapshot columns to analysis_jobs if missing."""
+        cursor = self.db.conn.cursor()
+        columns = {
+            "completed_files": "INTEGER",
+            "avg_mc_speed": "REAL",
+            "avg_vv_speed": "REAL",
+            "avg_mv_speed": "REAL",
+            "total_elapsed_s": "REAL",
+            "worker_count": "INTEGER",
+            "started_at": "TEXT",
+        }
+        for col, typedef in columns.items():
+            try:
+                cursor.execute(f"SELECT {col} FROM analysis_jobs LIMIT 1")
+            except Exception:
+                try:
+                    cursor.execute(
+                        f"ALTER TABLE analysis_jobs ADD COLUMN {col} {typedef}"
+                    )
+                    self.db.conn.commit()
+                except Exception:
+                    pass
 
     def _ensure_elapsed_columns(self):
         """Add elapsed_s columns if missing."""
@@ -286,6 +311,19 @@ class AnalysisJobManager:
         )
         self.db.conn.commit()
         return cursor.rowcount > 0
+
+    def delete_job(self, job_id: int) -> bool:
+        """Permanently delete a job and its file_tasks (CASCADE).
+
+        files/vec_files/vec_text are NOT affected — search data persists.
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute("DELETE FROM analysis_jobs WHERE id = ?", (job_id,))
+        deleted = cursor.rowcount > 0
+        self.db.conn.commit()
+        if deleted:
+            logger.info(f"Analysis job {job_id} permanently deleted (file_tasks cascaded)")
+        return deleted
 
     def cancel_job(self, job_id: int) -> bool:
         cursor = self.db.conn.cursor()
@@ -496,7 +534,7 @@ class AnalysisJobManager:
         if not rows:
             return []
 
-        # Assign to worker (started_at is NOT set here — set when worker actually starts processing)
+        # Assign to worker
         task_ids = [r[0] for r in rows]
         placeholders = ",".join("?" * len(task_ids))
         cursor.execute(f"""
@@ -506,6 +544,15 @@ class AnalysisJobManager:
                 updated_at = ?
             WHERE id IN ({placeholders})
         """, [worker_id, now] + task_ids)
+
+        # Mark job started_at (first claim ever)
+        job_ids = set(r[3] for r in rows)
+        for jid in job_ids:
+            cursor.execute(
+                "UPDATE analysis_jobs SET started_at = ? WHERE id = ? AND started_at IS NULL",
+                (now, jid),
+            )
+
         self.db.conn.commit()
 
         return [
@@ -593,7 +640,7 @@ class AnalysisJobManager:
                 self.db.conn.commit()
 
     def _check_job_completion(self, task_id: int):
-        """Check if the analysis job is fully complete."""
+        """Check if the analysis job is fully complete. Write snapshot on completion."""
         cursor = self.db.conn.cursor()
         cursor.execute(
             "SELECT analysis_job_id FROM file_tasks WHERE id = ?",
@@ -614,13 +661,57 @@ class AnalysisJobManager:
         pending = cursor.fetchone()[0]
 
         if pending == 0:
-            # All tasks either done or permanently failed
-            cursor.execute(
-                "UPDATE analysis_jobs SET status = 'completed', completed_at = ? WHERE id = ? AND status = 'active'",
-                (_now(), job_id),
-            )
+            now = _now()
+            # Write completion snapshot
+            cursor.execute("""
+                UPDATE analysis_jobs SET
+                    status = 'completed',
+                    completed_at = ?,
+                    completed_files = (
+                        SELECT COUNT(*) FROM file_tasks
+                        WHERE analysis_job_id = ?
+                          AND mc_status = 'done' AND vv_status = 'done' AND mv_status = 'done'
+                    ),
+                    avg_mc_speed = (
+                        SELECT CASE WHEN AVG(mc_elapsed_s) > 0
+                            THEN ROUND(60.0 / AVG(mc_elapsed_s), 1) END
+                        FROM file_tasks
+                        WHERE analysis_job_id = ? AND mc_elapsed_s > 0
+                    ),
+                    avg_vv_speed = (
+                        SELECT CASE WHEN AVG(vv_elapsed_s) > 0
+                            THEN ROUND(60.0 / AVG(vv_elapsed_s), 1) END
+                        FROM file_tasks
+                        WHERE analysis_job_id = ? AND vv_elapsed_s > 0
+                    ),
+                    avg_mv_speed = (
+                        SELECT CASE WHEN AVG(mv_elapsed_s) > 0
+                            THEN ROUND(60.0 / AVG(mv_elapsed_s), 1) END
+                        FROM file_tasks
+                        WHERE analysis_job_id = ? AND mv_elapsed_s > 0
+                    ),
+                    total_elapsed_s = (
+                        SELECT ROUND(
+                            (julianday(?) - julianday(started_at)) * 86400, 1
+                        ) FROM analysis_jobs WHERE id = ?
+                    ),
+                    worker_count = (
+                        SELECT COUNT(DISTINCT w) FROM (
+                            SELECT mc_assigned_to AS w FROM file_tasks
+                                WHERE analysis_job_id = ? AND mc_assigned_to IS NOT NULL
+                            UNION
+                            SELECT vv_assigned_to FROM file_tasks
+                                WHERE analysis_job_id = ? AND vv_assigned_to IS NOT NULL
+                            UNION
+                            SELECT mv_assigned_to FROM file_tasks
+                                WHERE analysis_job_id = ? AND mv_assigned_to IS NOT NULL
+                        )
+                    )
+                WHERE id = ? AND status = 'active'
+            """, (now, job_id, job_id, job_id, job_id, now, job_id, job_id, job_id, job_id, job_id))
+
             if cursor.rowcount > 0:
-                logger.info(f"Analysis job {job_id} completed")
+                logger.info(f"Analysis job {job_id} completed (snapshot written)")
                 self.db.conn.commit()
 
     # ── Retry Failed ─────────────────────────────────────────

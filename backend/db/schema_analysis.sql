@@ -14,7 +14,16 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
     total_files INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER REFERENCES users(id),
     created_at TEXT DEFAULT (datetime('now')),
-    completed_at TEXT
+    started_at TEXT,                             -- first task claimed
+    completed_at TEXT,
+
+    -- Completion snapshot (written once when status → 'completed')
+    completed_files INTEGER,
+    avg_mc_speed REAL,                          -- files/min
+    avg_vv_speed REAL,
+    avg_mv_speed REAL,
+    total_elapsed_s REAL,                       -- wall time (started → completed)
+    worker_count INTEGER                        -- distinct workers used
 );
 
 CREATE INDEX IF NOT EXISTS idx_analysis_jobs_status

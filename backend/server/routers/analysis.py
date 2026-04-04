@@ -154,6 +154,19 @@ def archive_analysis_job(
     return {"success": True}
 
 
+@router.delete("/api/v1/analysis-jobs/{job_id}")
+def delete_analysis_job(
+    job_id: int,
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Permanently delete a job + file_tasks. Search data (files/vec) preserved."""
+    mgr = _get_manager(db)
+    if not mgr.delete_job(job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"success": True}
+
+
 @router.post("/api/v1/analysis-jobs/{job_id}/cancel")
 def cancel_analysis_job(
     job_id: int,
