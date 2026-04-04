@@ -301,9 +301,9 @@ def _bench_vv(image_path: str) -> float:
 
 def _bench_mv() -> float:
     """Benchmark MV (Qwen3-Embedding) — encode 1 text, return files/min."""
-    from backend.vector.text_embedding import get_embedding_provider
+    from backend.vector.text_embedding import get_text_embedding_provider
 
-    provider = get_embedding_provider()
+    provider = get_text_embedding_provider()
     test_text = "A fantasy knight holding a sword in full armor, anime style character illustration"
 
     # Warm up
@@ -321,15 +321,17 @@ def _bench_mv() -> float:
 def _bench_mc(image_path: str) -> float:
     """Benchmark MC (VLM) — generate caption for 1 image, return files/min."""
     from backend.vision.vision_factory import get_vision_analyzer
+    from PIL import Image as PILImage
 
     analyzer = get_vision_analyzer()
+    img = PILImage.open(image_path).convert("RGB")
 
     # Warm up (first call loads model)
-    analyzer.analyze_image(image_path, "Describe this image briefly.")
+    analyzer.analyze(img)
 
     # Measure
     t = time.perf_counter()
-    analyzer.analyze_image(image_path, "Describe this image briefly.")
+    analyzer.analyze(img)
     elapsed = time.perf_counter() - t
 
     return 60.0 / elapsed if elapsed > 0 else 0
