@@ -34,15 +34,28 @@ class AnalysisJobManager:
     _initialized = False  # Class-level flag: schema + startup tasks run once
 
     def __init__(self, db):
+        import time as _t
         self.db = db
         if not AnalysisJobManager._initialized:
             AnalysisJobManager._initialized = True
+            t0 = _t.perf_counter()
             self._ensure_tables()
+            logger.info(f"[init] _ensure_tables: {_t.perf_counter()-t0:.2f}s")
+            t0 = _t.perf_counter()
             self._ensure_elapsed_columns()
+            logger.info(f"[init] _ensure_elapsed_columns: {_t.perf_counter()-t0:.2f}s")
+            t0 = _t.perf_counter()
             self._ensure_snapshot_columns()
+            logger.info(f"[init] _ensure_snapshot_columns: {_t.perf_counter()-t0:.2f}s")
+            t0 = _t.perf_counter()
             self._fix_check_constraint()
+            logger.info(f"[init] _fix_check_constraint: {_t.perf_counter()-t0:.2f}s")
+            t0 = _t.perf_counter()
             self._reclaim_stale_assigned()
+            logger.info(f"[init] _reclaim_stale_assigned: {_t.perf_counter()-t0:.2f}s")
+            t0 = _t.perf_counter()
             self._sync_with_files_db()
+            logger.info(f"[init] _sync_with_files_db: {_t.perf_counter()-t0:.2f}s")
 
     def _reclaim_stale_assigned(self):
         """Reset assigned tasks back to pending on startup.

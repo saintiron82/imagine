@@ -155,21 +155,29 @@ def _activate_server(app_instance):
     if getattr(app_instance.state, 'ready', False):
         return  # already activated
 
+    import time as _time
     logger.info("Activating server subsystems...")
     from backend.server.deps import get_db
+
+    t0 = _time.perf_counter()
     db = get_db()
+    logger.info(f"[activate] get_db: {_time.perf_counter()-t0:.2f}s")
 
     # Phase 1: DB setup (sequential, no threads)
+    t1 = _time.perf_counter()
     _create_default_admin()
+    logger.info(f"[activate] create_default_admin: {_time.perf_counter()-t1:.2f}s")
+
+    t1 = _time.perf_counter()
     _cleanup_stale_sessions()
-    logger.info("Phase 1: DB setup done")
+    logger.info(f"[activate] cleanup_stale_sessions: {_time.perf_counter()-t1:.2f}s")
 
     # Phase 2: AnalysisJobManager init — heavy DB writes (reclaim + sync)
-    # Must complete BEFORE pools start to avoid DB lock contention
     try:
         from backend.server.queue.analysis_manager import AnalysisJobManager
-        _mgr = AnalysisJobManager(db)  # triggers reclaim + sync
-        logger.info("Phase 2: AnalysisJobManager initialized")
+        t1 = _time.perf_counter()
+        _mgr = AnalysisJobManager(db)
+        logger.info(f"[activate] AnalysisJobManager init: {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
         logger.warning(f"AnalysisJobManager init failed: {e}")
 
