@@ -643,19 +643,24 @@ class DownloadAheadPool(BaseAheadPool):
             with self._active_lock:
                 self._active_files[file_id] = str(local_path)
 
-            # Mark file_task download as done
-            try:
-                cursor = self.db.conn.cursor()
-                cursor.execute(
-                    "UPDATE file_tasks SET download_status = 'done', updated_at = ? WHERE id = ?",
-                    (time.strftime("%Y-%m-%d %H:%M:%S"), task_id),
-                )
-                self.db.conn.commit()
-            except Exception as e:
-                logger.warning(
-                    f"DownloadAhead: failed to update file_tasks "
-                    f"for task {task_id}: {e}"
-                )
+            # Mark file_task download as done (with retry for DB locked)
+            for _retry in range(5):
+                try:
+                    cursor = self.db.conn.cursor()
+                    cursor.execute(
+                        "UPDATE file_tasks SET download_status = 'done', updated_at = ? WHERE id = ?",
+                        (time.strftime("%Y-%m-%d %H:%M:%S"), task_id),
+                    )
+                    self.db.conn.commit()
+                    break
+                except Exception as e:
+                    if "locked" in str(e) and _retry < 4:
+                        time.sleep(1)
+                        continue
+                    logger.warning(
+                        f"DownloadAhead: failed to update file_tasks "
+                        f"for task {task_id}: {e}"
+                    )
 
             logger.info(
                 f"DownloadAhead: downloaded {filename} "
