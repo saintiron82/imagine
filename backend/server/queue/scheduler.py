@@ -189,18 +189,14 @@ class WorkerScheduler:
         return {"phase": phase, "count": count}
 
     def _batch_for_phase(self, phase: str, profile: dict, pending: int) -> int:
-        """Calculate batch size for a phase based on worker's measured speed.
+        """Calculate batch size: target_time × worker_speed.
 
-        Logic:
-          - If worker has measured speed → batch = target_seconds * (speed / 60)
-          - If no measurement → use conservative default
-          - Clamp to [1, min(pending, MAX_BATCH)]
+        Large batches minimize model switch overhead.
         """
         speed_key = f"{phase}_speed"
         speed = profile.get(speed_key)  # files/min or None
 
         if speed and speed > 0:
-            # speed files/min → speed/60 files/sec → target_sec * files/sec
             target = TARGET_BATCH_SECONDS[phase]
             batch = int(target * speed / 60.0)
         else:
@@ -209,17 +205,24 @@ class WorkerScheduler:
         batch = max(1, min(batch, pending, MAX_BATCH[phase]))
         return batch
 
+    def _pick_vv_or_mv(self, profile: dict, vv_p: int, mv_p: int) -> tuple:
+        """Pick VV or MV based on pending count."""
+        if vv_p >= mv_p and vv_p > 0:
+            return ("vv", self._batch_for_phase("vv", profile, vv_p))
+        if mv_p > 0:
+            return ("mv", self._batch_for_phase("mv", profile, mv_p))
+        return (None, 0)
+
     def _decide(
         self, profile: dict, pending: dict, cursor
     ) -> tuple:
-        """Core scheduling algorithm.
+        """Core scheduling algorithm — pool-aware, phase-sticky.
 
-        Strategy:
-        - MC is the bottleneck (10-100x slower than VV/MV)
-        - MC-capable workers should prioritize MC when MC is pending
-        - MC-incapable workers handle VV/MV
-        - When MC pending is 0, MC workers help with VV/MV
-        - Batch size is dynamic per worker (target time × measured speed)
+        Principles:
+        1. PHASE STICKY: keep same phase while pending > 0 (minimize model switches)
+        2. MC PRIORITY: fastest MC workers get MC; slow ones do VV/MV
+        3. MC EXCLUSION: if worker MC speed < 30% of best, skip MC
+        4. COLD START: no measurement → small trial batch (3 files)
 
         Returns: (phase, count)
         """
@@ -227,26 +230,50 @@ class WorkerScheduler:
         vv_p = pending["vv"]
         mv_p = pending["mv"]
         mc_capable = profile.get("mc_capable", True)
+        current_phase = profile.get("current_phase")
 
-        # Rule 1: MC pending + worker MC capable → MC
-        if mc_p > 0 and mc_capable:
-            count = self._batch_for_phase("mc", profile, mc_p)
-            return ("mc", count)
+        # ── Rule 0: Phase sticky — same phase while pending remains ──
+        if current_phase and pending.get(current_phase, 0) > 0:
+            # Verify worker can still do this phase
+            if current_phase == "mc" and not mc_capable:
+                pass  # fall through to reassignment
+            else:
+                count = self._batch_for_phase(current_phase, profile, pending[current_phase])
+                return (current_phase, count)
 
-        # Rule 2: VV/MV — pick the one with more pending
-        if vv_p >= mv_p and vv_p > 0:
-            count = self._batch_for_phase("vv", profile, vv_p)
-            return ("vv", count)
+        # ── Rule 1: MC not capable → VV/MV only ──
+        if not mc_capable:
+            return self._pick_vv_or_mv(profile, vv_p, mv_p)
 
-        if mv_p > 0:
-            count = self._batch_for_phase("mv", profile, mv_p)
-            return ("mv", count)
+        # ── Rule 2: No MC pending → VV/MV ──
+        if mc_p == 0:
+            return self._pick_vv_or_mv(profile, vv_p, mv_p)
 
-        # Rule 3: Only MC pending but worker can't do MC
-        if mc_p > 0 and not mc_capable:
-            return (None, 0)
+        # ── Rule 3: MC pending — should THIS worker do MC? ──
+        my_mc_speed = profile.get("mc_speed")
 
-        return (None, 0)
+        # 3a. Cold start: no measurement → trial batch (3 files)
+        if my_mc_speed is None:
+            return ("mc", min(3, mc_p))
+
+        # 3b. Check if better MC workers exist
+        cursor.execute("""
+            SELECT mc_speed FROM worker_sessions
+            WHERE status = 'online' AND mc_capable = 1 AND mc_speed IS NOT NULL
+            ORDER BY mc_speed DESC
+        """)
+        all_mc_speeds = [r[0] for r in cursor.fetchall() if r[0] and r[0] > 0]
+
+        if all_mc_speeds:
+            best_mc = all_mc_speeds[0]
+
+            # If my speed < 30% of best AND there's VV/MV work → skip MC
+            if my_mc_speed < best_mc * 0.3 and (vv_p > 0 or mv_p > 0):
+                return self._pick_vv_or_mv(profile, vv_p, mv_p)
+
+        # ── Rule 4: MC assigned ──
+        count = self._batch_for_phase("mc", profile, mc_p)
+        return ("mc", count)
 
     # ── Helpers ─────────────────────────────────────────────
 
@@ -275,12 +302,12 @@ class WorkerScheduler:
         """Read worker capability profile from DB."""
         cursor.execute("""
             SELECT mc_capable, mc_speed, vv_speed, mv_speed,
-                   gpu_name, vram_gb
+                   gpu_name, vram_gb, current_phase
             FROM worker_sessions WHERE id = ?
         """, (session_id,))
         row = cursor.fetchone()
         if not row:
-            return {"mc_capable": True}  # default: assume capable
+            return {"mc_capable": True}
         return {
             "mc_capable": bool(row[0]) if row[0] is not None else True,
             "mc_speed": row[1],
@@ -288,6 +315,7 @@ class WorkerScheduler:
             "mv_speed": row[3],
             "gpu_name": row[4],
             "vram_gb": row[5],
+            "current_phase": row[6],
         }
 
     def get_status(self) -> dict:
