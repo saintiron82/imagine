@@ -96,7 +96,7 @@ class SQLiteDB:
 
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new SQLite connection with standard settings."""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
