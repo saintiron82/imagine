@@ -176,11 +176,14 @@ function App() {
         if (status?.primaryLanUrl) setServerLanUrl(status.primaryLanUrl);
       } catch { /* ignore */ }
 
-      // Restore auto-processing (embedded worker) after login
+      // Start embedded worker after login if enabled + active work exists
       try {
         const { getAutoProcessing, updateAutoProcessing } = await import('./api/admin');
+        const { listAnalysisJobs } = await import('./api/analysis');
         const ap = await getAutoProcessing();
-        if (ap?.enabled) {
+        const jobs = await listAnalysisJobs();
+        const hasActiveWork = (jobs?.jobs || []).some(j => j.status === 'active');
+        if (ap?.enabled && hasActiveWork) {
           await updateAutoProcessing({ enabled: true });
         }
       } catch { /* ignore — will be retried from UI */ }
