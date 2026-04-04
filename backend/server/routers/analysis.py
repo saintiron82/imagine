@@ -116,16 +116,14 @@ def scan_and_create_job(
                 base_url=source_config["url"],
                 username=source_config["username"],
                 password=source_config["password"],
-                remote_path="/",
+                remote_path=remote_path,
                 verify_ssl=source_config.get("verify_ssl", True),
             )
-            files = client.list_files(remote_path, recursive=True)
+            files = client.list_files_recursive()
             client.close()
 
-            supported = {".psd", ".png", ".jpg", ".jpeg"}
             for f in files:
-                if PurePosixPath(f).suffix.lower() in supported:
-                    file_paths.append(f"webdav://{source_id}{f}")
+                file_paths.append(f"webdav://{source_id}{f.remote_path}")
         except HTTPException:
             raise
         except Exception as e:
