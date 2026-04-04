@@ -3,7 +3,7 @@ import { Play, Square, RefreshCw, Server, Activity, AlertCircle, Clock, Loader2,
 import { useLocale } from '../i18n';
 import { apiClient, isElectron, getServerUrl, getAccessToken, getRefreshToken } from '../api/client';
 import { getJobStats } from '../api/worker';
-import { registerWorker, listMyWorkers, stopMyWorker } from '../api/admin';
+import { registerWorker, listMyWorkers, stopMyWorker, getBenchmark, runBenchmark } from '../api/admin';
 
 export function MyWorkersSection() {
   const { t } = useLocale();
@@ -969,7 +969,121 @@ function WorkerPage({ appMode }) {
           </div>
         </div>
 
+        {/* Benchmark */}
+        <BenchmarkSection />
+
       </div>
+    </div>
+  );
+}
+
+export function BenchmarkSection() {
+  const { t } = useLocale();
+  const [data, setData] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const result = await getBenchmark();
+      setData(result);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleRun = async () => {
+    setRunning(true);
+    try {
+      const result = await runBenchmark();
+      setData(result);
+    } catch (e) {
+      console.error('Benchmark failed:', e);
+    }
+    setRunning(false);
+  };
+
+  const gradeColor = (grade) => ({
+    S: 'text-yellow-400', A: 'text-green-400', B: 'text-blue-400',
+    C: 'text-orange-400', F: 'text-red-400',
+  }[grade] || 'text-gray-400');
+
+  const scores = data?.scores;
+  const hw = data?.hardware;
+  const profile = data?.profile;
+
+  return (
+    <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold">{t('worker.bench_title')}</h3>
+          <p className="text-sm text-gray-400 mt-1">{t('worker.bench_desc')}</p>
+        </div>
+        <button
+          onClick={handleRun}
+          disabled={running}
+          className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
+            running
+              ? 'bg-gray-600 text-gray-400 cursor-wait'
+              : 'bg-blue-600 hover:bg-blue-500 text-white'
+          }`}
+        >
+          {running ? (
+            <span className="flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" />
+              {t('worker.bench_running')}
+            </span>
+          ) : t('worker.bench_run')}
+        </button>
+      </div>
+
+      {hw && (
+        <div className="text-sm text-gray-400 mb-3">
+          {hw.gpu_name || 'CPU'} · {hw.gpu_type} · {hw.vram_gb}GB
+        </div>
+      )}
+
+      {scores ? (
+        <div className="space-y-3">
+          {/* Overall */}
+          <div className="flex items-center gap-4 p-3 bg-gray-900/50 rounded">
+            <span className={`text-3xl font-bold ${gradeColor(scores.grade)}`}>
+              {scores.grade}
+            </span>
+            <div>
+              <div className="text-sm text-gray-400">{t('worker.bench_score')}</div>
+              <div className="text-xl font-mono">{scores.overall}</div>
+            </div>
+          </div>
+
+          {/* Per-phase */}
+          <div className="grid grid-cols-3 gap-3">
+            {['mc', 'vv', 'mv'].map(phase => (
+              <div key={phase} className="p-3 bg-gray-900/50 rounded text-center">
+                <div className="text-xs text-gray-500 uppercase mb-1">{phase.toUpperCase()}</div>
+                <div className={`text-lg font-bold ${gradeColor(scores[`${phase}_grade`])}`}>
+                  {scores[`${phase}_grade`]}
+                </div>
+                <div className="text-sm font-mono text-gray-300">{scores[phase]}</div>
+                <div className="text-xs text-gray-500">
+                  {profile?.[`${phase}_speed`] ? `${profile[`${phase}_speed`]}/m` : '-'}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {profile?.benchmarked_at && (
+            <div className="text-xs text-gray-500 text-right">
+              {t('worker.bench_last')}: {profile.benchmarked_at}
+            </div>
+          )}
+        </div>
+      ) : !loading && (
+        <div className="text-center text-gray-500 py-6">
+          {t('worker.bench_no_data')}
+        </div>
+      )}
     </div>
   );
 }

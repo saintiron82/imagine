@@ -930,3 +930,64 @@ def admin_update_embedded_worker(
     status = get_status()
     logger.info(f"Admin updated embedded_worker: enabled={req.enabled}, running={status['running']}")
     return {"ok": True, **status}
+
+
+# ── Benchmark ──────────────────────────────────────────────
+
+@router.get("/admin/workers/benchmark")
+def get_benchmark(
+    admin: dict = Depends(require_admin),
+):
+    """Get cached benchmark results (speed profile + scores)."""
+    from backend.worker.capability import load_speed_profile, collect_capability, calculate_scores
+
+    cap = collect_capability(include_speed=False)
+    profile = load_speed_profile()
+
+    if profile:
+        scores = profile.get("scores") or calculate_scores(profile)
+    else:
+        scores = None
+
+    return {
+        "hardware": {
+            "gpu_name": cap.get("gpu_name", ""),
+            "gpu_type": cap.get("gpu_type", "cpu"),
+            "vram_gb": cap.get("vram_gb", 0),
+        },
+        "profile": profile,
+        "scores": scores,
+    }
+
+
+@router.post("/admin/workers/benchmark")
+def run_benchmark_endpoint(
+    admin: dict = Depends(require_admin),
+):
+    """Run benchmark on server machine. Returns speed profile + scores.
+
+    This runs MC/VV/MV benchmarks sequentially (~30s total).
+    Blocks until complete.
+    """
+    from backend.worker.capability import run_benchmark, collect_capability
+
+    cap = collect_capability(include_speed=False)
+    logger.info(f"Benchmark started: {cap.get('gpu_name', 'unknown')}")
+
+    profile = run_benchmark()
+
+    logger.info(
+        f"Benchmark complete: MC={profile.get('mc_speed')}/m "
+        f"VV={profile.get('vv_speed')}/m MV={profile.get('mv_speed')}/m "
+        f"Grade={profile.get('scores', {}).get('grade', '?')}"
+    )
+
+    return {
+        "hardware": {
+            "gpu_name": cap.get("gpu_name", ""),
+            "gpu_type": cap.get("gpu_type", "cpu"),
+            "vram_gb": cap.get("vram_gb", 0),
+        },
+        "profile": profile,
+        "scores": profile.get("scores"),
+    }

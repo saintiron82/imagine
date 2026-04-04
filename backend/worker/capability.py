@@ -157,7 +157,7 @@ def load_speed_profile() -> Optional[Dict[str, float]]:
         if not data.get("mc_speed") and not data.get("vv_speed"):
             return None
         # Check if GPU changed since last benchmark
-        current_gpu = collect_capability().get("gpu_name", "")
+        current_gpu = collect_capability(include_speed=False).get("gpu_name", "")
         if data.get("gpu_name") and data["gpu_name"] != current_gpu:
             logger.info(
                 f"GPU changed ({data['gpu_name']} → {current_gpu}), "
@@ -275,8 +275,66 @@ def run_benchmark() -> Dict[str, Any]:
         logger.warning(f"  MC benchmark failed: {e}")
         profile["mc_speed"] = 0  # 0 = tried but failed → incapable
 
+    # Calculate scores
+    profile["scores"] = calculate_scores(profile)
+
     save_speed_profile(profile)
     return profile
+
+
+def calculate_scores(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Calculate performance scores from speed measurements.
+
+    Scoring:
+    - Per-phase: (measured / baseline) × 100. Baseline = design speed.
+      100 = reference speed, >100 = faster, <100 = slower, 0 = incapable.
+    - Overall: weighted average. MC weight = 70% (bottleneck determines throughput).
+
+    Grades:
+      S: ≥150  (50%+ above baseline)
+      A: ≥100  (meets or exceeds baseline)
+      B: ≥50   (below baseline but usable)
+      C: ≥10   (very slow, CPU/Ollama level)
+      F: 0     (incapable)
+    """
+    BASELINE = {"mc": 8, "vv": 80, "mv": 120}  # files/min design speed
+    WEIGHT = {"mc": 0.7, "vv": 0.15, "mv": 0.15}  # MC dominates throughput
+
+    scores = {}
+    weighted_sum = 0
+    total_weight = 0
+
+    for phase in ("mc", "vv", "mv"):
+        speed = profile.get(f"{phase}_speed")
+        if speed and speed > 0:
+            score = round(speed / BASELINE[phase] * 100)
+        else:
+            score = 0
+        scores[phase] = score
+        weighted_sum += score * WEIGHT[phase]
+        total_weight += WEIGHT[phase]
+
+    overall = round(weighted_sum / total_weight) if total_weight > 0 else 0
+    scores["overall"] = overall
+
+    # Grade
+    def _grade(s):
+        if s >= 150:
+            return "S"
+        if s >= 100:
+            return "A"
+        if s >= 50:
+            return "B"
+        if s >= 10:
+            return "C"
+        return "F"
+
+    scores["grade"] = _grade(overall)
+    scores["mc_grade"] = _grade(scores["mc"])
+    scores["vv_grade"] = _grade(scores["vv"])
+    scores["mv_grade"] = _grade(scores["mv"])
+
+    return scores
 
 
 def _bench_vv(image_path: str) -> float:

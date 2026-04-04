@@ -114,6 +114,16 @@ export async function updateEmbeddedWorker(config) {
   return apiClient.patch('/api/v1/admin/workers/embedded-worker', config);
 }
 
+// ── Benchmark ───────────────────────────────────────────
+
+export async function getBenchmark() {
+  return apiClient.get('/api/v1/admin/workers/benchmark');
+}
+
+export async function runBenchmark() {
+  return apiClient.post('/api/v1/admin/workers/benchmark');
+}
+
 // ── Worker Self-service ──────────────────────────────────
 
 export async function registerWorker() {
