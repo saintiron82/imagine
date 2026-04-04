@@ -1038,9 +1038,33 @@ export function BenchmarkSection() {
         </button>
       </div>
 
+      {/* Hardware Info */}
       {hw && (
-        <div className="text-sm text-gray-400 mb-3">
-          {hw.gpu_name || 'CPU'} · {hw.gpu_type} · {hw.vram_gb}GB
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mb-4 p-3 bg-gray-900/50 rounded">
+          <div className="flex justify-between">
+            <span className="text-gray-500">CPU</span>
+            <span className="text-gray-300 font-mono">{hw.cpu_name || '—'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">코어</span>
+            <span className="text-gray-300 font-mono">{hw.cpu_count || '—'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">메모리</span>
+            <span className="text-gray-300 font-mono">{hw.memory_total_gb ? `${hw.memory_total_gb} GB` : '—'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">GPU</span>
+            <span className="text-gray-300 font-mono">{hw.gpu_name || 'CPU'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">VRAM</span>
+            <span className="text-gray-300 font-mono">{hw.vram_gb ? `${hw.vram_gb} GB` : '—'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">OS</span>
+            <span className="text-gray-300 font-mono">{hw.os || '—'} {hw.arch || ''}</span>
+          </div>
         </div>
       )}
 
@@ -1068,14 +1092,12 @@ export function BenchmarkSection() {
           <div className="grid grid-cols-3 gap-3">
             {['mc', 'vv', 'mv'].map(phase => {
               const p = scores.phases?.[phase] || {};
-              const diff = scores.difficulty?.[phase];
               return (
                 <div key={phase} className={`p-3 rounded text-center ${
                   p.status === 'incapable' ? 'bg-red-900/20 border border-red-800/50' : 'bg-gray-900/50'
                 }`}>
                   <div className="text-xs text-gray-500 uppercase mb-1">
                     {phase.toUpperCase()}
-                    {diff > 1 && <span className="text-yellow-500 ml-1">×{diff}</span>}
                   </div>
                   {p.status === 'incapable' ? (
                     <div className="text-lg font-bold text-red-400">불가</div>

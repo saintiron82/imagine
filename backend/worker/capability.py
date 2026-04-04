@@ -326,11 +326,10 @@ def calculate_scores(profile: Dict[str, Any]) -> Dict[str, Any]:
     Reference M5 32GB: MC=8.6/m, VV=347/m, MV=3412/m
     Multiplier = MV_ref / phase_ref = { MC: 3412/8.6=397, VV: 3412/347=10 }
     """
-    # Difficulty multipliers (MV-equivalent, from M5 reference)
-    DIFFICULTY = {"mc": 397, "vv": 10, "mv": 1}
+    # Difficulty multipliers (MV-equivalent, rounded)
+    DIFFICULTY = {"mc": 400, "vv": 80, "mv": 1}
 
     scores = {
-        "difficulty": dict(DIFFICULTY),
         "phases": {},        # 개별 phase 점수
         "incapable": [],     # 불능 phase 목록
     }
