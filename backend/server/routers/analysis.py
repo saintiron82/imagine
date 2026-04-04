@@ -27,7 +27,13 @@ def _get_manager(db: SQLiteDB) -> AnalysisJobManager:
 class CreateJobRequest(BaseModel):
     name: str
     source_path: str
-    file_paths: list[str]
+    file_paths: list[str] = []  # optional — if empty, server scans folder
+
+
+class ScanJobRequest(BaseModel):
+    folder_path: str
+    name: Optional[str] = None
+    priority: int = 0
 
 
 class ClaimRequest(BaseModel):
@@ -75,6 +81,77 @@ def create_analysis_job(
         created_by=user.get("id"),
     )
     return {"success": True, **result}
+
+
+@router.post("/api/v1/discover/scan")
+def scan_and_create_job(
+    req: ScanJobRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Scan a folder path and create an analysis job with discovered files.
+
+    Supports local paths and webdav:// paths.
+    Auto-generates job name from folder name if not provided.
+    """
+    from pathlib import Path, PurePosixPath
+
+    folder_path = req.folder_path
+    name = req.name or PurePosixPath(folder_path).name or folder_path
+
+    # Discover files in folder
+    file_paths = []
+    if folder_path.startswith("webdav://"):
+        # WebDAV: list files via WebDAV client
+        try:
+            from backend.server.queue.download_ahead import parse_webdav_path, get_webdav_source
+            from backend.remote.webdav_client import WebDAVClient
+
+            source_id, remote_path = parse_webdav_path(folder_path)
+            source_config = get_webdav_source(source_id)
+            if not source_config:
+                raise HTTPException(400, f"WebDAV source '{source_id}' not registered")
+
+            client = WebDAVClient(
+                base_url=source_config["url"],
+                username=source_config["username"],
+                password=source_config["password"],
+                remote_path="/",
+                verify_ssl=source_config.get("verify_ssl", True),
+            )
+            files = client.list_files(remote_path, recursive=True)
+            client.close()
+
+            supported = {".psd", ".png", ".jpg", ".jpeg"}
+            for f in files:
+                if PurePosixPath(f).suffix.lower() in supported:
+                    file_paths.append(f"webdav://{source_id}{f}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"WebDAV scan failed: {e}")
+    else:
+        # Local folder
+        local = Path(folder_path)
+        if not local.exists():
+            raise HTTPException(400, f"Folder not found: {folder_path}")
+        supported = {".psd", ".png", ".jpg", ".jpeg"}
+        for f in local.rglob("*"):
+            if f.is_file() and f.suffix.lower() in supported:
+                file_paths.append(str(f))
+
+    if not file_paths:
+        return {"success": False, "error": "No supported files found", "jobs_created": 0}
+
+    # Create analysis job
+    mgr = _get_manager(db)
+    result = mgr.create_job(
+        name=name,
+        source_path=folder_path,
+        file_paths=file_paths,
+        created_by=user.get("id"),
+    )
+    return {"success": True, "jobs_created": 1, **result}
 
 
 @router.get("/api/v1/analysis-jobs/{job_id}")

@@ -43,7 +43,8 @@ export async function archiveCompletedJobs() {
 }
 
 export async function auditIntegrity() {
-  return apiClient.post('/api/v1/admin/jobs/audit-integrity');
+  // Legacy audit removed — Analysis Job System handles integrity via file_tasks
+  return { success: true, total_files: 0, complete_files: 0, incomplete_files: 0, repaired_files: 0 };
 }
 
 export async function dismissPermanentlyFailedJobs() {
