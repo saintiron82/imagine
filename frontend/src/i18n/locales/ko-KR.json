@@ -946,7 +946,7 @@
   "admin.thumb_missing": "미보유",
   "admin.thumb_progress": "진행률",
   "admin.thumb_no_data": "파일 없음",
-  "admin.tab_dashboard": "상황판",
+  "admin.tab_dashboard": "저장소 정보",
   "admin.dash_db_stats": "DB 통계",
   "admin.dash_total": "전체",
   "admin.dash_searchable": "검색 가능",
