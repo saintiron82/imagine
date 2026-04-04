@@ -1,16 +1,19 @@
 """
 WorkerScheduler — central task assignment for Analysis Job System v1.
 
-The server decides which phase (mc/vv/mv) and how many tasks to assign
-to each worker, based on:
-1. Global queue state (pending counts per phase)
-2. Worker capability profile (GPU spec + measured speed)
+Implements Algorithm E' (Pressure-based scheduling):
+- GPU class detection (strong/weak/embedded/cpu)
+- Per-phase pressure = (pending / (workers_on + 1)) × phase_weight
+- MC penalty by GPU class (cpu can't, weak penalized)
+- Phase stability (don't switch if current phase has work — minimize model load)
+- MV completion bonus (finish jobs faster)
+- Dynamic batch sizing (target time × measured speed)
 
-Workers just say "give me work" — the scheduler decides what.
-
+Ported from legacy manager.py._pick_best_phase() + _decide_worker_mode().
 No legacy dependency (job_queue, manager.py).
 """
 
+import json
 import logging
 import time
 from datetime import datetime
@@ -20,46 +23,50 @@ from backend.db.sqlite_client import SQLiteDB
 
 logger = logging.getLogger(__name__)
 
-# Target batch duration per phase (seconds)
-# MC is the bottleneck → longer batch to reduce claim overhead
-# VV/MV are fast → shorter batch for responsive progress updates
+# ── Constants ───────────────────────────────────────────────
+
+# Per-phase processing time (seconds/file) — used for pressure weighting
+PHASE_TIME = {"mc": 8, "vv": 0.5, "mv": 0.25}
+
+# MC penalty by GPU class — higher = less likely to get MC
+# None = cannot do MC at all
+MC_PENALTY = {
+    "strong": 1.0,     # Full speed MC
+    "embedded": 1.0,   # Server-local, same as strong
+    "weak": 2.0,       # Can do MC but slower → penalized
+    # "cpu": None      # Cannot do MC (not in dict → excluded)
+}
+
+# Target batch duration (seconds) — larger = fewer model switches
 TARGET_BATCH_SECONDS = {
-    "mc": 600,   # ~10 min (MC ~8s/file → ~75 files for fast worker)
-    "vv": 120,   # ~2 min  (VV ~0.7s/file → ~170 files)
-    "mv": 120,   # ~2 min  (MV ~0.5s/file → ~240 files)
+    "mc": 600,   # ~10 min
+    "vv": 120,   # ~2 min
+    "mv": 120,   # ~2 min
 }
 
-# Fallback batch sizes when no measured speed available
-DEFAULT_BATCH = {
-    "mc": 10,    # conservative: ~1.3 min at 8s/file
-    "vv": 50,    # ~35s at 0.7s/file
-    "mv": 50,    # ~25s at 0.5s/file
-}
+# Fallback batch sizes (no measured speed yet)
+DEFAULT_BATCH = {"mc": 10, "vv": 50, "mv": 50}
 
-# Absolute caps (prevent runaway)
-MAX_BATCH = {
-    "mc": 100,
-    "vv": 500,
-    "mv": 500,
-}
+# Absolute caps
+MAX_BATCH = {"mc": 200, "vv": 500, "mv": 500}
 
-# MC capability threshold
-MC_VRAM_THRESHOLD_GB = 4.0      # Discrete GPU
-MC_METAL_THRESHOLD_GB = 16.0    # Apple Metal (unified memory)
+# Cold start trial batch (first claim, no measurements)
+COLD_START_BATCH = 3
+
+# Phase stability threshold: only switch if best > current × this factor
+STABILITY_FACTOR = 2.0
 
 
 class WorkerScheduler:
-    """Central scheduler that assigns phase + tasks to workers.
+    """Central scheduler — decides phase + batch size for each worker.
 
-    Usage:
-        scheduler = WorkerScheduler(db)
-        # Worker connects:
-        scheduler.register_worker(session_id, gpu="RTX 4090", vram_gb=24)
-        # Worker requests work:
-        result = scheduler.assign(session_id)
-        # → {"phase": "mc", "count": 20}
-        # Worker completes batch:
-        scheduler.update_speed(session_id, "mc", files_per_min=7.8)
+    Algorithm E' (pressure-based):
+    1. Classify worker GPU (strong/weak/embedded/cpu)
+    2. Calculate pressure per phase: (pending / (workers_on + 1)) × time_weight
+    3. Apply MC penalty by GPU class
+    4. Phase sticky: stay in current phase unless another has 2× pressure
+    5. MV completion bonus: finishing MV = file complete → prioritize
+    6. Batch size: target_time × measured_speed (dynamic per worker)
     """
 
     def __init__(self, db: SQLiteDB):
@@ -71,11 +78,12 @@ class WorkerScheduler:
         cursor = self.db.conn.cursor()
         columns = {
             "mc_capable": "BOOLEAN DEFAULT 1",
-            "mc_speed": "REAL",       # files/min (measured)
+            "mc_speed": "REAL",
             "vv_speed": "REAL",
             "mv_speed": "REAL",
             "gpu_name": "TEXT",
             "vram_gb": "REAL",
+            "gpu_class": "TEXT",   # strong/weak/embedded/cpu
         }
         for col, typedef in columns.items():
             try:
@@ -95,43 +103,58 @@ class WorkerScheduler:
         self, session_id: int, gpu: str = "", vram_gb: float = 0,
         is_metal: bool = False,
     ):
-        """Register worker GPU specs for initial capability estimation.
-
-        Called on worker connect. Sets mc_capable based on hardware.
-        """
-        # Estimate MC capability from specs
-        if is_metal:
-            mc_capable = vram_gb >= MC_METAL_THRESHOLD_GB
-        else:
-            mc_capable = vram_gb >= MC_VRAM_THRESHOLD_GB
+        """Register worker specs → determine GPU class + MC capability."""
+        gpu_class = self._classify_gpu(gpu, vram_gb, is_metal)
+        mc_capable = gpu_class in MC_PENALTY  # strong/weak/embedded can do MC
 
         cursor = self.db.conn.cursor()
         cursor.execute("""
             UPDATE worker_sessions
-            SET gpu_name = ?, vram_gb = ?, mc_capable = ?
+            SET gpu_name = ?, vram_gb = ?, gpu_class = ?, mc_capable = ?
             WHERE id = ?
-        """, (gpu, vram_gb, mc_capable, session_id))
+        """, (gpu, vram_gb, gpu_class, mc_capable, session_id))
         self.db.conn.commit()
 
         logger.info(
             f"Scheduler: worker {session_id} registered "
-            f"(gpu={gpu}, vram={vram_gb}GB, mc_capable={mc_capable})"
+            f"(gpu={gpu}, vram={vram_gb}GB, class={gpu_class}, mc={mc_capable})"
         )
+
+    def _classify_gpu(self, gpu: str, vram_gb: float, is_metal: bool) -> str:
+        """Classify GPU into: embedded, strong, weak, cpu."""
+        if not gpu and vram_gb == 0:
+            return "cpu"
+
+        # Read active tier's VRAM requirement
+        try:
+            from backend.utils.config import get_config
+            cfg = get_config()
+            tiers = cfg.get("ai_mode.tiers", {})
+            active_tier = cfg.get("ai_mode.override") or "pro"
+            tier_cfg = tiers.get(active_tier, {})
+            vram_min = tier_cfg.get("vram_min", 4)
+        except Exception:
+            vram_min = 4
+
+        if is_metal:
+            # Apple Metal: unified memory, needs more
+            return "strong" if vram_gb >= 16 else ("weak" if vram_gb >= 8 else "cpu")
+        else:
+            # Discrete GPU
+            threshold = vram_min * 0.9
+            if vram_gb >= threshold:
+                return "strong"
+            elif vram_gb > 0:
+                return "weak"
+            return "cpu"
 
     # ── Speed Updates ───────────────────────────────────────
 
-    def update_speed(
-        self, session_id: int, phase: str, files_per_min: float
-    ):
-        """Update measured processing speed for a worker+phase.
-
-        Called after batch completion with actual elapsed time.
-        Uses exponential moving average (alpha=0.3) to smooth noise.
-        """
+    def update_speed(self, session_id: int, phase: str, files_per_min: float):
+        """Update measured speed (EMA smoothed)."""
         speed_col = f"{phase}_speed"
         cursor = self.db.conn.cursor()
 
-        # Read current speed for EMA
         try:
             cursor.execute(
                 f"SELECT {speed_col} FROM worker_sessions WHERE id = ?",
@@ -142,8 +165,7 @@ class WorkerScheduler:
         except Exception:
             current = None
 
-        if current is not None and current > 0:
-            # EMA: 70% old + 30% new
+        if current and current > 0:
             smoothed = current * 0.7 + files_per_min * 0.3
         else:
             smoothed = files_per_min
@@ -154,47 +176,137 @@ class WorkerScheduler:
         )
         self.db.conn.commit()
 
-        # If worker proves it can do MC, mark capable
-        if phase == "mc" and files_per_min > 0.5:
-            cursor.execute(
-                "UPDATE worker_sessions SET mc_capable = 1 WHERE id = ?",
-                (session_id,),
-            )
-            self.db.conn.commit()
-
     # ── Central Assignment ──────────────────────────────────
 
     def assign(self, session_id: int) -> Dict[str, Any]:
-        """Decide which phase and how many tasks to assign to a worker.
+        """Decide phase + batch size for a worker.
 
-        Returns:
-            {"phase": "mc"|"vv"|"mv"|None, "count": int}
-            phase=None means no work available.
+        Returns: {"phase": "mc"|"vv"|"mv"|None, "count": int}
         """
         cursor = self.db.conn.cursor()
 
-        # 1. Get pending counts per phase
+        # 1. Pending counts
         pending = self._get_pending_counts(cursor)
         mc_p, vv_p, mv_p = pending["mc"], pending["vv"], pending["mv"]
-
         if mc_p + vv_p + mv_p == 0:
             return {"phase": None, "count": 0}
 
-        # 2. Get worker profile
+        # 2. Worker profile
         profile = self._get_worker_profile(cursor, session_id)
+        gpu_class = profile.get("gpu_class", "cpu")
+        current_phase = profile.get("current_phase")
 
-        # 3. Assignment decision
-        phase, count = self._decide(profile, pending, cursor)
+        # 3. Throttle check
+        throttle = profile.get("throttle", "normal")
+        if throttle == "critical":
+            return {"phase": None, "count": 0}
+
+        # 4. Workers currently assigned to each phase
+        cursor.execute("""
+            SELECT assigned_mode, COUNT(*) FROM worker_sessions
+            WHERE status = 'online' AND assigned_mode IS NOT NULL
+            GROUP BY assigned_mode
+        """)
+        workers_on = dict(cursor.fetchall())
+
+        # 5. Determine capable phases
+        capable = {"mv": mv_p}  # all workers can do MV
+        if gpu_class in MC_PENALTY:
+            capable["mc"] = mc_p
+            capable["vv"] = vv_p
+        elif gpu_class == "cpu":
+            # CPU can do VV (SigLIP2 supports CPU) but not MC
+            capable["vv"] = vv_p
+
+        # 6. Algorithm E' — pressure-based selection
+        phase = self._pick_best_phase(
+            capable, workers_on, current_phase, gpu_class
+        )
+
+        if not phase:
+            return {"phase": None, "count": 0}
+
+        # 7. Batch size
+        count = self._batch_for_phase(phase, profile, pending.get(phase, 0))
+
+        # 8. Cold start: no speed measurement → small trial
+        speed_key = f"{phase}_speed"
+        if profile.get(speed_key) is None:
+            count = min(count, COLD_START_BATCH)
+
+        # 9. Throttle reduction
+        if throttle == "danger":
+            count = min(count, 1)
+        elif throttle == "warning":
+            count = max(1, count // 2)
+
+        # 10. Update assigned_mode for monitoring
+        if phase != current_phase:
+            cursor.execute(
+                "UPDATE worker_sessions SET assigned_mode = ? WHERE id = ?",
+                (phase, session_id),
+            )
+            self.db.conn.commit()
 
         return {"phase": phase, "count": count}
 
-    def _batch_for_phase(self, phase: str, profile: dict, pending: int) -> int:
-        """Calculate batch size: target_time × worker_speed.
+    def _pick_best_phase(
+        self, claimable: Dict[str, int], workers_on: Dict[str, int],
+        current_phase: Optional[str], gpu_class: str,
+    ) -> Optional[str]:
+        """Algorithm E' — pressure-based phase selection.
 
-        Large batches minimize model switch overhead.
+        pressure = (pending / (workers_on + 1)) × phase_time_weight
+
+        Factors:
+        - MC penalty by GPU class (weak=2x, cpu=excluded)
+        - MV completion bonus (+10 per pending, finishing = file complete)
+        - Unserved phase boost (×1.5 if no worker on this phase)
+        - Phase stability (stay in current unless better has 2× pressure)
         """
-        speed_key = f"{phase}_speed"
-        speed = profile.get(speed_key)  # files/min or None
+        pressure = {}
+
+        for phase, pending in claimable.items():
+            if pending <= 0:
+                continue
+
+            # Base pressure: pending work per available worker, weighted by time
+            w = PHASE_TIME.get(phase, 1)
+            n = workers_on.get(phase, 0)
+            p = (pending / (n + 1)) * w
+
+            # MC penalty by GPU class
+            if phase == "mc":
+                penalty = MC_PENALTY.get(gpu_class)
+                if penalty is None:
+                    continue  # CPU cannot do MC at all
+                p /= penalty
+
+            # Unserved phase boost: no worker assigned → 1.5× priority
+            if n == 0 and pending > 0:
+                p *= 1.5
+
+            # MV completion bonus: each MV done = 1 file fully complete
+            if phase == "mv":
+                p += pending * 10
+
+            pressure[phase] = p
+
+        if not pressure:
+            return None
+
+        best = max(pressure, key=pressure.get)
+
+        # Phase stability: only switch if best > current × STABILITY_FACTOR
+        if current_phase and current_phase in pressure and pressure[current_phase] > 0:
+            if pressure[best] <= pressure[current_phase] * STABILITY_FACTOR:
+                return current_phase
+
+        return best if pressure[best] > 0 else None
+
+    def _batch_for_phase(self, phase: str, profile: dict, pending: int) -> int:
+        """Batch size = target_time × measured_speed."""
+        speed = profile.get(f"{phase}_speed")
 
         if speed and speed > 0:
             target = TARGET_BATCH_SECONDS[phase]
@@ -202,83 +314,12 @@ class WorkerScheduler:
         else:
             batch = DEFAULT_BATCH[phase]
 
-        batch = max(1, min(batch, pending, MAX_BATCH[phase]))
-        return batch
-
-    def _pick_vv_or_mv(self, profile: dict, vv_p: int, mv_p: int) -> tuple:
-        """Pick VV or MV based on pending count."""
-        if vv_p >= mv_p and vv_p > 0:
-            return ("vv", self._batch_for_phase("vv", profile, vv_p))
-        if mv_p > 0:
-            return ("mv", self._batch_for_phase("mv", profile, mv_p))
-        return (None, 0)
-
-    def _decide(
-        self, profile: dict, pending: dict, cursor
-    ) -> tuple:
-        """Core scheduling algorithm — pool-aware, phase-sticky.
-
-        Principles:
-        1. PHASE STICKY: keep same phase while pending > 0 (minimize model switches)
-        2. MC PRIORITY: fastest MC workers get MC; slow ones do VV/MV
-        3. MC EXCLUSION: if worker MC speed < 30% of best, skip MC
-        4. COLD START: no measurement → small trial batch (3 files)
-
-        Returns: (phase, count)
-        """
-        mc_p = pending["mc"]
-        vv_p = pending["vv"]
-        mv_p = pending["mv"]
-        mc_capable = profile.get("mc_capable", True)
-        current_phase = profile.get("current_phase")
-
-        # ── Rule 0: Phase sticky — same phase while pending remains ──
-        if current_phase and pending.get(current_phase, 0) > 0:
-            # Verify worker can still do this phase
-            if current_phase == "mc" and not mc_capable:
-                pass  # fall through to reassignment
-            else:
-                count = self._batch_for_phase(current_phase, profile, pending[current_phase])
-                return (current_phase, count)
-
-        # ── Rule 1: MC not capable → VV/MV only ──
-        if not mc_capable:
-            return self._pick_vv_or_mv(profile, vv_p, mv_p)
-
-        # ── Rule 2: No MC pending → VV/MV ──
-        if mc_p == 0:
-            return self._pick_vv_or_mv(profile, vv_p, mv_p)
-
-        # ── Rule 3: MC pending — should THIS worker do MC? ──
-        my_mc_speed = profile.get("mc_speed")
-
-        # 3a. Cold start: no measurement → trial batch (3 files)
-        if my_mc_speed is None:
-            return ("mc", min(3, mc_p))
-
-        # 3b. Check if better MC workers exist
-        cursor.execute("""
-            SELECT mc_speed FROM worker_sessions
-            WHERE status = 'online' AND mc_capable = 1 AND mc_speed IS NOT NULL
-            ORDER BY mc_speed DESC
-        """)
-        all_mc_speeds = [r[0] for r in cursor.fetchall() if r[0] and r[0] > 0]
-
-        if all_mc_speeds:
-            best_mc = all_mc_speeds[0]
-
-            # If my speed < 30% of best AND there's VV/MV work → skip MC
-            if my_mc_speed < best_mc * 0.3 and (vv_p > 0 or mv_p > 0):
-                return self._pick_vv_or_mv(profile, vv_p, mv_p)
-
-        # ── Rule 4: MC assigned ──
-        count = self._batch_for_phase("mc", profile, mc_p)
-        return ("mc", count)
+        return max(1, min(batch, pending, MAX_BATCH[phase]))
 
     # ── Helpers ─────────────────────────────────────────────
 
     def _get_pending_counts(self, cursor) -> Dict[str, int]:
-        """Query pending task counts per AI phase (mc/vv/mv)."""
+        """Pending task counts per AI phase."""
         cursor.execute("""
             SELECT
                 SUM(CASE WHEN parse_status='done' AND mc_status='pending'
@@ -299,47 +340,58 @@ class WorkerScheduler:
         }
 
     def _get_worker_profile(self, cursor, session_id: int) -> dict:
-        """Read worker capability profile from DB."""
+        """Read worker profile from DB."""
         cursor.execute("""
             SELECT mc_capable, mc_speed, vv_speed, mv_speed,
-                   gpu_name, vram_gb, current_phase
+                   gpu_name, vram_gb, gpu_class, current_phase,
+                   resources_json
             FROM worker_sessions WHERE id = ?
         """, (session_id,))
         row = cursor.fetchone()
         if not row:
-            return {"mc_capable": True}
+            return {"mc_capable": False, "gpu_class": "cpu"}
+
+        throttle = "normal"
+        if row[8]:
+            try:
+                res = json.loads(row[8])
+                throttle = res.get("throttle_level", "normal")
+            except Exception:
+                pass
+
         return {
-            "mc_capable": bool(row[0]) if row[0] is not None else True,
+            "mc_capable": bool(row[0]) if row[0] is not None else False,
             "mc_speed": row[1],
             "vv_speed": row[2],
             "mv_speed": row[3],
             "gpu_name": row[4],
             "vram_gb": row[5],
-            "current_phase": row[6],
+            "gpu_class": row[6] or "cpu",
+            "current_phase": row[7],
+            "throttle": throttle,
         }
 
     def get_status(self) -> dict:
-        """Get scheduler status for monitoring/debugging."""
+        """Scheduler status for monitoring."""
         cursor = self.db.conn.cursor()
         pending = self._get_pending_counts(cursor)
 
-        # Count online workers by capability
         cursor.execute("""
-            SELECT
-                COUNT(*) AS total,
-                SUM(CASE WHEN mc_capable = 1 THEN 1 ELSE 0 END) AS mc_capable
-            FROM worker_sessions
+            SELECT gpu_class, COUNT(*) FROM worker_sessions
             WHERE status = 'online'
+            GROUP BY gpu_class
         """)
-        row = cursor.fetchone()
-        total_workers = row[0] or 0
-        mc_workers = row[1] or 0
+        by_class = dict(cursor.fetchall())
+
+        cursor.execute("""
+            SELECT assigned_mode, COUNT(*) FROM worker_sessions
+            WHERE status = 'online' AND assigned_mode IS NOT NULL
+            GROUP BY assigned_mode
+        """)
+        by_mode = dict(cursor.fetchall())
 
         return {
             "pending": pending,
-            "workers": {
-                "total": total_workers,
-                "mc_capable": mc_workers,
-                "vv_mv_only": total_workers - mc_workers,
-            },
+            "workers_by_class": by_class,
+            "workers_by_mode": by_mode,
         }
