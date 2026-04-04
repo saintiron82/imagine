@@ -135,8 +135,12 @@ class SQLiteDB:
         """Return current thread's connection (create if needed)."""
         c = getattr(self._local, 'conn', None)
         if c is None:
+            import threading
             c = self._create_connection()
             self._local.conn = c
+            # Verify busy_timeout is set
+            bt = c.execute("PRAGMA busy_timeout").fetchone()[0]
+            logger.debug(f"New DB connection for thread {threading.current_thread().name}: busy_timeout={bt}ms")
         return c
 
     def _get_default_embedding_model(self) -> str:
