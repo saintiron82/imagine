@@ -1,0 +1,11 @@
+# Qwen3.5-9B — MLX 4bit benchmark profile (current default)
+# Usage: python tools/bench_worker_sim.py --profile benchmarks/profiles/qwen35_9b.yaml
+
+name: "Qwen3.5-9B MLX 4bit"
+description: "Current production VLM — baseline reference"
+
+vlm_model: "mlx-community/Qwen3.5-9B-MLX-4bit"
+phases: "mc"
+count: 10
+no_full: true
+max_edge: 768

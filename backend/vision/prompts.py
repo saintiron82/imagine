@@ -146,21 +146,42 @@ INSTRUCTIONS:
 {schema}""",
 }
 
-# ── Stage 2: Concise variant for Qwen3.5 (faster generation) ────────
-STAGE2_USER_CONCISE = """Analyze this image. Be concise. Return ONLY this JSON (no markdown fences):
+# ── Stage 2: Concise variants — type-specific focus + compact output ────────
+
+_CONCISE_OUTPUT_FMT = """\nReturn ONLY this JSON (no markdown fences):
 {
-  "caption": "one sentence, max 20 words",
-  "tags": ["max 8 tags"],
+  "caption": "one sentence, max 20 words, describe what is visible",
+  "tags": ["5-8 concrete tags of objects/attributes visible in the image"],
   "art_style": "one word",
-  "color_palette": "max 3 colors"
+  "color_palette": "max 3 dominant colors"
 }"""
 
+STAGE2_PROMPTS_CONCISE = {
+    "character": f"""Analyze this character image. Focus on: pose, outfit, weapon/equipment, expression, body type.{_CONCISE_OUTPUT_FMT}""",
 
-def get_stage2_user_prompt(concise: bool = False) -> str:
-    """Get Stage 2 user prompt. Use concise=True for Qwen3.5 optimized output."""
-    if concise:
-        return STAGE2_USER_CONCISE
-    return None  # caller uses existing per-type STAGE2_PROMPTS
+    "background": f"""Analyze this background/environment image. Focus on: scene type, visible objects (furniture, architecture, nature), lighting, time of day.{_CONCISE_OUTPUT_FMT}""",
+
+    "ui_element": f"""Analyze this UI element. Focus on: UI component type, layout, text labels, color scheme.{_CONCISE_OUTPUT_FMT}""",
+
+    "item": f"""Analyze this item/object. Focus on: item type, material, shape, visual details.{_CONCISE_OUTPUT_FMT}""",
+
+    "icon": f"""Analyze this icon. Focus on: symbol meaning, shape, color, border style.{_CONCISE_OUTPUT_FMT}""",
+
+    "texture": f"""Analyze this texture/pattern. Focus on: surface material, tileability, color, pattern type.{_CONCISE_OUTPUT_FMT}""",
+
+    "effect": f"""Analyze this visual effect. Focus on: effect type (fire, magic, glow, etc.), color, intensity.{_CONCISE_OUTPUT_FMT}""",
+
+    "logo": f"""Analyze this logo/title. Focus on: text content, font style, brand identity.{_CONCISE_OUTPUT_FMT}""",
+
+    "photo": f"""Analyze this photograph. Focus on: subject, setting, composition, lighting.{_CONCISE_OUTPUT_FMT}""",
+
+    "illustration": f"""Analyze this illustration. Focus on: scene content, visible objects, art style, composition.{_CONCISE_OUTPUT_FMT}""",
+
+    "other": f"""Analyze this image. Focus on: visible objects, scene type, composition.{_CONCISE_OUTPUT_FMT}""",
+}
+
+# Legacy alias
+STAGE2_USER_CONCISE = STAGE2_PROMPTS_CONCISE["other"]
 
 
 def build_stage1_prompt(domain: "DomainProfile" = None) -> str:
@@ -213,9 +234,9 @@ def get_stage2_prompt(
     Returns:
         Stage 2 prompt string with schema, domain hints, and context
     """
-    # v4.1: Concise prompt for Qwen3.5 — reduces output tokens by ~60%
+    # v4.2: Concise prompt — type-specific focus + compact output format
     if concise:
-        prompt = STAGE2_USER_CONCISE
+        prompt = STAGE2_PROMPTS_CONCISE.get(image_type, STAGE2_PROMPTS_CONCISE["other"])
         if context:
             context_text = _build_context_text(context)
             prompt = f"{prompt}\n\n{context_text}"

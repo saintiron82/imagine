@@ -932,10 +932,61 @@ def _ab_delta(val_a: float, val_b: float, lower_better: bool = True) -> str:
 # ── Main ────────────────────────────────────────────────────────────────
 
 
+def _load_profile(profile_path: Path, args: argparse.Namespace) -> argparse.Namespace:
+    """Load a YAML benchmark profile and apply as defaults (CLI args take precedence)."""
+    try:
+        import yaml
+    except ImportError:
+        from ruamel.yaml import YAML
+        yaml = None
+
+    with open(profile_path, "r", encoding="utf-8") as f:
+        if yaml and hasattr(yaml, 'safe_load'):
+            profile = yaml.safe_load(f)
+        else:
+            _yaml = YAML()
+            profile = _yaml.load(f)
+
+    profile_name = profile.get("name", profile_path.stem)
+    print(f"  Profile: {profile_name}")
+    if profile.get("description"):
+        print(f"  {profile.get('description')}")
+
+    # Map profile keys to argparse defaults (CLI args override profile)
+    defaults = vars(args)
+    mapping = {
+        "vlm_model": "vlm_model",
+        "phases": "phases",
+        "count": "count",
+        "no_full": "no_full",
+        "max_edge": "max_edge",
+        "vv_batch": "vv_batch",
+        "mv_batch": "mv_batch",
+    }
+    # Track which args were explicitly set on CLI
+    cli_set = set()
+    for action in args._parser._actions:
+        if hasattr(action, 'dest') and action.dest != 'help':
+            if getattr(args, action.dest, None) != action.default:
+                cli_set.add(action.dest)
+
+    for profile_key, arg_key in mapping.items():
+        if profile_key in profile and arg_key not in cli_set:
+            setattr(args, arg_key, profile[profile_key])
+
+    # Handle A/B mode from profile
+    if "ab" in profile and "ab" not in cli_set:
+        args.ab = profile["ab"]
+
+    return args
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Worker Simulation Benchmark — measures real pipeline speed"
     )
+    parser.add_argument("--profile", type=Path, default=None,
+                        help="YAML profile file (benchmarks/profiles/*.yaml)")
     parser.add_argument("--images", type=Path, default=DEFAULT_IMAGE_DIR,
                         help="Image directory")
     parser.add_argument("--count", type=int, default=10,
@@ -959,6 +1010,11 @@ def main():
     parser.add_argument("--compare", type=Path, default=None,
                         help="Path to previous JSON result for comparison")
     args = parser.parse_args()
+    args._parser = parser  # stash for profile loader
+
+    # Load profile if specified
+    if args.profile:
+        args = _load_profile(args.profile, args)
 
     # ── A/B Comparison Mode ──
     if args.ab:

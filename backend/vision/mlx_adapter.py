@@ -34,6 +34,9 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         tier_name: str = "pro",
         max_tokens: int = 512,
         temperature: float = 0.1,
+        concise: Optional[bool] = None,
+        system_prompt: Optional[str] = None,
+        stage2_prompt: Optional[str] = None,
     ):
         """
         Initialize MLX Vision Adapter.
@@ -43,11 +46,17 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
             tier_name: AI tier for metadata tracking
             max_tokens: Maximum tokens to generate per response
             temperature: Sampling temperature (lower = more deterministic)
+            concise: Force concise prompt mode (None = auto-detect by model name)
+            system_prompt: Override system prompt for Stage 2
+            stage2_prompt: Override Stage 2 user prompt template
         """
         self.model_id = model
         self.tier_name = tier_name
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self._force_concise = concise
+        self._custom_system_prompt = system_prompt
+        self._custom_stage2_prompt = stage2_prompt
 
         self._model = None
         self._processor = None
@@ -118,12 +127,11 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
             ],
         })
         tok = getattr(self._processor, 'tokenizer', self._processor)
-        formatted_prompt = tok.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=False,
-        )
+        # enable_thinking is Qwen-specific; other models (Gemma etc.) don't support it
+        chat_kwargs = dict(tokenize=False, add_generation_prompt=True)
+        if "qwen" in self.model_id.lower():
+            chat_kwargs["enable_thinking"] = False
+        formatted_prompt = tok.apply_chat_template(messages, **chat_kwargs)
 
         # Generate response (returns GenerationResult with .text attribute)
         result = generate(
@@ -221,9 +229,17 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
 
         try:
             t0 = time.perf_counter()
-            _use_concise = "Qwen3.5" in self.model_id or "qwen3.5" in self.model_id.lower()
-            prompt = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
-            raw = self._generate_response(image, prompt, STAGE2_SYSTEM)
+            # Custom prompt from profile or auto-detect concise mode
+            if self._custom_stage2_prompt:
+                prompt = self._custom_stage2_prompt
+            else:
+                if self._force_concise is not None:
+                    _use_concise = self._force_concise
+                else:
+                    _use_concise = "qwen3.5" in self.model_id.lower()
+                prompt = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
+            sys_prompt = self._custom_system_prompt or STAGE2_SYSTEM
+            raw = self._generate_response(image, prompt, sys_prompt)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(
                 raw, get_schema(image_type), image_type=image_type
