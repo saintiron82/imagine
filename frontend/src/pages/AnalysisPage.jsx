@@ -1,15 +1,16 @@
 /**
  * AnalysisPage — Top-level "분석" tab.
  *
- * Sub-tabs:
- *   - 대시보드: Queue progress + worker overview (FactoryPage/WorkersPanel)
- *   - 워커: My workers, connect PC, worker settings (WorkerPage)
+ * Sub-tabs (flat, no nesting):
+ *   - 대시보드: Queue progress + worker overview (WorkersPanel)
+ *   - 워커: My workers, connect PC (WorkerPage)
+ *   - 로그: Processing logs
  */
 
 import { useState } from 'react';
-import { BarChart3, Cpu } from 'lucide-react';
+import { BarChart3, Cpu, FileText } from 'lucide-react';
 import { useLocale } from '../i18n';
-import FactoryPage from './FactoryPage';
+import { WorkersPanel } from './AdminPage';
 import WorkerPage from './WorkerPage';
 
 
@@ -20,6 +21,7 @@ export default function AnalysisPage({ isAdmin, appMode, queueReloadSignal }) {
   const tabs = [
     { id: 'dashboard', label: t('tab.factory'), icon: BarChart3 },
     { id: 'worker', label: t('tab.worker'), icon: Cpu },
+    { id: 'logs', label: t('factory.tab_logs'), icon: FileText },
   ];
 
   return (
@@ -44,15 +46,20 @@ export default function AnalysisPage({ isAdmin, appMode, queueReloadSignal }) {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {activeTab === 'dashboard' ? (
-          <FactoryPage
-            isAdmin={isAdmin}
-            appMode={appMode}
-            queueReloadSignal={queueReloadSignal}
-          />
-        ) : activeTab === 'worker' ? (
+        {activeTab === 'dashboard' && (
+          <div className="p-4 space-y-6">
+            <WorkersPanel />
+          </div>
+        )}
+        {activeTab === 'worker' && (
           <WorkerPage />
-        ) : null}
+        )}
+        {activeTab === 'logs' && (
+          <div className="p-4 text-gray-500 text-center">
+            <FileText size={48} className="mx-auto mb-4 opacity-50" />
+            <p className="text-sm">Processing logs will appear here</p>
+          </div>
+        )}
       </div>
     </div>
   );
