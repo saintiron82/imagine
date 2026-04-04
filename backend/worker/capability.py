@@ -56,6 +56,9 @@ def collect_capability(include_speed: bool = True) -> Dict[str, Any]:
     spec = {
         "hostname": socket.gethostname(),
         "os": platform.system(),
+        "os_version": platform.version(),
+        "arch": platform.machine(),
+        "cpu_name": _get_cpu_name(),
         "cpu_count": os.cpu_count() or 1,
         "memory_total_gb": _get_system_memory_gb(),
         "gpu_name": "",
@@ -91,13 +94,17 @@ def collect_capability(include_speed: bool = True) -> Dict[str, Any]:
         spec["gpu_name"] = _get_apple_chip_name()
         spec["vram_gb"] = _get_system_memory_gb()  # unified memory
 
-    # Attach cached speed profile if available
+    # Attach cached speed profile + scores if available
     if include_speed:
         profile = load_speed_profile()
         if profile:
             spec["mc_speed"] = profile.get("mc_speed")
             spec["vv_speed"] = profile.get("vv_speed")
             spec["mv_speed"] = profile.get("mv_speed")
+            scores = profile.get("scores")
+            if not scores:
+                scores = calculate_scores(profile)
+            spec["scores"] = scores
 
     return spec
 
@@ -121,6 +128,29 @@ def _get_system_memory_gb() -> float:
     except Exception:
         pass
     return 0.0
+
+
+def _get_cpu_name() -> str:
+    """Get CPU brand string."""
+    try:
+        if platform.system() == "Darwin":
+            import subprocess
+            r = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.stdout.strip():
+                return r.stdout.strip()
+        elif platform.system() == "Linux":
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if "model name" in line:
+                        return line.split(":")[1].strip()
+        elif platform.system() == "Windows":
+            return platform.processor() or "Unknown"
+    except Exception:
+        pass
+    return platform.processor() or "Unknown"
 
 
 def _get_apple_chip_name() -> str:

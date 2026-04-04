@@ -101,24 +101,68 @@ class WorkerScheduler:
 
     def register_worker(
         self, session_id: int, gpu: str = "", vram_gb: float = 0,
-        is_metal: bool = False,
+        is_metal: bool = False, scores: dict = None,
     ):
-        """Register worker specs → determine GPU class + MC capability."""
-        gpu_class = self._classify_gpu(gpu, vram_gb, is_metal)
-        mc_capable = gpu_class in MC_PENALTY  # strong/weak/embedded can do MC
+        """Register worker with benchmark scores.
 
+        If scores provided (from worker_profile.json):
+          - Use measured speeds directly
+          - Determine MC capability from actual measurement (speed > 0)
+          - GPU class from scores grade
+
+        If no scores (cold start):
+          - Fall back to GPU spec estimation
+        """
         cursor = self.db.conn.cursor()
-        cursor.execute("""
-            UPDATE worker_sessions
-            SET gpu_name = ?, vram_gb = ?, gpu_class = ?, mc_capable = ?
-            WHERE id = ?
-        """, (gpu, vram_gb, gpu_class, mc_capable, session_id))
-        self.db.conn.commit()
 
-        logger.info(
-            f"Scheduler: worker {session_id} registered "
-            f"(gpu={gpu}, vram={vram_gb}GB, class={gpu_class}, mc={mc_capable})"
-        )
+        if scores and scores.get("phases"):
+            # Score-based registration — actual measurements
+            phases = scores["phases"]
+            mc_phase = phases.get("mc", {})
+            mc_capable = mc_phase.get("status") == "ok" and mc_phase.get("speed", 0) > 0
+
+            # GPU class from grade
+            grade = scores.get("grade", "F")
+            gpu_class = {"S": "strong", "A": "strong", "B": "weak", "C": "weak", "F": "cpu"}.get(grade, "cpu")
+
+            # Apply measured speeds
+            mc_speed = phases.get("mc", {}).get("speed")
+            vv_speed = phases.get("vv", {}).get("speed")
+            mv_speed = phases.get("mv", {}).get("speed")
+
+            cursor.execute("""
+                UPDATE worker_sessions
+                SET gpu_name = ?, vram_gb = ?, gpu_class = ?, mc_capable = ?,
+                    mc_speed = ?, vv_speed = ?, mv_speed = ?
+                WHERE id = ?
+            """, (gpu, vram_gb, gpu_class, mc_capable,
+                  mc_speed, vv_speed, mv_speed, session_id))
+            self.db.conn.commit()
+
+            incapable = scores.get("incapable", [])
+            total = scores.get("total", 0)
+            logger.info(
+                f"Scheduler: worker {session_id} registered with scores "
+                f"(grade={grade}, total={total}, mc={mc_speed}/m, "
+                f"vv={vv_speed}/m, mv={mv_speed}/m, "
+                f"incapable={incapable or 'none'})"
+            )
+        else:
+            # Spec-based fallback (no benchmark data)
+            gpu_class = self._classify_gpu(gpu, vram_gb, is_metal)
+            mc_capable = gpu_class in MC_PENALTY
+
+            cursor.execute("""
+                UPDATE worker_sessions
+                SET gpu_name = ?, vram_gb = ?, gpu_class = ?, mc_capable = ?
+                WHERE id = ?
+            """, (gpu, vram_gb, gpu_class, mc_capable, session_id))
+            self.db.conn.commit()
+
+            logger.info(
+                f"Scheduler: worker {session_id} registered (spec-based) "
+                f"(gpu={gpu}, vram={vram_gb}GB, class={gpu_class}, mc={mc_capable})"
+            )
 
     def _classify_gpu(self, gpu: str, vram_gb: float, is_metal: bool) -> str:
         """Classify GPU into: embedded, strong, weak, cpu."""

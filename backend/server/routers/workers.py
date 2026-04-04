@@ -249,17 +249,13 @@ def worker_connect(
             f"GPU={gpu_name}, type={gpu_type}, VRAM={vram_gb:.1f}GB, metal={is_metal}"
         )
 
-        # Register with scheduler for GPU class + MC capability
+        # Register with scheduler — scores-based if available
         scheduler = getattr(request.app.state, 'scheduler', None)
         if scheduler:
-            scheduler.register_worker(session_id, gpu_name, vram_gb, is_metal)
-
-            # Apply pre-measured speed profile (skip cold start trial)
-            for phase in ("mc", "vv", "mv"):
-                speed = req.resources.get(f"{phase}_speed")
-                if speed and speed > 0:
-                    scheduler.update_speed(session_id, phase, speed)
-                    logger.info(f"  {phase}_speed: {speed:.1f} files/min (from profile)")
+            scores = req.resources.get('scores')  # from worker_profile.json
+            scheduler.register_worker(
+                session_id, gpu_name, vram_gb, is_metal, scores=scores
+            )
 
     db.conn.commit()
 
