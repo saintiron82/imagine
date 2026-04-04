@@ -66,28 +66,42 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
     def _run_loop():
         global _shutdown_flag, _status, _last_error, _jobs_completed
 
+        print("[EW] _run_loop started", flush=True)
         logger.info("Embedded worker starting...")
 
         # Collect hardware capability spec
         try:
             from backend.worker.capability import collect_capability
             resources = collect_capability()
-        except Exception:
+            print(f"[EW] capability collected: gpu={resources.get('gpu_name','?')}", flush=True)
+        except Exception as e:
             resources = {}
+            print(f"[EW] capability FAILED: {e}", flush=True)
 
-        session = _transport.connect(
-            worker_name="embedded",
-            hostname=socket.gethostname(),
-            batch_capacity=20,
-            resources=resources,
-        )
-        session_id = session.get("session_id")
+        try:
+            session = _transport.connect(
+                worker_name="embedded",
+                hostname=socket.gethostname(),
+                batch_capacity=20,
+                resources=resources,
+            )
+            session_id = session.get("session_id")
+            print(f"[EW] session created: id={session_id}", flush=True)
+        except Exception as e:
+            _status = "error"
+            _last_error = str(e)
+            print(f"[EW] session create EXCEPTION: {e}", flush=True)
+            logger.error(f"Embedded worker: session create exception: {e}")
+            return
+
         if not session_id:
             _status = "error"
             _last_error = "Failed to create worker session"
+            print("[EW] session create failed — no session_id", flush=True)
             logger.error("Embedded worker: session create failed")
             return
 
+        print(f"[EW] session OK, entering main loop", flush=True)
         logger.info(f"Embedded worker session created (id={session_id})")
         consecutive_empty = 0
         last_heartbeat = time.time()
@@ -107,9 +121,16 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                         last_heartbeat = now
 
                     # Claim tasks — scheduler decides phase + count
-                    result = _transport.claim()
+                    try:
+                        result = _transport.claim()
+                    except Exception as ce:
+                        print(f"[EW] claim EXCEPTION: {ce}", flush=True)
+                        time.sleep(5)
+                        continue
                     phase = result.get("phase")
                     tasks = result.get("tasks", [])
+                    if phase and tasks:
+                        print(f"[EW] claimed: phase={phase} count={len(tasks)}", flush=True)
 
                     if not phase or not tasks:
                         # No work available
