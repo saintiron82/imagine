@@ -1046,31 +1046,36 @@ export function BenchmarkSection() {
 
       {scores ? (
         <div className="space-y-3">
-          {/* Overall */}
+          {/* Grade + Total */}
           <div className="flex items-center gap-4 p-3 bg-gray-900/50 rounded">
             <span className={`text-3xl font-bold ${gradeColor(scores.grade)}`}>
               {scores.grade}
             </span>
-            <div>
+            <div className="flex-1">
               <div className="text-sm text-gray-400">{t('worker.bench_score')}</div>
-              <div className="text-xl font-mono">{scores.overall}</div>
+              <div className="text-xl font-mono">{scores.total?.toLocaleString()}<span className="text-sm text-gray-500"> /min</span></div>
             </div>
           </div>
 
           {/* Per-phase */}
           <div className="grid grid-cols-3 gap-3">
-            {['mc', 'vv', 'mv'].map(phase => (
-              <div key={phase} className="p-3 bg-gray-900/50 rounded text-center">
-                <div className="text-xs text-gray-500 uppercase mb-1">{phase.toUpperCase()}</div>
-                <div className={`text-lg font-bold ${gradeColor(scores[`${phase}_grade`])}`}>
-                  {scores[`${phase}_grade`]}
+            {['mc', 'vv', 'mv'].map(phase => {
+              const ratio = scores[`${phase}_ratio`];
+              return (
+                <div key={phase} className="p-3 bg-gray-900/50 rounded text-center">
+                  <div className="text-xs text-gray-500 uppercase mb-1">{phase.toUpperCase()}</div>
+                  <div className="text-lg font-mono font-bold text-gray-200">
+                    {scores[phase] || 0}<span className="text-xs text-gray-500">/m</span>
+                  </div>
+                  {ratio > 0 && (
+                    <div className="text-xs text-gray-500">×{ratio} MC</div>
+                  )}
+                  {scores[phase] === 0 && (
+                    <div className="text-xs text-red-400">불가</div>
+                  )}
                 </div>
-                <div className="text-sm font-mono text-gray-300">{scores[phase]}</div>
-                <div className="text-xs text-gray-500">
-                  {profile?.[`${phase}_speed`] ? `${profile[`${phase}_speed`]}/m` : '-'}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {profile?.benchmarked_at && (
