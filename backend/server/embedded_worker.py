@@ -44,13 +44,13 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
     _jobs_completed = 0
 
     try:
-        from backend.db.sqlite_client import SQLiteDB
+        from backend.server.deps import get_db
         from backend.server.queue.analysis_manager import AnalysisJobManager
         from backend.server.queue.scheduler import WorkerScheduler
         from backend.worker.transport import LocalTransport
         from backend.worker.worker_daemon import WorkerDaemon
 
-        db = SQLiteDB()
+        db = get_db()  # shared singleton — no duplicate migrations
         manager = AnalysisJobManager(db)
         scheduler = WorkerScheduler(db)
 
