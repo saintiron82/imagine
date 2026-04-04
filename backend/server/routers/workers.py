@@ -581,7 +581,7 @@ def admin_list_workers(
                   ws.processing_mode_override, ws.batch_capacity_override,
                   ws.resources_json, ws.assigned_mode, ws.phase_job_count
            FROM worker_sessions ws
-           JOIN users u ON ws.user_id = u.id
+           LEFT JOIN users u ON ws.user_id = u.id
            ORDER BY
                CASE ws.status WHEN 'online' THEN 0 WHEN 'blocked' THEN 1 ELSE 2 END,
                ws.last_heartbeat DESC
@@ -589,38 +589,57 @@ def admin_list_workers(
     )
     rows = cursor.fetchall()
 
-    # Per-worker throughput: count ONLY the phase matching the worker's assigned_mode.
-    # Previous bug: OR condition counted MC+VV+MV for same job → inflated numbers.
-    # Now: each phase counted separately, worker gets only its mode's count.
-    cursor.execute(
-        """SELECT
-               worker_session_id,
-               COUNT(*) FILTER (WHERE mc_completed_at IS NOT NULL
-                                AND datetime(mc_completed_at) > datetime('now', '-5 minutes')) AS mc_5m,
-               COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') = 1
-                                AND updated_at IS NOT NULL
-                                AND datetime(updated_at) > datetime('now', '-5 minutes')) AS vv_5m,
-               COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mv') = 1
-                                AND updated_at IS NOT NULL
-                                AND datetime(updated_at) > datetime('now', '-5 minutes')) AS mv_5m,
-               COUNT(*) FILTER (WHERE mc_completed_at IS NOT NULL
-                                AND datetime(mc_completed_at) > datetime('now', '-1 minute')) AS mc_1m,
-               COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.vv') = 1
-                                AND updated_at IS NOT NULL
-                                AND datetime(updated_at) > datetime('now', '-1 minute')) AS vv_1m,
-               COUNT(*) FILTER (WHERE json_extract(phase_completed, '$.mv') = 1
-                                AND updated_at IS NOT NULL
-                                AND datetime(updated_at) > datetime('now', '-1 minute')) AS mv_1m
-           FROM job_queue
-           WHERE worker_session_id IS NOT NULL
-           GROUP BY worker_session_id"""
-    )
-    # {session_id: {mc_5m, vv_5m, mv_5m, mc_1m, vv_1m, mv_1m}}
+    # Per-worker throughput from file_tasks (Analysis Job System v1)
+    try:
+        cursor.execute(
+            """SELECT
+                   mc_assigned_to AS worker_id,
+                   COUNT(*) FILTER (WHERE mc_status='done'
+                                    AND datetime(mc_completed_at) > datetime('now', '-5 minutes')) AS mc_5m,
+                   COUNT(*) FILTER (WHERE mc_status='done'
+                                    AND datetime(mc_completed_at) > datetime('now', '-1 minute')) AS mc_1m
+               FROM file_tasks
+               WHERE mc_assigned_to IS NOT NULL
+               GROUP BY mc_assigned_to"""
+        )
+        mc_counts = {r[0]: {"mc_5m": r[1], "mc_1m": r[2]} for r in cursor.fetchall()}
+
+        cursor.execute(
+            """SELECT
+                   vv_assigned_to AS worker_id,
+                   COUNT(*) FILTER (WHERE vv_status='done'
+                                    AND datetime(vv_completed_at) > datetime('now', '-5 minutes')) AS vv_5m,
+                   COUNT(*) FILTER (WHERE vv_status='done'
+                                    AND datetime(vv_completed_at) > datetime('now', '-1 minute')) AS vv_1m
+               FROM file_tasks
+               WHERE vv_assigned_to IS NOT NULL
+               GROUP BY vv_assigned_to"""
+        )
+        vv_counts = {r[0]: {"vv_5m": r[1], "vv_1m": r[2]} for r in cursor.fetchall()}
+
+        cursor.execute(
+            """SELECT
+                   mv_assigned_to AS worker_id,
+                   COUNT(*) FILTER (WHERE mv_status='done'
+                                    AND datetime(mv_completed_at) > datetime('now', '-5 minutes')) AS mv_5m,
+                   COUNT(*) FILTER (WHERE mv_status='done'
+                                    AND datetime(mv_completed_at) > datetime('now', '-1 minute')) AS mv_1m
+               FROM file_tasks
+               WHERE mv_assigned_to IS NOT NULL
+               GROUP BY mv_assigned_to"""
+        )
+        mv_counts = {r[0]: {"mv_5m": r[1], "mv_1m": r[2]} for r in cursor.fetchall()}
+    except Exception:
+        mc_counts, vv_counts, mv_counts = {}, {}, {}
+
+    # Merge per-worker phase counts
     session_phase_counts = {}
-    for r in cursor.fetchall():
-        session_phase_counts[r[0]] = {
-            "mc_5m": r[1], "vv_5m": r[2], "mv_5m": r[3],
-            "mc_1m": r[4], "vv_1m": r[5], "mv_1m": r[6],
+    all_worker_ids = set(mc_counts) | set(vv_counts) | set(mv_counts)
+    for wid in all_worker_ids:
+        session_phase_counts[wid] = {
+            **(mc_counts.get(wid, {})),
+            **(vv_counts.get(wid, {})),
+            **(mv_counts.get(wid, {})),
         }
 
     workers = []
@@ -662,7 +681,7 @@ def admin_list_workers(
             "current_file": row[7], "current_phase": row[8],
             "last_heartbeat": row[9], "connected_at": row[10],
             "disconnected_at": row[11], "pending_command": row[12],
-            "username": row[13],
+            "username": row[13] or "system",
             "throughput": throughput,
             "throughput_mode": assigned_mode or "full",
             "processing_mode_override": row[15],
