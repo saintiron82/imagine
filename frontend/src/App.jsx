@@ -9,11 +9,12 @@ import AdminPage from './pages/AdminPage';
 import SettingsPage from './pages/SettingsPage';
 import ArchivingPage from './pages/ArchivingPage';
 import FactoryPage from './pages/FactoryPage';
+import WorkerPage from './pages/WorkerPage';
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
 import UpdateNotification from './components/UpdateNotification';
 import EolBanner from './components/EolBanner';
-import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2, ShieldCheck, RotateCcw, Factory } from 'lucide-react';
+import { FolderOpen, Play, Search, Archive, Zap, Globe, Database, Upload, Download, Settings, LogOut, User, Power, Monitor, Wifi, Info, Trash2, ShieldCheck, RotateCcw, Factory, Cpu } from 'lucide-react';
 import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
@@ -1485,6 +1486,20 @@ function App() {
             </button>
           )}
 
+          {/* Worker tab — authenticated users */}
+          {(isElectron || isAuthenticated) && (
+            <button
+              onClick={() => setCurrentTab('worker')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'worker'
+                ? 'bg-orange-700 text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+            >
+              <Cpu size={16} />
+              <span>{t('tab.worker')}</span>
+            </button>
+          )}
+
           {/* Admin tab — admin role only */}
           {isAdmin && (
             <button
@@ -1790,6 +1805,8 @@ function App() {
                 false={false}
                                                                 queueReloadSignal={queueReloadSignal}
               />
+            ) : currentTab === 'worker' ? (
+              <WorkerPage />
             ) : null}
           </div>
 
