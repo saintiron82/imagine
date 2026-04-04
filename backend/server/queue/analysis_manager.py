@@ -102,12 +102,33 @@ class AnalysisJobManager:
         return total
 
     def _sync_with_files_db(self):
-        """Sync file_tasks status with actual files DB state.
-
-        Handles cases where legacy pipeline processed files but
-        file_tasks wasn't updated (e.g. legacy system ran first).
-        """
+        """Sync file_tasks status with actual files DB state."""
         cursor = self.db.conn.cursor()
+
+        # Count how many rows need syncing (diagnostic)
+        cursor.execute("SELECT COUNT(*) FROM file_tasks")
+        total_tasks = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT COUNT(*) FROM file_tasks
+            WHERE mc_status IN ('pending','assigned')
+              AND (SELECT mc_caption FROM files WHERE id = file_tasks.file_id) IS NOT NULL
+              AND (SELECT mc_caption FROM files WHERE id = file_tasks.file_id) != ''
+        """)
+        mc_need_sync = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT COUNT(*) FROM file_tasks
+            WHERE vv_status IN ('pending','assigned')
+              AND EXISTS(SELECT 1 FROM vec_files WHERE file_id = file_tasks.file_id)
+        """)
+        vv_need_sync = cursor.fetchone()[0]
+        logger.info(
+            f"[sync] file_tasks={total_tasks}, need sync: mc={mc_need_sync} vv={vv_need_sync}"
+        )
+
+        if mc_need_sync == 0 and vv_need_sync == 0:
+            logger.info("[sync] nothing to sync — skipping UPDATE")
+            return
+
         cursor.execute("""
             UPDATE file_tasks SET
                 download_status = CASE

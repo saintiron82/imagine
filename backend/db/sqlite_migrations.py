@@ -857,42 +857,60 @@ def run_migrations(db, *, existing_db: bool = True):
                      False if empty database (fresh install path).
     """
     if existing_db:
-        # Upgrade path: existing DB with files table
-        migrate_folder_columns(db)
-        migrate_v3_columns(db)
-        migrate_content_hash(db)
-        migrate_structure_table(db)
-        migrate_uploaded_by(db)
-        migrate_preview_only(db)
-        migrate_backfill_storage_root(db)
-        db._ensure_system_meta()
-        db._ensure_fts()
-        migrate_auth_tables(db)
-        migrate_worker_tokens(db)
-        migrate_worker_sessions(db)
-        migrate_parse_ahead_columns(db)
-        migrate_worker_session_tracking(db)
-        migrate_worker_session_overrides(db)
-        migrate_worker_resources_json(db)
-        migrate_mc_completed_at(db)
-        migrate_backfill_parse_status(db)
-        migrate_users_email_nullable(db)
-        migrate_users_firebase_uid(db)
-        migrate_error_code(db)
-        migrate_file_ready(db)
-        migrate_job_completions(db)
-        migrate_files_processing_status(db)
-        migrate_work_requests(db)
-        migrate_members_table(db)
-        migrate_drop_fts_update_trigger(db)
-        migrate_job_queue_unique_file_id(db)
-        migrate_job_queue_archived_at(db)
-        migrate_search_logs(db)
-        migrate_worker_phase_tracking(db)
-        migrate_phase_completed_vv_mv(db)
-        migrate_vv_mv_completed_at(db)
-        # Analysis Job System v1 tables
-        _ensure_analysis_tables(db)
+        import time as _t
+        _total_start = _t.perf_counter()
+
+        migrations = [
+            ("folder_columns", lambda: migrate_folder_columns(db)),
+            ("v3_columns", lambda: migrate_v3_columns(db)),
+            ("content_hash", lambda: migrate_content_hash(db)),
+            ("structure_table", lambda: migrate_structure_table(db)),
+            ("uploaded_by", lambda: migrate_uploaded_by(db)),
+            ("preview_only", lambda: migrate_preview_only(db)),
+            ("backfill_storage_root", lambda: migrate_backfill_storage_root(db)),
+            ("system_meta", lambda: db._ensure_system_meta()),
+            ("fts", lambda: db._ensure_fts()),
+            ("auth_tables", lambda: migrate_auth_tables(db)),
+            ("worker_tokens", lambda: migrate_worker_tokens(db)),
+            ("worker_sessions", lambda: migrate_worker_sessions(db)),
+            ("parse_ahead_columns", lambda: migrate_parse_ahead_columns(db)),
+            ("worker_session_tracking", lambda: migrate_worker_session_tracking(db)),
+            ("worker_session_overrides", lambda: migrate_worker_session_overrides(db)),
+            ("worker_resources_json", lambda: migrate_worker_resources_json(db)),
+            ("mc_completed_at", lambda: migrate_mc_completed_at(db)),
+            ("backfill_parse_status", lambda: migrate_backfill_parse_status(db)),
+            ("users_email_nullable", lambda: migrate_users_email_nullable(db)),
+            ("users_firebase_uid", lambda: migrate_users_firebase_uid(db)),
+            ("error_code", lambda: migrate_error_code(db)),
+            ("file_ready", lambda: migrate_file_ready(db)),
+            ("job_completions", lambda: migrate_job_completions(db)),
+            ("files_processing_status", lambda: migrate_files_processing_status(db)),
+            ("work_requests", lambda: migrate_work_requests(db)),
+            ("members_table", lambda: migrate_members_table(db)),
+            ("drop_fts_update_trigger", lambda: migrate_drop_fts_update_trigger(db)),
+            ("job_queue_unique_file_id", lambda: migrate_job_queue_unique_file_id(db)),
+            ("job_queue_archived_at", lambda: migrate_job_queue_archived_at(db)),
+            ("search_logs", lambda: migrate_search_logs(db)),
+            ("worker_phase_tracking", lambda: migrate_worker_phase_tracking(db)),
+            ("phase_completed_vv_mv", lambda: migrate_phase_completed_vv_mv(db)),
+            ("vv_mv_completed_at", lambda: migrate_vv_mv_completed_at(db)),
+            ("analysis_tables", lambda: _ensure_analysis_tables(db)),
+        ]
+
+        slow = []
+        for name, fn in migrations:
+            t0 = _t.perf_counter()
+            fn()
+            elapsed = _t.perf_counter() - t0
+            if elapsed > 0.1:
+                slow.append((name, elapsed))
+
+        total = _t.perf_counter() - _total_start
+        if slow:
+            slow_str = ", ".join(f"{n}={e:.1f}s" for n, e in slow)
+            logger.info(f"Migrations: {total:.1f}s total. Slow: {slow_str}")
+        else:
+            logger.info(f"Migrations: {total:.1f}s total (all fast)")
     else:
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()
