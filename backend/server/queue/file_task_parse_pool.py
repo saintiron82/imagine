@@ -190,20 +190,22 @@ class FileTaskParsePool(BaseAheadPool):
             logger.warning(f"FileTaskParse: no parser for {file_path}")
             return False
 
+        parse_note = None
         result = parser.parse(file_p)
         if result.success:
             meta = result.asset_meta
         else:
             # Parse failed (unsupported compression, corrupt layers, etc.)
             # → still generate thumbnail via PIL and continue to MC/VV/MV
-            logger.warning(
-                f"FileTaskParse: parse failed, falling back to thumbnail-only: "
-                f"{file_path}: {result.errors}"
+            logger.info(
+                f"FileTaskParse: layer parse failed, thumbnail-only mode: "
+                f"{file_p.name}"
             )
             meta = self._fallback_thumbnail(file_p, file_path)
             if meta is None:
-                logger.error(f"FileTaskParse: fallback also failed: {file_path}")
+                logger.error(f"FileTaskParse: thumbnail also failed: {file_path}")
                 return False
+            parse_note = "thumbnail_only"  # 레이어 추출 불가, 썸네일만 생성
 
         # 3. Content hash
         try:

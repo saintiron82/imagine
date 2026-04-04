@@ -175,6 +175,15 @@ function App() {
         if (status?.lanAddresses) setServerLanAddresses(status.lanAddresses);
         if (status?.primaryLanUrl) setServerLanUrl(status.primaryLanUrl);
       } catch { /* ignore */ }
+
+      // Restore auto-processing (embedded worker) after login
+      try {
+        const { getAutoProcessing, updateAutoProcessing } = await import('./api/admin');
+        const ap = await getAutoProcessing();
+        if (ap?.enabled) {
+          await updateAutoProcessing({ enabled: true });
+        }
+      } catch { /* ignore — will be retried from UI */ }
     }
 
     configureAuth(mode);
