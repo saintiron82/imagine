@@ -847,7 +847,7 @@ def _start_embedded_worker(app):
     # server_url and access_token are unused by LocalTransport but kept for API compat
     result = start_worker(server_url="", access_token="")
     if result.get("success"):
-        logger.info(f"Embedded worker started (port={port})")
+        logger.info("Embedded worker started (LocalTransport)")
     else:
         logger.warning(f"Embedded worker start failed: {result.get('error')}")
 
