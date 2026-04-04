@@ -143,84 +143,91 @@ def _activate_server(app_instance):
     except Exception as e:
         _log(f"AnalysisJobManager init FAILED: {e}")
 
-    # Phase 3: Background pools (start threads AFTER DB is stable)
+    # Phase 3: Background pools
+    t1 = _time.perf_counter()
     try:
         from backend.server.queue.download_ahead import (
             DownloadAheadPool, register_webdav_source,
         )
         app_instance.state.download_ahead = DownloadAheadPool(db)
         app_instance.state.download_ahead.start()
-        logger.info("Phase 3: DownloadAheadPool started")
         webdav_env = os.environ.get("IMAGINE_WEBDAV_SOURCES")
+        n_sources = 0
         if webdav_env:
             import json as _json
             try:
                 for src in _json.loads(webdav_env):
                     register_webdav_source(src)
+                    n_sources += 1
             except Exception:
                 pass
+        _log(f"Phase 3a: DownloadAheadPool started ({n_sources} WebDAV sources) {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
-        logger.warning(f"DownloadAheadPool failed: {e}")
+        _log(f"Phase 3a FAILED: DownloadAheadPool: {e}")
 
+    t1 = _time.perf_counter()
     try:
         from backend.server.queue.file_task_parse_pool import FileTaskParsePool
         dl_pool = getattr(app_instance.state, 'download_ahead', None)
         app_instance.state.file_task_parse = FileTaskParsePool(db, download_pool=dl_pool)
         app_instance.state.file_task_parse.start()
-        logger.info("Phase 3: FileTaskParsePool started")
+        _log(f"Phase 3b: FileTaskParsePool started {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
-        logger.warning(f"FileTaskParsePool failed: {e}")
+        _log(f"Phase 3b FAILED: FileTaskParsePool: {e}")
 
     # Phase 4: Scheduler + watchdog
+    t1 = _time.perf_counter()
     try:
         from backend.server.queue.scheduler import WorkerScheduler
         app_instance.state.scheduler = WorkerScheduler(db)
-        logger.info("Phase 4: WorkerScheduler started")
+        _log(f"Phase 4a: WorkerScheduler started {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
-        logger.warning(f"WorkerScheduler failed: {e}")
+        _log(f"Phase 4a FAILED: WorkerScheduler: {e}")
 
+    t1 = _time.perf_counter()
     try:
         app_instance.state.heartbeat_watchdog = _start_heartbeat_watchdog()
-        logger.info("Phase 4: Heartbeat watchdog started")
+        _log(f"Phase 4b: Heartbeat watchdog started {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
-        logger.warning(f"Heartbeat watchdog failed: {e}")
+        _log(f"Phase 4b FAILED: Heartbeat watchdog: {e}")
 
-    # Phase 5: License + mDNS
+    # Phase 5: License
+    t1 = _time.perf_counter()
     try:
         from backend.server.licensing.license_manager import LicenseManager
         from backend.server.licensing.enforcement import set_license_manager
         lm = LicenseManager(db)
         set_license_manager(lm)
         app_instance.state.license_manager = lm
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Running inside async context (FastAPI) — schedule as task
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    info = pool.submit(lambda: asyncio.run(lm.verify())).result(timeout=10)
-            else:
-                info = loop.run_until_complete(lm.verify())
-            _log(f"License: {info.plan_id} / {info.status}")
-        except Exception:
-            _log("License: verification deferred")
+        _log(f"Phase 5: License manager loaded {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
-        _log(f"License manager failed: {e}")
+        _log(f"Phase 5: License failed: {e}")
 
+    # Phase 6: Embedded worker (if active work exists)
+    t1 = _time.perf_counter()
     try:
-        from backend.server.mdns import ImagineServiceAnnouncer
-        cfg = get_server_config()
-        port = cfg.get("port", 8000)
-        app_instance.state.mdns = ImagineServiceAnnouncer(port)
-        app_instance.state.mdns.start()
-    except ImportError:
-        pass
-    except Exception:
-        pass
+        from backend.server.queue.analysis_manager import AnalysisJobManager
+        mgr = AnalysisJobManager(db)
+        cursor = db.conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM file_tasks ft
+            JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+            WHERE aj.status = 'active'
+              AND (mc_status = 'pending' OR vv_status = 'pending' OR mv_status = 'pending')
+        """)
+        pending = cursor.fetchone()[0]
+        if pending > 0:
+            from backend.server.embedded_worker import start_worker
+            result = start_worker(server_url="", access_token="")
+            _log(f"Phase 6: Embedded worker started ({pending} pending tasks) {_time.perf_counter()-t1:.2f}s")
+        else:
+            _log(f"Phase 6: No pending tasks — worker standby {_time.perf_counter()-t1:.2f}s")
+    except Exception as e:
+        _log(f"Phase 6 FAILED: Embedded worker: {e}")
 
+    total = _time.perf_counter() - t0
     app_instance.state.ready = True
-    _log("Server activated — all subsystems running")
+    _log(f"=== Server activated ({total:.1f}s total) ===")
 
     # Firebase re-registration on restart (best-effort, non-blocking)
     try:
