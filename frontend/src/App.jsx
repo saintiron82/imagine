@@ -10,6 +10,7 @@ import SettingsPage from './pages/SettingsPage';
 import ArchivingPage from './pages/ArchivingPage';
 import FactoryPage from './pages/FactoryPage';
 import WorkerPage from './pages/WorkerPage';
+import AnalysisPage from './pages/AnalysisPage';
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
 import UpdateNotification from './components/UpdateNotification';
@@ -1472,31 +1473,17 @@ function App() {
             </button>
           )}
 
-          {/* Factory tab — Electron or authenticated web users */}
+          {/* Analysis tab — Electron or authenticated web users */}
           {(isElectron || isAuthenticated) && (
             <button
-              onClick={() => setCurrentTab('factory')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'factory'
+              onClick={() => setCurrentTab('analysis')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'analysis'
                 ? 'bg-emerald-700 text-white'
                 : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
                 }`}
             >
               <Factory size={16} />
-              <span>{t('tab.factory')}</span>
-            </button>
-          )}
-
-          {/* Worker tab — authenticated users */}
-          {(isElectron || isAuthenticated) && (
-            <button
-              onClick={() => setCurrentTab('worker')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded transition-colors ${currentTab === 'worker'
-                ? 'bg-orange-700 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-                }`}
-            >
-              <Cpu size={16} />
-              <span>{t('tab.worker')}</span>
+              <span>{t('tab.analysis')}</span>
             </button>
           )}
 
@@ -1798,15 +1785,12 @@ function App() {
                 appMode={appMode}
                 onShowToast={showToast}
               />
-            ) : currentTab === 'factory' ? (
-              <FactoryPage
+            ) : currentTab === 'analysis' ? (
+              <AnalysisPage
                 isAdmin={isAdmin}
                 appMode={appMode}
-                false={false}
-                                                                queueReloadSignal={queueReloadSignal}
+                queueReloadSignal={queueReloadSignal}
               />
-            ) : currentTab === 'worker' ? (
-              <WorkerPage />
             ) : null}
           </div>
 
