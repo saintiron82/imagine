@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_db_safe, get_current_user
 from backend.server.config import get_storage_config
-from backend.server.queue.manager import JobQueueManager
+# Note: legacy JobQueueManager removed. Job creation is via POST /api/v1/analysis-jobs.
 
 logger = logging.getLogger(__name__)
 
@@ -123,14 +123,12 @@ async def upload_images(
                 "error": str(e),
             })
 
-    # Create processing jobs
-    queue = JobQueueManager(db)
-    jobs_created = queue.create_jobs(file_ids, file_paths, priority) if file_ids else 0
+    # Note: processing jobs are now created via POST /api/v1/analysis-jobs
+    # Upload only stores files — analysis is a separate step.
 
     return {
         "success": True,
         "uploaded": len(file_ids),
-        "jobs_created": jobs_created,
         "results": results,
     }
 
