@@ -107,11 +107,17 @@ def _notify(callback, event_type: str, data: dict):
 
 
 class WorkerDaemon:
-    """Headless worker that processes jobs from the Imagine server."""
+    """Headless worker that processes jobs from the Imagine server.
 
-    def __init__(self):
+    Supports two transport modes:
+    - transport=None (default): HTTP-based, for external workers
+    - transport=LocalTransport: direct DB calls, for embedded worker
+    """
+
+    def __init__(self, transport=None):
         import requests
 
+        self.transport = transport  # None = HTTP mode (legacy compatible)
         self.server_url = get_server_url()
         self.session = requests.Session()
         # Do NOT set Content-Type on session — requests sets it automatically:
