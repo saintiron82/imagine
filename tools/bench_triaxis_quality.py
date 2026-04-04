@@ -1,43 +1,42 @@
 #!/usr/bin/env python3
 """
-Triaxis Search Quality Benchmark
-==================================
-Measures retrieval quality of the 3-axis fusion (VV + MV + FTS → RRF)
-compared to each individual axis.
+Triaxis Full-Pipeline Search Quality Benchmark
+================================================
+Measures retrieval quality of the COMPLETE Triaxis pipeline:
+  LLM Decomposer → Scope Filter → 3-axis Search → Auto-Weight RRF
+  → Negative Filter → Quality Rerank
 
-Core idea: Use MC-generated tags/captions as "ground truth" queries for
-each image. Then search with each axis and the combined Triaxis, measuring
-whether the original image appears in top-K results.
+Tests 3 query complexity levels that exercise progressively more
+pipeline stages:
 
-This proves the project thesis: individually modest models, when combined
-through RRF fusion, achieve search quality greater than any single axis.
+  Level 1 — SIMPLE: "anime room desk"
+    Tests: VV + MV + FTS → RRF (basic 3-axis)
 
-Metrics per axis:
-  - R@1:  Original image is rank 1
-  - R@3:  Original image in top 3
-  - R@5:  Original image in top 5
-  - MRR:  Mean Reciprocal Rank (1/rank, averaged)
+  Level 2 — SCOPED: "background 타입에서 anime room desk"
+    Tests: + QueryDecomposer (scope extraction) + Scope Filter
 
-Key output: **Fusion Lift** = Triaxis R@K / best single-axis R@K
+  Level 3 — COMPLEX: "character 중에서 sword warrior, cute 제외"
+    Tests: + Negative Filter + Exclude Keywords + full pipeline
 
-Prerequisites:
-  - DB must have processed images (mc_caption, ai_tags, VV, MV, FTS populated)
-  - Run pipeline first: python backend/pipeline/ingest_engine.py --discover <dir>
+This proves the project thesis: the full pipeline achieves higher
+retrieval quality than any single axis, and each pipeline stage adds
+measurable value.
 
 Usage:
-    python tools/bench_triaxis_quality.py                 # all DB images (sample 50)
-    python tools/bench_triaxis_quality.py --count 100     # sample 100
+    python tools/bench_triaxis_quality.py                 # default
+    python tools/bench_triaxis_quality.py --count 50
     python tools/bench_triaxis_quality.py --profile benchmarks/profiles/triaxis.yaml
 """
 
 import argparse
 import json
 import os
+import random
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -47,13 +46,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmarks" / "results"
 
 
-# ── Query Builder ──────────────────────────────────────────────────────
-
-import random
+# ── Query Generation ───────────────────────────────────────────────────
 
 
 def _parse_tags(tags_raw: str) -> List[str]:
-    """Parse tags from DB format (JSON array or comma-separated)."""
     if not tags_raw:
         return []
     try:
@@ -65,86 +61,73 @@ def _parse_tags(tags_raw: str) -> List[str]:
     return [t.strip() for t in tags_raw.split(",") if t.strip()]
 
 
-def _extract_keywords(tags: List[str], max_words: int = 10) -> List[str]:
-    """Extract individual keywords from tags."""
-    keywords = []
-    for t in tags:
-        for word in t.replace("_", " ").split():
-            w = word.strip().lower()
-            if len(w) > 2 and w not in keywords:
-                keywords.append(w)
-                if len(keywords) >= max_words:
-                    return keywords
-    return keywords
+def _pick_negative_tag(all_tags: List[str], own_tags: List[str]) -> str:
+    """Pick a tag from the corpus that this image does NOT have."""
+    own_set = {t.lower() for t in own_tags}
+    candidates = [t for t in all_tags if t.lower() not in own_set and len(t) > 2]
+    return random.choice(candidates) if candidates else ""
 
 
-def build_queries_from_mc(row: dict) -> dict:
+def generate_queries(rows: List[dict], all_tags_pool: List[str]) -> List[dict]:
     """
-    Build 3 difficulty levels of search queries from MC data.
+    Generate 3 complexity levels of natural-language queries for each image.
 
-    Simulates real user search behavior at different specificity levels.
-
-    Returns:
-        {
-            "file_id": int,
-            "file_name": str,
-            "queries": {
-                "exact":  full MC caption — ceiling reference (MV advantage),
-                "sparse": 2-3 random tags — typical user search ("anime room sunset"),
-                "novel":  short natural phrase from 2 key concepts — new wording,
-            },
-            "keywords_exact":  all keywords from tags,
-            "keywords_sparse": keywords from sparse tags only,
-        }
+    Level 1 SIMPLE:  "anime room desk" (2-3 tags as keywords)
+    Level 2 SCOPED:  "background 중에서 anime room" (image_type scope)
+    Level 3 COMPLEX: "character에서 sword warrior 찾아줘, cute 스타일 제외"
+                     (scope + find + exclude)
     """
-    caption = row.get("mc_caption", "") or ""
-    tags = _parse_tags(row.get("ai_tags", "") or "")
+    queries = []
 
-    # ── Exact: full caption + all tags (MV ceiling) ──
-    exact = caption if caption else ", ".join(tags[:8])
+    for row in rows:
+        tags = _parse_tags(row.get("ai_tags", ""))
+        caption = row.get("mc_caption", "") or ""
+        image_type = row.get("image_type", "") or "other"
+        art_style = row.get("art_style", "") or ""
 
-    # ── Sparse: 2-3 random tags (realistic user query) ──
-    if len(tags) >= 3:
-        sparse_tags = random.sample(tags, 3)
-    elif tags:
-        sparse_tags = tags[:]
-    else:
-        sparse_tags = caption.split()[:3]
-    sparse = " ".join(sparse_tags)
+        if not tags and not caption:
+            continue
 
-    # ── Novel: natural phrase from 2 key concepts (new wording) ──
-    # Pick 2 tags and form a short query the user might type
-    if len(tags) >= 2:
-        picks = random.sample(tags, 2)
-        novel = f"{picks[0]} with {picks[1]}"
-    elif tags:
-        novel = f"image of {tags[0]}"
-    else:
-        # Rephrase: take first 5 words of caption + rearrange
-        words = caption.split()[:6]
-        if len(words) >= 3:
-            novel = " ".join(words[1:4])  # drop first word, take middle
+        # Pick 2-3 descriptive tags (skip generic ones like "anime")
+        desc_tags = [t for t in tags if t.lower() not in ("anime", "illustration", "sketch", "digital")]
+        if len(desc_tags) < 2:
+            desc_tags = tags[:3]
+        sparse_tags = random.sample(desc_tags, min(3, len(desc_tags)))
+        sparse_text = " ".join(sparse_tags)
+
+        # SIMPLE: just keywords
+        simple = sparse_text
+
+        # SCOPED: image_type + keywords
+        scoped = f"{image_type} 중에서 {sparse_text}"
+
+        # COMPLEX: scope + keywords + negative
+        neg_tag = _pick_negative_tag(all_tags_pool, tags)
+        if neg_tag:
+            complex_q = f"{image_type}에서 {sparse_text} 찾아줘, {neg_tag} 제외"
         else:
-            novel = caption[:40]
+            complex_q = f"{image_type}에서 {sparse_text} 찾아줘"
 
-    return {
-        "file_id": row["id"],
-        "file_name": row.get("file_name", "?"),
-        "queries": {
-            "exact": exact,
-            "sparse": sparse,
-            "novel": novel,
-        },
-        "keywords_exact": _extract_keywords(tags),
-        "keywords_sparse": _extract_keywords(sparse_tags),
-    }
+        queries.append({
+            "file_id": row["id"],
+            "file_name": row.get("file_name", "?"),
+            "image_type": image_type,
+            "tags": tags,
+            "queries": {
+                "simple": simple,
+                "scoped": scoped,
+                "complex": complex_q,
+            },
+            "negative_tag": neg_tag,
+        })
+
+    return queries
 
 
-# ── Search Runners ─────────────────────────────────────────────────────
+# ── Search Functions ───────────────────────────────────────────────────
 
 
 def search_vv(searcher, query: str, top_k: int) -> List[int]:
-    """VV axis only. Returns list of file_ids in rank order."""
     try:
         results = searcher.vector_search(query, top_k=top_k, threshold=0.0)
         return [r["id"] for r in results]
@@ -153,7 +136,6 @@ def search_vv(searcher, query: str, top_k: int) -> List[int]:
 
 
 def search_mv(searcher, query: str, top_k: int) -> List[int]:
-    """MV axis only. Returns list of file_ids in rank order."""
     try:
         results = searcher.text_vector_search(query, top_k=top_k, threshold=0.0)
         return [r["id"] for r in results]
@@ -161,17 +143,19 @@ def search_mv(searcher, query: str, top_k: int) -> List[int]:
         return []
 
 
-def search_fts(searcher, keywords: List[str], top_k: int) -> List[int]:
-    """FTS axis only. Returns list of file_ids in rank order."""
+def search_fts(searcher, query: str, top_k: int) -> List[int]:
+    keywords = [w.strip() for w in query.replace(",", " ").split() if len(w.strip()) > 2]
+    if not keywords:
+        return []
     try:
-        results = searcher.fts_search(keywords, top_k=top_k)
+        results = searcher.fts_search(keywords[:8], top_k=top_k)
         return [r["id"] for r in results]
     except Exception:
         return []
 
 
-def search_triaxis(searcher, query: str, top_k: int) -> List[int]:
-    """Full Triaxis (VV + MV + FTS → RRF). Returns list of file_ids."""
+def search_triaxis_full(searcher, query: str, top_k: int) -> List[int]:
+    """Full pipeline: decomposer + scope + negative + rerank."""
     try:
         results = searcher.triaxis_search(
             query, top_k=top_k, threshold=0.0, use_codex=False
@@ -184,24 +168,13 @@ def search_triaxis(searcher, query: str, top_k: int) -> List[int]:
 # ── Evaluation ─────────────────────────────────────────────────────────
 
 
-def evaluate_axis(
-    axis_name: str,
+def evaluate(
+    name: str,
     search_fn,
     queries: List[dict],
-    difficulty: str = "sparse",
-    k_values: List[int] = [1, 3, 5],
+    level: str,
+    k_values: List[int] = [1, 3, 5, 10],
 ) -> dict:
-    """
-    Evaluate one search axis across all queries at a given difficulty.
-
-    Args:
-        axis_name: "vv", "mv", "fts", "triaxis"
-        search_fn: callable that takes (query_text_or_keywords) → [file_ids]
-        queries: list from build_queries_from_mc()
-        difficulty: "exact", "sparse", "novel"
-
-    Returns: {recall_at_k, mrr, per_query_ranks}
-    """
     recall_hits = {k: 0 for k in k_values}
     reciprocal_ranks = []
     per_query = []
@@ -209,32 +182,20 @@ def evaluate_axis(
 
     for i, q in enumerate(queries):
         target_id = q["file_id"]
-        qtext = q["queries"][difficulty]
+        qtext = q["queries"][level]
+        ranked_ids = search_fn(qtext)
 
-        # Choose query input based on axis
-        if axis_name == "fts":
-            kw_key = "keywords_exact" if difficulty == "exact" else "keywords_sparse"
-            ranked_ids = search_fn(q[kw_key])
-        else:
-            ranked_ids = search_fn(qtext)
-
-        # Find rank of target
-        if target_id in ranked_ids:
-            rank = ranked_ids.index(target_id) + 1
-        else:
-            rank = -1  # Not found in top-K
-
+        rank = ranked_ids.index(target_id) + 1 if target_id in ranked_ids else -1
         for k in k_values:
             if 0 < rank <= k:
                 recall_hits[k] += 1
 
         rr = 1.0 / rank if rank > 0 else 0.0
         reciprocal_ranks.append(rr)
-
         per_query.append({
             "file": q["file_name"],
             "rank": rank,
-            "query": str(qtext)[:60],
+            "query": qtext[:70],
         })
 
         if (i + 1) % 10 == 0 or i == n - 1:
@@ -242,140 +203,114 @@ def evaluate_axis(
 
     recall = {f"R@{k}": round(recall_hits[k] / n, 4) for k in k_values}
     mrr = round(float(np.mean(reciprocal_ranks)), 4)
-
-    return {
-        "recall": recall,
-        "mrr": mrr,
-        "per_query": per_query,
-    }
+    return {"recall": recall, "mrr": mrr, "per_query": per_query}
 
 
-# ── Report Builder ─────────────────────────────────────────────────────
+# ── Report ─────────────────────────────────────────────────────────────
 
 
 def score_grade(pct: float) -> str:
-    if pct >= 85:
-        return "A"
-    elif pct >= 70:
-        return "B"
-    elif pct >= 55:
-        return "C"
-    elif pct >= 40:
-        return "D"
-    else:
-        return "F"
+    if pct >= 85: return "A"
+    elif pct >= 70: return "B"
+    elif pct >= 55: return "C"
+    elif pct >= 40: return "D"
+    else: return "F"
 
 
 def build_report(
     all_results: Dict[str, Dict[str, dict]],
-    query_count: int,
-    db_size: int,
-    timing: dict,
+    query_count: int, db_size: int, timing: dict,
     sample_queries: List[dict],
 ) -> str:
-    """
-    Build report. all_results[difficulty][axis] = {recall, mrr, per_query}
-    """
     axes = ["vv", "mv", "fts", "triaxis"]
-    difficulties = ["exact", "sparse", "novel"]
+    levels = ["simple", "scoped", "complex"]
 
     lines = [
-        f"# Triaxis Search Quality Benchmark",
-        f"",
+        "# Triaxis Full-Pipeline Search Quality Benchmark",
+        "",
         f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"**Queries**: {query_count} (from MC tags/captions)",
+        f"**Queries**: {query_count}",
         f"**DB Size**: {db_size} images",
-        f"",
-        f"## Query Difficulty Levels",
-        f"",
-        f"| Level | Description | Example |",
-        f"|---|---|---|",
+        "",
+        "## Query Complexity Levels",
+        "",
+        "| Level | Pipeline Stages | Example |",
+        "|---|---|---|",
     ]
     if sample_queries:
         sq = sample_queries[0]["queries"]
         lines.extend([
-            f"| **exact** | Full MC caption (MV ceiling) | {sq['exact'][:60]} |",
-            f"| **sparse** | 2-3 random tags (typical user) | {sq['sparse'][:60]} |",
-            f"| **novel** | New phrasing from 2 concepts | {sq['novel'][:60]} |",
+            f"| **simple** | VV + MV + FTS → RRF | `{sq['simple'][:55]}` |",
+            f"| **scoped** | + LLM Decomposer + Scope Filter | `{sq['scoped'][:55]}` |",
+            f"| **complex** | + Negative Filter + Exclude | `{sq['complex'][:55]}` |",
         ])
 
-    # Main comparison table per difficulty
-    for diff in difficulties:
-        results = all_results[diff]
-
-        single_best_r1 = max(results[a]["recall"].get("R@1", 0) for a in ["vv", "mv", "fts"])
-        single_best_r5 = max(results[a]["recall"].get("R@5", 0) for a in ["vv", "mv", "fts"])
-        tri_r1 = results["triaxis"]["recall"].get("R@1", 0)
-        tri_r5 = results["triaxis"]["recall"].get("R@5", 0)
-        lift_r1 = (tri_r1 / single_best_r1 - 1) * 100 if single_best_r1 > 0 else 0
-        lift_r5 = (tri_r5 / single_best_r5 - 1) * 100 if single_best_r5 > 0 else 0
-
+    # Per-level tables
+    for level in levels:
+        results = all_results[level]
         lines.extend([
-            f"",
-            f"---",
-            f"",
-            f"## {diff.upper()} Difficulty",
-            f"",
-            f"| Axis | R@1 | R@3 | R@5 | MRR |",
-            f"|---|:-:|:-:|:-:|:-:|",
+            "", "---", "",
+            f"## {level.upper()}",
+            "",
+            "| Axis | R@1 | R@3 | R@5 | R@10 | MRR |",
+            "|---|:-:|:-:|:-:|:-:|:-:|",
         ])
         for axis in axes:
             r = results[axis]
-            recall = r["recall"]
+            rc = r["recall"]
             p = "**" if axis == "triaxis" else ""
             lines.append(
                 f"| {p}{axis.upper()}{p} | "
-                f"{p}{recall.get('R@1', 0):.3f}{p} | "
-                f"{p}{recall.get('R@3', 0):.3f}{p} | "
-                f"{p}{recall.get('R@5', 0):.3f}{p} | "
+                f"{p}{rc.get('R@1',0):.3f}{p} | "
+                f"{p}{rc.get('R@3',0):.3f}{p} | "
+                f"{p}{rc.get('R@5',0):.3f}{p} | "
+                f"{p}{rc.get('R@10',0):.3f}{p} | "
                 f"{p}{r['mrr']:.3f}{p} |"
             )
-
-        lines.extend([
-            f"",
-            f"**Fusion Lift (R@1)**: best single={single_best_r1:.3f} → "
-            f"Triaxis={tri_r1:.3f} (**{lift_r1:+.1f}%**) | "
-            f"**R@5**: {single_best_r5:.3f} → {tri_r5:.3f} (**{lift_r5:+.1f}%**)",
-        ])
-
-    # Summary table — all difficulties in one view
-    lines.extend([
-        f"",
-        f"---",
-        f"",
-        f"## Summary — Fusion Lift by Difficulty",
-        f"",
-        f"| Difficulty | Best Single R@1 | Triaxis R@1 | Lift R@1 | Best Single R@5 | Triaxis R@5 | Lift R@5 |",
-        f"|---|:-:|:-:|:-:|:-:|:-:|:-:|",
-    ])
-    for diff in difficulties:
-        results = all_results[diff]
-        sb1 = max(results[a]["recall"].get("R@1", 0) for a in ["vv", "mv", "fts"])
+        # Fusion lift
         sb5 = max(results[a]["recall"].get("R@5", 0) for a in ["vv", "mv", "fts"])
-        t1 = results["triaxis"]["recall"].get("R@1", 0)
         t5 = results["triaxis"]["recall"].get("R@5", 0)
-        l1 = (t1 / sb1 - 1) * 100 if sb1 > 0 else 0
-        l5 = (t5 / sb5 - 1) * 100 if sb5 > 0 else 0
+        lift5 = (t5 / sb5 - 1) * 100 if sb5 > 0 else 0
+        sb1 = max(results[a]["recall"].get("R@1", 0) for a in ["vv", "mv", "fts"])
+        t1 = results["triaxis"]["recall"].get("R@1", 0)
+        lift1 = (t1 / sb1 - 1) * 100 if sb1 > 0 else 0
+        lines.append(f"\n**Fusion Lift**: R@1 {sb1:.3f}→{t1:.3f} (**{lift1:+.1f}%**) | R@5 {sb5:.3f}→{t5:.3f} (**{lift5:+.1f}%**)")
+
+    # Summary
+    lines.extend(["", "---", "", "## Summary — Pipeline Stage Value", ""])
+    lines.append("| Level | Triaxis R@1 | Triaxis R@5 | Triaxis R@10 | MRR | Stages Active |")
+    lines.append("|---|:-:|:-:|:-:|:-:|---|")
+    for level in levels:
+        r = all_results[level]["triaxis"]
+        rc = r["recall"]
+        stages = {
+            "simple": "VV+MV+FTS→RRF",
+            "scoped": "+Decomposer+Scope",
+            "complex": "+Negative+Exclude",
+        }[level]
         lines.append(
-            f"| **{diff}** | {sb1:.3f} | {t1:.3f} | **{l1:+.1f}%** | "
-            f"{sb5:.3f} | {t5:.3f} | **{l5:+.1f}%** |"
+            f"| **{level}** | {rc.get('R@1',0):.3f} | {rc.get('R@5',0):.3f} | "
+            f"{rc.get('R@10',0):.3f} | {r['mrr']:.3f} | {stages} |"
         )
 
-    # Per-query rank comparison (sparse, top 20)
-    if "sparse" in all_results:
-        results = all_results["sparse"]
-        lines.extend([
-            f"",
-            f"---",
-            f"",
-            f"## Per-Query Rank Comparison (sparse)",
-            f"",
-            f"| File | Query | VV | MV | FTS | Triaxis |",
-            f"|---|---|:-:|:-:|:-:|:-:|",
-        ])
+    # Scoped vs simple lift
+    s_r5 = all_results["simple"]["triaxis"]["recall"].get("R@5", 0)
+    sc_r5 = all_results["scoped"]["triaxis"]["recall"].get("R@5", 0)
+    cx_r5 = all_results["complex"]["triaxis"]["recall"].get("R@5", 0)
+    if s_r5 > 0:
+        lines.append(f"\n**Scope Filter value**: simple→scoped R@5 {s_r5:.3f}→{sc_r5:.3f} (**{(sc_r5/s_r5-1)*100:+.1f}%**)")
+    if sc_r5 > 0:
+        lines.append(f"**Negative Filter value**: scoped→complex R@5 {sc_r5:.3f}→{cx_r5:.3f} (**{(cx_r5/sc_r5-1)*100:+.1f}%**)")
+
+    # Per-query detail (scoped, top 20)
+    if "scoped" in all_results:
+        results = all_results["scoped"]
+        lines.extend(["", "---", "", "## Per-Query Detail (scoped, top 20)", ""])
+        lines.append("| File | Query | VV | MV | FTS | Triaxis |")
+        lines.append("|---|---|:-:|:-:|:-:|:-:|")
         for i in range(min(20, query_count)):
             fname = results["triaxis"]["per_query"][i]["file"]
-            qtext = results["triaxis"]["per_query"][i]["query"][:35]
+            qtext = results["triaxis"]["per_query"][i]["query"][:40]
             ranks = []
             for axis in axes:
                 r = results[axis]["per_query"][i]["rank"]
@@ -383,15 +318,9 @@ def build_report(
             lines.append(f"| {fname} | {qtext} | {' | '.join(ranks)} |")
 
     # Timing
-    lines.extend([
-        f"",
-        f"---",
-        f"",
-        f"## Timing",
-        f"",
-        f"| Phase | Time |",
-        f"|---|---|",
-    ])
+    lines.extend(["", "---", "", "## Timing", ""])
+    lines.append("| Phase | Time |")
+    lines.append("|---|---|")
     for phase, t in timing.items():
         lines.append(f"| {phase} | {t:.1f}s |")
 
@@ -404,13 +333,11 @@ def build_report(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Triaxis Search Quality Benchmark — measures fusion lift"
+        description="Triaxis Full-Pipeline Search Quality Benchmark"
     )
     parser.add_argument("--profile", type=Path, default=None)
-    parser.add_argument("--count", type=int, default=50,
-                        help="Number of images to sample from DB")
-    parser.add_argument("--top-k", type=int, default=20,
-                        help="Search top-K for each query")
+    parser.add_argument("--count", type=int, default=50)
+    parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
 
@@ -429,117 +356,96 @@ def main():
             args.top_k = profile["top_k"]
 
     timing = {}
+    random.seed(42)
 
     print("=" * 70)
-    print("  Triaxis Search Quality Benchmark")
+    print("  Triaxis Full-Pipeline Benchmark")
     print("=" * 70)
 
-    # Load DB and search engine
+    # Load search engine
     print("  Loading search engine...")
     t0 = time.perf_counter()
     from backend.db.sqlite_client import SQLiteDB
     from backend.search.sqlite_search import SqliteVectorSearch
-
     db = SQLiteDB()
     searcher = SqliteVectorSearch(db=db)
     timing["init"] = round(time.perf_counter() - t0, 1)
 
-    # Get images with MC data from DB
-    print("  Loading images from DB...")
+    # Sample images with MC data
     cursor = db.conn.cursor()
     cursor.execute("""
-        SELECT id, file_name, mc_caption, ai_tags
+        SELECT id, file_name, image_type, folder_path, art_style, mc_caption, ai_tags
         FROM files
         WHERE mc_caption IS NOT NULL AND mc_caption != ''
           AND ai_tags IS NOT NULL AND ai_tags != ''
+          AND image_type IS NOT NULL
         ORDER BY RANDOM()
         LIMIT ?
     """, (args.count,))
     columns = [d[0] for d in cursor.description]
     rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-    if not rows:
-        print("  ERROR: No images with MC data in DB. Run pipeline first.")
-        sys.exit(1)
-
-    # Total DB size for context
     cursor.execute("SELECT COUNT(*) FROM files")
     db_size = cursor.fetchone()[0]
 
-    print(f"  Sampled {len(rows)} images (DB total: {db_size})")
-
-    # Build queries (reproducible random with seed)
-    random.seed(42)
-    queries = [build_queries_from_mc(row) for row in rows]
-    valid_queries = [q for q in queries if q["queries"]["exact"]]
-    print(f"  Valid queries: {len(valid_queries)}")
-
-    if len(valid_queries) < 5:
-        print("  ERROR: Too few valid queries. Need at least 5 images with MC data.")
+    if len(rows) < 5:
+        print("  ERROR: Too few images with MC data. Run pipeline first.")
         sys.exit(1)
 
-    # Show sample queries
-    print(f"\n  Sample queries (first image):")
-    sq = valid_queries[0]["queries"]
-    print(f"    exact:  {sq['exact'][:70]}")
-    print(f"    sparse: {sq['sparse'][:70]}")
-    print(f"    novel:  {sq['novel'][:70]}")
+    print(f"  Sampled {len(rows)} images (DB: {db_size})")
 
-    # Run each axis × each difficulty
-    top_k = args.top_k
-    difficulties = ["exact", "sparse", "novel"]
-    axes = ["vv", "mv", "fts", "triaxis"]
-    all_results = {}  # all_results[difficulty][axis]
+    # Build tag pool for negative generation
+    all_tags = set()
+    for row in rows:
+        for t in _parse_tags(row.get("ai_tags", "")):
+            all_tags.add(t)
+    all_tags_list = list(all_tags)
 
-    for diff in difficulties:
+    # Generate queries
+    queries = generate_queries(rows, all_tags_list)
+    print(f"  Generated {len(queries)} queries")
+
+    # Sample display
+    sq = queries[0]
+    print(f"\n  Sample query ({sq['file_name']}, type={sq['image_type']}):")
+    for level, q in sq["queries"].items():
+        print(f"    {level:>8}: {q[:65]}")
+
+    # Run evaluations: 3 levels × 4 axes = 12
+    levels = ["simple", "scoped", "complex"]
+    axes_config = {
+        "vv":      lambda q: search_vv(searcher, q, args.top_k),
+        "mv":      lambda q: search_mv(searcher, q, args.top_k),
+        "fts":     lambda q: search_fts(searcher, q, args.top_k),
+        "triaxis": lambda q: search_triaxis_full(searcher, q, args.top_k),
+    }
+    all_results = {}
+
+    for level in levels:
         print(f"\n{'=' * 70}")
-        print(f"  Difficulty: {diff.upper()}")
+        print(f"  Level: {level.upper()}")
         print(f"{'=' * 70}")
-        all_results[diff] = {}
+        all_results[level] = {}
 
-        for axis in axes:
-            label = {"vv": "VV (SigLIP2)", "mv": "MV (Qwen3-Embed)",
-                     "fts": "FTS (BM25)", "triaxis": "TRIAXIS (RRF)"}[axis]
+        for axis_name, search_fn in axes_config.items():
+            label = {"vv": "VV", "mv": "MV", "fts": "FTS", "triaxis": "TRIAXIS (full pipeline)"}[axis_name]
             print(f"\n  {label}:")
             t0 = time.perf_counter()
-
-            if axis == "vv":
-                fn = lambda q: search_vv(searcher, q, top_k)
-            elif axis == "mv":
-                fn = lambda q: search_mv(searcher, q, top_k)
-            elif axis == "fts":
-                fn = lambda q: search_fts(searcher, q, top_k)
-            else:
-                fn = lambda q: search_triaxis(searcher, q, top_k)
-
-            result = evaluate_axis(axis, fn, valid_queries, difficulty=diff)
+            result = evaluate(axis_name, search_fn, queries, level)
             elapsed = round(time.perf_counter() - t0, 1)
-            timing[f"{diff}_{axis}"] = elapsed
-            all_results[diff][axis] = result
-
-            print(f"    R@1={result['recall']['R@1']:.3f}  "
-                  f"R@5={result['recall']['R@5']:.3f}  "
-                  f"MRR={result['mrr']:.3f}  ({elapsed}s)")
-
-    # Compute key fusion lifts for console summary
-    sparse_results = all_results["sparse"]
-    sb1 = max(sparse_results[a]["recall"]["R@1"] for a in ["vv", "mv", "fts"])
-    sb5 = max(sparse_results[a]["recall"]["R@5"] for a in ["vv", "mv", "fts"])
-    tri1 = sparse_results["triaxis"]["recall"]["R@1"]
-    tri5 = sparse_results["triaxis"]["recall"]["R@5"]
-    lift1 = (tri1 / sb1 - 1) * 100 if sb1 > 0 else 0
-    lift5 = (tri5 / sb5 - 1) * 100 if sb5 > 0 else 0
+            timing[f"{level}_{axis_name}"] = elapsed
+            all_results[level][axis_name] = result
+            rc = result["recall"]
+            print(f"    R@1={rc['R@1']:.3f}  R@5={rc['R@5']:.3f}  R@10={rc['R@10']:.3f}  MRR={result['mrr']:.3f}  ({elapsed}s)")
 
     # Report
-    report_md = build_report(
-        all_results, len(valid_queries), db_size, timing, valid_queries
-    )
+    report_md = build_report(all_results, len(queries), db_size, timing, queries)
 
     output_path = args.output
     if output_path is None:
         DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = DEFAULT_OUTPUT_DIR / f"triaxis_quality_{ts}.md"
+        output_path = DEFAULT_OUTPUT_DIR / f"triaxis_fullpipe_{ts}.md"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -548,15 +454,15 @@ def main():
     json_path = output_path.with_suffix(".json")
     raw = {
         "timestamp": datetime.now().isoformat(),
-        "query_count": len(valid_queries),
+        "query_count": len(queries),
         "db_size": db_size,
-        "top_k": top_k,
-        "difficulties": {
-            diff: {
+        "top_k": args.top_k,
+        "levels": {
+            level: {
                 axis: {"recall": r["recall"], "mrr": r["mrr"]}
-                for axis, r in all_results[diff].items()
+                for axis, r in all_results[level].items()
             }
-            for diff in difficulties
+            for level in levels
         },
         "timing": timing,
     }
@@ -565,22 +471,34 @@ def main():
 
     # Console summary
     print(f"\n{'=' * 70}")
-    print(f"  RESULTS — SPARSE difficulty (realistic user queries)")
+    print(f"  RESULTS — Pipeline Stage Value")
     print(f"{'=' * 70}")
-    print(f"  {'Axis':<12} {'R@1':>8} {'R@3':>8} {'R@5':>8} {'MRR':>8}")
-    print(f"  {'─'*12} {'─'*8} {'─'*8} {'─'*8} {'─'*8}")
-    for axis in axes:
-        r = sparse_results[axis]
-        marker = " ★" if axis == "triaxis" else ""
+    print(f"  {'Level':<10} {'Tri R@1':>8} {'Tri R@5':>8} {'Tri R@10':>9} {'MRR':>8}  {'Best Single R@5':>16} {'Lift':>8}")
+    print(f"  {'─'*10} {'─'*8} {'─'*8} {'─'*9} {'─'*8}  {'─'*16} {'─'*8}")
+    for level in levels:
+        tri = all_results[level]["triaxis"]
+        sb5 = max(all_results[level][a]["recall"]["R@5"] for a in ["vv", "mv", "fts"])
+        t5 = tri["recall"]["R@5"]
+        lift = (t5 / sb5 - 1) * 100 if sb5 > 0 else 0
         print(
-            f"  {axis.upper():<12} "
-            f"{r['recall']['R@1']:>7.3f} "
-            f"{r['recall']['R@3']:>7.3f} "
-            f"{r['recall']['R@5']:>7.3f} "
-            f"{r['mrr']:>7.3f}{marker}"
+            f"  {level:<10} "
+            f"{tri['recall']['R@1']:>7.3f} "
+            f"{tri['recall']['R@5']:>7.3f} "
+            f"{tri['recall']['R@10']:>8.3f} "
+            f"{tri['mrr']:>7.3f}  "
+            f"{sb5:>15.3f} "
+            f"{lift:>+7.1f}%"
         )
+
+    # Stage value
+    s5 = all_results["simple"]["triaxis"]["recall"]["R@5"]
+    sc5 = all_results["scoped"]["triaxis"]["recall"]["R@5"]
+    cx5 = all_results["complex"]["triaxis"]["recall"]["R@5"]
     print(f"{'─' * 70}")
-    print(f"  Fusion Lift R@1: {lift1:+.1f}% | R@5: {lift5:+.1f}%  (vs best single axis)")
+    if s5 > 0:
+        print(f"  Scope Filter:    simple→scoped  R@5 {s5:.3f}→{sc5:.3f} ({(sc5/s5-1)*100:+.1f}%)")
+    if sc5 > 0:
+        print(f"  Negative Filter: scoped→complex R@5 {sc5:.3f}→{cx5:.3f} ({(cx5/sc5-1)*100:+.1f}%)")
     print(f"{'─' * 70}")
     print(f"  Report: {output_path}")
     print(f"  JSON:   {json_path}")
