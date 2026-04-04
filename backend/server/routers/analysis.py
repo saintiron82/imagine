@@ -22,6 +22,17 @@ def _get_manager(db: SQLiteDB) -> AnalysisJobManager:
     return AnalysisJobManager(db)
 
 
+def _auto_start_worker():
+    """Start embedded worker if not already running."""
+    try:
+        from backend.server.embedded_worker import start_worker, get_status
+        if not get_status()["running"]:
+            start_worker(server_url="", access_token="")
+            logger.info("Embedded worker auto-started (new analysis job created)")
+    except Exception as e:
+        logger.warning(f"Embedded worker auto-start failed: {e}")
+
+
 # ── Models ───────────────────────────────────────────────────
 
 class CreateJobRequest(BaseModel):
@@ -80,6 +91,7 @@ def create_analysis_job(
         file_paths=req.file_paths,
         created_by=user.get("id"),
     )
+    _auto_start_worker()
     return {"success": True, **result}
 
 
@@ -172,6 +184,7 @@ def scan_and_create_job(
         file_paths=file_paths,
         created_by=user.get("id"),
     )
+    _auto_start_worker()
     return {"success": True, "jobs_created": 1, **result}
 
 

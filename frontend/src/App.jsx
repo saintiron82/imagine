@@ -176,17 +176,16 @@ function App() {
         if (status?.primaryLanUrl) setServerLanUrl(status.primaryLanUrl);
       } catch { /* ignore */ }
 
-      // Start embedded worker after login if enabled + active work exists
+      // Restore embedded worker after login if active work exists
       try {
-        const { getAutoProcessing, updateAutoProcessing } = await import('./api/admin');
+        const { updateAutoProcessing } = await import('./api/admin');
         const { listAnalysisJobs } = await import('./api/analysis');
-        const ap = await getAutoProcessing();
         const jobs = await listAnalysisJobs();
         const hasActiveWork = (jobs?.jobs || []).some(j => j.status === 'active');
-        if (ap?.enabled && hasActiveWork) {
+        if (hasActiveWork) {
           await updateAutoProcessing({ enabled: true });
         }
-      } catch { /* ignore — will be retried from UI */ }
+      } catch { /* ignore */ }
     }
 
     configureAuth(mode);
