@@ -1194,12 +1194,14 @@ function App() {
           folderPath={enqueueFolderTarget.path}
           folderName={enqueueFolderTarget.name}
           onConfirm={async (path, name, includeSub) => {
-            if (appMode === 'server' && isElectron && window.electron?.queue) {
-              const result = await window.electron.queue.scanFolders([path], 0);
+            try {
+              const { scanFolder } = await import('./api/admin');
+              const result = await scanFolder(path, 0);
               setQueueReloadSignal(prev => prev + 1);
               return result;
+            } catch (e) {
+              return { success: false, error: e.message };
             }
-            return { success: false, error: 'Not in server mode' };
           }}
           onClose={() => setEnqueueFolderTarget(null)}
         />
