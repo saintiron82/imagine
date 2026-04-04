@@ -20,11 +20,27 @@ from backend.db.sqlite_client import SQLiteDB
 
 logger = logging.getLogger(__name__)
 
-# Phase batch limits — max tasks per claim
-PHASE_BATCH_LIMIT = {
-    "mc": 20,    # VLM inference ~8s/file → batch ~2.5 min
-    "vv": 50,    # SigLIP2 ~0.7s/file → batch ~35s
-    "mv": 50,    # Qwen3-Embedding ~0.5s/file → batch ~25s
+# Target batch duration per phase (seconds)
+# MC is the bottleneck → longer batch to reduce claim overhead
+# VV/MV are fast → shorter batch for responsive progress updates
+TARGET_BATCH_SECONDS = {
+    "mc": 600,   # ~10 min (MC ~8s/file → ~75 files for fast worker)
+    "vv": 120,   # ~2 min  (VV ~0.7s/file → ~170 files)
+    "mv": 120,   # ~2 min  (MV ~0.5s/file → ~240 files)
+}
+
+# Fallback batch sizes when no measured speed available
+DEFAULT_BATCH = {
+    "mc": 10,    # conservative: ~1.3 min at 8s/file
+    "vv": 50,    # ~35s at 0.7s/file
+    "mv": 50,    # ~25s at 0.5s/file
+}
+
+# Absolute caps (prevent runaway)
+MAX_BATCH = {
+    "mc": 100,
+    "vv": 500,
+    "mv": 500,
 }
 
 # MC capability threshold
@@ -172,6 +188,27 @@ class WorkerScheduler:
 
         return {"phase": phase, "count": count}
 
+    def _batch_for_phase(self, phase: str, profile: dict, pending: int) -> int:
+        """Calculate batch size for a phase based on worker's measured speed.
+
+        Logic:
+          - If worker has measured speed → batch = target_seconds * (speed / 60)
+          - If no measurement → use conservative default
+          - Clamp to [1, min(pending, MAX_BATCH)]
+        """
+        speed_key = f"{phase}_speed"
+        speed = profile.get(speed_key)  # files/min or None
+
+        if speed and speed > 0:
+            # speed files/min → speed/60 files/sec → target_sec * files/sec
+            target = TARGET_BATCH_SECONDS[phase]
+            batch = int(target * speed / 60.0)
+        else:
+            batch = DEFAULT_BATCH[phase]
+
+        batch = max(1, min(batch, pending, MAX_BATCH[phase]))
+        return batch
+
     def _decide(
         self, profile: dict, pending: dict, cursor
     ) -> tuple:
@@ -182,6 +219,7 @@ class WorkerScheduler:
         - MC-capable workers should prioritize MC when MC is pending
         - MC-incapable workers handle VV/MV
         - When MC pending is 0, MC workers help with VV/MV
+        - Batch size is dynamic per worker (target time × measured speed)
 
         Returns: (phase, count)
         """
@@ -192,21 +230,20 @@ class WorkerScheduler:
 
         # Rule 1: MC pending + worker MC capable → MC
         if mc_p > 0 and mc_capable:
-            count = min(mc_p, PHASE_BATCH_LIMIT["mc"])
+            count = self._batch_for_phase("mc", profile, mc_p)
             return ("mc", count)
 
         # Rule 2: VV/MV — pick the one with more pending
         if vv_p >= mv_p and vv_p > 0:
-            count = min(vv_p, PHASE_BATCH_LIMIT["vv"])
+            count = self._batch_for_phase("vv", profile, vv_p)
             return ("vv", count)
 
         if mv_p > 0:
-            count = min(mv_p, PHASE_BATCH_LIMIT["mv"])
+            count = self._batch_for_phase("mv", profile, mv_p)
             return ("mv", count)
 
         # Rule 3: Only MC pending but worker can't do MC
         if mc_p > 0 and not mc_capable:
-            # Nothing this worker can do right now
             return (None, 0)
 
         return (None, 0)
