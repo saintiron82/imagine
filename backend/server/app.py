@@ -30,7 +30,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.server.config import get_cors_origins, get_server_config
-from backend.server.deps import close_db
+from backend.server.deps import close_db, get_current_user
 
 # ── Logging ──────────────────────────────────────────────────
 # JSON format when piped (Electron), plain text when terminal (dev)
@@ -97,68 +97,10 @@ async def startup():
     except Exception as e:
         logger.warning(f"Parent watchdog failed to start: {e}")
 
-    # DB + admin setup
-    _create_default_admin()
-    _cleanup_stale_sessions()
+    # Minimal startup — pools/workers start after login via POST /api/v1/server/activate
+    logger.info("Server waiting for login")
 
-    # Analysis Job System v1 — ParseAhead removed, but DownloadAhead needed
-    # for WebDAV file downloads (workers can't download directly yet).
-    try:
-        from backend.server.queue.download_ahead import (
-            DownloadAheadPool, register_webdav_source,
-        )
-        from backend.server.deps import get_db
-        db = get_db()
-        app.state.download_ahead = DownloadAheadPool(db)
-        app.state.download_ahead.start()
-        logger.info("Download-ahead pool started (WebDAV downloads)")
-        # Register WebDAV sources from environment
-        webdav_env = os.environ.get("IMAGINE_WEBDAV_SOURCES")
-        if webdav_env:
-            import json as _json
-            try:
-                for src in _json.loads(webdav_env):
-                    register_webdav_source(src)
-            except Exception:
-                pass
-    except Exception as e:
-        logger.warning(f"Download pool failed: {e}")
-
-    # FileTaskParsePool: server-side parsing (download done → parse)
-    try:
-        from backend.server.queue.file_task_parse_pool import FileTaskParsePool
-        dl_pool = getattr(app.state, 'download_ahead', None)
-        app.state.file_task_parse = FileTaskParsePool(db, download_pool=dl_pool)
-        app.state.file_task_parse.start()
-        logger.info("FileTaskParsePool started (server-side parsing)")
-    except Exception as e:
-        logger.warning(f"FileTaskParsePool failed: {e}")
-
-    # WorkerScheduler: central task assignment
-    try:
-        from backend.server.queue.scheduler import WorkerScheduler
-        app.state.scheduler = WorkerScheduler(db)
-        logger.info("WorkerScheduler started (central task assignment)")
-    except Exception as e:
-        logger.warning(f"WorkerScheduler failed: {e}")
-
-    logger.info("Analysis Job System v1")
-
-    # Embedded worker: starts after user login (triggered by frontend)
-    logger.info("Embedded worker: standby (starts after login)")
-
-    # Mark server as ready — all initialization complete
-    app.state.ready = True
-    logger.info("Server ready")
-
-    # Heartbeat watchdog: periodically detect dead workers and reclaim their jobs
-    try:
-        app.state.heartbeat_watchdog = _start_heartbeat_watchdog()
-        logger.info("Heartbeat watchdog started (60s interval, 3min timeout)")
-    except Exception as e:
-        logger.warning(f"Heartbeat watchdog failed to start: {e}")
-
-    # License manager: hybrid verification (Firebase RTDB → cache → offline JWT → free-tier)
+    # License manager (runs before login — needed for plan enforcement)
     try:
         from backend.server.deps import get_db
         from backend.server.licensing.license_manager import LicenseManager
@@ -170,7 +112,6 @@ async def startup():
         info = await lm.verify()
         logger.info(f"License: {info.plan_id} / {info.status} (users={info.current_users}/{info.max_users})")
 
-        # Periodic re-verification (every 1 hour)
         app.state.license_check_stop = threading.Event()
         def _license_check():
             import asyncio
@@ -183,17 +124,13 @@ async def startup():
                     loop = asyncio.new_event_loop()
                     loop.run_until_complete(lm.verify())
                     loop.close()
-                    logger.info("Periodic license re-verification complete")
                 except Exception as e:
                     logger.warning(f"Periodic license check failed: {e}")
-
-        t = threading.Thread(target=_license_check, daemon=True, name="license-check")
-        t.start()
-        logger.info("License manager started (1h periodic check)")
+        threading.Thread(target=_license_check, daemon=True, name="license-check").start()
     except Exception as e:
-        logger.warning(f"License manager failed to start: {e}")
+        logger.warning(f"License manager failed: {e}")
 
-    # mDNS service registration (optional — requires zeroconf)
+    # mDNS (optional)
     try:
         from backend.server.mdns import ImagineServiceAnnouncer
         cfg = get_server_config()
@@ -201,9 +138,69 @@ async def startup():
         app.state.mdns = ImagineServiceAnnouncer(port)
         app.state.mdns.start()
     except ImportError:
-        logger.info("zeroconf not installed, mDNS discovery disabled")
+        pass
     except Exception as e:
-        logger.warning(f"mDNS registration failed: {e}")
+        logger.warning(f"mDNS failed: {e}")
+
+
+def _activate_server(app_instance):
+    """Initialize all server subsystems. Called once after first login."""
+    if getattr(app_instance.state, 'ready', False):
+        return  # already activated
+
+    logger.info("Activating server subsystems...")
+
+    _create_default_admin()
+    _cleanup_stale_sessions()
+
+    # DownloadAheadPool
+    try:
+        from backend.server.queue.download_ahead import (
+            DownloadAheadPool, register_webdav_source,
+        )
+        from backend.server.deps import get_db
+        db = get_db()
+        app_instance.state.download_ahead = DownloadAheadPool(db)
+        app_instance.state.download_ahead.start()
+        logger.info("DownloadAheadPool started")
+        webdav_env = os.environ.get("IMAGINE_WEBDAV_SOURCES")
+        if webdav_env:
+            import json as _json
+            try:
+                for src in _json.loads(webdav_env):
+                    register_webdav_source(src)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Download pool failed: {e}")
+
+    # FileTaskParsePool
+    try:
+        from backend.server.queue.file_task_parse_pool import FileTaskParsePool
+        dl_pool = getattr(app_instance.state, 'download_ahead', None)
+        app_instance.state.file_task_parse = FileTaskParsePool(db, download_pool=dl_pool)
+        app_instance.state.file_task_parse.start()
+        logger.info("FileTaskParsePool started")
+    except Exception as e:
+        logger.warning(f"FileTaskParsePool failed: {e}")
+
+    # WorkerScheduler
+    try:
+        from backend.server.queue.scheduler import WorkerScheduler
+        app_instance.state.scheduler = WorkerScheduler(db)
+        logger.info("WorkerScheduler started")
+    except Exception as e:
+        logger.warning(f"WorkerScheduler failed: {e}")
+
+    # Heartbeat watchdog
+    try:
+        app_instance.state.heartbeat_watchdog = _start_heartbeat_watchdog()
+        logger.info("Heartbeat watchdog started")
+    except Exception as e:
+        logger.warning(f"Heartbeat watchdog failed: {e}")
+
+    app_instance.state.ready = True
+    logger.info("Server activated — all subsystems running")
 
     # Firebase re-registration on restart (best-effort, non-blocking)
     try:
@@ -281,6 +278,23 @@ app.include_router(server_init_router, prefix="/api/v1")
 app.include_router(license_router, prefix="/api/v1")
 app.include_router(analysis_router)  # Already has /api/v1 prefix in routes
 app.include_router(archive_router, prefix="/api/v1")
+
+
+@app.post("/api/v1/server/activate")
+def activate_server(
+    request: Request,
+    _user: dict = Depends(get_current_user),
+):
+    """Activate server subsystems after first login.
+
+    Called once — initializes DB, pools, scheduler, watchdog.
+    Subsequent calls are no-ops (already activated).
+    """
+    _activate_server(request.app)
+    return {
+        "success": True,
+        "ready": getattr(request.app.state, 'ready', False),
+    }
 
 
 @app.get("/api/v1/health")

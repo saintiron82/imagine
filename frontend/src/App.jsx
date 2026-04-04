@@ -176,16 +176,10 @@ function App() {
         if (status?.primaryLanUrl) setServerLanUrl(status.primaryLanUrl);
       } catch { /* ignore */ }
 
-      // Wait for server initialization to complete before any operations
+      // Activate server subsystems (DB, pools, scheduler) after login
       try {
         const { apiClient } = await import('./api/client');
-        let ready = false;
-        for (let i = 0; i < 30; i++) {
-          const health = await apiClient.get('/api/v1/health');
-          if (health?.ready) { ready = true; break; }
-          await new Promise(r => setTimeout(r, 1000));
-        }
-        if (!ready) console.warn('Server initialization timed out');
+        await apiClient.post('/api/v1/server/activate');
 
         // Start embedded worker if active work exists
         const { updateAutoProcessing } = await import('./api/admin');
@@ -195,7 +189,9 @@ function App() {
         if (hasActiveWork) {
           await updateAutoProcessing({ enabled: true });
         }
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.warn('Server activation failed:', e);
+      }
     }
 
     configureAuth(mode);
