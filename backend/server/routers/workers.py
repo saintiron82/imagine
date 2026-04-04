@@ -254,6 +254,13 @@ def worker_connect(
         if scheduler:
             scheduler.register_worker(session_id, gpu_name, vram_gb, is_metal)
 
+            # Apply pre-measured speed profile (skip cold start trial)
+            for phase in ("mc", "vv", "mv"):
+                speed = req.resources.get(f"{phase}_speed")
+                if speed and speed > 0:
+                    scheduler.update_speed(session_id, phase, speed)
+                    logger.info(f"  {phase}_speed: {speed:.1f} files/min (from profile)")
+
     db.conn.commit()
 
     # Determine effective processing mode:
