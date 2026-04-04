@@ -110,7 +110,22 @@ def scan_and_create_job(
             source_id, remote_path = parse_webdav_path(folder_path)
             source_config = get_webdav_source(source_id)
             if not source_config:
-                raise HTTPException(400, f"WebDAV source '{source_id}' not registered")
+                # Try auto-register from IMAGINE_WEBDAV_SOURCES env (set by Electron)
+                import os as _os
+                webdav_env = _os.environ.get("IMAGINE_WEBDAV_SOURCES")
+                if webdav_env:
+                    try:
+                        import json as _j
+                        from backend.server.queue.download_ahead import register_webdav_source as _reg
+                        for src in _j.loads(webdav_env):
+                            if src.get("id") == source_id:
+                                _reg(src)
+                                source_config = get_webdav_source(source_id)
+                                break
+                    except Exception:
+                        pass
+            if not source_config:
+                raise HTTPException(400, f"WebDAV source '{source_id}' not registered. Restart server to reload sources.")
 
             client = WebDAVClient(
                 base_url=source_config["url"],
