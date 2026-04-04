@@ -109,10 +109,12 @@ def scan_and_create_job(
 
             source_id, remote_path = parse_webdav_path(folder_path)
             source_config = get_webdav_source(source_id)
+            logger.info(f"discover/scan: source_id={source_id}, remote_path={remote_path}, registered={bool(source_config)}")
             if not source_config:
                 # Try auto-register from IMAGINE_WEBDAV_SOURCES env (set by Electron)
                 import os as _os
                 webdav_env = _os.environ.get("IMAGINE_WEBDAV_SOURCES")
+                logger.info(f"discover/scan: env IMAGINE_WEBDAV_SOURCES={'set' if webdav_env else 'NOT SET'}")
                 if webdav_env:
                     try:
                         import json as _j
@@ -136,6 +138,7 @@ def scan_and_create_job(
             )
             files = client.list_files_recursive()
             client.close()
+            logger.info(f"discover/scan: WebDAV found {len(files)} files in {remote_path}")
 
             for f in files:
                 file_paths.append(f"webdav://{source_id}{f.remote_path}")
