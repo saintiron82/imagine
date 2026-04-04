@@ -54,16 +54,8 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // Auto-reconnect to last server (Layer 2)
-      const lastServer = localStorage.getItem('imagine-last-server');
-      const lastServerUrl = localStorage.getItem('imagine-last-server-url');
-      const lastServerPw = sessionStorage.getItem('imagine-last-server-pw');
-      if (lastServer && lastServerUrl && lastServerPw && !skipFirebase.current) {
-        _reconnectServer(lastServerUrl, lastServer, lastServerPw)
-          .finally(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
+      // Auto-reconnect removed — user must login every session
+      setLoading(false);
     });
 
     return unsub;
