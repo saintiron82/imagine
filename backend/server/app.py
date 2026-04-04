@@ -144,25 +144,43 @@ async def startup():
 
 
 def _activate_server(app_instance):
-    """Initialize all server subsystems. Called once after first login."""
+    """Initialize all server subsystems. Called once after first login.
+
+    Order matters — DB operations complete BEFORE background threads start:
+    1. DB setup (admin, sessions, migrations)
+    2. AnalysisJobManager init (reclaim, sync — heavy DB writes)
+    3. Background pools (download, parse — start AFTER DB is stable)
+    4. Scheduler + watchdog
+    """
     if getattr(app_instance.state, 'ready', False):
         return  # already activated
 
     logger.info("Activating server subsystems...")
+    from backend.server.deps import get_db
+    db = get_db()
 
+    # Phase 1: DB setup (sequential, no threads)
     _create_default_admin()
     _cleanup_stale_sessions()
+    logger.info("Phase 1: DB setup done")
 
-    # DownloadAheadPool
+    # Phase 2: AnalysisJobManager init — heavy DB writes (reclaim + sync)
+    # Must complete BEFORE pools start to avoid DB lock contention
+    try:
+        from backend.server.queue.analysis_manager import AnalysisJobManager
+        _mgr = AnalysisJobManager(db)  # triggers reclaim + sync
+        logger.info("Phase 2: AnalysisJobManager initialized")
+    except Exception as e:
+        logger.warning(f"AnalysisJobManager init failed: {e}")
+
+    # Phase 3: Background pools (start threads AFTER DB is stable)
     try:
         from backend.server.queue.download_ahead import (
             DownloadAheadPool, register_webdav_source,
         )
-        from backend.server.deps import get_db
-        db = get_db()
         app_instance.state.download_ahead = DownloadAheadPool(db)
         app_instance.state.download_ahead.start()
-        logger.info("DownloadAheadPool started")
+        logger.info("Phase 3: DownloadAheadPool started")
         webdav_env = os.environ.get("IMAGINE_WEBDAV_SOURCES")
         if webdav_env:
             import json as _json
@@ -172,30 +190,28 @@ def _activate_server(app_instance):
             except Exception:
                 pass
     except Exception as e:
-        logger.warning(f"Download pool failed: {e}")
+        logger.warning(f"DownloadAheadPool failed: {e}")
 
-    # FileTaskParsePool
     try:
         from backend.server.queue.file_task_parse_pool import FileTaskParsePool
         dl_pool = getattr(app_instance.state, 'download_ahead', None)
         app_instance.state.file_task_parse = FileTaskParsePool(db, download_pool=dl_pool)
         app_instance.state.file_task_parse.start()
-        logger.info("FileTaskParsePool started")
+        logger.info("Phase 3: FileTaskParsePool started")
     except Exception as e:
         logger.warning(f"FileTaskParsePool failed: {e}")
 
-    # WorkerScheduler
+    # Phase 4: Scheduler + watchdog
     try:
         from backend.server.queue.scheduler import WorkerScheduler
         app_instance.state.scheduler = WorkerScheduler(db)
-        logger.info("WorkerScheduler started")
+        logger.info("Phase 4: WorkerScheduler started")
     except Exception as e:
         logger.warning(f"WorkerScheduler failed: {e}")
 
-    # Heartbeat watchdog
     try:
         app_instance.state.heartbeat_watchdog = _start_heartbeat_watchdog()
-        logger.info("Heartbeat watchdog started")
+        logger.info("Phase 4: Heartbeat watchdog started")
     except Exception as e:
         logger.warning(f"Heartbeat watchdog failed: {e}")
 
