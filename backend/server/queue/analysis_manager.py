@@ -31,14 +31,18 @@ def _now() -> str:
 class AnalysisJobManager:
     """Manages analysis jobs and file task lifecycle."""
 
+    _initialized = False  # Class-level flag: schema + startup tasks run once
+
     def __init__(self, db):
         self.db = db
-        self._ensure_tables()
-        self._ensure_elapsed_columns()
-        self._ensure_snapshot_columns()
-        self._fix_check_constraint()
-        self._reclaim_stale_assigned()
-        self._sync_with_files_db()
+        if not AnalysisJobManager._initialized:
+            AnalysisJobManager._initialized = True
+            self._ensure_tables()
+            self._ensure_elapsed_columns()
+            self._ensure_snapshot_columns()
+            self._fix_check_constraint()
+            self._reclaim_stale_assigned()
+            self._sync_with_files_db()
 
     def _reclaim_stale_assigned(self):
         """Reset assigned tasks back to pending on startup.
