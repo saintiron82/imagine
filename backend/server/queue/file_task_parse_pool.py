@@ -132,15 +132,21 @@ class FileTaskParsePool(BaseAheadPool):
                     f"({Path(file_path).name}, {elapsed:.1f}s)"
                 )
             else:
+                # Parse failures are usually permanent (corrupt file, unsupported format).
+                # Set max_retries=0 so _retry_failed() won't re-queue them.
                 cursor.execute("""
                     UPDATE file_tasks
                     SET parse_status = 'failed',
                         parse_completed_at = ?,
                         parse_elapsed_s = ?,
                         retry_count = retry_count + 1,
+                        max_retries = 0,
+                        error_message = ?,
                         updated_at = ?
                     WHERE id = ?
-                """, (_now(), round(elapsed, 3), _now(), task_id))
+                """, (_now(), round(elapsed, 3),
+                      f"parse failed: {Path(file_path).name}",
+                      _now(), task_id))
                 self.db.conn.commit()
                 self._failed_count += 1
 
