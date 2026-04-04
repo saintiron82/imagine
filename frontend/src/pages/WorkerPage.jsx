@@ -1053,25 +1053,43 @@ export function BenchmarkSection() {
             </span>
             <div className="flex-1">
               <div className="text-sm text-gray-400">{t('worker.bench_score')}</div>
-              <div className="text-xl font-mono">{scores.total?.toLocaleString()}<span className="text-sm text-gray-500"> /min</span></div>
+              <div className="text-xl font-mono">{scores.total?.toLocaleString()}</div>
             </div>
           </div>
+
+          {/* Incapable warning */}
+          {scores.incapable?.length > 0 && (
+            <div className="px-3 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-300">
+              {scores.incapable.map(p => p.toUpperCase()).join(', ')} 처리 불가
+            </div>
+          )}
 
           {/* Per-phase */}
           <div className="grid grid-cols-3 gap-3">
             {['mc', 'vv', 'mv'].map(phase => {
-              const ratio = scores[`${phase}_ratio`];
+              const p = scores.phases?.[phase] || {};
+              const diff = scores.difficulty?.[phase];
               return (
-                <div key={phase} className="p-3 bg-gray-900/50 rounded text-center">
-                  <div className="text-xs text-gray-500 uppercase mb-1">{phase.toUpperCase()}</div>
-                  <div className="text-lg font-mono font-bold text-gray-200">
-                    {scores[phase] || 0}<span className="text-xs text-gray-500">/m</span>
+                <div key={phase} className={`p-3 rounded text-center ${
+                  p.status === 'incapable' ? 'bg-red-900/20 border border-red-800/50' : 'bg-gray-900/50'
+                }`}>
+                  <div className="text-xs text-gray-500 uppercase mb-1">
+                    {phase.toUpperCase()}
+                    {diff > 1 && <span className="text-yellow-500 ml-1">×{diff}</span>}
                   </div>
-                  {ratio > 0 && (
-                    <div className="text-xs text-gray-500">×{ratio} MC</div>
-                  )}
-                  {scores[phase] === 0 && (
-                    <div className="text-xs text-red-400">불가</div>
+                  {p.status === 'incapable' ? (
+                    <div className="text-lg font-bold text-red-400">불가</div>
+                  ) : p.status === 'unmeasured' ? (
+                    <div className="text-lg text-gray-500">미측정</div>
+                  ) : (
+                    <>
+                      <div className="text-lg font-mono font-bold text-gray-200">
+                        {p.speed}<span className="text-xs text-gray-500">/m</span>
+                      </div>
+                      <div className="text-sm font-mono text-emerald-400">
+                        {p.weighted?.toLocaleString()}
+                      </div>
+                    </>
                   )}
                 </div>
               );

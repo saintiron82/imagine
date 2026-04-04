@@ -283,50 +283,72 @@ def run_benchmark() -> Dict[str, Any]:
 
 
 def calculate_scores(profile: Dict[str, Any]) -> Dict[str, Any]:
-    """Calculate performance scores from speed measurements.
+    """Calculate performance scores with difficulty multiplier.
 
-    Score = actual files/min. The ratio between phases reflects real capability.
-    MC가 8/m이고 VV가 347/m이면 VV 점수가 MC의 40배 — 이게 실제 처리 능력 차이.
+    MC is ~400× harder than MV per file. Score reflects this:
+      weighted_score = speed × difficulty_multiplier
 
-    Total = MC + VV + MV (합산 처리량)
-    Grade = MC 기준 (MC가 병목이므로 MC 속도가 등급을 결정)
-    Multiplier = 각 phase의 MC 대비 배율
+    Difficulty multiplier (MV 기준):
+      MC: ×397 (MC 1파일 처리 = MV 397파일 가치)
+      VV: ×10  (VV 1파일 처리 = MV 10파일 가치)
+      MV: ×1   (기준)
+
+    Reference M5 32GB: MC=8.6/m, VV=347/m, MV=3412/m
+    Multiplier = MV_ref / phase_ref = { MC: 3412/8.6=397, VV: 3412/347=10 }
     """
-    scores = {}
+    # Difficulty multipliers (MV-equivalent, from M5 reference)
+    DIFFICULTY = {"mc": 397, "vv": 10, "mv": 1}
 
+    scores = {
+        "difficulty": dict(DIFFICULTY),
+        "phases": {},        # 개별 phase 점수
+        "incapable": [],     # 불능 phase 목록
+    }
+
+    total_weighted = 0
     for phase in ("mc", "vv", "mv"):
         speed = profile.get(f"{phase}_speed")
-        scores[phase] = round(speed, 1) if speed and speed > 0 else 0
 
-    mc = scores["mc"]
-    vv = scores["vv"]
-    mv = scores["mv"]
+        if speed is not None and speed == 0:
+            # 0 = benchmark 시도했지만 실패 → 불능
+            scores["phases"][phase] = {
+                "speed": 0,
+                "weighted": 0,
+                "status": "incapable",
+            }
+            scores["incapable"].append(phase)
+        elif speed and speed > 0:
+            raw = round(speed, 1)
+            weighted = round(raw * DIFFICULTY[phase])
+            scores["phases"][phase] = {
+                "speed": raw,
+                "weighted": weighted,
+                "status": "ok",
+            }
+            total_weighted += weighted
+        else:
+            # None = 미측정
+            scores["phases"][phase] = {
+                "speed": None,
+                "weighted": None,
+                "status": "unmeasured",
+            }
 
-    # Total processing power (sum of all phase speeds)
-    scores["total"] = round(mc + vv + mv, 1)
+    # 종합 점수 = 가중 합계
+    scores["total"] = total_weighted
 
-    # Multiplier relative to MC (the bottleneck)
-    if mc > 0:
-        scores["vv_ratio"] = round(vv / mc, 1) if vv > 0 else 0
-        scores["mv_ratio"] = round(mv / mc, 1) if mv > 0 else 0
+    # 등급 = MC 속도 기준 (파이프라인 병목)
+    mc_speed = scores["phases"].get("mc", {}).get("speed") or 0
+    if mc_speed >= 12:
+        scores["grade"] = "S"
+    elif mc_speed >= 7:
+        scores["grade"] = "A"
+    elif mc_speed >= 3:
+        scores["grade"] = "B"
+    elif mc_speed > 0:
+        scores["grade"] = "C"
     else:
-        scores["vv_ratio"] = 0
-        scores["mv_ratio"] = 0
-
-    # Grade by MC speed (bottleneck determines real throughput)
-    # Based on M5 32GB reference: MC 8.6/m
-    def _grade(mc_speed):
-        if mc_speed >= 12:
-            return "S"   # RTX 4090급
-        if mc_speed >= 7:
-            return "A"   # M5 32GB급
-        if mc_speed >= 3:
-            return "B"   # 중급 GPU
-        if mc_speed > 0:
-            return "C"   # CPU/Ollama (느리지만 가능)
-        return "F"       # MC 불가
-
-    scores["grade"] = _grade(mc)
+        scores["grade"] = "F"
 
     return scores
 
