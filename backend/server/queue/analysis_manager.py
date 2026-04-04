@@ -131,6 +131,7 @@ class AnalysisJobManager:
             "total_elapsed_s": "REAL",
             "worker_count": "INTEGER",
             "started_at": "TEXT",
+            "worker_stats_json": "TEXT",
         }
         for col, typedef in columns.items():
             try:
@@ -711,8 +712,65 @@ class AnalysisJobManager:
             """, (now, job_id, job_id, job_id, job_id, now, job_id, job_id, job_id, job_id, job_id))
 
             if cursor.rowcount > 0:
-                logger.info(f"Analysis job {job_id} completed (snapshot written)")
+                # Build per-worker breakdown JSON
+                self._write_worker_stats(cursor, job_id)
                 self.db.conn.commit()
+                logger.info(f"Analysis job {job_id} completed (snapshot written)")
+
+    def _write_worker_stats(self, cursor, job_id: int):
+        """Build per-worker breakdown and store as JSON in analysis_jobs."""
+        import json as _json
+
+        # Collect all unique workers that touched this job
+        cursor.execute("""
+            SELECT DISTINCT w, phase FROM (
+                SELECT mc_assigned_to AS w, 'mc' AS phase FROM file_tasks
+                    WHERE analysis_job_id = ? AND mc_assigned_to IS NOT NULL
+                UNION ALL
+                SELECT vv_assigned_to, 'vv' FROM file_tasks
+                    WHERE analysis_job_id = ? AND vv_assigned_to IS NOT NULL
+                UNION ALL
+                SELECT mv_assigned_to, 'mv' FROM file_tasks
+                    WHERE analysis_job_id = ? AND mv_assigned_to IS NOT NULL
+            )
+        """, (job_id, job_id, job_id))
+
+        worker_phases = {}  # {worker_id: set of phases}
+        for wid, phase in cursor.fetchall():
+            worker_phases.setdefault(wid, set()).add(phase)
+
+        stats = []
+        for wid in worker_phases:
+            entry = {"worker_id": wid}
+
+            # Worker name from worker_sessions
+            cursor.execute(
+                "SELECT worker_name FROM worker_sessions WHERE id = ?", (wid,)
+            )
+            name_row = cursor.fetchone()
+            entry["name"] = name_row[0] if name_row else f"worker-{wid}"
+
+            # Per-phase: count + avg speed
+            for phase in ("mc", "vv", "mv"):
+                assigned_col = f"{phase}_assigned_to"
+                elapsed_col = f"{phase}_elapsed_s"
+                cursor.execute(f"""
+                    SELECT COUNT(*),
+                           CASE WHEN AVG({elapsed_col}) > 0
+                               THEN ROUND(60.0 / AVG({elapsed_col}), 1) END
+                    FROM file_tasks
+                    WHERE analysis_job_id = ? AND {assigned_col} = ? AND {phase}_status = 'done'
+                """, (job_id, wid))
+                row = cursor.fetchone()
+                entry[f"{phase}_count"] = row[0] or 0
+                entry[f"{phase}_speed"] = row[1]  # files/min, None if no data
+
+            stats.append(entry)
+
+        cursor.execute(
+            "UPDATE analysis_jobs SET worker_stats_json = ? WHERE id = ?",
+            (_json.dumps(stats, ensure_ascii=False), job_id),
+        )
 
     # ── Retry Failed ─────────────────────────────────────────
 
