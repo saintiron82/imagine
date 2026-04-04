@@ -1,9 +1,10 @@
-# VV (Visual Vector) benchmark profile — SigLIP2 NaFlex (current default)
+# VV (Visual Vector) benchmark profile — SigLIP2 NaFlex + Qwen3.5-9B Cross-Modal
 # Usage: python tools/bench_vv_quality.py --profile benchmarks/profiles/vv_siglip2.yaml
 
-name: "SigLIP2 so400m-NaFlex"
-description: "Current production VV encoder — baseline reference (1152d, Apache 2.0)"
+name: "SigLIP2 so400m-NaFlex + Qwen3.5-9B Cross-Modal"
+description: "Full 3-metric VV benchmark — Self-Consistency + Retrieval@K + Cross-Modal Recall"
 
 encoder_model: "google/siglip2-so400m-patch16-naflex"
-count: 30
+vlm_model: "mlx-community/Qwen3.5-9B-MLX-4bit"
+count: 20
 max_edge: 512

@@ -2,17 +2,23 @@
 """
 VV (Visual Vector) Quality Benchmark
 ======================================
-Evaluates VV encoder quality using two metrics:
+Evaluates VV encoder quality using three metrics:
 
-1. Self-Consistency (0-50):
+1. Self-Consistency (0-34):
    Apply transforms (crop, flip, brightness, blur, resize) to each image,
    measure cosine similarity between original and transformed vectors.
    A good encoder should be robust to these augmentations.
 
-2. Retrieval@K (0-50):
+2. Retrieval@K (0-33):
    For each image, find top-K nearest neighbors in the corpus.
    Images from the same group (filename prefix or folder) should rank higher.
    Measures how well the encoder captures visual similarity for retrieval.
+
+3. Cross-Modal Recall (0-33):
+   Use MC-generated tags as text queries via encode_text().
+   Check if the original image ranks in top-K among the whole corpus.
+   Measures text↔image alignment quality — the VV axis in Triaxis search.
+   Requires VLM to generate MC tags first.
 
 Total score: 0-100.
 
@@ -21,6 +27,7 @@ Usage:
     python tools/bench_vv_quality.py --count 50               # more images
     python tools/bench_vv_quality.py --profile benchmarks/profiles/vv_siglip2.yaml
     python tools/bench_vv_quality.py --encoder-model google/siglip2-so400m-patch16-naflex
+    python tools/bench_vv_quality.py --vlm-model mlx-community/Qwen3.5-9B-MLX-4bit
 """
 
 import argparse
@@ -228,9 +235,9 @@ def score_self_consistency(
 
     overall_mean = np.mean(list(aug_means.values()))
 
-    # Score: [0.5, 0.95] → [0, 50]
+    # Score: [0.5, 0.95] → [0, 34]
     normalized = max(0, min(1, (overall_mean - 0.5) / 0.45))
-    score = round(normalized * 50, 1)
+    score = round(normalized * 34, 1)
 
     return {
         "score": score,
@@ -322,13 +329,13 @@ def score_retrieval_at_k(
         vals = precision_at_k[k]
         mean_precision[f"P@{k}"] = round(np.mean(vals), 4) if vals else 0.0
 
-    # Score: weighted average P@3(0.5) + P@5(0.3) + P@10(0.2) → [0, 50]
+    # Score: weighted average P@3(0.5) + P@5(0.3) + P@10(0.2) → [0, 33]
     weights = {3: 0.5, 5: 0.3, 10: 0.2}
     weighted_avg = sum(
         mean_precision.get(f"P@{k}", 0) * w
         for k, w in weights.items()
     )
-    score = round(weighted_avg * 50, 1)
+    score = round(weighted_avg * 33, 1)
 
     return {
         "score": score,
@@ -337,6 +344,154 @@ def score_retrieval_at_k(
         "images_evaluated": len(per_image_results),
         "images_skipped_singleton": n - len(per_image_results),
         "per_image": per_image_results[:20],  # Limit output size
+    }
+
+
+# ── Scoring: Cross-Modal Recall ────────────────────────────────────────
+
+
+def generate_mc_tags(
+    images: List[Tuple[Image.Image, str]], vlm_model: Optional[str] = None
+) -> List[Dict]:
+    """Generate MC tags for each image using VLM."""
+    from backend.vision.mlx_adapter import MLXVisionAdapter
+
+    model_id = vlm_model or "mlx-community/Qwen3.5-9B-MLX-4bit"
+    print(f"    Loading VLM: {model_id}")
+    adapter = MLXVisionAdapter(model=model_id, concise=True)
+    adapter._load_model()
+
+    # Load domain
+    domain = None
+    try:
+        from backend.utils.config import get_config
+        cfg = get_config()
+        domain_id = cfg.get("classification.active_domain")
+        if domain_id:
+            from backend.vision.domain_loader import load_domain
+            domain = load_domain(domain_id)
+    except Exception:
+        pass
+
+    results = []
+    for i, (img, fname) in enumerate(images):
+        try:
+            r = adapter.classify_and_analyze(img, domain=domain)
+            caption = r.get("mc_caption", "") or r.get("caption", "")
+            tags = r.get("tags", []) or r.get("ai_tags", [])
+            results.append({"file": fname, "caption": caption, "tags": tags})
+        except Exception as e:
+            results.append({"file": fname, "caption": "", "tags": [], "error": str(e)})
+        if (i + 1) % 5 == 0 or i == len(images) - 1:
+            print(f"      [{i+1}/{len(images)}] MC done")
+
+    # Unload VLM
+    if hasattr(adapter, 'unload_model'):
+        adapter.unload_model()
+    del adapter
+    gc.collect()
+    try:
+        import mlx.core as mx
+        mx.clear_cache()
+    except Exception:
+        pass
+
+    return results
+
+
+def score_cross_modal_recall(
+    images: List[Tuple[Image.Image, str]],
+    mc_results: List[Dict],
+    encoder,
+    k_values: List[int] = [1, 3, 5],
+) -> Dict:
+    """
+    Score 0-33: Can MC tags find the original image via VV text→image search?
+
+    For each image:
+      1. Join MC tags into a text query
+      2. encode_text(tags) → text vector
+      3. Rank all image VV vectors by cosine similarity to text vector
+      4. Check if the original image appears in top-K
+
+    This measures the full Triaxis VV path:
+      user query → encode_text → cosine vs stored VV → retrieval
+
+    Score: weighted R@1(0.5) + R@3(0.3) + R@5(0.2) → [0, 33]
+    """
+    n = len(images)
+
+    # Pre-encode all images
+    print(f"    Cross-Modal: encoding {n} images...")
+    img_vectors = np.array([encoder.encode_image(img) for img, _ in images])  # (N, dim)
+
+    recall_at_k = {k: [] for k in k_values}
+    per_image = []
+
+    for i, (mc, (img, fname)) in enumerate(zip(mc_results, images)):
+        tags = mc.get("tags", [])
+        caption = mc.get("caption", "")
+
+        # Build text query from tags (+ caption for richer signal)
+        if tags:
+            text_query = ", ".join(tags[:8])
+        elif caption:
+            text_query = caption[:100]
+        else:
+            per_image.append({"file": fname, "query": "", "recall": {}, "rank": -1})
+            continue
+
+        # Encode text and rank images
+        try:
+            txt_vec = encoder.encode_text(text_query)
+            similarities = img_vectors @ txt_vec  # (N,)
+            ranked = np.argsort(similarities)[::-1]  # descending
+            rank = int(np.where(ranked == i)[0][0]) + 1  # 1-indexed
+
+            img_recall = {}
+            for k in k_values:
+                hit = 1.0 if rank <= k else 0.0
+                recall_at_k[k].append(hit)
+                img_recall[f"R@{k}"] = hit
+
+            per_image.append({
+                "file": fname,
+                "query": text_query[:80],
+                "rank": rank,
+                "cosine": round(float(similarities[i]), 4),
+                "recall": img_recall,
+            })
+        except Exception as e:
+            per_image.append({"file": fname, "query": text_query[:80], "rank": -1, "error": str(e)})
+
+        if (i + 1) % 10 == 0 or i == n - 1:
+            print(f"      [{i+1}/{n}] done")
+
+    # Aggregate
+    mean_recall = {}
+    for k in k_values:
+        vals = recall_at_k[k]
+        mean_recall[f"R@{k}"] = round(np.mean(vals), 4) if vals else 0.0
+
+    # Score: weighted R@1(0.5) + R@3(0.3) + R@5(0.2) → [0, 33]
+    weights = {1: 0.5, 3: 0.3, 5: 0.2}
+    weighted_avg = sum(
+        mean_recall.get(f"R@{k}", 0) * w
+        for k, w in weights.items()
+    )
+    score = round(weighted_avg * 33, 1)
+
+    # Mean rank
+    valid_ranks = [p["rank"] for p in per_image if p.get("rank", -1) > 0]
+    mean_rank = round(np.mean(valid_ranks), 1) if valid_ranks else -1
+    median_rank = round(float(np.median(valid_ranks)), 1) if valid_ranks else -1
+
+    return {
+        "score": score,
+        "mean_recall": mean_recall,
+        "mean_rank": mean_rank,
+        "median_rank": median_rank,
+        "per_image": per_image[:20],
     }
 
 
@@ -360,23 +515,48 @@ def build_markdown_report(
     encoder_id: str,
     sc_result: Dict,
     ret_result: Dict,
+    cm_result: Optional[Dict],
     timing: Dict,
     image_count: int,
+    vlm_id: str = "",
 ) -> str:
-    total = sc_result["score"] + ret_result["score"]
+    total = sc_result["score"] + ret_result["score"] + (cm_result["score"] if cm_result else 0)
+    max_score = 100 if cm_result else 67
+
     lines = [
         f"# VV Quality Benchmark",
         f"",
         f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"**Encoder**: `{encoder_id}`",
+    ]
+    if vlm_id:
+        lines.append(f"**VLM (for Cross-Modal)**: `{vlm_id}`")
+    lines.extend([
         f"**Images**: {image_count}",
         f"",
-        f"## Overall Score: {total:.1f}/100 ({score_grade(total)})",
+        f"## Overall Score: {total:.1f}/{max_score} ({score_grade(total * 100 / max_score)})",
         f"",
         f"| Component | Score | Details |",
         f"|---|:-:|---|",
-        f"| Self-Consistency | {sc_result['score']:.1f}/50 | Mean cosine: {sc_result['overall_mean_cosine']:.4f} |",
-        f"| Retrieval@K | {ret_result['score']:.1f}/50 | {', '.join(f'{k}={v:.3f}' for k, v in ret_result.get('mean_precision', {}).items())} |",
+        f"| Self-Consistency | {sc_result['score']:.1f}/34 | Mean cosine: {sc_result['overall_mean_cosine']:.4f} |",
+        f"| Retrieval@K | {ret_result['score']:.1f}/33 | {', '.join(f'{k}={v:.3f}' for k, v in ret_result.get('mean_precision', {}).items())} |",
+    ])
+    if cm_result:
+        lines.append(
+            f"| Cross-Modal Recall | {cm_result['score']:.1f}/33 | "
+            f"{', '.join(f'{k}={v:.3f}' for k, v in cm_result.get('mean_recall', {}).items())}"
+            f" · mean rank: {cm_result.get('mean_rank', '?')} |"
+        )
+
+    lines.extend([
+        f"",
+        f"### Score Breakdown",
+        f"",
+        f"| Component | Max | Measures |",
+        f"|---|:-:|---|",
+        f"| Self-Consistency | 34 | Augmentation robustness (crop, flip, brightness, blur, resize) |",
+        f"| Retrieval@K | 33 | Image→image retrieval precision by filename groups |",
+        f"| Cross-Modal Recall | 33 | MC tags → encode_text → find original image in corpus |",
         f"",
         f"## Timing",
         f"",
@@ -386,16 +566,21 @@ def build_markdown_report(
         f"| Model loading | {timing.get('model_load_s', 0):.1f}s |",
         f"| Self-consistency | {timing.get('sc_s', 0):.1f}s |",
         f"| Retrieval@K | {timing.get('ret_s', 0):.1f}s |",
+    ])
+    if "cm_mc_s" in timing:
+        lines.append(f"| Cross-Modal MC gen | {timing['cm_mc_s']:.1f}s |")
+    if "cm_s" in timing:
+        lines.append(f"| Cross-Modal scoring | {timing['cm_s']:.1f}s |")
+
+    lines.extend([
         f"",
         f"---",
         f"",
         f"## Self-Consistency Detail",
         f"",
-        f"Per-augmentation mean cosine similarity (higher = more robust):",
-        f"",
         f"| Augmentation | Mean Cosine |",
         f"|---|:-:|",
-    ]
+    ])
     for aug, val in sc_result.get("per_augmentation", {}).items():
         bar = "█" * int(val * 20) if val > 0 else ""
         lines.append(f"| {aug} | {val:.4f} {bar} |")
@@ -406,21 +591,44 @@ def build_markdown_report(
         f"",
         f"## Retrieval@K Detail",
         f"",
-        f"Group distribution (top 15):",
-        f"",
         f"| Group | Count |",
         f"|---|:-:|",
     ])
     for grp, cnt in list(ret_result.get("group_distribution", {}).items())[:15]:
         lines.append(f"| {grp} | {cnt} |")
+    lines.append(
+        f"\nImages evaluated: {ret_result.get('images_evaluated', 0)} "
+        f"(skipped {ret_result.get('images_skipped_singleton', 0)} singletons)"
+    )
 
-    lines.extend([
-        f"",
-        f"Images evaluated: {ret_result.get('images_evaluated', 0)} "
-        f"(skipped {ret_result.get('images_skipped_singleton', 0)} singletons)",
-        f"",
-    ])
+    if cm_result:
+        lines.extend([
+            f"",
+            f"---",
+            f"",
+            f"## Cross-Modal Recall Detail",
+            f"",
+            f"MC tags → SigLIP2 encode_text → rank original image in corpus.",
+            f"",
+            f"| File | Tag Query | Rank | Cosine | R@1 | R@3 | R@5 |",
+            f"|---|---|:-:|:-:|:-:|:-:|:-:|",
+        ])
+        for p in cm_result.get("per_image", []):
+            recall = p.get("recall", {})
+            lines.append(
+                f"| {p.get('file', '?')} | {p.get('query', '')[:40]} | "
+                f"{p.get('rank', '?')} | {p.get('cosine', '?')} | "
+                f"{'✓' if recall.get('R@1') else '✗'} | "
+                f"{'✓' if recall.get('R@3') else '✗'} | "
+                f"{'✓' if recall.get('R@5') else '✗'} |"
+            )
+        lines.extend([
+            f"",
+            f"Mean rank: {cm_result.get('mean_rank', '?')} · "
+            f"Median rank: {cm_result.get('median_rank', '?')}",
+        ])
 
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -452,6 +660,8 @@ def main():
                         help="YAML profile file")
     parser.add_argument("--encoder-model", type=str, default=None,
                         help="Override VV encoder model ID")
+    parser.add_argument("--vlm-model", type=str, default=None,
+                        help="VLM model for Cross-Modal MC generation (skip if omitted)")
     parser.add_argument("--images", type=Path, default=DEFAULT_IMAGE_DIR)
     parser.add_argument("--count", type=int, default=30)
     parser.add_argument("--max-edge", type=int, default=512)
@@ -471,6 +681,8 @@ def main():
 
         if "encoder_model" in profile and not args.encoder_model:
             args.encoder_model = profile["encoder_model"]
+        if "vlm_model" in profile and not args.vlm_model:
+            args.vlm_model = profile["vlm_model"]
         if "count" in profile and args.count == 30:
             args.count = profile["count"]
         if "max_edge" in profile:
@@ -504,25 +716,51 @@ def main():
 
     # 1. Self-Consistency
     print(f"\n{'─' * 70}")
-    print("  1. Self-Consistency")
+    print("  1. Self-Consistency (/34)")
     t0 = time.perf_counter()
     sc_result = score_self_consistency(images, encoder)
     timing["sc_s"] = round(time.perf_counter() - t0, 1)
-    print(f"    Score: {sc_result['score']:.1f}/50 "
+    print(f"    Score: {sc_result['score']:.1f}/34 "
           f"(mean cosine: {sc_result['overall_mean_cosine']:.4f})")
 
     # 2. Retrieval@K
     print(f"\n{'─' * 70}")
-    print("  2. Retrieval@K")
+    print("  2. Retrieval@K (/33)")
     t0 = time.perf_counter()
     ret_result = score_retrieval_at_k(images, encoder)
     timing["ret_s"] = round(time.perf_counter() - t0, 1)
-    print(f"    Score: {ret_result['score']:.1f}/50")
+    print(f"    Score: {ret_result['score']:.1f}/33")
     for k, v in ret_result.get("mean_precision", {}).items():
         print(f"      {k}: {v:.3f}")
 
+    # 3. Cross-Modal Recall (optional — requires VLM)
+    cm_result = None
+    vlm_id = ""
+    if args.vlm_model:
+        print(f"\n{'─' * 70}")
+        print("  3. Cross-Modal Recall (/33)")
+        print(f"    VLM: {args.vlm_model}")
+
+        # Generate MC tags (needs VLM, unloads after)
+        t0 = time.perf_counter()
+        mc_results = generate_mc_tags(images, vlm_model=args.vlm_model)
+        timing["cm_mc_s"] = round(time.perf_counter() - t0, 1)
+        vlm_id = args.vlm_model
+
+        # Score cross-modal retrieval (uses VV encoder, already loaded)
+        t0 = time.perf_counter()
+        cm_result = score_cross_modal_recall(images, mc_results, encoder)
+        timing["cm_s"] = round(time.perf_counter() - t0, 1)
+        print(f"    Score: {cm_result['score']:.1f}/33")
+        for k, v in cm_result.get("mean_recall", {}).items():
+            print(f"      {k}: {v:.3f}")
+        print(f"    Mean rank: {cm_result.get('mean_rank', '?')} / {len(images)}")
+    else:
+        print(f"\n  (Skipping Cross-Modal — use --vlm-model to enable)")
+
     # Total
-    total = sc_result["score"] + ret_result["score"]
+    total = sc_result["score"] + ret_result["score"] + (cm_result["score"] if cm_result else 0)
+    max_score = 100 if cm_result else 67
 
     # Cleanup
     del encoder
@@ -536,7 +774,7 @@ def main():
 
     # Report
     report_md = build_markdown_report(
-        encoder_id, sc_result, ret_result, timing, len(images)
+        encoder_id, sc_result, ret_result, cm_result, timing, len(images), vlm_id
     )
 
     output_path = args.output
@@ -554,24 +792,26 @@ def main():
     raw = {
         "timestamp": datetime.now().isoformat(),
         "encoder": encoder_id,
+        "vlm": vlm_id,
         "image_count": len(images),
         "total_score": total,
-        "self_consistency": sc_result,
+        "max_score": max_score,
+        "self_consistency": {k: v for k, v in sc_result.items() if k != "per_image"},
         "retrieval_at_k": ret_result,
         "timing": timing,
         "system_memory": mem,
     }
-    # Trim per_image for JSON size
-    raw["self_consistency"] = {
-        k: v for k, v in sc_result.items() if k != "per_image"
-    }
+    if cm_result:
+        raw["cross_modal_recall"] = cm_result
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(raw, f, ensure_ascii=False, indent=2, default=str)
 
     print(f"\n{'=' * 70}")
-    print(f"  RESULT: {total:.1f}/100 ({score_grade(total)})")
-    print(f"    Self-Consistency: {sc_result['score']:.1f}/50")
-    print(f"    Retrieval@K:     {ret_result['score']:.1f}/50")
+    print(f"  RESULT: {total:.1f}/{max_score} ({score_grade(total * 100 / max_score)})")
+    print(f"    Self-Consistency:   {sc_result['score']:.1f}/34")
+    print(f"    Retrieval@K:        {ret_result['score']:.1f}/33")
+    if cm_result:
+        print(f"    Cross-Modal Recall: {cm_result['score']:.1f}/33")
     print(f"{'─' * 70}")
     print(f"  Report: {output_path}")
     print(f"  JSON:   {json_path}")
