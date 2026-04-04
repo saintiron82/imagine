@@ -1,0 +1,9 @@
+# VV (Visual Vector) benchmark profile — SigLIP2 NaFlex (current default)
+# Usage: python tools/bench_vv_quality.py --profile benchmarks/profiles/vv_siglip2.yaml
+
+name: "SigLIP2 so400m-NaFlex"
+description: "Current production VV encoder — baseline reference (1152d, Apache 2.0)"
+
+encoder_model: "google/siglip2-so400m-patch16-naflex"
+count: 30
+max_edge: 512
