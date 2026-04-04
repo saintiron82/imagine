@@ -60,10 +60,37 @@ TAG_KO_MAP = {
 }
 
 SKIP_TAGS = {
+    # Style / medium
     "anime", "illustration", "sketch", "digital", "3d_render",
     "painterly", "realistic", "fantasy", "abstract", "cartoon",
+    "pixel_art", "line_art", "lineart", "watercolor", "digital painting",
+    # Palette / mood (abstract adjectives — users don't search these)
     "cool_palette", "warm_palette", "neutral_color_palette",
+    "warm_color_palette", "cool_color_palette",
     "atmospheric", "dynamic", "dramatic", "serene", "ethereal",
+    "mysterious", "mythical", "mystical", "surreal", "tranquil",
+    "melancholic", "desolate", "contemplative", "futuristic",
+    "translucent", "ghostly", "overlay", "glow", "glowing",
+    # Colors alone (too generic)
+    "blue", "red", "green", "yellow", "pink", "purple", "orange",
+    "white", "black", "grey", "gray", "brown",
+    # Meta / system
+    "public_art", "close-up", "profile", "draft", "concept_art",
+    "split-screen", "indoor_scene", "outdoor_scene",
+}
+
+# Only use tags that represent CONCRETE OBJECTS (things you can see)
+CONCRETE_OBJECTS = set(TAG_KO_MAP.keys()) | {
+    "car", "boat", "ship", "train", "bicycle", "bus",
+    "cat", "dog", "bird", "horse", "fish",
+    "sword", "shield", "armor", "weapon", "bow",
+    "book", "bottle", "cup", "basket", "pillow",
+    "statue", "fountain", "bench", "gate", "tower",
+    "candle", "piano", "guitar", "drum",
+    "tent", "campfire", "lantern", "sign",
+    "snow", "rain", "fog", "lightning",
+    "fence", "pillar", "column", "arch",
+    "chandelier", "rug", "carpet", "vase",
 }
 
 
@@ -130,11 +157,21 @@ def generate_queries_with_gt(db, count: int, judge_mode: str = "keyword") -> Lis
             break
 
         tags = _parse_tags(row.get("ai_tags", ""))
-        concrete = [t for t in tags if t.lower() not in SKIP_TAGS and len(t) > 2]
-        if len(concrete) < 2:
+        # Only pick concrete visible objects, not abstract adjectives
+        concrete = [t for t in tags
+                    if t.lower() not in SKIP_TAGS
+                    and len(t) > 2
+                    and not t.startswith("imagine_worker")  # system tags
+                    and not any(c.isdigit() for c in t[:3])  # file codes
+                    ]
+        # Prefer tags that are in our known objects list
+        known = [t for t in concrete if t.lower().replace("_", " ") in CONCRETE_OBJECTS
+                 or t.lower().split("_")[0] in CONCRETE_OBJECTS]
+        pool = known if len(known) >= 2 else concrete
+        if len(pool) < 2:
             continue
 
-        picks = random.sample(concrete, 2)
+        picks = random.sample(pool, 2)
         el1_en, el2_en = picks[0], picks[1]
         el1_ko = _tag_to_korean(el1_en)
         el2_ko = _tag_to_korean(el2_en)
@@ -153,7 +190,8 @@ def generate_queries_with_gt(db, count: int, judge_mode: str = "keyword") -> Lis
             # Too few matches — try with just 1 element
             gt_ids = _find_ground_truth_single(cursor, el1_en)
 
-        if len(gt_ids) < 2:
+        # Skip if GT too small or too large (>100 means query is too generic)
+        if len(gt_ids) < 2 or len(gt_ids) > 100:
             continue
 
         queries.append({
