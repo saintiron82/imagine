@@ -636,13 +636,10 @@ class WorkerDaemon:
             return False
         finally:
             self._clear_current()
-            # Move downloaded temp files to cache (or delete)
+            # Clean up temp files (no cache — server manages downloads)
             if self.storage_mode == "server_upload" and local_path != file_path:
                 try:
-                    from backend.utils.download_cache import get_download_cache
-                    cache = get_download_cache()
-                    if not cache.put(file_path, local_path, move=True):
-                        Path(local_path).unlink(missing_ok=True)
+                    Path(local_path).unlink(missing_ok=True)
                 except Exception:
                     pass
 
@@ -655,16 +652,15 @@ class WorkerDaemon:
     def _resolve_file(self, job: dict) -> str:
         """Get local file path for processing.
 
-        Resolution priority (mode-dependent):
-        - parse mode: download ORIGINAL file (needed for parsing)
-        - mc/vv/mv modes: download THUMBNAIL only (never original)
+        Workers only handle MC/VV/MV — always need THUMBNAIL only.
+        Parse is server-side (FileTaskParsePool).
         """
         file_path = job["file_path"]
         file_id = job.get("file_id")
         file_name = Path(file_path).name
         is_remote_uri = file_path.startswith(("webdav://", "http://", "https://"))
 
-        # 1) shared_fs mode — local paths only
+        # shared_fs mode — local paths only
         if self.storage_mode == "shared_fs" and not is_remote_uri:
             if Path(file_path).exists():
                 logger.info(f"[RESOLVE] LOCAL file: {file_name}")
@@ -672,28 +668,7 @@ class WorkerDaemon:
             logger.warning(f"[RESOLVE] LOCAL file not found: {file_name}")
             return None
 
-        # 2) parse mode: needs ORIGINAL file for parsing
-        if self.processing_mode == "parse":
-            if is_remote_uri:
-                from backend.utils.download_cache import get_download_cache
-                cache = get_download_cache()
-                cached = cache.get(file_path)
-                if cached:
-                    logger.info(f"[RESOLVE] ORIGINAL (cache hit): {file_name}")
-                    return str(cached)
-                temp = self._resolve_download_ahead(job)
-                if temp:
-                    logger.info(f"[RESOLVE] ORIGINAL (download-ahead): {file_name}")
-                    return temp
-            if file_id is not None:
-                logger.info(f"[RESOLVE] ORIGINAL (server download): {file_name}")
-                result = self.uploader.download_file(file_id, self.tmp_dir)
-                if result:
-                    return result
-            logger.error(f"[RESOLVE] ORIGINAL failed — file unavailable: {file_name}")
-            return None
-
-        # 3) mc/vv/mv/full modes: needs THUMBNAIL only (never download original)
+        # MC/VV/MV: needs THUMBNAIL only (never download original)
         if job.get("pre_parsed") or is_remote_uri:
             thumb = self._resolve_thumbnail(job)
             if thumb:
@@ -707,27 +682,8 @@ class WorkerDaemon:
         return None
         return result
 
-    def _resolve_download_ahead(self, job: dict) -> Optional[str]:
-        """Look up temp file from DownloadAheadPool (server co-located mode).
-
-        When the builtin worker runs inside the server process, it can
-        access the DownloadAheadPool's temp files directly via app.state.
-        """
-        file_id = job.get("file_id")
-
-        # Try DownloadAheadPool's in-memory registry via app.state
-        try:
-            from backend.server.app import app
-            pool = getattr(app.state, 'download_ahead', None)
-            if pool:
-                temp = pool.get_temp_path(file_id)
-                if temp and Path(temp).exists():
-                    logger.info(f"[RESOLVE] Using download-ahead temp: {Path(temp).name}")
-                    return temp
-        except Exception:
-            pass
-
-        return None
+    # _resolve_download_ahead removed — workers don't access download pool.
+    # Parse is server-side (FileTaskParsePool).
 
     def _resolve_thumbnail(self, job: dict) -> Optional[str]:
         """Download only the thumbnail for a pre-parsed job (~200KB instead of ~500MB).
@@ -1140,9 +1096,7 @@ class WorkerDaemon:
         Returns:
             List of (job_id, success) tuples.
         """
-        if self.processing_mode == "parse":
-            return self._process_batch_parse(jobs, progress_callback)
-
+        # Parse is server-only (FileTaskParsePool). Workers handle MC/VV/MV only.
         if self.processing_mode == "mc":
             return self._process_batch_mc(jobs, progress_callback)
 
@@ -1435,13 +1389,10 @@ class WorkerDaemon:
                 "file_name": Path(ctx.job["file_path"]).name,
             })
 
-            # Move downloaded temp files to cache (or delete)
+            # Clean up temp files (no cache — server manages downloads)
             if self.storage_mode == "server_upload" and ctx.local_path != ctx.job["file_path"]:
                 try:
-                    from backend.utils.download_cache import get_download_cache
-                    cache = get_download_cache()
-                    if not cache.put(ctx.job["file_path"], ctx.local_path, move=True):
-                        Path(ctx.local_path).unlink(missing_ok=True)
+                    Path(ctx.local_path).unlink(missing_ok=True)
                 except Exception:
                     pass
 
@@ -1650,13 +1601,10 @@ class WorkerDaemon:
                 "file_name": Path(ctx.job["file_path"]).name,
             })
 
-            # Move downloaded temp files to cache (or delete)
+            # Clean up temp files (no cache — server manages downloads)
             if self.storage_mode == "server_upload" and ctx.local_path != ctx.job["file_path"]:
                 try:
-                    from backend.utils.download_cache import get_download_cache
-                    cache = get_download_cache()
-                    if not cache.put(ctx.job["file_path"], ctx.local_path, move=True):
-                        Path(ctx.local_path).unlink(missing_ok=True)
+                    Path(ctx.local_path).unlink(missing_ok=True)
                 except Exception:
                     pass
 
@@ -1698,122 +1646,9 @@ class WorkerDaemon:
         gc.collect()
         self._try_empty_gpu_cache()
 
-    # ── Single-Role Processing: parse, VV-only, MV-only ──
-
-    def _process_batch_parse(self, jobs: list, progress_callback=None) -> list:
-        """Parse mode: resolve file → parse → thumbnail → upload results.
-
-        No GPU required. CPU-only workers can do this.
-        Uses new Analysis Job API endpoints.
-        """
-        from backend.pipeline.ingest_engine import ParserFactory, _set_tier_metadata
-        from backend.utils.content_hash import compute_content_hash
-        from backend.utils.meta_helpers import meta_to_dict
-
-        _notify = lambda cb, evt, data: cb(evt, data) if cb else None
-
-        results = []
-        _notify(progress_callback, "batch_phase_start", {"phase": "parse", "count": len(jobs)})
-
-        for idx, job in enumerate(jobs):
-            task_id = job.get("task_id") or job["job_id"]
-            file_id = job.get("file_id")
-            file_path = job.get("file_path", "")
-            file_name = Path(file_path).name
-            t_start = time.perf_counter()
-
-            try:
-                # Report processing start
-                self._report_task_start(task_id, "parse")
-
-                # 1. Resolve file (download if remote, local path if shared_fs)
-                local_path = self._resolve_file(job)
-                if not local_path or not Path(local_path).exists():
-                    self._report_task_phase(task_id, "parse", False, f"File not accessible: {file_path}")
-                    results.append((task_id, False))
-                    continue
-
-                file_p = Path(local_path)
-
-                # 2. Parse
-                parser = ParserFactory.get_parser(file_p)
-                if not parser:
-                    self._report_task_phase(task_id, "parse", False, f"No parser for: {file_name}")
-                    results.append((task_id, False))
-                    continue
-
-                parse_result = parser.parse(file_p)
-                if not parse_result.success:
-                    self._report_task_phase(task_id, "parse", False, f"Parse failed: {parse_result.errors}")
-                    results.append((task_id, False))
-                    continue
-
-                meta = parse_result.asset_meta
-
-                # 3. Content hash
-                try:
-                    meta.content_hash = compute_content_hash(file_p)
-                except Exception:
-                    pass
-
-                # 4. Folder metadata from original path (not temp)
-                from pathlib import PurePosixPath
-                orig_parent = PurePosixPath(file_path).parent.name
-                if orig_parent and orig_parent not in (".", ""):
-                    meta.folder_path = orig_parent
-                    meta.folder_depth = 0
-                    meta.folder_tags = [orig_parent]
-
-                # 5. Tier metadata
-                _set_tier_metadata(meta)
-
-                # 6. Save parse results via new API
-                meta_dict = meta_to_dict(meta)
-                meta_dict["file_path"] = file_path
-
-                ok = self._save_parse_results(file_id, meta_dict)
-                if ok:
-                    # Upload thumbnail if available
-                    thumb_path = meta.thumbnail_url if meta.thumbnail_url else None
-                    if thumb_path and file_id:
-                        self.uploader.upload_thumbnail(file_id, thumb_path)
-
-                elapsed = time.perf_counter() - t_start
-                self._report_task_phase(task_id, "parse", ok, elapsed_s=elapsed)
-                results.append((task_id, ok))
-
-                _notify(progress_callback, "batch_file_done", {
-                    "phase": "parse",
-                    "file_name": file_name,
-                    "index": idx + 1,
-                    "count": len(jobs),
-                    "success": ok,
-                })
-
-            except Exception as e:
-                logger.error(f"parse task {task_id} failed: {e}")
-                elapsed = time.perf_counter() - t_start
-                self._report_task_phase(task_id, "parse", False, str(e), elapsed_s=elapsed)
-                results.append((task_id, False))
-
-        _notify(progress_callback, "batch_phase_complete", {"phase": "parse", "count": len(jobs)})
-        return results
-
-    def _save_parse_results(self, file_id: int, metadata: dict) -> bool:
-        """Save parse results to server via PATCH /api/v1/files/{id}/parse."""
-        try:
-            resp = self._authed_request(
-                'patch',
-                f"{self.server_url}/api/v1/files/{file_id}/parse",
-                json={"metadata": metadata},
-            )
-            if resp.status_code == 200:
-                return True
-            logger.error(f"Parse save failed for file_id={file_id}: {resp.status_code} {resp.text}")
-            return False
-        except Exception as e:
-            logger.error(f"Parse save request failed for file_id={file_id}: {e}")
-            return False
+    # ── Single-Role Processing: VV-only, MV-only ──
+    # _process_batch_parse + _save_parse_results removed
+    # Parse is server-only (FileTaskParsePool)
 
     def _process_batch_vv_only(self, jobs: list, progress_callback=None) -> list:
         """VV-only mode: SigLIP2 stays loaded, generates visual vectors only."""

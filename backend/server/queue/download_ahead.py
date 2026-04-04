@@ -381,11 +381,10 @@ class DownloadAheadPool(BaseAheadPool):
         self._temp_dir = None
 
     def release_slot(self, file_id: int, file_path: str = None):
-        """Release a buffer slot after job completion.
+        """Release a buffer slot after parse completion.
 
-        Called by JobQueueManager.complete_job() to move the temp file
-        into the download cache (or delete it if caching is disabled)
-        and free a semaphore slot for new downloads.
+        Deletes the temp file and frees a semaphore slot for new downloads.
+        No LRU cache — temp files are deleted after parsing.
         """
         with self._active_lock:
             temp_path = self._active_files.pop(file_id, None)
@@ -393,17 +392,10 @@ class DownloadAheadPool(BaseAheadPool):
             try:
                 p = Path(temp_path)
                 if p.exists():
-                    cached = False
-                    if file_path:
-                        from backend.utils.download_cache import get_download_cache
-                        cache = get_download_cache()
-                        result = cache.put(file_path, p, move=True)
-                        cached = result is not None
-                    if not cached:
-                        p.unlink()
-                    logger.debug(f"DownloadAhead: {'cached' if cached else 'deleted'} temp file {p.name}")
+                    p.unlink()
+                    logger.debug(f"DownloadAhead: deleted temp file {p.name}")
             except Exception as e:
-                logger.warning(f"DownloadAhead: failed to handle {temp_path}: {e}")
+                logger.warning(f"DownloadAhead: failed to delete {temp_path}: {e}")
         self._buffer_sem.release()
 
     def get_temp_path(self, file_id: int) -> Optional[str]:
