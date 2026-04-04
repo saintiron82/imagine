@@ -908,9 +908,11 @@ def run_migrations(db, *, existing_db: bool = True):
         total = _t.perf_counter() - _total_start
         if slow:
             slow_str = ", ".join(f"{n}={e:.1f}s" for n, e in slow)
-            logger.info(f"Migrations: {total:.1f}s total. Slow: {slow_str}")
+            msg = f"Migrations: {total:.1f}s total. Slow: {slow_str}"
         else:
-            logger.info(f"Migrations: {total:.1f}s total (all fast)")
+            msg = f"Migrations: {total:.1f}s total (all fast)"
+        logger.info(msg)
+        print(f"[DB] {msg}", flush=True)
     else:
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()
