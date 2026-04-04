@@ -234,22 +234,27 @@ def worker_connect(
     )
     session_id = cursor.lastrowid
 
-    # Auto-detect processing_mode from resources provided at connect time.
-    # Only set if no manual override already exists (admin pre-configuration).
-    # Store resources only. Mode is decided dynamically by _decide_worker_mode().
+    # Store capability spec and register with scheduler
     if req.resources:
         cursor.execute(
-            "UPDATE worker_sessions SET resources_json = ?, processing_mode_override = NULL WHERE id = ?",
+            "UPDATE worker_sessions SET resources_json = ? WHERE id = ?",
             (json.dumps(req.resources), session_id)
         )
-        vram_gb = req.resources.get('gpu_memory_total_gb') or 0
-        gpu_type = req.resources.get('gpu_type') or 'none'
-        logger.info(f"Worker {req.worker_name} resources: GPU={gpu_type}, VRAM={vram_gb:.1f}GB")
+        gpu_name = req.resources.get('gpu_name') or ''
+        vram_gb = req.resources.get('vram_gb') or req.resources.get('gpu_memory_total_gb') or 0
+        gpu_type = req.resources.get('gpu_type') or 'cpu'
+        is_metal = req.resources.get('is_metal', False)
+        logger.info(
+            f"Worker {req.worker_name} capability: "
+            f"GPU={gpu_name}, type={gpu_type}, VRAM={vram_gb:.1f}GB, metal={is_metal}"
+        )
+
+        # Register with scheduler for GPU class + MC capability
+        scheduler = getattr(request.app.state, 'scheduler', None)
+        if scheduler:
+            scheduler.register_worker(session_id, gpu_name, vram_gb, is_metal)
 
     db.conn.commit()
-
-    # Recalculate server pools with the new worker included
-    _recalculate_server_pools(request.app, db)
 
     # Determine effective processing mode:
     # - mc global → ALL workers get mc

@@ -305,11 +305,11 @@ class WorkerDaemon:
     def _connect_session(self) -> bool:
         """Register worker session with server. Returns True on success."""
         try:
-            # Collect GPU resources at connect time so server can immediately
-            # determine processing_mode (mc/vv/mv) without waiting for heartbeat.
+            # Send hardware capability spec so server scheduler can classify
+            # GPU class (strong/weak/cpu) and estimate MC capability.
             try:
-                from backend.worker.resource_monitor import collect_metrics
-                connect_resources = collect_metrics()
+                from backend.worker.capability import collect_capability
+                connect_resources = collect_capability()
             except Exception:
                 connect_resources = None
 

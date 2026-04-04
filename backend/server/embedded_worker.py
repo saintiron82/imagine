@@ -68,10 +68,10 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
 
         logger.info("Embedded worker starting...")
 
-        # Connect session via LocalTransport (direct DB insert)
+        # Collect hardware capability spec
         try:
-            from backend.utils.platform_detector import collect_gpu_info
-            resources = collect_gpu_info()
+            from backend.worker.capability import collect_capability
+            resources = collect_capability()
         except Exception:
             resources = {}
 
