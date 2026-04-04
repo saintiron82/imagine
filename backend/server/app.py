@@ -97,9 +97,48 @@ async def startup():
     # DB + admin setup
     _create_default_admin()
 
-    # Legacy ParseAhead/DownloadAhead/audit REMOVED — Analysis Job System v1
-    # Workers handle all phases (DL/Parse/MC/VV/MV) via file_tasks.
-    logger.info("Analysis Job System v1 — no legacy pools")
+    # Analysis Job System v1 — ParseAhead removed, but DownloadAhead needed
+    # for WebDAV file downloads (workers can't download directly yet).
+    try:
+        from backend.server.queue.download_ahead import (
+            DownloadAheadPool, register_webdav_source,
+        )
+        from backend.server.deps import get_db
+        db = get_db()
+        app.state.download_ahead = DownloadAheadPool(db)
+        app.state.download_ahead.start()
+        logger.info("Download-ahead pool started (WebDAV downloads)")
+        # Register WebDAV sources from environment
+        webdav_env = os.environ.get("IMAGINE_WEBDAV_SOURCES")
+        if webdav_env:
+            import json as _json
+            try:
+                for src in _json.loads(webdav_env):
+                    register_webdav_source(src)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Download pool failed: {e}")
+
+    # FileTaskParsePool: server-side parsing (download done → parse)
+    try:
+        from backend.server.queue.file_task_parse_pool import FileTaskParsePool
+        dl_pool = getattr(app.state, 'download_ahead', None)
+        app.state.file_task_parse = FileTaskParsePool(db, download_pool=dl_pool)
+        app.state.file_task_parse.start()
+        logger.info("FileTaskParsePool started (server-side parsing)")
+    except Exception as e:
+        logger.warning(f"FileTaskParsePool failed: {e}")
+
+    # WorkerScheduler: central task assignment
+    try:
+        from backend.server.queue.scheduler import WorkerScheduler
+        app.state.scheduler = WorkerScheduler(db)
+        logger.info("WorkerScheduler started (central task assignment)")
+    except Exception as e:
+        logger.warning(f"WorkerScheduler failed: {e}")
+
+    logger.info("Analysis Job System v1")
 
     # Embedded worker: standby until user enables via Admin UI
     logger.info("Embedded worker: standby (waiting for user login)")

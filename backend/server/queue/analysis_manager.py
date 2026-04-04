@@ -436,15 +436,9 @@ class AnalysisJobManager:
         now = _now()
 
         # Phase-specific WHERE clause and columns
+        # Workers only claim AI phases (mc/vv/mv).
+        # Download is handled by DownloadAheadPool, parse by FileTaskParsePool.
         claim_sql = {
-            "download": (
-                "download_status = 'pending'",
-                "download_status", "download_assigned_to", "download_started_at"
-            ),
-            "parse": (
-                "download_status IN ('done', 'n/a') AND parse_status = 'pending'",
-                "parse_status", "parse_assigned_to", "parse_started_at"
-            ),
             "mc": (
                 "parse_status = 'done' AND mc_status = 'pending'",
                 "mc_status", "mc_assigned_to", "mc_started_at"

@@ -31,14 +31,12 @@ class CreateJobRequest(BaseModel):
 
 
 class ClaimRequest(BaseModel):
-    phase: str       # download, parse, mc, vv, mv
-    worker_id: int
-    count: int = 5
+    worker_id: int   # Server decides phase + count via scheduler
 
 
 class CompletePhaseRequest(BaseModel):
     task_id: int
-    phase: str       # download, parse, mc, vv, mv
+    phase: str       # mc, vv, mv
     success: bool
     error_message: Optional[str] = None
     elapsed_s: Optional[float] = None  # actual processing time (worker-measured)
@@ -186,17 +184,38 @@ def retry_failed_tasks(
 @router.post("/api/v1/tasks/claim")
 def claim_tasks(
     req: ClaimRequest,
+    request: Request,
     _user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """Worker claims tasks for a specific phase."""
+    """Worker requests tasks. Server scheduler decides phase + count.
+
+    Worker only sends worker_id. Scheduler determines optimal phase
+    based on queue state and worker capability profile.
+    """
+    from backend.server.queue.scheduler import WorkerScheduler
+
+    scheduler = getattr(request.app.state, 'scheduler', None)
+    if not scheduler:
+        scheduler = WorkerScheduler(db)
+
+    # Scheduler decides phase + count
+    decision = scheduler.assign(req.worker_id)
+    phase = decision.get("phase")
+    count = decision.get("count", 0)
+
+    if not phase or count == 0:
+        return {"success": True, "phase": None, "tasks": [], "count": 0}
+
+    # Claim via manager
     mgr = _get_manager(db)
-    tasks = mgr.claim_tasks(
-        phase=req.phase,
-        worker_id=req.worker_id,
-        count=req.count,
-    )
-    return {"success": True, "tasks": tasks, "count": len(tasks)}
+    tasks = mgr.claim_tasks(phase=phase, worker_id=req.worker_id, count=count)
+    return {
+        "success": True,
+        "phase": phase,
+        "tasks": tasks,
+        "count": len(tasks),
+    }
 
 
 @router.get("/api/v1/files/{file_id}/mc")
@@ -312,54 +331,8 @@ async def save_vision_fields(
     return {"success": True}
 
 
-@router.patch("/api/v1/files/{file_id}/parse")
-async def save_parse_results(
-    file_id: int,
-    request: Request,
-    _user: dict = Depends(get_current_user),
-    db: SQLiteDB = Depends(get_db_safe),
-):
-    """Save parse results (metadata) to files table.
-
-    Called by workers after Phase P (parsing + thumbnail generation).
-    Updates file metadata columns and thumbnail URL.
-    """
-    import json as _json
-    body = await request.json()
-    metadata = body.get("metadata", {})
-    if not metadata:
-        raise HTTPException(status_code=400, detail="No metadata provided")
-
-    cursor = db.conn.cursor()
-
-    # Build dynamic UPDATE from provided metadata fields
-    safe_fields = [
-        "file_name", "file_type", "file_size", "width", "height",
-        "color_mode", "bit_depth", "dpi", "has_alpha", "layer_count",
-        "text_content", "layer_tree", "semantic_tags", "translated_tags",
-        "translated_text", "translated_layer_tree", "thumbnail_url",
-        "relative_path", "folder_path", "folder_depth", "folder_tags",
-        "content_hash", "mode_tier", "embedding_model", "embedding_dim",
-    ]
-    updates = []
-    values = []
-    for f in safe_fields:
-        if f in metadata:
-            val = metadata[f]
-            if isinstance(val, (list, dict)):
-                val = _json.dumps(val, ensure_ascii=False)
-            updates.append(f"{f} = ?")
-            values.append(val)
-
-    if updates:
-        values.append(file_id)
-        cursor.execute(
-            f"UPDATE files SET {', '.join(updates)} WHERE id = ?",
-            values,
-        )
-        db.conn.commit()
-
-    return {"success": True, "file_id": file_id}
+# Note: /api/v1/files/{file_id}/parse endpoint removed.
+# Parse is now server-only via FileTaskParsePool. Workers never parse.
 
 
 class StartPhaseRequest(BaseModel):
