@@ -99,10 +99,7 @@ contextBridge.exposeInMainWorld('electron', {
             load: () => ipcRenderer.invoke('thumb-queue-load'),
             save: (queue) => ipcRenderer.invoke('thumb-queue-save', queue),
         },
-        downloadCache: {
-            stats: () => ipcRenderer.invoke('download-cache-stats'),
-            cleanup: () => ipcRenderer.invoke('download-cache-cleanup'),
-        },
+        // downloadCache removed — managed by server queue lifecycle
         readMetadata: (filePath) => ipcRenderer.invoke('read-metadata', filePath),
         checkMetadataExists: (filePaths) => ipcRenderer.invoke('check-metadata-exists', filePaths),
         checkPhaseStatus: (filePaths) => ipcRenderer.invoke('check-phase-status', filePaths),

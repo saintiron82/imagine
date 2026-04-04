@@ -962,7 +962,7 @@
   "admin.dash_total": "전체",
   "admin.dash_searchable": "검색 가능",
   "admin.dash_preview": "미리보기만",
-  "admin.dash_cache": "다운로드 캐시",
+  "admin.dash_cache": "다운로드 공간",
   "admin.dash_cleanup": "정리",
 
   "history.title": "처리 이력",
