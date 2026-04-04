@@ -255,7 +255,7 @@ def run_benchmark() -> Dict[str, Any]:
         logger.info(f"  VV: {vv_speed:.1f} files/min")
     except Exception as e:
         logger.warning(f"  VV benchmark failed: {e}")
-        profile["vv_speed"] = None
+        profile["vv_speed"] = 0  # 0 = failed (not None = unmeasured)
 
     # MV benchmark (Qwen3-Embedding)
     try:
@@ -264,20 +264,16 @@ def run_benchmark() -> Dict[str, Any]:
         logger.info(f"  MV: {mv_speed:.1f} files/min")
     except Exception as e:
         logger.warning(f"  MV benchmark failed: {e}")
-        profile["mv_speed"] = None
+        profile["mv_speed"] = 0
 
-    # MC benchmark (VLM) — only if GPU available
-    if cap.get("gpu_type") != "cpu":
-        try:
-            mc_speed = _bench_mc(bench_image)
-            profile["mc_speed"] = round(mc_speed, 1)
-            logger.info(f"  MC: {mc_speed:.1f} files/min")
-        except Exception as e:
-            logger.warning(f"  MC benchmark failed: {e}")
-            profile["mc_speed"] = None
-    else:
-        profile["mc_speed"] = None
-        logger.info("  MC: skipped (no GPU)")
+    # MC benchmark (VLM) — always try (CPU/Ollama can also run VLM)
+    try:
+        mc_speed = _bench_mc(bench_image)
+        profile["mc_speed"] = round(mc_speed, 1)
+        logger.info(f"  MC: {mc_speed:.1f} files/min")
+    except Exception as e:
+        logger.warning(f"  MC benchmark failed: {e}")
+        profile["mc_speed"] = 0  # 0 = tried but failed → incapable
 
     save_speed_profile(profile)
     return profile

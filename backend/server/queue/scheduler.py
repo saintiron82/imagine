@@ -210,13 +210,17 @@ class WorkerScheduler:
         workers_on = dict(cursor.fetchall())
 
         # 5. Determine capable phases
-        capable = {"mv": mv_p}  # all workers can do MV
-        if gpu_class in MC_PENALTY:
+        # All workers can do VV and MV
+        capable = {"vv": vv_p, "mv": mv_p}
+        # MC capability: measured speed > 0, or GPU class allows it
+        mc_speed = profile.get("mc_speed")
+        if mc_speed is not None and mc_speed > 0:
+            # Proven capable (benchmark or runtime measurement)
             capable["mc"] = mc_p
-            capable["vv"] = vv_p
-        elif gpu_class == "cpu":
-            # CPU can do VV (SigLIP2 supports CPU) but not MC
-            capable["vv"] = vv_p
+        elif mc_speed is None and gpu_class in MC_PENALTY:
+            # No measurement yet, but GPU class suggests capable → allow (trial)
+            capable["mc"] = mc_p
+        # mc_speed == 0 → tried and failed → MC excluded
 
         # 6. Algorithm E' — pressure × speed_factor selection
         phase = self._pick_best_phase(
