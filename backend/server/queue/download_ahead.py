@@ -577,19 +577,24 @@ class DownloadAheadPool(BaseAheadPool):
 
     def _mark_task_downloaded(self, task_id: int):
         """Mark a file_task download as done (file already in active_files)."""
-        try:
-            cursor = self.db.conn.cursor()
-            cursor.execute(
-                "UPDATE file_tasks SET download_status = 'done', updated_at = ? WHERE id = ?",
-                (time.strftime("%Y-%m-%d %H:%M:%S"), task_id),
-            )
-            self.db.conn.commit()
-        except Exception as e:
-            logger.warning(f"DownloadAhead: mark task {task_id} done failed: {e}")
+        for _retry in range(5):
             try:
-                self.db.conn.rollback()
-            except Exception:
-                pass
+                cursor = self.db.conn.cursor()
+                cursor.execute(
+                    "UPDATE file_tasks SET download_status = 'done', updated_at = ? WHERE id = ?",
+                    (time.strftime("%Y-%m-%d %H:%M:%S"), task_id),
+                )
+                self.db.conn.commit()
+                return
+            except Exception as e:
+                if "locked" in str(e) and _retry < 4:
+                    time.sleep(1)
+                    continue
+                logger.warning(f"DownloadAhead: mark task {task_id} done failed: {e}")
+                try:
+                    self.db.conn.rollback()
+                except Exception:
+                    pass
 
     def _download_one(
         self, task_id: int, file_id: int, file_path: str,
