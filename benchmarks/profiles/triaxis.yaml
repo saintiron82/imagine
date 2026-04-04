@@ -1,0 +1,8 @@
+# Triaxis integrated search quality benchmark
+# Usage: python tools/bench_triaxis_quality.py --profile benchmarks/profiles/triaxis.yaml
+
+name: "Triaxis Fusion Quality"
+description: "VV + MV + FTS → RRF fusion vs individual axes. Measures fusion lift."
+
+count: 50
+top_k: 20
