@@ -285,7 +285,15 @@ class WorkerDaemon:
             return self.login()
 
     def _authed_request(self, method: str, url: str, **kwargs):
-        """Make request with automatic token refresh on 401."""
+        """Make request with automatic token refresh on 401.
+        Embedded worker (transport set) should not call this — log and skip.
+        """
+        if self.transport:
+            logger.debug(f"[SKIP-HTTP] {method.upper()} {url} (using LocalTransport)")
+            # Return a fake 200 response to avoid crashes in legacy code paths
+            import types
+            fake = types.SimpleNamespace(status_code=200, text='{}', json=lambda: {})
+            return fake
         import requests
         resp = getattr(self.session, method)(url, **kwargs)
         if resp.status_code == 401:
@@ -465,8 +473,11 @@ class WorkerDaemon:
         return []
 
     def _report_task_start(self, task_id: int, phase: str):
-        """Report actual processing start to new Analysis Job system."""
+        """Report actual processing start."""
         if not task_id:
+            return
+        if self.transport:
+            self.transport.report_start(task_id, phase)
             return
         try:
             self._authed_request(
@@ -479,8 +490,11 @@ class WorkerDaemon:
 
     def _report_task_phase(self, task_id: int, phase: str, success: bool,
                            error: str = None, elapsed_s: float = None):
-        """Report phase completion to new Analysis Job system."""
+        """Report phase completion."""
         if not task_id:
+            return
+        if self.transport:
+            self.transport.report_complete(task_id, phase, success, error, elapsed_s)
             return
         try:
             payload = {
@@ -686,11 +700,14 @@ class WorkerDaemon:
     # Parse is server-side (FileTaskParsePool).
 
     def _resolve_thumbnail(self, job: dict) -> Optional[str]:
-        """Download only the thumbnail for a pre-parsed job (~200KB instead of ~500MB).
-
-        Uses _authed_request() for automatic JWT refresh on 401.
-        """
+        """Get thumbnail path for a pre-parsed job."""
         file_id = job.get("file_id")
+
+        # LocalTransport: read directly from DB/filesystem
+        if self.transport:
+            return self.transport.get_thumbnail(file_id)
+
+        # HttpTransport fallback: download from server
         try:
             resp = self._authed_request(
                 'get',
