@@ -277,12 +277,23 @@ class LocalTransport(WorkerTransport):
         from datetime import datetime
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         cursor = self.db.conn.cursor()
+
+        # Find actual admin user_id (not hardcoded)
+        cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
+        user_row = cursor.fetchone()
+        user_id = user_row[0] if user_row else None
+        if not user_id:
+            # No admin user — create without FK
+            cursor.execute("SELECT id FROM users LIMIT 1")
+            any_user = cursor.fetchone()
+            user_id = any_user[0] if any_user else None
+
         cursor.execute("""
             INSERT INTO worker_sessions
                 (user_id, worker_name, hostname, status, batch_capacity,
                  connected_at, last_heartbeat)
             VALUES (?, ?, ?, 'online', ?, ?, ?)
-        """, (1, worker_name, hostname, batch_capacity, now, now))
+        """, (user_id, worker_name, hostname, batch_capacity, now, now))
         self.session_id = cursor.lastrowid
         self.db.conn.commit()
 
