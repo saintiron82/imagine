@@ -297,11 +297,12 @@ class LocalTransport(WorkerTransport):
         self.session_id = cursor.lastrowid
         self.db.conn.commit()
 
-        # Register GPU specs with scheduler
+        # Register GPU specs + scores with scheduler
         gpu = resources.get("gpu_name", "")
-        vram = resources.get("gpu_memory_total_gb", 0)
+        vram = resources.get("vram_gb") or resources.get("gpu_memory_total_gb") or 0
         is_metal = resources.get("is_metal", False)
-        self.scheduler.register_worker(self.session_id, gpu, vram, is_metal)
+        scores = resources.get("scores")
+        self.scheduler.register_worker(self.session_id, gpu, vram, is_metal, scores=scores)
 
         return {
             "session_id": self.session_id,
