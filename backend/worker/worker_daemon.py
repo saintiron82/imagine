@@ -1607,6 +1607,7 @@ class WorkerDaemon:
                                     elapsed_s=getattr(ctx, '_inference_elapsed', None))
             if upload_result is True:
                 self._total_completed += 1
+                self._phase_counts["mc"] += 1
                 results.append((job_id, True, ""))
             else:
                 err = f"MC upload failed: {upload_result}" if isinstance(upload_result, str) else "MC upload rejected"
