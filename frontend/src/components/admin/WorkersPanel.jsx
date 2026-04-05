@@ -741,19 +741,15 @@ export default function WorkersPanel() {
               const phaseCell = (key, color) => {
                 const isCurrent = cur === key;
                 const speed = pt[key] || 0;
+                const count = w.jobs_completed || 0;
                 return (
-                  <td className={`text-center px-2 py-2 ${isCurrent ? `bg-${color}-900/30` : ''}`}>
-                    {isCurrent && batchCount > 0 && (
-                      <div className={`text-xs font-bold font-mono text-${color}-400`}>{batchCount}</div>
-                    )}
-                    {speed > 0 && (
-                      <div className={`text-[9px] font-mono ${isCurrent ? 'text-emerald-400' : 'text-gray-600'}`}>{speed}/m</div>
-                    )}
-                    {isCurrent && fileName && (
-                      <div className={`text-[9px] text-${color}-300 truncate max-w-[120px] mx-auto`} title={w.current_file}>
-                        {fileName}
-                      </div>
-                    )}
+                  <td className={`text-center px-2 py-2 ${isCurrent ? `bg-${color}-900/20` : ''}`}>
+                    <div className={`text-xs font-mono ${isCurrent ? `text-${color}-400 font-bold` : 'text-gray-600'}`}>
+                      {isCurrent && batchCount > 0 ? batchCount : (pc[key] || '-')}
+                    </div>
+                    <div className={`text-[9px] font-mono ${isCurrent ? 'text-emerald-400' : 'text-gray-600'}`}>
+                      {speed > 0 ? `${speed}/m` : '-'}
+                    </div>
                   </td>
                 );
               };
