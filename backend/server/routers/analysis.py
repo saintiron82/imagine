@@ -23,12 +23,15 @@ def _get_manager(db: SQLiteDB) -> AnalysisJobManager:
 
 
 def _auto_start_worker():
-    """Start embedded worker if not already running."""
+    """Start embedded worker if not already running (called on new job creation)."""
     try:
-        from backend.server.embedded_worker import start_worker, get_status
-        if not get_status()["running"]:
-            start_worker(server_url="", access_token="")
-            logger.info("Embedded worker auto-started (new analysis job created)")
+        from backend.server.embedded_worker import _daemon
+        # Already running — skip
+        if _daemon and _daemon.is_running():
+            return
+        from backend.server.embedded_worker import start_worker
+        start_worker(server_url="", access_token="")
+        logger.info("Embedded worker auto-started (new analysis job created)")
     except Exception as e:
         logger.warning(f"Embedded worker auto-start failed: {e}")
 

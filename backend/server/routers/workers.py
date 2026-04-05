@@ -858,12 +858,11 @@ def admin_update_auto_processing(
 
     # Scheduler handles mode assignment — no global mode switching needed
 
-    # Start/stop embedded worker based on auto_processing toggle
-    if req.enabled is not None:
-        if req.enabled:
-            _start_embedded_worker(request.app)
-        else:
-            _stop_embedded_worker()
+    # Start/stop embedded worker
+    # Note: start is handled by _activate_server Phase 6 (on login).
+    # This API only handles STOP (user explicitly disables).
+    if req.enabled is not None and not req.enabled:
+        _stop_embedded_worker()
 
     logger.info(f"Admin updated auto_processing: enabled={req.enabled}, mode={req.mode}, rest={req.rest_after_batch_s}s")
     return {"ok": True}
@@ -925,9 +924,8 @@ def admin_update_embedded_worker(
 
     if req.enabled is not None:
         cfg._set_dotted("server.embedded_worker.enabled", req.enabled)
-        if req.enabled:
-            _start_embedded_worker(request.app)
-        else:
+        # Start handled by _activate_server. Only stop here.
+        if not req.enabled:
             _stop_embedded_worker()
 
     status = get_status()
