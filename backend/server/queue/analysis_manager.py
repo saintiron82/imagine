@@ -854,3 +854,49 @@ class AnalysisJobManager:
             self.db.conn.commit()
 
         return retried
+
+    def retry_failed_auto(self, cooldown_minutes: int = 5) -> int:
+        """Auto-retry failed AI-phase tasks across all active jobs.
+
+        Called periodically by heartbeat watchdog. Only retries tasks that:
+        - Are in active jobs
+        - Have retry_count < max_retries
+        - Failed more than cooldown_minutes ago (avoid tight retry loops)
+
+        Returns: total number of tasks reset to pending.
+        """
+        cursor = self.db.conn.cursor()
+        now = _now()
+        total = 0
+
+        for phase in ("mc", "vv", "mv"):
+            status_col = f"{phase}_status"
+            completed_col = f"{phase}_completed_at"
+            assigned_col = f"{phase}_assigned_to"
+            started_col = f"{phase}_started_at"
+
+            cursor.execute(f"""
+                UPDATE file_tasks
+                SET {status_col} = 'pending',
+                    {assigned_col} = NULL,
+                    {started_col} = NULL,
+                    {completed_col} = NULL,
+                    error_message = NULL,
+                    retry_count = retry_count + 1,
+                    updated_at = ?
+                WHERE {status_col} = 'failed'
+                  AND retry_count < max_retries
+                  AND {completed_col} IS NOT NULL
+                  AND datetime({completed_col}, '+' || ? || ' minutes') < datetime('now')
+                  AND analysis_job_id IN (
+                      SELECT id FROM analysis_jobs WHERE status = 'active'
+                  )
+            """, (now, cooldown_minutes))
+            count = cursor.rowcount
+            if count > 0:
+                logger.info(f"Auto-retry: {count} {phase} tasks reset to pending")
+                total += count
+
+        if total > 0:
+            self.db.conn.commit()
+        return total

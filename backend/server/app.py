@@ -466,6 +466,14 @@ def _start_heartbeat_watchdog():
 
                 db.conn.commit()
 
+                # Auto-retry failed AI-phase tasks (5 min cooldown, max 3 retries)
+                try:
+                    retried = mgr.retry_failed_auto(cooldown_minutes=5)
+                    if retried:
+                        logger.info(f"Watchdog: auto-retried {retried} failed tasks")
+                except Exception as e2:
+                    logger.warning(f"Watchdog auto-retry error: {e2}")
+
             except Exception as e:
                 logger.error(f"Heartbeat watchdog error: {e}")
                 try:
