@@ -322,6 +322,7 @@ class LocalTransport(WorkerTransport):
                 jobs_completed = ?,
                 current_phase = ?,
                 current_file = ?,
+                batch_capacity = ?,
                 resources_json = ?
             WHERE id = ?
         """, (
@@ -329,6 +330,7 @@ class LocalTransport(WorkerTransport):
             data.get("jobs_completed", 0),
             data.get("current_phase"),
             data.get("current_file"),
+            data.get("batch_capacity", 0),
             _json.dumps({
                 "phase_throughput": data.get("phase_throughput", {}),
                 "batch_throughput": data.get("batch_throughput", 0),
