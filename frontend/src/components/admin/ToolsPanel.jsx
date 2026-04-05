@@ -50,18 +50,23 @@ export default function ToolsPanel() {
     try {
       const resp = await startRepairParse();
       const data = resp.data ?? resp;
-      setStatus(data);
-      if (data.running) {
+      if (data.success) {
+        // Start returned, begin polling for real status
+        setStatus({ running: true, progress: { done: 0, failed: 0, total: data.total, current_file: '' } });
         startPolling();
+      } else {
+        setError(data.detail || 'Start failed');
       }
     } catch (err) {
       setError(err?.response?.data?.detail ?? err.message ?? 'Unknown error');
     }
   };
 
+  // Normalize: status API returns {running, progress: {done, total, ...}}
+  const prog = status?.progress ?? status ?? {};
   const isRunning = status?.running === true;
-  const isFinished = status && !status.running && status.total > 0;
-  const pct = status?.total > 0 ? ((status.done / status.total) * 100).toFixed(1) : '0.0';
+  const isFinished = status && !status.running && (prog.done > 0 || prog.failed > 0);
+  const pct = prog.total > 0 ? ((prog.done / prog.total) * 100).toFixed(1) : '0.0';
 
   return (
     <div className="space-y-4">
@@ -82,24 +87,19 @@ export default function ToolsPanel() {
           <div className="space-y-1">
             <p className="text-xs text-yellow-400 font-medium">{t('admin.tools_repair_parse_running')}</p>
             <p className="text-xs font-mono text-emerald-400">
-              {status.done}/{status.total} ({pct}%)
+              {prog.done}/{prog.total} ({pct}%)
             </p>
-            {status.current_file && (
-              <p className="text-xs text-gray-500 truncate">{status.current_file}</p>
+            {prog.current_file && (
+              <p className="text-xs text-gray-500 truncate">{prog.current_file}</p>
             )}
           </div>
         ) : isFinished ? (
           <div className="space-y-1">
             <p className="text-xs text-emerald-400 font-medium">
-              {t('admin.tools_repair_parse_done')}: {status.done - (status.failed ?? 0) - (status.skipped ?? 0)}{t('admin.tools_repair_parse_success_unit')}
-              {(status.failed ?? 0) > 0 && (
+              {t('admin.tools_repair_parse_done')}: {prog.done} / {prog.total}
+              {(prog.failed ?? 0) > 0 && (
                 <span className="text-red-400 ml-2">
-                  {status.failed} {t('admin.tools_repair_parse_failed')}
-                </span>
-              )}
-              {(status.skipped ?? 0) > 0 && (
-                <span className="text-gray-400 ml-2">
-                  {status.skipped} {t('admin.tools_repair_parse_skipped')}
+                  {prog.failed} {t('admin.tools_repair_parse_failed')}
                 </span>
               )}
             </p>
