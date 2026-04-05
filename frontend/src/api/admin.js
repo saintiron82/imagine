@@ -115,6 +115,16 @@ export async function updateEmbeddedWorker(config) {
   return apiClient.patch('/api/v1/admin/workers/embedded-worker', config);
 }
 
+// ── Phase Pause Control ─────────────────────────────────
+
+export async function getPausedPhases() {
+  return apiClient.get('/api/v1/server/paused-phases');
+}
+
+export async function setPausedPhases(phases) {
+  return apiClient.post('/api/v1/server/paused-phases', phases);
+}
+
 // ── Benchmark ───────────────────────────────────────────
 
 export async function getBenchmark() {

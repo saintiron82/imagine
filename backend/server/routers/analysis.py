@@ -492,3 +492,53 @@ def complete_task_phase(
         elapsed_s=req.elapsed_s,
     )
     return {"success": True}
+
+
+# ── Phase Pause Control ─────────────────────────────────────
+
+_DEFAULT_PAUSED = {"dl": False, "parse": False, "mc": False, "vv": False, "mv": False}
+
+
+def get_paused_phases(db: SQLiteDB) -> dict:
+    """Read paused phases from system_meta."""
+    import json as _json
+    raw = db._get_system_meta("paused_phases")
+    if raw:
+        try:
+            return {**_DEFAULT_PAUSED, **_json.loads(raw)}
+        except Exception:
+            pass
+    return dict(_DEFAULT_PAUSED)
+
+
+def set_paused_phases(db: SQLiteDB, updates: dict) -> dict:
+    """Update paused phases in system_meta."""
+    import json as _json
+    current = get_paused_phases(db)
+    for k in ("dl", "parse", "mc", "vv", "mv"):
+        if k in updates:
+            current[k] = bool(updates[k])
+    db._set_system_meta("paused_phases", _json.dumps(current))
+    return current
+
+
+@router.get("/api/v1/server/paused-phases")
+def api_get_paused_phases(
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Get per-phase pause state."""
+    return get_paused_phases(db)
+
+
+@router.post("/api/v1/server/paused-phases")
+async def api_set_paused_phases(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Toggle individual phase pause. Body: {"mc": true, "vv": false, ...}"""
+    body = await request.json()
+    result = set_paused_phases(db, body)
+    logger.info(f"Paused phases updated: {result}")
+    return {"paused_phases": result}

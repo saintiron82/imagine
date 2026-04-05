@@ -73,6 +73,14 @@ class FileTaskParsePool(BaseAheadPool):
 
     def _parse_batch(self) -> int:
         """Find and parse pending tasks. Returns count parsed."""
+        # Check if parse is paused
+        try:
+            from backend.server.routers.analysis import get_paused_phases
+            if get_paused_phases(self.db).get("parse"):
+                return 0
+        except Exception:
+            pass
+
         cursor = self.db.conn.cursor()
 
         try:

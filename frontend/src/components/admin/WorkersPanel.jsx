@@ -11,6 +11,7 @@ import {
   getAutoProcessing, updateAutoProcessing,
   getEmbeddedWorker,
   forceRetryFailedJobs,
+  getPausedPhases, setPausedPhases,
 } from '../../api/admin';
 import {
   listAnalysisJobs, pauseAnalysisJob, resumeAnalysisJob,
@@ -165,13 +166,16 @@ export default function WorkersPanel() {
   const [dbStats, setDbStats] = useState(null);
   const [queueStats, setQueueStats] = useState(null);
   const [analysisJobs, setAnalysisJobs] = useState([]);
+  const [pausedPhases, setPausedPhasesState] = useState({ dl: false, parse: false, mc: false, vv: false, mv: false });
 
   const load = useCallback(async () => {
     try {
-      const [workerData, jobsData] = await Promise.all([
+      const [workerData, jobsData, pausedData] = await Promise.all([
         listWorkerSessions(),
         listAnalysisJobs(true).catch(() => ({ jobs: [] })),
+        getPausedPhases().catch(() => null),
       ]);
+      if (pausedData) setPausedPhasesState(pausedData);
       let statsData = {};
       const all = workerData.workers || [];
       setWorkers(all.filter(w => w.status === 'online'));
@@ -485,6 +489,27 @@ export default function WorkersPanel() {
                     {spd > 0 ? `${spd}/m` : '-'}
                   </span>
                 ))}
+                {/* ON/OFF 토글 */}
+                {['dl', 'parse', 'mc', 'vv', 'mv'].map(phase => {
+                  const paused = pausedPhases[phase];
+                  return (
+                    <button
+                      key={phase}
+                      onClick={async () => {
+                        const next = !paused;
+                        setPausedPhasesState(prev => ({ ...prev, [phase]: next }));
+                        try { await setPausedPhases({ [phase]: next }); } catch { setPausedPhasesState(prev => ({ ...prev, [phase]: !next })); }
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-colors ${
+                        paused
+                          ? 'bg-red-900/40 text-red-400 hover:bg-red-800/50'
+                          : 'bg-emerald-900/30 text-emerald-400 hover:bg-emerald-800/40'
+                      }`}
+                    >
+                      {paused ? 'OFF' : 'ON'}
+                    </button>
+                  );
+                })}
               </div>
               {/* Row 3: speed detail + action buttons */}
               <div className="flex items-center gap-3 pt-1 border-t border-gray-700/20">

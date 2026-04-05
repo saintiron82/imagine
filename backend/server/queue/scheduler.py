@@ -229,8 +229,16 @@ class WorkerScheduler:
         """
         cursor = self.db.conn.cursor()
 
-        # 1. Pending counts
+        # 1. Pending counts (exclude paused phases)
         pending = self._get_pending_counts(cursor)
+        try:
+            from backend.server.routers.analysis import get_paused_phases
+            paused = get_paused_phases(self.db)
+            if paused.get("mc"): pending["mc"] = 0
+            if paused.get("vv"): pending["vv"] = 0
+            if paused.get("mv"): pending["mv"] = 0
+        except Exception:
+            pass
         mc_p, vv_p, mv_p = pending["mc"], pending["vv"], pending["mv"]
         if mc_p + vv_p + mv_p == 0:
             return {"phase": None, "count": 0}
