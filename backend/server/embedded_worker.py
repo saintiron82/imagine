@@ -138,6 +138,7 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                     phase = result.get("phase")
                     tasks = result.get("tasks", [])
                     if phase and tasks:
+                        _worker_daemon.batch_capacity = len(tasks)
                         print(f"[EW] claimed: phase={phase} count={len(tasks)}", flush=True)
 
                     if not phase or not tasks:

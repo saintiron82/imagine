@@ -720,7 +720,7 @@ export default function WorkersPanel() {
                 <div className="text-green-400">MV</div>
                 {queueStats?.mv_throughput > 0 && <div className="text-[9px] text-green-400/60 font-mono">{queueStats.mv_throughput}/m</div>}
               </th>
-              <th className="text-center px-2 py-2">처리 중</th>
+              <th className="text-center px-2 py-2">배치</th>
               <th className="text-right px-3 py-2"></th>
             </tr>
           </thead>
@@ -738,18 +738,34 @@ export default function WorkersPanel() {
               const batchCount = w.batch_capacity || 0;
 
               const pt = w.resources?.phase_throughput || {};
+              // mc_speed=0 in scores means incapable
+              const scores = w.resources?.scores?.phases || {};
+              const isIncapable = (key) => {
+                const s = scores[key];
+                return s && s.status === 'incapable';
+              };
+
               const phaseCell = (key, color) => {
                 const isCurrent = cur === key;
                 const speed = pt[key] || 0;
-                const count = w.jobs_completed || 0;
+                const count = pc[key] || 0;
+                const disabled = isIncapable(key);
                 return (
-                  <td className={`text-center px-2 py-2 ${isCurrent ? `bg-${color}-900/20` : ''}`}>
-                    <div className={`text-xs font-mono ${isCurrent ? `text-${color}-400 font-bold` : 'text-gray-600'}`}>
-                      {isCurrent && batchCount > 0 ? batchCount : (pc[key] || '-')}
+                  <td className={`text-center px-2 py-1 ${isCurrent ? `bg-${color}-900/20` : ''} ${disabled ? 'opacity-30' : ''}`}>
+                    {/* Row 1: 처리량 */}
+                    <div className={`text-xs font-mono ${disabled ? 'text-red-400' : isCurrent ? `text-${color}-400 font-bold` : 'text-gray-600'}`}>
+                      {disabled ? '✕' : count > 0 ? count : '-'}
                     </div>
+                    {/* Row 2: 속도 */}
                     <div className={`text-[9px] font-mono ${isCurrent ? 'text-emerald-400' : 'text-gray-600'}`}>
-                      {speed > 0 ? `${speed}/m` : '-'}
+                      {disabled ? '' : speed > 0 ? `${speed}/m` : '-'}
                     </div>
+                    {/* Row 3: 파일명 (MC만) */}
+                    {isCurrent && key === 'mc' && fileName && (
+                      <div className={`text-[8px] text-${color}-300/70 truncate max-w-[120px] mx-auto`} title={w.current_file}>
+                        {fileName}
+                      </div>
+                    )}
                   </td>
                 );
               };
@@ -766,15 +782,16 @@ export default function WorkersPanel() {
                   {phaseCell('mc', 'purple')}
                   {phaseCell('vv', 'blue')}
                   {phaseCell('mv', 'green')}
-                  <td className="text-center px-2 py-2">
-                    {fileName ? (
-                      <div className="text-[9px] text-gray-400 truncate max-w-[120px] mx-auto" title={w.current_file}>
-                        {fileName}
-                      </div>
+                  <td className="text-center px-2 py-1">
+                    {cur && batchCount > 0 ? (
+                      <div className="text-xs font-bold font-mono text-yellow-300">{batchCount}</div>
                     ) : w.current_phase === 'resting' ? (
                       <div className="text-[9px] text-orange-400 animate-pulse">휴식</div>
                     ) : (
-                      <span className="text-gray-600 text-[9px]">대기</span>
+                      <span className="text-gray-600 text-[9px]">-</span>
+                    )}
+                    {cur && (
+                      <div className="text-[9px] text-gray-500">{phaseLabel}</div>
                     )}
                   </td>
                   <td className="text-right px-3 py-2">
