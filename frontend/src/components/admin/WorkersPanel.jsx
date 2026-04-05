@@ -709,9 +709,6 @@ export default function WorkersPanel() {
             <tr className="border-b border-gray-700 text-gray-400 text-xs">
               <th className="text-left px-3 py-2">{t('admin.worker_name')}</th>
               <th className="text-center px-2 py-2">
-                <div className="text-orange-400">REST</div>
-              </th>
-              <th className="text-center px-2 py-2">
                 <div className="text-purple-400">MC</div>
                 {queueStats?.mc_throughput > 0 && <div className="text-[9px] text-purple-400/60 font-mono">{queueStats.mc_throughput}/m</div>}
               </th>
@@ -723,7 +720,7 @@ export default function WorkersPanel() {
                 <div className="text-green-400">MV</div>
                 {queueStats?.mv_throughput > 0 && <div className="text-[9px] text-green-400/60 font-mono">{queueStats.mv_throughput}/m</div>}
               </th>
-              <th className="text-center px-2 py-2">Batch</th>
+              <th className="text-center px-2 py-2">처리 중</th>
               <th className="text-right px-3 py-2"></th>
             </tr>
           </thead>
@@ -738,6 +735,7 @@ export default function WorkersPanel() {
               const fileName = w.current_file ? w.current_file.split(/[/\\]/).pop() : null;
 
               const phaseLabel = cur === 'mc' ? 'MC' : cur === 'vv' ? 'VV' : cur === 'mv' ? 'MV' : cur === 'parse' ? 'Parse' : null;
+              const batchCount = w.batch_capacity || 0;
 
               const pt = w.resources?.phase_throughput || {};
               const phaseCell = (key, color) => {
@@ -745,6 +743,9 @@ export default function WorkersPanel() {
                 const speed = pt[key] || 0;
                 return (
                   <td className={`text-center px-2 py-2 ${isCurrent ? `bg-${color}-900/30` : ''}`}>
+                    {isCurrent && batchCount > 0 && (
+                      <div className={`text-xs font-bold font-mono text-${color}-400`}>{batchCount}</div>
+                    )}
                     {speed > 0 && (
                       <div className={`text-[9px] font-mono ${isCurrent ? 'text-emerald-400' : 'text-gray-600'}`}>{speed}/m</div>
                     )}
@@ -761,37 +762,23 @@ export default function WorkersPanel() {
                 <tr key={w.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
                   <td className="px-3 py-2">
                     <div className="text-xs font-medium text-white">
-                      {w.worker_name === '__builtin__' ? t('admin.worker_builtin_label') : w.worker_name}
+                      {w.worker_name === '__builtin__' || w.worker_name === 'embedded'
+                        ? t('admin.worker_builtin_label') : w.worker_name}
                     </div>
                     <div className="text-[10px] text-gray-500">{w.hostname}</div>
-                  </td>
-                  <td className="text-center px-2 py-2">
-                    {w.current_phase === 'resting' ? (
-                      <div>
-                        <div className="text-sm font-bold font-mono text-orange-400 animate-pulse">
-                          {w.current_file || '...'}
-                        </div>
-                        <div className="text-[8px] text-orange-400/60">휴식중</div>
-                      </div>
-                    ) : (
-                      <span className="text-gray-800">-</span>
-                    )}
                   </td>
                   {phaseCell('mc', 'purple')}
                   {phaseCell('vv', 'blue')}
                   {phaseCell('mv', 'green')}
                   <td className="text-center px-2 py-2">
-                    {editingCapacity?.id === w.id ? (
-                      <input type="number" min={1} max={32} value={editingCapacity.value}
-                        onChange={(e) => setEditingCapacity({ id: w.id, value: Math.max(1, Math.min(32, Number(e.target.value))) })}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleCapacitySave(w.id); if (e.key === 'Escape') setEditingCapacity(null); }}
-                        onBlur={() => handleCapacitySave(w.id)} autoFocus
-                        className="w-10 bg-gray-900 border border-blue-500 rounded px-1 py-0 text-xs font-mono text-yellow-300 focus:outline-none text-center" />
+                    {fileName ? (
+                      <div className="text-[9px] text-gray-400 truncate max-w-[120px] mx-auto" title={w.current_file}>
+                        {fileName}
+                      </div>
+                    ) : w.current_phase === 'resting' ? (
+                      <div className="text-[9px] text-orange-400 animate-pulse">휴식</div>
                     ) : (
-                      <span className="text-xs font-mono text-yellow-300 cursor-pointer hover:text-yellow-200"
-                        onClick={() => setEditingCapacity({ id: w.id, value: batchSize })}>
-                        {batchSize}
-                      </span>
+                      <span className="text-gray-600 text-[9px]">대기</span>
                     )}
                   </td>
                   <td className="text-right px-3 py-2">
