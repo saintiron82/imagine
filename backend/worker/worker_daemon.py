@@ -1069,7 +1069,6 @@ class WorkerDaemon:
             vlm_err = vision_fields.get("_error") if isinstance(vision_fields, dict) else None
             if vision_fields and vision_fields.get("mc_caption"):
                 self._phase_counts["mc"] += 1
-                # Update throughput progressively
                 elapsed_so_far = time.perf_counter() - t_phase
                 if elapsed_so_far > 0:
                     self._phase_throughput["mc"] = round((i + 1) / elapsed_so_far * 60, 1)
@@ -1077,6 +1076,19 @@ class WorkerDaemon:
                 if ctx.metadata:
                     ctx.metadata.update(vision_fields)
                 ctx.vision_fields = vision_fields
+
+                # Immediate save — don't wait for batch end (crash-safe)
+                task_id = ctx.job.get("task_id")
+                file_id = ctx.job.get("file_id")
+                if self.transport and file_id:
+                    try:
+                        self.transport.save_vision(file_id, vision_fields)
+                        self.transport.report_complete(
+                            task_id, "mc", True, elapsed_s=_file_elapsed,
+                        )
+                        ctx._saved = True
+                    except Exception as e:
+                        logger.warning(f"[MC] immediate save failed: {e}")
             else:
                 ctx.failed = True
                 if vlm_err:
@@ -1084,6 +1096,10 @@ class WorkerDaemon:
                 else:
                     ctx.error = f"VLM returned empty MC for {self._current_file}"
                 logger.warning(ctx.error)
+                # Report failure immediately
+                task_id = ctx.job.get("task_id")
+                if self.transport and task_id:
+                    self.transport.report_complete(task_id, "mc", False, ctx.error)
                 # Surface error to UI via diag_log
                 _notify(progress_callback, "diag_log", {
                     "message": f"[MC] FAIL {self._current_file}: {ctx.error}",
@@ -1587,12 +1603,18 @@ class WorkerDaemon:
 
         # NOTE: VLM is NOT unloaded in mc mode — stays resident
 
-        # ── Upload MC results (vision fields only, no vectors) ──
+        # ── Upload MC results (skip already-saved by immediate save) ──
         t_upload = time.perf_counter()
         results = []
         for ctx in contexts:
             job_id = ctx.job["job_id"]
             file_name = Path(ctx.job.get("file_path", "")).name
+
+            # Already saved during vision phase (transport mode)
+            if getattr(ctx, '_saved', False):
+                self._total_completed += 1
+                results.append((job_id, True, ""))
+                continue
 
             if ctx.failed:
                 err = ctx.error or "unknown error"
