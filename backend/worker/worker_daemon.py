@@ -1010,10 +1010,20 @@ class WorkerDaemon:
             self._current_file = Path(ctx.job["file_path"]).name
             self.uploader.report_progress(ctx.job["job_id"], "vision")
 
-            # Keep-alive heartbeat during long processing (prevents server job reclaim)
+            # Keep-alive: update DB metrics during long processing
             if i > 0 and i % 5 == 0:
                 try:
-                    self._heartbeat()
+                    if self.transport:
+                        self.transport.heartbeat({
+                            "jobs_completed": self._total_completed,
+                            "current_phase": self._current_phase,
+                            "current_file": self._current_file,
+                            "phase_throughput": self._phase_throughput,
+                            "batch_throughput": self._batch_throughput,
+                            "batch_capacity": self.batch_capacity,
+                        })
+                    else:
+                        self._heartbeat()
                 except Exception:
                     pass
 
@@ -1058,6 +1068,12 @@ class WorkerDaemon:
 
             vlm_err = vision_fields.get("_error") if isinstance(vision_fields, dict) else None
             if vision_fields and vision_fields.get("mc_caption"):
+                self._phase_counts["mc"] += 1
+                # Update throughput progressively
+                elapsed_so_far = time.perf_counter() - t_phase
+                if elapsed_so_far > 0:
+                    self._phase_throughput["mc"] = round((i + 1) / elapsed_so_far * 60, 1)
+                    self._batch_throughput = self._phase_throughput["mc"]
                 if ctx.metadata:
                     ctx.metadata.update(vision_fields)
                 ctx.vision_fields = vision_fields
