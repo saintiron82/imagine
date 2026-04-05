@@ -700,16 +700,19 @@ def admin_list_workers(
             "phase_job_count": row[19] or 0,    # DB cumulative (reference only)
         })
 
-    # BUG-005: override embedded worker's current_phase from live memory
+    # BUG-005: override embedded worker's data from live memory
+    # (heartbeat may be blocked during long MC batch)
     try:
         from backend.server.embedded_worker import get_status as _ew_status
         ew = _ew_status()
         if ew.get("running"):
             for w in workers:
-                if w["worker_name"] == "embedded" and w["status"] == "online":
+                if w["worker_name"] == "embedded":
+                    w["status"] = "online"  # force online if running
                     w["current_phase"] = ew.get("current_phase") or w["current_phase"]
                     w["current_file"] = ew.get("current_file") or w["current_file"]
-                    # Also override phase_counts and throughput from live daemon
+                    if ew.get("batch_capacity"):
+                        w["batch_capacity"] = ew["batch_capacity"]
                     if ew.get("phase_counts"):
                         w["phase_counts"] = ew["phase_counts"]
                     if ew.get("throughput") and ew["throughput"] > 0:

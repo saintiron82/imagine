@@ -751,7 +751,7 @@ export default function WorkersPanel() {
           </thead>
           <tbody>
             {workers.map((w) => {
-              const pc = w.resources?.phase_counts || {};
+              const pc = w.phase_counts || w.resources?.phase_counts || {};
               const cur = w.current_phase === 'vision' ? 'mc' :
                 w.current_phase === 'embed_vv' ? 'vv' :
                 w.current_phase === 'embed_mv' ? 'mv' :
