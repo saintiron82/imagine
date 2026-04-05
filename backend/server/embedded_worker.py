@@ -69,6 +69,7 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
 
         _transport = LocalTransport(db, scheduler, manager)
         _worker_daemon = WorkerDaemon(transport=_transport)
+        _worker_daemon._result_queue = _result_queue  # connect to IO thread
 
     except Exception as e:
         _status = "error"
@@ -155,9 +156,19 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
         rtype = item.get("type")
         file_id = item.get("file_id")
         task_id = item.get("task_id")
-        success = False
+
+        # Failure report (no data to save)
+        if item.get("success") is False or item.get("fields") is None and rtype == "mc":
+            try:
+                _transport.report_complete(
+                    task_id, rtype, False, item.get("error"),
+                )
+            except Exception:
+                pass
+            return
 
         try:
+            success = False
             if rtype == "mc":
                 success = _transport.save_vision(file_id, item["fields"])
             elif rtype == "vv":
@@ -184,18 +195,13 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
 
         try:
             while not _shutdown_flag:
-                # Get batch — from prefetch queue or direct claim
+                # Get batch from IO thread's prefetch queue only
+                # (IO thread handles all DB access including claim)
                 batch = None
                 try:
-                    batch = _prefetch_queue.get(timeout=5)
+                    batch = _prefetch_queue.get(timeout=10)
                 except Empty:
-                    # Prefetch empty — try direct claim
-                    try:
-                        batch = _transport.claim()
-                        if not batch.get("phase"):
-                            batch = None
-                    except Exception:
-                        pass
+                    pass
 
                 if not batch or not batch.get("tasks"):
                     consecutive_empty += 1

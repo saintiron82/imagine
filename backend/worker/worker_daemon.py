@@ -1077,18 +1077,15 @@ class WorkerDaemon:
                     ctx.metadata.update(vision_fields)
                 ctx.vision_fields = vision_fields
 
-                # Immediate save — don't wait for batch end (crash-safe)
+                # Queue result for IO thread (crash-safe, non-blocking)
                 task_id = ctx.job.get("task_id")
                 file_id = ctx.job.get("file_id")
-                if self.transport and file_id:
-                    try:
-                        self.transport.save_vision(file_id, vision_fields)
-                        self.transport.report_complete(
-                            task_id, "mc", True, elapsed_s=_file_elapsed,
-                        )
-                        ctx._saved = True
-                    except Exception as e:
-                        logger.warning(f"[MC] immediate save failed: {e}")
+                if hasattr(self, '_result_queue') and self._result_queue and file_id:
+                    self._result_queue.put({
+                        "type": "mc", "file_id": file_id, "task_id": task_id,
+                        "fields": dict(vision_fields), "elapsed_s": _file_elapsed,
+                    })
+                    ctx._saved = True
             else:
                 ctx.failed = True
                 if vlm_err:
@@ -1096,10 +1093,14 @@ class WorkerDaemon:
                 else:
                     ctx.error = f"VLM returned empty MC for {self._current_file}"
                 logger.warning(ctx.error)
-                # Report failure immediately
+                # Queue failure report for IO thread
                 task_id = ctx.job.get("task_id")
-                if self.transport and task_id:
-                    self.transport.report_complete(task_id, "mc", False, ctx.error)
+                if hasattr(self, '_result_queue') and self._result_queue and task_id:
+                    self._result_queue.put({
+                        "type": "mc", "file_id": ctx.job.get("file_id"),
+                        "task_id": task_id, "fields": None,
+                        "error": ctx.error, "success": False,
+                    })
                 # Surface error to UI via diag_log
                 _notify(progress_callback, "diag_log", {
                     "message": f"[MC] FAIL {self._current_file}: {ctx.error}",
