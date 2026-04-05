@@ -20,9 +20,15 @@ def start_worker(server_url: str = "", access_token: str = "", refresh_token: st
     """Start embedded worker using LocalTransport."""
     global _daemon
 
-    with _start_lock:
+    if not _start_lock.acquire(blocking=False):
+        return {"success": False, "error": "Start in progress"}
+
+    try:
         if _daemon and _daemon.is_running():
+            _start_lock.release()
             return {"success": False, "error": "Worker already running"}
+    except:
+        pass
 
     try:
         from backend.server.deps import get_db
@@ -59,6 +65,8 @@ def start_worker(server_url: str = "", access_token: str = "", refresh_token: st
     except Exception as e:
         logger.error(f"Embedded worker start failed: {e}")
         return {"success": False, "error": str(e)}
+    finally:
+        _start_lock.release()
 
 
 def stop_worker() -> dict:
