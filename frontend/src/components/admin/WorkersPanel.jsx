@@ -462,7 +462,7 @@ export default function WorkersPanel() {
               {/* Row 2: Phase table — 항목 / 처리량 / 속도 (세로 3단) */}
               <div className="grid grid-cols-5 gap-1 text-[10px] font-mono text-center">
                 {/* Header */}
-                {['DL', 'Parse', 'MC', 'VV', 'MV'].map(h => (
+                {['DL', 'Parse', 'MC', 'MV', 'VV'].map(h => (
                   <span key={h} className="text-gray-500 font-semibold">{h}</span>
                 ))}
                 {/* 처리량 (done/total) */}
@@ -470,8 +470,8 @@ export default function WorkersPanel() {
                   [totals.dl, 'text-yellow-400'],
                   [totals.parse, 'text-sky-400'],
                   [totals.mc, 'text-purple-400'],
-                  [totals.vv, 'text-cyan-400'],
                   [totals.mv, 'text-green-400'],
+                  [totals.vv, 'text-cyan-400'],
                 ].map(([done, color], i) => (
                   <span key={i} className={color}>
                     {done}<span className="text-gray-600">/{totals.total}</span>
@@ -482,15 +482,15 @@ export default function WorkersPanel() {
                   s.download_throughput,
                   s.parse_throughput,
                   s.mc_throughput,
-                  s.vv_throughput,
                   s.mv_throughput,
+                  s.vv_throughput,
                 ].map((spd, i) => (
                   <span key={i} className={spd > 0 ? 'text-emerald-400' : 'text-gray-700'}>
                     {spd > 0 ? `${spd}/m` : '-'}
                   </span>
                 ))}
                 {/* ON/OFF 토글 */}
-                {['dl', 'parse', 'mc', 'vv', 'mv'].map(phase => {
+                {['dl', 'parse', 'mc', 'mv', 'vv'].map(phase => {
                   const paused = pausedPhases[phase];
                   return (
                     <button
@@ -737,10 +737,10 @@ export default function WorkersPanel() {
                 <div className="text-purple-400">MC</div>
               </th>
               <th className="text-center px-2 py-2">
-                <div className="text-blue-400">VV</div>
+                <div className="text-green-400">MV</div>
               </th>
               <th className="text-center px-2 py-2">
-                <div className="text-green-400">MV</div>
+                <div className="text-blue-400">VV</div>
               </th>
               <th className="text-center px-2 py-2">배치</th>
               <th className="text-right px-3 py-2"></th>
@@ -802,8 +802,8 @@ export default function WorkersPanel() {
                     <div className="text-[10px] text-gray-500">{w.hostname}</div>
                   </td>
                   {phaseCell('mc', 'purple')}
-                  {phaseCell('vv', 'blue')}
                   {phaseCell('mv', 'green')}
+                  {phaseCell('vv', 'blue')}
                   <td className="text-center px-2 py-1">
                     {cur && batchCount > 0 ? (
                       <div className="text-xs font-bold font-mono text-yellow-300">{batchCount}</div>
