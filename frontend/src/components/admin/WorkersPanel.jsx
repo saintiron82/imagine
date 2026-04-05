@@ -777,13 +777,13 @@ export default function WorkersPanel() {
                 const disabled = isIncapable(key);
                 return (
                   <td className={`text-center px-2 py-1 ${isCurrent ? `bg-${color}-900/20` : ''} ${disabled ? 'opacity-30' : ''}`}>
-                    {/* Row 1: 처리량 */}
+                    {/* Row 1: 처리량 or 처리중 표시 */}
                     <div className={`text-xs font-mono ${disabled ? 'text-red-400' : isCurrent ? `text-${color}-400 font-bold` : 'text-gray-600'}`}>
-                      {disabled ? '✕' : count > 0 ? count : '-'}
+                      {disabled ? '✕' : count > 0 ? count : isCurrent ? '...' : '-'}
                     </div>
                     {/* Row 2: 속도 */}
                     <div className={`text-[9px] font-mono ${isCurrent ? 'text-emerald-400' : 'text-gray-600'}`}>
-                      {disabled ? '' : speed > 0 ? `${speed}/m` : '-'}
+                      {disabled ? '' : speed > 0 ? `${speed}/m` : isCurrent ? '' : '-'}
                     </div>
                     {/* Row 3: 파일명 (MC만) */}
                     {isCurrent && key === 'mc' && fileName && (
