@@ -420,7 +420,7 @@ def _start_heartbeat_watchdog():
     (Heartbeat interval is 30s, so 3 minutes = 6 missed heartbeats → likely dead.)
     """
     INTERVAL = 60   # check interval (seconds)
-    TIMEOUT = 3     # heartbeat timeout (minutes)
+    TIMEOUT = 15    # heartbeat timeout (minutes) — MC batch can take 10min
 
     _stop_event = threading.Event()
 
