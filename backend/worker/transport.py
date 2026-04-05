@@ -312,20 +312,28 @@ class LocalTransport(WorkerTransport):
     def heartbeat(self, data: dict) -> dict:
         """Update session metrics directly in DB."""
         from datetime import datetime
+        import json as _json
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         cursor = self.db.conn.cursor()
         cursor.execute("""
             UPDATE worker_sessions
-            SET last_heartbeat = ?,
+            SET status = 'online',
+                last_heartbeat = ?,
                 jobs_completed = ?,
                 current_phase = ?,
-                current_file = ?
+                current_file = ?,
+                resources_json = ?
             WHERE id = ?
         """, (
             now,
             data.get("jobs_completed", 0),
             data.get("current_phase"),
             data.get("current_file"),
+            _json.dumps({
+                "phase_throughput": data.get("phase_throughput", {}),
+                "batch_throughput": data.get("batch_throughput", 0),
+                "worker_state": data.get("worker_state", "active"),
+            }) if data.get("phase_throughput") else None,
             self.session_id,
         ))
         self.db.conn.commit()

@@ -121,6 +121,9 @@ def start_worker(server_url: str, access_token: str, refresh_token: str = "") ->
                             "jobs_completed": _jobs_completed,
                             "current_phase": getattr(_worker_daemon, '_current_phase', None),
                             "current_file": getattr(_worker_daemon, '_current_file', None),
+                            "phase_throughput": getattr(_worker_daemon, '_phase_throughput', {}),
+                            "batch_throughput": getattr(_worker_daemon, '_batch_throughput', 0),
+                            "worker_state": "active" if getattr(_worker_daemon, '_current_phase', None) else "idle",
                         })
                         last_heartbeat = now
 
