@@ -1,0 +1,554 @@
+{
+  "timestamp": "2026-04-04T12:43:41.958568",
+  "model_a": {
+    "id": "mlx-community/gemma-4-e4b-it-4bit",
+    "results": [
+      {
+        "caption": "A series of matching picture frames are displayed against a backdrop of a bathtub scene, suggesting a series or sequence.",
+        "tags": [
+          "picture frames",
+          "bathtub",
+          "window",
+          "interior setting",
+          "matching frames",
+          "bathroom scene"
+        ],
+        "art_style": "photographic",
+        "color_palette": "blue, white, brown",
+        "image_type": "background",
+        "_file": "#02_01.psd",
+        "_time_s": 3.6
+      },
+      {
+        "caption": "A series of nested, empty, stylized frames suggesting a transition or a series of similar scenes.",
+        "tags": [
+          "doorway",
+          "room",
+          "threshold",
+          "frames",
+          "door",
+          "empty",
+          "thresholds"
+        ],
+        "art_style": "conceptual",
+        "color_palette": "beige, brown, white",
+        "image_type": "background",
+        "_file": "#02_02.psd",
+        "_time_s": 3.44
+      },
+      {
+        "caption": "A humorous, oversized diorama depicting a fitting room or a series of interconnected shower stalls.",
+        "tags": [
+          "bathroom",
+          "tiled",
+          "doorways",
+          "scales",
+          "shower",
+          "tubs",
+          "bathroom fixtures"
+        ],
+        "art_style": "diorama",
+        "color_palette": "brown, beige, white",
+        "image_type": "background",
+        "_file": "#02_03.psd",
+        "_time_s": 3.98
+      },
+      {
+        "caption": "A series of interconnected, stacked, and flowing transitional structures suggesting a passage or a conceptual journey.",
+        "tags": [
+          "isometric",
+          "transition",
+          "structure",
+          "flow",
+          "platforms",
+          "stages",
+          "journey"
+        ],
+        "art_style": "conceptual",
+        "color_palette": "brown, blue, green",
+        "image_type": "illustration",
+        "_file": "#02_04.psd",
+        "_time_s": 3.41
+      },
+      {
+        "caption": "A collection of legal or academic books are stacked on a tilted surface, suggesting a library or legal setting.",
+        "tags": [
+          "bookshelves",
+          "law",
+          "library",
+          "stacked books",
+          "legal volumes",
+          "library setting",
+          "library"
+        ],
+        "art_style": "realistic",
+        "color_palette": "brown, blue, tan",
+        "image_type": "background",
+        "_file": "#02_sanko.psd",
+        "_time_s": 3.56
+      },
+      {
+        "caption": "A series of nested, empty office door frames suggesting a sequence or a conceptual passage.",
+        "tags": [
+          "door frames",
+          "doorways",
+          "door handles",
+          "door frames",
+          "doorways",
+          "door jambs",
+          "doorways"
+        ],
+        "art_style": "architectural",
+        "color_palette": [
+          "brown",
+          "beige",
+          "wood"
+        ],
+        "image_type": "illustration",
+        "_file": "#02_toukanoheya.psd",
+        "_time_s": 3.64
+      },
+      {
+        "caption": "A visual representation of a pair of matching, empty office or legal document binders on a desk.",
+        "tags": [
+          "binders",
+          "desk",
+          "office supplies",
+          "legal documents",
+          "storage",
+          "office setting",
+          "in-use"
+        ],
+        "art_style": "photographic",
+        "color_palette": [
+          "blue",
+          "brown",
+          "white"
+        ],
+        "image_type": "background",
+        "_file": "#03_199.psd",
+        "_time_s": 3.63
+      },
+      {
+        "caption": "A series of interconnected, stylized door frames suggesting a passage or threshold.",
+        "tags": [
+          "door frames",
+          "room",
+          "threshold",
+          "doorways",
+          "interior design",
+          "passage",
+          "door frames"
+        ],
+        "art_style": "conceptual",
+        "color_palette": "beige, pink, blue",
+        "image_type": "illustration",
+        "_file": "#03_201.psd",
+        "_time_s": 3.39
+      },
+      {
+        "image_type": "background",
+        "caption": "A visual representation of a door or passage flanked by curtains and flanked by a series of matching panels.",
+        "tags": [
+          "curtains",
+          "doorway",
+          "panels",
+          "threshold",
+          "interior",
+          "passage",
+          "frame"
+        ],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_file": "#03_202A_202C.psd",
+        "_time_s": 3.3
+      },
+      {
+        "caption": "A series of interconnected office and meeting room doors and signs suggesting a transition or passage.",
+        "tags": [
+          "doors",
+          "signs",
+          "office",
+          "passage",
+          "doorways",
+          "signs",
+          "threshold"
+        ],
+        "art_style": "conceptual",
+        "color_palette": "purple, brown, grey",
+        "image_type": "background",
+        "_file": "#03_203.psd",
+        "_time_s": 3.39
+      }
+    ],
+    "scores": [
+      {
+        "visual_alignment": 3.9,
+        "caption_quality": 15,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 58.9
+      },
+      {
+        "visual_alignment": 7.5,
+        "caption_quality": 14,
+        "tag_quality": 23,
+        "structure": 15.0,
+        "total": 59.5
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 17,
+        "tag_quality": 23,
+        "structure": 15.0,
+        "total": 55.0
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 8,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 48.0
+      },
+      {
+        "visual_alignment": 4.1,
+        "caption_quality": 19,
+        "tag_quality": 22,
+        "structure": 15.0,
+        "total": 60.1
+      },
+      {
+        "visual_alignment": 0.3,
+        "caption_quality": 15,
+        "tag_quality": 21,
+        "structure": 15.0,
+        "total": 51.3
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 18,
+        "tag_quality": 23,
+        "structure": 15.0,
+        "total": 56.0
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 13,
+        "tag_quality": 24,
+        "structure": 15.0,
+        "total": 52.0
+      },
+      {
+        "visual_alignment": 5.8,
+        "caption_quality": 13,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 58.8
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 13,
+        "tag_quality": 24,
+        "structure": 15.0,
+        "total": 52.0
+      }
+    ]
+  },
+  "model_b": {
+    "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+    "results": [
+      {
+        "caption": "A bright, modern living room with a view of a lake and mountains.",
+        "tags": [
+          "living room",
+          "dining area",
+          "lake view",
+          "mountains",
+          "anime",
+          "interior design",
+          "daytime",
+          "cottage"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "green",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#02_01.psd",
+        "_time_s": 6.84
+      },
+      {
+        "caption": "A cozy living room with a view of a lake and mountains.",
+        "tags": [
+          "living room",
+          "lake view",
+          "mountains",
+          "chandelier",
+          "dining table",
+          "couch",
+          "window",
+          "curtains"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "brown",
+          "pink"
+        ],
+        "image_type": "background",
+        "_file": "#02_02.psd",
+        "_time_s": 6.84
+      },
+      {
+        "caption": "A modern kitchen and living room with a view of a lake.",
+        "tags": [
+          "kitchen",
+          "living room",
+          "modern",
+          "interior design",
+          "lake view",
+          "stools",
+          "television",
+          "refrigerator"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "beige",
+          "brown",
+          "white"
+        ],
+        "image_type": "background",
+        "_file": "#02_03.psd",
+        "_time_s": 7.05
+      },
+      {
+        "caption": "A colorful lakeside house with a wooden dock and small boat.",
+        "tags": [
+          "house",
+          "dock",
+          "boat",
+          "lake",
+          "cottage",
+          "summer",
+          "scenery",
+          "anime"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "green",
+          "pink"
+        ],
+        "image_type": "background",
+        "_file": "#02_04.psd",
+        "_time_s": 6.92
+      },
+      {
+        "caption": "A tilted view of a library with bookshelves and a wooden table.",
+        "tags": [
+          "library",
+          "books",
+          "shelves",
+          "table",
+          "tilted",
+          "anime",
+          "interior",
+          "study"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "brown",
+          "green"
+        ],
+        "image_type": "background",
+        "_file": "#02_sanko.psd",
+        "_time_s": 6.91
+      },
+      {
+        "caption": "Two anime-style rooms, one with a desk and one with a bed.",
+        "tags": [
+          "anime",
+          "room",
+          "interior",
+          "desk",
+          "bed",
+          "furniture",
+          "study",
+          "bedroom"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "brown",
+          "beige",
+          "white"
+        ],
+        "image_type": "background",
+        "_file": "#02_toukanoheya.psd",
+        "_time_s": 7.1
+      },
+      {
+        "caption": "A bright room with a dresser, hanging plant, and window.",
+        "tags": [
+          "interior",
+          "room",
+          "plant",
+          "window",
+          "dresser",
+          "blue",
+          "purple",
+          "cartoon"
+        ],
+        "art_style": "cartoon",
+        "color_palette": [
+          "blue",
+          "purple",
+          "green"
+        ],
+        "image_type": "background",
+        "_file": "#03_199.psd",
+        "_time_s": 7.0
+      },
+      {
+        "caption": "A cozy anime-style bedroom with a desk, bed, and bookshelf.",
+        "tags": [
+          "anime",
+          "bedroom",
+          "desk",
+          "bookshelf",
+          "cozy",
+          "interior",
+          "cartoon",
+          "room"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "purple",
+          "green",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#03_201.psd",
+        "_time_s": 7.11
+      },
+      {
+        "caption": "A cozy room with a window, desk, and hanging basket.",
+        "tags": [
+          "interior",
+          "room",
+          "desk",
+          "window",
+          "curtains",
+          "basket",
+          "lamp",
+          "purple"
+        ],
+        "art_style": "digital",
+        "color_palette": [
+          "blue",
+          "purple",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#03_202A_202C.psd",
+        "_time_s": 6.95
+      },
+      {
+        "caption": "A cozy, colorful bedroom with a desk, bookshelf, and playful decor.",
+        "tags": [
+          "bedroom",
+          "desk",
+          "bookshelf",
+          "cute",
+          "cozy",
+          "anime",
+          "pink",
+          "purple"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "pink",
+          "purple",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#03_203.psd",
+        "_time_s": 7.07
+      }
+    ],
+    "scores": [
+      {
+        "visual_alignment": 9.6,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 72.6
+      },
+      {
+        "visual_alignment": 12.2,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 75.2
+      },
+      {
+        "visual_alignment": 11.6,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 74.6
+      },
+      {
+        "visual_alignment": 12.3,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 77.3
+      },
+      {
+        "visual_alignment": 17.0,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 80.0
+      },
+      {
+        "visual_alignment": 14.6,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 77.6
+      },
+      {
+        "visual_alignment": 18.2,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 83.2
+      },
+      {
+        "visual_alignment": 14.2,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 79.2
+      },
+      {
+        "visual_alignment": 15.4,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 80.4
+      },
+      {
+        "visual_alignment": 12.3,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 77.3
+      }
+    ]
+  }
+}

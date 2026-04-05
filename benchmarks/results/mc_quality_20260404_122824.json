@@ -1,0 +1,586 @@
+{
+  "timestamp": "2026-04-04T12:28:24.078104",
+  "model_a": {
+    "id": "mlx-community/gemma-4-e4b-it-4bit",
+    "results": [
+      {
+        "scene_type": "indoor",
+        "time_of_day": "day",
+        "weather": "clear",
+        "season": "unknown",
+        "mood": "nostalgic",
+        "architecture_style": "classical",
+        "lighting": "bright",
+        "depth": "deep",
+        "art_style": "realistic",
+        "color_palette": "neutral",
+        "caption": "A view through a large window overlooking a body of water",
+        "tags": [
+          "window",
+          "interior",
+          "view",
+          "reflection",
+          "tranquil"
+        ],
+        "image_type": "background",
+        "_file": "#02_01.psd",
+        "_time_s": 5.95
+      },
+      {
+        "scene_type": "indoor",
+        "time_of_day": "day",
+        "weather": "clear",
+        "season": "any",
+        "mood": "serene",
+        "architecture_style": "modern",
+        "lighting": "bright",
+        "depth": "deep",
+        "art_style": "photorealistic",
+        "color_palette": "neutral",
+        "caption": "A large, empty room or transitional space, possibly a dressing room or large chamber, with glass partitions suggesting a view into another space, suggesting a transition or waiting area.",
+        "tags": [
+          "empty",
+          "modern",
+          "interior",
+          "setting",
+          "threshold"
+        ],
+        "image_type": "background",
+        "_file": "#02_02.psd",
+        "_time_s": 5.87
+      },
+      {
+        "scene_type": "indoor",
+        "time_of_day": "day",
+        "weather": "clear",
+        "season": "any",
+        "mood": "nostalgic",
+        "architecture_style": "mundane",
+        "lighting": "bright",
+        "depth": "medium",
+        "art_style": "photorealistic",
+        "color_palette": "warm",
+        "caption": "A realistic rendering of a room or passage",
+        "tags": [
+          "interior",
+          "passage",
+          "empty",
+          "realistic",
+          "transition",
+          "threshold"
+        ],
+        "image_type": "background",
+        "_file": "#02_03.psd",
+        "_time_s": 5.46
+      },
+      {
+        "subject": "concept_art",
+        "art_style": "3d_render",
+        "color_palette": "mixed",
+        "mood": "neutral",
+        "has_text": "yes",
+        "text_content": "The image is a visual representation of a transition or a passage through a structure, possibly symbolizing a threshold or a journey, with the text 'Office/Office/Office' or similar architectural passage.",
+        "caption": "A passage or threshold, possibly representing a journey or a passage through a structure.",
+        "tags": [
+          "passage",
+          "transition",
+          "threshold",
+          "passage through a structure"
+        ],
+        "image_type": "illustration",
+        "_file": "#02_04.psd",
+        "_time_s": 5.44
+      },
+      {
+        "scene_type": "abstract",
+        "time_of_day": "unknown",
+        "weather": "unknown",
+        "season": "unknown",
+        "mood": "contemplative",
+        "architecture_style": "unknown",
+        "lighting": "bright",
+        "depth": "shallow",
+        "art_style": "mixed_media",
+        "color_palette": "mixed",
+        "caption": "A collection of binders or files",
+        "tags": [
+          "office supplies",
+          "organization",
+          "academic",
+          "library",
+          "desk_setting"
+        ],
+        "image_type": "background",
+        "_file": "#02_sanko.psd",
+        "_time_s": 5.36
+      },
+      {
+        "subject": "architectural_rendering",
+        "art_style": "isometric_diagram",
+        "color_palette": "neutral",
+        "mood": "technical",
+        "has_text": "yes",
+        "text_content": "Ibery, concerning, regarding",
+        "caption": "Floor plan diagram",
+        "tags": [
+          "floor_plan",
+          "blueprint",
+          "architectural_drawing"
+        ],
+        "image_type": "illustration",
+        "_file": "#02_toukanoheya.psd",
+        "_time_s": 4.32
+      },
+      {
+        "subject": "conceptual_transition",
+        "art_style": "digital_illustration",
+        "color_palette": "cool",
+        "mood": "transitional",
+        "has_text": "yes",
+        "text_content": "Tomboyish_transition",
+        "caption": "A visual metaphor for passage or change",
+        "tags": [
+          "passage",
+          "threshold",
+          "transition",
+          "doorway",
+          "threshold_crossing"
+        ],
+        "image_type": "illustration",
+        "_file": "#03_199.psd",
+        "_time_s": 4.61
+      },
+      {
+        "subject": "conceptual_threshold",
+        "art_style": "mixed_media",
+        "color_palette": "neutral",
+        "mood": "transitional",
+        "has_text": "yes",
+        "text_content": "Threshold",
+        "caption": "A passage or doorway",
+        "tags": [
+          "passage",
+          "doorway",
+          "threshold",
+          "transition",
+          "liminal_space"
+        ],
+        "image_type": "illustration",
+        "_file": "#03_201.psd",
+        "_time_s": 4.45
+      },
+      {
+        "scene_type": "abstract",
+        "time_of_day": "unknown",
+        "weather": "unknown",
+        "season": "unknown",
+        "mood": "contemplative",
+        "architecture_style": "unknown",
+        "lighting": "diffuse",
+        "depth": "shallow",
+        "art_style": "graphic_design",
+        "color_palette": "cool",
+        "caption": "A visual metaphor for transition or passage",
+        "tags": [
+          "transition",
+          "threshold",
+          "passage",
+          "threshold",
+          "doorway",
+          "threshold"
+        ],
+        "image_type": "background",
+        "_file": "#03_202A_202C.psd",
+        "_time_s": 5.52
+      },
+      {
+        "scene_type": "abstract",
+        "time_of_day": "unknown",
+        "weather": "unknown",
+        "season": "unknown",
+        "mood": "nostalgic",
+        "architecture_style": "mixed",
+        "lighting": "mixed",
+        "depth": "shallow",
+        "art_style": "mixed",
+        "color_palette": "muted",
+        "caption": "A collection of disparate objects and symbols",
+        "tags": [
+          "collage",
+          "objects",
+          "conceptual",
+          "still life"
+        ],
+        "image_type": "background",
+        "_file": "#03_203.psd",
+        "_time_s": 5.21
+      }
+    ],
+    "scores": [
+      {
+        "visual_alignment": 4.2,
+        "caption_quality": 19,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 63.2
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 12,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 52.0
+      },
+      {
+        "visual_alignment": 4.3,
+        "caption_quality": 16,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 60.3
+      },
+      {
+        "visual_alignment": 0.7,
+        "caption_quality": 8,
+        "tag_quality": 19,
+        "structure": 15.0,
+        "total": 42.7
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 14,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 54.0
+      },
+      {
+        "visual_alignment": 2.3,
+        "caption_quality": 13,
+        "tag_quality": 23,
+        "structure": 15.0,
+        "total": 53.3
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 8,
+        "tag_quality": 22,
+        "structure": 15.0,
+        "total": 45.0
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 11,
+        "tag_quality": 24,
+        "structure": 15.0,
+        "total": 50.0
+      },
+      {
+        "visual_alignment": 0.6,
+        "caption_quality": 8,
+        "tag_quality": 19,
+        "structure": 15.0,
+        "total": 42.6
+      },
+      {
+        "visual_alignment": 2.0,
+        "caption_quality": 14,
+        "tag_quality": 23,
+        "structure": 15.0,
+        "total": 54.0
+      }
+    ]
+  },
+  "model_b": {
+    "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+    "results": [
+      {
+        "caption": "A bright living room with a view of a lake and mountains.",
+        "tags": [
+          "living room",
+          "lake",
+          "mountains",
+          "dining table",
+          "chandelier",
+          "windows",
+          "anime",
+          "interior"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "green",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#02_01.psd",
+        "_time_s": 6.75
+      },
+      {
+        "caption": "A cozy living room with a view of a lake and mountains.",
+        "tags": [
+          "living room",
+          "lake view",
+          "mountains",
+          "chandelier",
+          "dining table",
+          "couch",
+          "window",
+          "curtains"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "brown",
+          "pink"
+        ],
+        "image_type": "background",
+        "_file": "#02_02.psd",
+        "_time_s": 6.85
+      },
+      {
+        "caption": "A modern kitchen and living room with a view of a lake.",
+        "tags": [
+          "kitchen",
+          "living room",
+          "modern",
+          "interior design",
+          "lake view",
+          "stools",
+          "television",
+          "refrigerator"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "beige",
+          "brown",
+          "white"
+        ],
+        "image_type": "background",
+        "_file": "#02_03.psd",
+        "_time_s": 7.06
+      },
+      {
+        "caption": "A colorful lakeside house with a wooden dock and small boat.",
+        "tags": [
+          "house",
+          "lake",
+          "dock",
+          "boat",
+          "summer",
+          "cottage",
+          "waterfront",
+          "scenery"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "green",
+          "pink"
+        ],
+        "image_type": "background",
+        "_file": "#02_04.psd",
+        "_time_s": 6.98
+      },
+      {
+        "caption": "A tilted view of a library with bookshelves and a wooden table.",
+        "tags": [
+          "library",
+          "bookshelves",
+          "wooden table",
+          "books",
+          "tilted",
+          "anime",
+          "interior",
+          "study"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "brown",
+          "blue",
+          "green"
+        ],
+        "image_type": "background",
+        "_file": "#02_sanko.psd",
+        "_time_s": 7.02
+      },
+      {
+        "caption": "Two anime-style rooms, one with a desk and one with a bed.",
+        "tags": [
+          "anime",
+          "room",
+          "interior",
+          "desk",
+          "bed",
+          "furniture",
+          "study",
+          "bedroom"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "brown",
+          "beige",
+          "white"
+        ],
+        "image_type": "background",
+        "_file": "#02_toukanoheya.psd",
+        "_time_s": 7.09
+      },
+      {
+        "caption": "A cozy room with a dresser, hanging plant, and blue curtains.",
+        "tags": [
+          "interior",
+          "room",
+          "plant",
+          "curtains",
+          "dresser",
+          "window",
+          "cartoon",
+          "decor"
+        ],
+        "art_style": "cartoon",
+        "color_palette": [
+          "blue",
+          "purple",
+          "green"
+        ],
+        "image_type": "background",
+        "_file": "#03_199.psd",
+        "_time_s": 7.12
+      },
+      {
+        "caption": "A cozy anime-style bedroom with a desk, bed, and bookshelf.",
+        "tags": [
+          "anime",
+          "bedroom",
+          "desk",
+          "bookshelf",
+          "cozy"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "purple",
+          "green",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#03_201.psd",
+        "_time_s": 6.52
+      },
+      {
+        "caption": "A cozy room with a desk, window, and hanging basket.",
+        "tags": [
+          "interior",
+          "desk",
+          "window",
+          "curtains",
+          "basket",
+          "lamp",
+          "purple",
+          "blue"
+        ],
+        "art_style": "digital",
+        "color_palette": [
+          "purple",
+          "blue",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#03_202A_202C.psd",
+        "_time_s": 6.97
+      },
+      {
+        "caption": "A cozy, colorful anime-style bedroom with a desk, bookshelf, and soft lighting.",
+        "tags": [
+          "anime",
+          "bedroom",
+          "desk",
+          "bookshelf",
+          "cozy",
+          "colorful",
+          "pink",
+          "purple"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "pink",
+          "purple",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#03_203.psd",
+        "_time_s": 7.19
+      }
+    ],
+    "scores": [
+      {
+        "visual_alignment": 13.6,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 76.6
+      },
+      {
+        "visual_alignment": 12.2,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 75.2
+      },
+      {
+        "visual_alignment": 11.6,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 74.6
+      },
+      {
+        "visual_alignment": 12.3,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 77.3
+      },
+      {
+        "visual_alignment": 17.0,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 80.0
+      },
+      {
+        "visual_alignment": 14.6,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 77.6
+      },
+      {
+        "visual_alignment": 20.9,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 85.9
+      },
+      {
+        "visual_alignment": 14.2,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 79.2
+      },
+      {
+        "visual_alignment": 16.3,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 81.3
+      },
+      {
+        "visual_alignment": 14.5,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 79.5
+      }
+    ]
+  }
+}

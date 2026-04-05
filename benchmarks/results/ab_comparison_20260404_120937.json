@@ -1,0 +1,45 @@
+{
+  "type": "ab_comparison",
+  "timestamp": "2026-04-04T12:09:37.292270",
+  "system": {
+    "platform": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.12",
+    "mlx_version": "0.30.6",
+    "torch_version": "2.11.0.dev20260216",
+    "transformers_version": "5.4.0",
+    "memory_gb": 32.0
+  },
+  "config": {
+    "image_count": 10,
+    "image_dir": "/Users/saintiron/imageDB/마캬베리즈무/실내소품"
+  },
+  "model_a": {
+    "model_id": "mlx-community/gemma-4-e4b-it-4bit",
+    "model_load_s": 4.54,
+    "processing_s": 54.73,
+    "per_file_s": 5.974,
+    "files_per_min": 10.0,
+    "theoretical_per_file_s": 5.473,
+    "theoretical_files_per_min": 11.0,
+    "overhead_s": 5.01,
+    "success": 10,
+    "failed": 0,
+    "metal_peak_mb": 4983.0,
+    "rss_peak_mb": 4560.0
+  },
+  "model_b": {
+    "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+    "model_load_s": 2.4,
+    "processing_s": 73.16,
+    "per_file_s": 7.609,
+    "files_per_min": 7.9,
+    "theoretical_per_file_s": 7.316,
+    "theoretical_files_per_min": 8.2,
+    "overhead_s": 2.92,
+    "success": 10,
+    "failed": 0,
+    "metal_peak_mb": 5675.0,
+    "rss_peak_mb": 4824.0
+  }
+}

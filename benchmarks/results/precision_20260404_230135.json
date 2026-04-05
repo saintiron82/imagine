@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-04-04T23:01:35.927016",
+  "query_count": 30,
+  "db_size": 11174,
+  "judge_mode": "keyword",
+  "axes": {
+    "vv": {
+      "precision": {
+        "P@3": 0.1889,
+        "P@5": 0.22,
+        "P@10": 0.1867
+      },
+      "recall": {
+        "Recall@3": 0.0481,
+        "Recall@5": 0.0951,
+        "Recall@10": 0.1545
+      }
+    },
+    "mv": {
+      "precision": {
+        "P@3": 0.3111,
+        "P@5": 0.2467,
+        "P@10": 0.2033
+      },
+      "recall": {
+        "Recall@3": 0.1127,
+        "Recall@5": 0.1415,
+        "Recall@10": 0.1861
+      }
+    },
+    "fts": {
+      "precision": {
+        "P@3": 0.0444,
+        "P@5": 0.0267,
+        "P@10": 0.0167
+      },
+      "recall": {
+        "Recall@3": 0.0009,
+        "Recall@5": 0.0009,
+        "Recall@10": 0.0024
+      }
+    },
+    "triaxis": {
+      "precision": {
+        "P@3": 0.2778,
+        "P@5": 0.28,
+        "P@10": 0.2333
+      },
+      "recall": {
+        "Recall@3": 0.0966,
+        "Recall@5": 0.1568,
+        "Recall@10": 0.2086
+      }
+    }
+  },
+  "timing": {
+    "init": 0.2,
+    "query_gen": 0.2,
+    "vv": 35.5,
+    "mv": 30.9,
+    "fts": 0.0,
+    "triaxis": 130.1
+  }
+}

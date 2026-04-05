@@ -1,0 +1,239 @@
+{
+  "timestamp": "2026-04-04T16:32:43.281496",
+  "encoder": "google/siglip2-so400m-patch16-naflex",
+  "image_count": 30,
+  "total_score": 74.7,
+  "self_consistency": {
+    "score": 48.1,
+    "overall_mean_cosine": 0.9329,
+    "per_augmentation": {
+      "center_crop_70": 0.8972,
+      "center_crop_50": 0.8568,
+      "h_flip": 0.945,
+      "brighten_1.4x": 0.9648,
+      "darken_0.6x": 0.9787,
+      "blur_r3": 0.8777,
+      "resize_50pct": 0.9514,
+      "color_jitter": 0.9917
+    }
+  },
+  "retrieval_at_k": {
+    "score": 26.6,
+    "mean_precision": {
+      "P@3": 0.5714,
+      "P@5": 0.4476,
+      "P@10": 0.5603
+    },
+    "group_distribution": {
+      "#03": 7,
+      "#02": 6,
+      "#305": 2,
+      "00": 2,
+      "001": 2,
+      "006": 2,
+      "#06": 1,
+      "#13": 1,
+      "#14": 1,
+      "#1": 1,
+      "#302": 1,
+      "#3": 1,
+      "#74": 1,
+      ".병.ᄌ": 1,
+      "002": 1
+    },
+    "images_evaluated": 21,
+    "images_skipped_singleton": 9,
+    "per_image": [
+      {
+        "file": "#02_01.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.6,
+          "P@10": 0.8
+        }
+      },
+      {
+        "file": "#02_02.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.8,
+          "P@10": 0.8
+        }
+      },
+      {
+        "file": "#02_03.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.8,
+          "P@10": 0.8
+        }
+      },
+      {
+        "file": "#02_04.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.6,
+          "P@10": 0.8
+        }
+      },
+      {
+        "file": "#02_sanko.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 0.2
+        }
+      },
+      {
+        "file": "#02_toukanoheya.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 0.2
+        }
+      },
+      {
+        "file": "#03_199.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.4,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "#03_201.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.6,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "#03_202A_202C.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.6,
+          "P@10": 0.667
+        }
+      },
+      {
+        "file": "#03_203.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.4,
+          "P@10": 0.667
+        }
+      },
+      {
+        "file": "#03_207.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.4,
+          "P@10": 0.5
+        }
+      },
+      {
+        "file": "#03_궋궶귟궻됄_뙷듫볙 - 복사본.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.6,
+          "P@10": 0.667
+        }
+      },
+      {
+        "file": "#03_궋궶귟궻됄_뙷듫볙.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.6,
+          "P@10": 0.667
+        }
+      },
+      {
+        "file": "#305_BG_071_WUNCLER PLAZA SECURITY DESK..psd",
+        "group": "#305",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 1.0,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "#305_BG_299_INT. CTA HQ-HALLWAY-(1225).psd",
+        "group": "#305",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 0.0
+        }
+      },
+      {
+        "file": "00-002-v08R.psd",
+        "group": "00",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 1.0,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "00-002-v08R_2.psd",
+        "group": "00",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 1.0,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "001_EP14.psd",
+        "group": "001",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 0.0
+        }
+      },
+      {
+        "file": "001_R_hg04.psd",
+        "group": "001",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 0.0
+        }
+      },
+      {
+        "file": "006_EP14.psd",
+        "group": "006",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 0.0
+        }
+      }
+    ]
+  },
+  "timing": {
+    "load_s": 4.8,
+    "model_load_s": 5.1,
+    "sc_s": 9.9,
+    "ret_s": 1.1
+  },
+  "system_memory": {
+    "rss_mb": 1536.5,
+    "mps_mb": 2166.1
+  }
+}

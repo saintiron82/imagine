@@ -1,0 +1,300 @@
+{
+  "timestamp": "2026-04-04T12:38:25.554107",
+  "model_a": {
+    "id": "mlx-community/gemma-4-e4b-it-4bit",
+    "results": [
+      {
+        "caption": "A series of sliding doors leading to a view of a body of water under a bright sky.",
+        "tags": [
+          "windows",
+          "view",
+          "modern",
+          "indoor",
+          "outdoor",
+          "reflection",
+          "architecture"
+        ],
+        "art_style": "realistic",
+        "color_palette": [
+          "blue",
+          "white",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#02_01.psd",
+        "_time_s": 3.27
+      },
+      {
+        "caption": "A humorous depiction of a sliding door leading to a view of a modern, empty room.",
+        "tags": [
+          "diy",
+          "doorway",
+          "empty",
+          "room",
+          "transition",
+          "setting",
+          "threshold"
+        ],
+        "art_style": "trompe-l'oeil",
+        "color_palette": [
+          "beige",
+          "brown",
+          "white"
+        ],
+        "image_type": "background",
+        "_file": "#02_02.psd",
+        "_time_s": 3.28
+      },
+      {
+        "caption": "A visual representation of a fitting room or a series of adjoining rooms, suggesting a transition or a collection of spaces.",
+        "tags": [
+          "fitting room",
+          "passage",
+          "interior",
+          "dressing area",
+          "threshold"
+        ],
+        "art_style": "architectural",
+        "color_palette": [
+          "brown",
+          "beige",
+          "wood"
+        ],
+        "image_type": "background",
+        "_file": "#02_03.psd",
+        "_time_s": 3.22
+      },
+      {
+        "caption": "A visual representation of the transition from an overhead view to a detailed, layered structure.",
+        "tags": [
+          "transition",
+          "architecture",
+          "layers",
+          "perspective",
+          "construction",
+          "overhead",
+          "depth"
+        ],
+        "art_style": "diagrammatic",
+        "color_palette": [
+          "brown",
+          "blue",
+          "wood"
+        ],
+        "image_type": "illustration",
+        "_file": "#02_04.psd",
+        "_time_s": 3.12
+      },
+      {
+        "caption": "A visual representation of a series of legal or academic binders suggesting a vast collection of documents.",
+        "tags": [
+          "legal",
+          "library",
+          "documents",
+          "law",
+          "archive",
+          "law books",
+          "library setting"
+        ],
+        "art_style": "conceptual",
+        "color_palette": [
+          "brown",
+          "blue",
+          "beige"
+        ],
+        "image_type": "background",
+        "_file": "#02_sanko.psd",
+        "_time_s": 3.17
+      }
+    ],
+    "scores": [
+      {
+        "visual_alignment": 4.0,
+        "caption_quality": 21,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 65.0
+      },
+      {
+        "visual_alignment": 3.9,
+        "caption_quality": 19,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 62.9
+      },
+      {
+        "visual_alignment": 3.9,
+        "caption_quality": 9,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 52.9
+      },
+      {
+        "visual_alignment": 0,
+        "caption_quality": 11,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 51.0
+      },
+      {
+        "visual_alignment": 3.3,
+        "caption_quality": 14,
+        "tag_quality": 23,
+        "structure": 15.0,
+        "total": 55.3
+      }
+    ]
+  },
+  "model_b": {
+    "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+    "results": [
+      {
+        "caption": "A bright living room with a view of a lake and mountains.",
+        "tags": [
+          "living room",
+          "lake",
+          "mountains",
+          "dining table",
+          "chandelier",
+          "windows",
+          "anime",
+          "interior"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "green",
+          "brown"
+        ],
+        "image_type": "background",
+        "_file": "#02_01.psd",
+        "_time_s": 6.64
+      },
+      {
+        "caption": "A cozy living room with a view of a lake and mountains.",
+        "tags": [
+          "living room",
+          "lake",
+          "mountains",
+          "chandelier",
+          "table",
+          "chairs",
+          "curtains",
+          "painting"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "beige",
+          "blue",
+          "pink"
+        ],
+        "image_type": "background",
+        "_file": "#02_02.psd",
+        "_time_s": 6.81
+      },
+      {
+        "caption": "A modern kitchen and living room with wooden floors and a view of a lake.",
+        "tags": [
+          "kitchen",
+          "living room",
+          "modern",
+          "interior design",
+          "stools",
+          "television",
+          "refrigerator",
+          "lake view"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "beige",
+          "brown",
+          "white"
+        ],
+        "image_type": "background",
+        "_file": "#02_03.psd",
+        "_time_s": 7.22
+      },
+      {
+        "caption": "A colorful lakeside house with a wooden dock and small boat.",
+        "tags": [
+          "house",
+          "lake",
+          "dock",
+          "boat",
+          "summer",
+          "cottage",
+          "waterfront",
+          "scenery"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "blue",
+          "green",
+          "pink"
+        ],
+        "image_type": "background",
+        "_file": "#02_04.psd",
+        "_time_s": 6.98
+      },
+      {
+        "caption": "A tilted view of a library with bookshelves and a wooden table.",
+        "tags": [
+          "library",
+          "books",
+          "shelves",
+          "table",
+          "tilted",
+          "anime",
+          "interior",
+          "study"
+        ],
+        "art_style": "anime",
+        "color_palette": [
+          "brown",
+          "blue",
+          "green"
+        ],
+        "image_type": "background",
+        "_file": "#02_sanko.psd",
+        "_time_s": 6.93
+      }
+    ],
+    "scores": [
+      {
+        "visual_alignment": 13.6,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 76.6
+      },
+      {
+        "visual_alignment": 12.2,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 75.2
+      },
+      {
+        "visual_alignment": 10.5,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 75.5
+      },
+      {
+        "visual_alignment": 12.3,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 77.3
+      },
+      {
+        "visual_alignment": 17.0,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 80.0
+      }
+    ]
+  }
+}
