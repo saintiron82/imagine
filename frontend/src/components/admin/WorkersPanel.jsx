@@ -735,15 +735,12 @@ export default function WorkersPanel() {
               <th className="text-left px-3 py-2">{t('admin.worker_name')}</th>
               <th className="text-center px-2 py-2">
                 <div className="text-purple-400">MC</div>
-                {queueStats?.mc_throughput > 0 && <div className="text-[9px] text-purple-400/60 font-mono">{queueStats.mc_throughput}/m</div>}
               </th>
               <th className="text-center px-2 py-2">
                 <div className="text-blue-400">VV</div>
-                {queueStats?.vv_throughput > 0 && <div className="text-[9px] text-blue-400/60 font-mono">{queueStats.vv_throughput}/m</div>}
               </th>
               <th className="text-center px-2 py-2">
                 <div className="text-green-400">MV</div>
-                {queueStats?.mv_throughput > 0 && <div className="text-[9px] text-green-400/60 font-mono">{queueStats.mv_throughput}/m</div>}
               </th>
               <th className="text-center px-2 py-2">배치</th>
               <th className="text-right px-3 py-2"></th>

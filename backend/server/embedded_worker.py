@@ -262,6 +262,7 @@ def get_status() -> dict:
         result["current_file"] = getattr(_worker_daemon, '_current_file', None)
         result["batch_throughput"] = getattr(_worker_daemon, '_batch_throughput', 0.0)
         result["batch_capacity"] = getattr(_worker_daemon, 'batch_capacity', 0)
+        result["phase_throughput"] = dict(getattr(_worker_daemon, '_phase_throughput', {}))
         pc = getattr(_worker_daemon, '_phase_counts', None)
         if pc:
             result["phase_counts"] = dict(pc)

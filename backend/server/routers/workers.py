@@ -715,6 +715,10 @@ def admin_list_workers(
                         w["batch_capacity"] = ew["batch_capacity"]
                     if ew.get("phase_counts"):
                         w["phase_counts"] = ew["phase_counts"]
+                    if ew.get("phase_throughput"):
+                        if not w.get("resources"):
+                            w["resources"] = {}
+                        w["resources"]["phase_throughput"] = ew["phase_throughput"]
                     if ew.get("throughput") and ew["throughput"] > 0:
                         w["throughput"] = ew["throughput"]
                     break
