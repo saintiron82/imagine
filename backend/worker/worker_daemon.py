@@ -2121,13 +2121,16 @@ class WorkerDaemon:
             vision_data = job.get("vision_data", {})
             mc_caption = vision_data.get("mc_caption", "")
 
-            # New system: no vision_data in claim — fetch from files DB via API
+            # New system: no vision_data in claim — fetch from files DB
             if not mc_caption and task_id:
+                file_id = job.get("file_id")
                 try:
-                    file_id = job.get("file_id")
-                    resp = self._authed_request("get", f"{self.server_url}/api/v1/files/{file_id}/mc")
-                    if resp.status_code == 200:
-                        mc_data = resp.json()
+                    if self.transport:
+                        mc_data = self.transport.get_mc_data(file_id)
+                    else:
+                        resp = self._authed_request("get", f"{self.server_url}/api/v1/files/{file_id}/mc")
+                        mc_data = resp.json() if resp.status_code == 200 else None
+                    if mc_data:
                         mc_caption = mc_data.get("mc_caption", "")
                         vision_data = mc_data
                 except Exception as e:
