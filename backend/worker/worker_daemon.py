@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
+from queue import Queue, Empty
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -178,10 +179,185 @@ class WorkerDaemon:
             on_enter_resting=self._on_enter_resting,
         )
 
+        # IO/Analysis thread infrastructure
+        self._result_queue = Queue()
+        self._prefetch_queue = Queue(maxsize=1)
+        self._shutdown = False
+        self._io_thread = None
+        self._analysis_thread = None
+
         logger.info(
             f"Worker initialized: server={self.server_url}, mode={self.storage_mode}, "
             f"batch_capacity={self.batch_capacity}, pool_size={self.pool_size}"
         )
+
+    # ── Dual-Thread Start/Stop ────────────────────────────────
+
+    def start(self):
+        """Start IO + Analysis threads. Both embedded and external use this."""
+        self._shutdown = False
+        self._io_thread = threading.Thread(target=self._io_loop, daemon=True, name="worker-io")
+        self._analysis_thread = threading.Thread(target=self._analysis_loop, daemon=True, name="worker-analysis")
+        self._io_thread.start()
+        self._analysis_thread.start()
+        logger.info("Worker started (IO + Analysis threads)")
+
+    def stop(self):
+        """Stop both threads."""
+        self._shutdown = True
+        self._stop_requested = True
+        if self._analysis_thread:
+            self._analysis_thread.join(timeout=60)
+        if self._io_thread:
+            self._io_thread.join(timeout=10)
+        self._io_thread = None
+        self._analysis_thread = None
+        logger.info("Worker stopped")
+
+    def wait(self):
+        """Block until analysis thread finishes (for CLI mode)."""
+        if self._analysis_thread:
+            self._analysis_thread.join()
+
+    def is_running(self):
+        return self._analysis_thread is not None and self._analysis_thread.is_alive()
+
+    def _io_loop(self):
+        """IO thread: heartbeat, result upload, batch prefetch."""
+        heartbeat_interval = 5
+        while not self._shutdown:
+            try:
+                # 1. Heartbeat
+                self.transport.heartbeat({
+                    "jobs_completed": self._total_completed,
+                    "current_phase": self._current_phase,
+                    "current_file": self._current_file,
+                    "phase_throughput": dict(self._phase_throughput),
+                    "batch_throughput": self._batch_throughput,
+                    "batch_capacity": self.batch_capacity,
+                })
+
+                # 2. Drain result queue → save to DB/server
+                while not self._result_queue.empty():
+                    try:
+                        item = self._result_queue.get_nowait()
+                        self._save_result(item)
+                    except Exception as e:
+                        logger.warning(f"[IO] save failed: {e}")
+                        break
+
+                # 3. Prefetch next batch
+                if self._prefetch_queue.empty():
+                    try:
+                        result = self.transport.claim()
+                        if result.get("phase") and result.get("tasks"):
+                            self._prefetch_queue.put(result)
+                    except Exception:
+                        pass
+
+            except Exception as e:
+                logger.warning(f"[IO] loop error: {e}")
+
+            time.sleep(heartbeat_interval)
+
+    def _save_result(self, item):
+        """Save a single analysis result via transport."""
+        rtype = item.get("type")
+        file_id = item.get("file_id")
+        task_id = item.get("task_id")
+
+        # Failure report
+        if item.get("success") is False or (rtype == "mc" and item.get("fields") is None):
+            try:
+                self.transport.report_complete(task_id, rtype, False, item.get("error"))
+            except Exception:
+                pass
+            return
+
+        try:
+            success = False
+            if rtype == "mc":
+                success = self.transport.save_vision(file_id, item["fields"])
+            elif rtype == "vv":
+                success = self.transport.save_vv(file_id, item["vector"])
+            elif rtype == "mv":
+                success = self.transport.save_mv(file_id, item["vector"])
+
+            self.transport.report_complete(
+                task_id, rtype, success, elapsed_s=item.get("elapsed_s"),
+            )
+            if success:
+                self._total_completed += 1
+        except Exception as e:
+            logger.warning(f"[IO] save {rtype} failed for file {file_id}: {e}")
+
+    def _analysis_loop(self):
+        """Analysis thread: GPU inference only."""
+        logger.info("[Analysis] Thread started")
+        consecutive_empty = 0
+
+        try:
+            while not self._shutdown:
+                # Get batch from IO thread's prefetch
+                batch = None
+                try:
+                    batch = self._prefetch_queue.get(timeout=10)
+                except Exception:
+                    pass
+
+                if not batch or not batch.get("tasks"):
+                    consecutive_empty += 1
+                    # Unload model when idle
+                    prev = self._prev_mode if hasattr(self, '_prev_mode') else None
+                    if prev:
+                        logger.info(f"[Analysis] Queue empty — unloading {prev}")
+                        if prev == "mc": self._unload_vlm()
+                        elif prev == "vv": self._unload_vv()
+                        elif prev == "mv": self._unload_mv()
+                        self._prev_mode = None
+
+                    wait = min(5 * consecutive_empty, 60)
+                    for _ in range(wait):
+                        if self._shutdown: break
+                        time.sleep(1)
+                    continue
+
+                consecutive_empty = 0
+                phase = batch["phase"]
+                tasks = batch["tasks"]
+                self.batch_capacity = len(tasks)
+
+                # Convert tasks to job format
+                jobs = [{
+                    "job_id": t["task_id"], "file_id": t["file_id"],
+                    "file_path": t["file_path"], "task_id": t["task_id"],
+                    "analysis_job_id": t.get("job_id"),
+                } for t in tasks]
+
+                # Unload previous model if mode changed
+                prev_mode = getattr(self, '_prev_mode', None)
+                if prev_mode and prev_mode != phase:
+                    logger.info(f"[Analysis] Mode switch: {prev_mode} → {phase}")
+                    if prev_mode == "mc": self._unload_vlm()
+                    elif prev_mode == "vv": self._unload_vv()
+                    elif prev_mode == "mv": self._unload_mv()
+
+                self.processing_mode = phase
+                self._prev_mode = phase
+
+                try:
+                    self.process_batch_phased(jobs)
+                except Exception as e:
+                    logger.error(f"[Analysis] batch failed: {e}", exc_info=True)
+
+        except Exception as e:
+            logger.error(f"[Analysis] thread error: {e}", exc_info=True)
+        finally:
+            try:
+                self.transport.disconnect(self.session_id)
+            except Exception:
+                pass
+            logger.info(f"[Analysis] Thread stopped (completed {self._total_completed})")
 
     # ── Authentication ─────────────────────────────────────────
 
