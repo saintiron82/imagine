@@ -749,9 +749,9 @@ export default function WorkersPanel() {
           <tbody>
             {workers.map((w) => {
               const pc = w.phase_counts || w.resources?.phase_counts || {};
-              const cur = w.current_phase === 'vision' ? 'mc' :
-                w.current_phase === 'embed_vv' ? 'vv' :
-                w.current_phase === 'embed_mv' ? 'mv' :
+              const cur = (w.current_phase === 'vision' || w.current_phase === 'mc') ? 'mc' :
+                (w.current_phase === 'embed_vv' || w.current_phase === 'vv') ? 'vv' :
+                (w.current_phase === 'embed_mv' || w.current_phase === 'mv') ? 'mv' :
                 w.current_phase === 'parse' ? 'parse' : null;
               const batchSize = w.batch_capacity_override || w.batch_capacity;
               const fileName = w.current_file ? w.current_file.split(/[/\\]/).pop() : null;
