@@ -1593,17 +1593,18 @@ class WorkerDaemon:
                 results.append((job_id, False, err))
                 continue
 
-            # New system (task_id) vs legacy (job_id)
+            # Save MC vision fields
             task_id = ctx.job.get("task_id") if isinstance(getattr(ctx, 'job', None), dict) else None
-            if task_id:
-                # New Analysis Job system: save MC to files DB directly + report
-                upload_result = self.uploader.save_vision_fields(ctx.job.get("file_id"), ctx.vision_fields)
-                self._report_task_phase(task_id, "mc", upload_result is True,
-                                        None if upload_result is True else str(upload_result),
-                                        elapsed_s=getattr(ctx, '_inference_elapsed', None))
+            file_id = ctx.job.get("file_id")
+            if self.transport and file_id:
+                upload_result = self.transport.save_vision(file_id, ctx.vision_fields)
+            elif task_id:
+                upload_result = self.uploader.save_vision_fields(file_id, ctx.vision_fields)
             else:
-                # Legacy: use job_queue-based complete_mc
                 upload_result = self.uploader.complete_mc(job_id, ctx.vision_fields)
+            self._report_task_phase(task_id or job_id, "mc", upload_result is True,
+                                    None if upload_result is True else str(upload_result),
+                                    elapsed_s=getattr(ctx, '_inference_elapsed', None))
             if upload_result is True:
                 self._total_completed += 1
                 results.append((job_id, True, ""))
@@ -1822,19 +1823,15 @@ class WorkerDaemon:
 
             if batch_items:
                 _log(f"[VV] Uploading {len(batch_items)} vectors...")
-                # Check if new system tasks (have task_id)
-                has_task_ids = any(it["ctx"]["job"].get("task_id") for it in batch_items)
-                if has_task_ids:
-                    # New system: save vectors via /api/v1/files/{id}/vv
-                    batch_results = []
-                    for it in batch_items:
-                        file_id = it["ctx"]["job"].get("file_id")
+                # Save VV vectors
+                batch_results = []
+                for it in batch_items:
+                    file_id = it["ctx"]["job"].get("file_id")
+                    if self.transport:
+                        ok = self.transport.save_vv(file_id, it["vec"])
+                    else:
                         ok = self.uploader.save_vv_vector(file_id, it["vec"])
-                        batch_results.append({"ok": ok is True})
-                else:
-                    batch_results = self.uploader.complete_vv_batch(
-                        [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
-                    )
+                    batch_results.append({"ok": ok is True})
                 n_upload_ok = sum(1 for r in batch_results if (r.get("ok") if isinstance(r, dict) else bool(r)))
                 _log(f"[VV] Upload: {n_upload_ok}/{len(batch_results)} ok")
                 for it, batch_result in zip(batch_items, batch_results):
@@ -1989,17 +1986,14 @@ class WorkerDaemon:
 
             if batch_items:
                 _log(f"[MV] Uploading {len(batch_items)} vectors...")
-                has_task_ids = any(it["ctx"]["job"].get("task_id") for it in batch_items)
-                if has_task_ids:
-                    batch_results = []
-                    for it in batch_items:
-                        file_id = it["ctx"]["job"].get("file_id")
+                batch_results = []
+                for it in batch_items:
+                    file_id = it["ctx"]["job"].get("file_id")
+                    if self.transport:
+                        ok = self.transport.save_mv(file_id, it["vec"])
+                    else:
                         ok = self.uploader.save_mv_vector(file_id, it["vec"])
-                        batch_results.append(ok is True)
-                else:
-                    batch_results = self.uploader.complete_mv_batch(
-                        [{"job_id": it["job_id"], "vec": it["vec"]} for it in batch_items]
-                    )
+                    batch_results.append(ok is True)
                 n_ok = sum(1 for r in batch_results if r)
                 _log(f"[MV] Upload: {n_ok}/{len(batch_results)} ok")
                 for it, ok in zip(batch_items, batch_results):
