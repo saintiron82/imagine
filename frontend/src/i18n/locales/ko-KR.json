@@ -990,5 +990,16 @@
   "history.col_started": "시작",
   "history.col_finished": "완료",
   "history.col_retries": "재시도",
-  "history.col_error": "에러"
+  "history.col_error": "에러",
+
+  "admin.tab_tools": "도구",
+  "admin.tools_title": "도구",
+  "admin.tools_repair_parse_title": "파싱 데이터 리페어",
+  "admin.tools_repair_parse_desc": "파서가 추출한 메타데이터(레이어명, 텍스트, 폰트)를 DB에 재저장합니다.",
+  "admin.tools_repair_parse_start": "실행",
+  "admin.tools_repair_parse_running": "복구 중...",
+  "admin.tools_repair_parse_done": "복구 완료",
+  "admin.tools_repair_parse_success_unit": "건 성공",
+  "admin.tools_repair_parse_failed": "실패",
+  "admin.tools_repair_parse_skipped": "스킵 (WebDAV)"
 }

@@ -990,5 +990,16 @@
   "history.col_started": "Started",
   "history.col_finished": "Finished",
   "history.col_retries": "Retries",
-  "history.col_error": "Error"
+  "history.col_error": "Error",
+
+  "admin.tab_tools": "Tools",
+  "admin.tools_title": "Tools",
+  "admin.tools_repair_parse_title": "Parse Data Repair",
+  "admin.tools_repair_parse_desc": "Re-extract and save parser metadata (layer names, text, fonts) to the database.",
+  "admin.tools_repair_parse_start": "Start Repair",
+  "admin.tools_repair_parse_running": "Repairing...",
+  "admin.tools_repair_parse_done": "Repair complete",
+  "admin.tools_repair_parse_success_unit": " succeeded",
+  "admin.tools_repair_parse_failed": "failed",
+  "admin.tools_repair_parse_skipped": "skipped (WebDAV)"
 }

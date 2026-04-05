@@ -6,11 +6,12 @@
 import { useState } from 'react';
 import { useLocale } from '../i18n';
 import { useAuth } from '../contexts/AuthContext';
-import { UserCheck, Tag, Clock } from 'lucide-react';
+import { UserCheck, Tag, Clock, Wrench } from 'lucide-react';
 
 import MembersPanel from '../components/admin/MembersPanel';
 import ClassificationPanel from '../components/admin/ClassificationPanel';
 import HistoryPanel from '../components/admin/HistoryPanel';
+import ToolsPanel from '../components/admin/ToolsPanel';
 
 // Re-export panels used by other pages (e.g. FactoryPage)
 export { default as WorkersPanel } from '../components/admin/WorkersPanel';
@@ -27,6 +28,7 @@ export default function AdminPage() {
     { id: 'members', label: t('admin.tab_members'), icon: UserCheck },
     { id: 'classification', label: t('admin.tab_classification'), icon: Tag },
     { id: 'history', label: t('admin.tab_history'), icon: Clock },
+    { id: 'tools', label: t('admin.tab_tools'), icon: Wrench },
   ];
 
   return (
@@ -54,6 +56,7 @@ export default function AdminPage() {
         {activeTab === 'members' && <MembersPanel currentUser={currentUser} />}
         {activeTab === 'classification' && <ClassificationPanel />}
         {activeTab === 'history' && <HistoryPanel />}
+        {activeTab === 'tools' && <ToolsPanel />}
       </div>
     </div>
   );

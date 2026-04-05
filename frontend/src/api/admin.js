@@ -213,3 +213,13 @@ export async function listHistoryJobs(wrId, status = null, limit = 50, offset = 
   return apiClient.get(`/api/v1/admin/history/sessions/${wrId}/jobs?${params.toString()}`);
 }
 
+// ── Tools ──────────────────────────────────────────────────
+
+export async function startRepairParse() {
+  return apiClient.post('/api/v1/admin/tools/repair-parse');
+}
+
+export async function getRepairParseStatus() {
+  return apiClient.get('/api/v1/admin/tools/repair-parse/status');
+}
+
