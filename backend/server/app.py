@@ -143,6 +143,14 @@ def _activate_server(app_instance):
     except Exception as e:
         _log(f"AnalysisJobManager init FAILED: {e}")
 
+    # Phase 2b: Startup health check — detect and auto-repair broken states
+    t1 = _time.perf_counter()
+    try:
+        _startup_health_check(db, _log)
+        _log(f"Phase 2b: Startup health check {_time.perf_counter()-t1:.2f}s")
+    except Exception as e:
+        _log(f"Phase 2b: Health check failed (non-fatal): {e}")
+
     # Phase 3: Background pools
     t1 = _time.perf_counter()
     try:
@@ -413,6 +421,109 @@ def _cleanup_stale_sessions():
         # AnalysisJobManager handles file_tasks reclaim on __init__
     except Exception as e:
         logger.warning(f"Startup session cleanup failed: {e}")
+
+
+def _startup_health_check(db, _log):
+    """Detect and auto-repair broken task states on server start.
+
+    Runs synchronously before background pools start.
+    Reports all findings to server log for operator visibility.
+    """
+    cursor = db.conn.cursor()
+    repairs = []
+
+    # 1. Thumbnail-missing files: parse done but no thumbnail → reset to re-parse
+    cursor.execute("""
+        SELECT ft.id, ft.file_id, f.file_name
+        FROM file_tasks ft
+        JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+        JOIN files f ON ft.file_id = f.id
+        WHERE aj.status = 'active'
+          AND ft.parse_status = 'done'
+          AND (f.thumbnail_url IS NULL OR f.thumbnail_url = '')
+    """)
+    thumb_missing = cursor.fetchall()
+    if thumb_missing:
+        task_ids = [r[0] for r in thumb_missing]
+        placeholders = ",".join("?" * len(task_ids))
+        cursor.execute(f"""
+            UPDATE file_tasks SET
+                parse_status = 'pending',
+                parse_assigned_to = NULL,
+                parse_started_at = NULL,
+                parse_completed_at = NULL,
+                mc_status = 'pending',
+                mc_assigned_to = NULL,
+                mc_started_at = NULL,
+                mc_completed_at = NULL,
+                vv_status = 'pending',
+                vv_assigned_to = NULL,
+                vv_started_at = NULL,
+                vv_completed_at = NULL,
+                mv_status = 'pending',
+                mv_assigned_to = NULL,
+                mv_started_at = NULL,
+                mv_completed_at = NULL,
+                error_message = NULL,
+                updated_at = datetime('now')
+            WHERE id IN ({placeholders})
+        """, task_ids)
+        repairs.append(f"thumbnail missing → re-parse: {len(thumb_missing)}")
+
+    # 2. Stale assigned tasks: assigned but worker is offline → reset to pending
+    for phase in ("mc", "vv", "mv"):
+        status_col = f"{phase}_status"
+        assigned_col = f"{phase}_assigned_to"
+        cursor.execute(f"""
+            UPDATE file_tasks SET
+                {status_col} = 'pending',
+                {assigned_col} = NULL,
+                error_message = NULL,
+                updated_at = datetime('now')
+            WHERE {status_col} = 'assigned'
+              AND analysis_job_id IN (SELECT id FROM analysis_jobs WHERE status = 'active')
+        """)
+        if cursor.rowcount > 0:
+            repairs.append(f"{phase} stale assigned → pending: {cursor.rowcount}")
+
+    # 3. Failed tasks eligible for auto-retry
+    from backend.server.queue.analysis_manager import AnalysisJobManager
+    mgr = AnalysisJobManager(db)
+    retried = mgr.retry_failed_auto(cooldown_minutes=0)  # no cooldown on startup
+    if retried > 0:
+        repairs.append(f"failed → auto-retry: {retried}")
+
+    db.conn.commit()
+
+    # 4. Report summary
+    if repairs:
+        for r in repairs:
+            _log(f"Health check: {r}")
+    else:
+        _log("Health check: all clean")
+
+    # 5. Stats for operator
+    cursor.execute("""
+        SELECT
+            SUM(CASE WHEN mc_status='pending' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN vv_status='pending' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN mv_status='pending' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN mc_status='failed' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN vv_status='failed' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN mv_status='failed' THEN 1 ELSE 0 END),
+            COUNT(*)
+        FROM file_tasks ft
+        JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+        WHERE aj.status = 'active'
+    """)
+    row = cursor.fetchone()
+    if row and row[6] > 0:
+        _log(
+            f"Task queue: MC {row[0]}p/{row[3]}f, "
+            f"VV {row[1]}p/{row[4]}f, "
+            f"MV {row[2]}p/{row[5]}f "
+            f"(total {row[6]} tasks)"
+        )
 
 
 def _start_heartbeat_watchdog():
