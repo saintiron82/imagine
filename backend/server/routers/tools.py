@@ -7,7 +7,6 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 
@@ -26,83 +25,93 @@ _repair_state = {
     "progress": {
         "done": 0,
         "failed": 0,
+        "skipped": 0,
         "total": 0,
         "current_file": "",
+        "phase": "",
     },
 }
 _repair_lock = threading.Lock()
 
 
-def _run_repair_parse(db_path: str):
-    """Background thread: re-parse all files and update metadata JSON column."""
-    global _repair_state
+def _update_progress(**kwargs):
+    with _repair_lock:
+        _repair_state["progress"].update(kwargs)
 
-    # Each thread needs its own DB connection (sqlite threading.local)
-    from backend.db.sqlite_client import SQLiteDB
-    db = SQLiteDB(db_path)
+
+def _run_repair_parse(db_path: str):
+    """Background thread: re-parse accessible files and update metadata + FTS."""
+    logger.info("[repair-parse] Thread started")
+
+    try:
+        from backend.db.sqlite_client import SQLiteDB
+        db = SQLiteDB(db_path)
+    except Exception as e:
+        logger.error(f"[repair-parse] DB connection failed: {e}")
+        with _repair_lock:
+            _repair_state["running"] = False
+        return
 
     try:
         cursor = db.conn.cursor()
-        cursor.execute("SELECT id, file_path, file_name, format FROM files")
+        cursor.execute("SELECT id, file_path, file_name, format FROM files ORDER BY id")
         rows = cursor.fetchall()
 
         total = len(rows)
-        with _repair_lock:
-            _repair_state["progress"]["total"] = total
-
-        logger.info(f"[repair-parse] Starting repair for {total} files")
+        _update_progress(total=total, phase="parsing")
+        logger.info(f"[repair-parse] {total} files to process")
 
         done = 0
         failed = 0
+        skipped = 0
+
+        # Pre-import parsers
+        from backend.parser.psd_parser import PSDParser
+        from backend.parser.image_parser import ImageParser
+        psd_parser = PSDParser()
+        img_parser = ImageParser()
 
         for file_id, file_path, file_name, fmt in rows:
-            with _repair_lock:
-                _repair_state["progress"]["current_file"] = file_name or file_path
+            display = file_name or Path(file_path).name if file_path else f"id={file_id}"
+            _update_progress(current_file=display)
 
-            # Skip WebDAV files (no local access)
+            # Skip WebDAV files
             if file_path and file_path.startswith("webdav://"):
-                logger.debug(f"[repair-parse] Skip WebDAV: {file_path}")
-                with _repair_lock:
-                    failed += 1
-                    _repair_state["progress"]["failed"] = failed
+                skipped += 1
+                _update_progress(skipped=skipped)
+                continue
+
+            if not file_path:
+                skipped += 1
+                _update_progress(skipped=skipped)
                 continue
 
             try:
                 p = Path(file_path)
                 if not p.exists():
-                    logger.debug(f"[repair-parse] File not found, skip: {file_path}")
-                    with _repair_lock:
-                        failed += 1
-                        _repair_state["progress"]["failed"] = failed
+                    skipped += 1
+                    _update_progress(skipped=skipped)
                     continue
-
-                # Select parser by extension
-                from backend.parser.psd_parser import PSDParser
-                from backend.parser.image_parser import ImageParser
 
                 ext = p.suffix.lower()
                 if ext == ".psd":
-                    parser = PSDParser()
+                    parser = psd_parser
                 elif ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"):
-                    parser = ImageParser()
+                    parser = img_parser
                 else:
-                    logger.debug(f"[repair-parse] Unsupported format, skip: {file_path}")
-                    with _repair_lock:
-                        failed += 1
-                        _repair_state["progress"]["failed"] = failed
+                    skipped += 1
+                    _update_progress(skipped=skipped)
                     continue
 
                 result = parser.parse(p)
                 if not result.success or result.asset_meta is None:
-                    logger.warning(f"[repair-parse] Parse failed: {file_path} — {result.errors}")
-                    with _repair_lock:
-                        failed += 1
-                        _repair_state["progress"]["failed"] = failed
+                    logger.warning(f"[repair-parse] FAIL {display}: {result.errors}")
+                    failed += 1
+                    _update_progress(failed=failed)
                     continue
 
                 meta_dict = meta_to_dict(result.asset_meta)
 
-                # Build metadata JSON (same structure as upsert_metadata)
                 metadata_json = {
                     "layer_tree": meta_dict.get("layer_tree"),
                     "semantic_tags": meta_dict.get("semantic_tags"),
@@ -119,27 +128,30 @@ def _run_repair_parse(db_path: str):
                 db._refresh_fts_row(cur, file_id)
                 db.conn.commit()
 
-                with _repair_lock:
-                    done += 1
-                    _repair_state["progress"]["done"] = done
+                done += 1
+                _update_progress(done=done)
 
-                if done % 50 == 0:
-                    logger.info(f"[repair-parse] Progress: {done}/{total} done, {failed} failed")
+                if done % 100 == 0:
+                    logger.info(f"[repair-parse] {done}/{total} done, {failed} failed, {skipped} skipped")
 
             except Exception as e:
-                logger.warning(f"[repair-parse] Error on {file_path}: {e}")
+                logger.warning(f"[repair-parse] ERROR {display}: {e}")
                 try:
                     db.conn.rollback()
                 except Exception:
                     pass
-                with _repair_lock:
-                    failed += 1
-                    _repair_state["progress"]["failed"] = failed
+                failed += 1
+                _update_progress(failed=failed)
 
-        logger.info(f"[repair-parse] Complete: {done}/{total} done, {failed} failed")
+        logger.info(
+            f"[repair-parse] Complete: {done} repaired, {failed} failed, "
+            f"{skipped} skipped (WebDAV/missing), {total} total"
+        )
+        _update_progress(phase="done")
 
     except Exception as e:
-        logger.error(f"[repair-parse] Fatal error: {e}")
+        logger.error(f"[repair-parse] Fatal error: {e}", exc_info=True)
+        _update_progress(phase="error")
     finally:
         with _repair_lock:
             _repair_state["running"] = False
@@ -148,6 +160,7 @@ def _run_repair_parse(db_path: str):
             db.close()
         except Exception:
             pass
+        logger.info("[repair-parse] Thread finished")
 
 
 @router.post("/admin/tools/repair-parse")
@@ -155,12 +168,7 @@ def start_repair_parse(
     _user: dict = Depends(require_admin),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """Re-parse all files and repair metadata JSON column.
-
-    Runs in background thread. Returns immediately with total count.
-    """
-    global _repair_state
-
+    """Re-parse all accessible files and repair metadata JSON + FTS."""
     with _repair_lock:
         if _repair_state["running"]:
             return {
@@ -169,15 +177,19 @@ def start_repair_parse(
                 "progress": dict(_repair_state["progress"]),
             }
 
-    # Count files
     cursor = db.conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM files")
     total = cursor.fetchone()[0]
 
+    cursor.execute("SELECT COUNT(*) FROM files WHERE file_path LIKE 'webdav://%'")
+    webdav_count = cursor.fetchone()[0]
+    local_count = total - webdav_count
+
     if total == 0:
         return {"success": False, "detail": "No files in database"}
 
-    # Get DB path for background thread (needs its own connection)
+    logger.info(f"[repair-parse] Starting: {total} total, {local_count} local, {webdav_count} WebDAV (skip)")
+
     from backend.server.config import get_db_path
     db_path = get_db_path()
 
@@ -186,8 +198,10 @@ def start_repair_parse(
         _repair_state["progress"] = {
             "done": 0,
             "failed": 0,
+            "skipped": 0,
             "total": total,
             "current_file": "",
+            "phase": "starting",
         }
 
     t = threading.Thread(
@@ -202,6 +216,8 @@ def start_repair_parse(
         "success": True,
         "task_id": "repair-parse",
         "total": total,
+        "local_count": local_count,
+        "webdav_count": webdav_count,
     }
 
 

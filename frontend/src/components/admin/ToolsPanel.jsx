@@ -86,23 +86,35 @@ export default function ToolsPanel() {
         {isRunning ? (
           <div className="space-y-1">
             <p className="text-xs text-yellow-400 font-medium">{t('admin.tools_repair_parse_running')}</p>
-            <p className="text-xs font-mono text-emerald-400">
-              {prog.done}/{prog.total} ({pct}%)
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-xs font-mono text-emerald-400">
+                {prog.done}/{prog.total} ({pct}%)
+              </p>
+              {(prog.skipped ?? 0) > 0 && (
+                <span className="text-xs text-gray-500">{prog.skipped} {t('admin.tools_repair_parse_skipped')}</span>
+              )}
+              {(prog.failed ?? 0) > 0 && (
+                <span className="text-xs text-red-400">{prog.failed} {t('admin.tools_repair_parse_failed')}</span>
+              )}
+            </div>
+            {/* Progress bar */}
+            <div className="w-full bg-gray-700 rounded-full h-1.5">
+              <div className="bg-emerald-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.min(100, ((prog.done + (prog.skipped ?? 0) + (prog.failed ?? 0)) / Math.max(1, prog.total)) * 100)}%` }} />
+            </div>
             {prog.current_file && (
-              <p className="text-xs text-gray-500 truncate">{prog.current_file}</p>
+              <p className="text-[10px] text-gray-500 truncate">{prog.current_file}</p>
             )}
           </div>
         ) : isFinished ? (
-          <div className="space-y-1">
-            <p className="text-xs text-emerald-400 font-medium">
-              {t('admin.tools_repair_parse_done')}: {prog.done} / {prog.total}
-              {(prog.failed ?? 0) > 0 && (
-                <span className="text-red-400 ml-2">
-                  {prog.failed} {t('admin.tools_repair_parse_failed')}
-                </span>
-              )}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-emerald-400">
+              {t('admin.tools_repair_parse_done')}
             </p>
+            <div className="flex gap-3 text-xs font-mono">
+              <span className="text-emerald-400">{prog.done} repaired</span>
+              {(prog.skipped ?? 0) > 0 && <span className="text-gray-500">{prog.skipped} skipped</span>}
+              {(prog.failed ?? 0) > 0 && <span className="text-red-400">{prog.failed} failed</span>}
+            </div>
             <button
               onClick={handleStart}
               className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors"
