@@ -119,11 +119,11 @@ class FileTaskParsePool(BaseAheadPool):
             self.db.conn.commit()
 
             t_start = time.perf_counter()
-            success = self._parse_single_task(task_id, file_id, file_path)
+            error = self._parse_single_task(task_id, file_id, file_path)
             elapsed = time.perf_counter() - t_start
 
             # Update file_tasks
-            if success:
+            if not error:
                 cursor.execute("""
                     UPDATE file_tasks
                     SET parse_status = 'done',
@@ -142,6 +142,8 @@ class FileTaskParsePool(BaseAheadPool):
             else:
                 # Parse failures are usually permanent (corrupt file, unsupported format).
                 # Set max_retries=0 so _retry_failed() won't re-queue them.
+                err_msg = f"{Path(file_path).name}: {error}"
+                logger.warning(f"FileTaskParse: FAIL {err_msg}")
                 cursor.execute("""
                     UPDATE file_tasks
                     SET parse_status = 'failed',
@@ -152,9 +154,7 @@ class FileTaskParsePool(BaseAheadPool):
                         error_message = ?,
                         updated_at = ?
                     WHERE id = ?
-                """, (_now(), round(elapsed, 3),
-                      f"parse failed: {Path(file_path).name}",
-                      _now(), task_id))
+                """, (_now(), round(elapsed, 3), err_msg, _now(), task_id))
                 self.db.conn.commit()
                 self._failed_count += 1
 
@@ -162,10 +162,10 @@ class FileTaskParsePool(BaseAheadPool):
 
     def _parse_single_task(
         self, task_id: int, file_id: int, file_path: str
-    ) -> bool:
+    ) -> str:
         """Parse a single file: resolve → parse → thumbnail → DB upsert.
 
-        Returns True on success, False on failure.
+        Returns empty string on success, error message on failure.
         """
         from backend.pipeline.ingest_engine import (
             ParserFactory,
@@ -183,20 +183,14 @@ class FileTaskParsePool(BaseAheadPool):
                 if temp:
                     file_p = Path(temp)
                 else:
-                    logger.debug(
-                        f"FileTaskParse: WebDAV file not yet downloaded: "
-                        f"{PurePosixPath(file_path).name}"
-                    )
-                    return False
+                    return f"WebDAV file not yet downloaded"
             else:
-                logger.warning(f"FileTaskParse: file not found: {file_path}")
-                return False
+                return f"file not found: {file_path}"
 
         # 2. Parse (fallback to thumbnail-only on failure)
         parser = ParserFactory.get_parser(file_p)
         if not parser:
-            logger.warning(f"FileTaskParse: no parser for {file_path}")
-            return False
+            return f"no parser for extension: {file_p.suffix}"
 
         parse_note = None
         result = parser.parse(file_p)
@@ -205,14 +199,14 @@ class FileTaskParsePool(BaseAheadPool):
         else:
             # Parse failed (unsupported compression, corrupt layers, etc.)
             # → still generate thumbnail via PIL and continue to MC/VV/MV
+            parse_errors = "; ".join(result.errors) if result.errors else "unknown parse error"
             logger.info(
-                f"FileTaskParse: layer parse failed, thumbnail-only mode: "
-                f"{file_p.name}"
+                f"FileTaskParse: layer parse failed ({parse_errors}), "
+                f"thumbnail-only mode: {file_p.name}"
             )
             meta = self._fallback_thumbnail(file_p, file_path)
             if meta is None:
-                logger.error(f"FileTaskParse: thumbnail also failed: {file_path}")
-                return False
+                return f"parse failed ({parse_errors}) AND thumbnail fallback also failed"
             parse_note = "thumbnail_only"  # 레이어 추출 불가, 썸네일만 생성
 
         # 3. Content hash
@@ -254,8 +248,7 @@ class FileTaskParsePool(BaseAheadPool):
         try:
             stored_file_id = self.db.upsert_metadata(nfc_path, meta_dict)
         except Exception as e:
-            logger.error(f"FileTaskParse: metadata upsert failed: {e}")
-            return False
+            return f"metadata upsert failed: {e}"
 
         # Update thumbnail_url in files table
         if server_thumb_path:
@@ -274,7 +267,7 @@ class FileTaskParsePool(BaseAheadPool):
         if is_webdav and self._download_pool:
             self._download_pool.release_slot(file_id, file_path)
 
-        return True
+        return ""  # success
 
     def _fallback_thumbnail(self, file_p: Path, file_path: str):
         """Generate minimal AssetMeta with thumbnail when full parse fails.
