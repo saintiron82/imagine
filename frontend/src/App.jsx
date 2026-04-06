@@ -1758,7 +1758,7 @@ function App() {
         {/* Main Content */}
         <div className="flex-1 flex flex-col bg-gray-900 relative">
           {/* Content Area */}
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden flex flex-col">
             {/* SearchPanel always mounted — hidden via CSS to preserve state across tab switches */}
             <div className={currentTab === 'search' ? 'contents' : 'hidden'}>
               <SearchPanel
