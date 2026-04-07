@@ -894,11 +894,9 @@ function QueueRow({ job, onAction }) {
             <span className="text-cyan-400">VV: {p.vv_done || 0}/{total}</span>
             <span className="text-green-400">MV: {p.mv_done || 0}/{total}</span>
           </div>
-          {/* Failures */}
+          {/* Failures with detail toggle */}
           {totalFailed > 0 && (
-            <div className="text-red-400">
-              실패: {Object.entries(failed).filter(([,v]) => v > 0).map(([k,v]) => `${k}:${v}`).join(' · ')}
-            </div>
+            <ErrorDetail jobId={job.id} failed={failed} totalFailed={totalFailed} />
           )}
           {/* Controls */}
           {isActive && onAction && (
@@ -930,6 +928,54 @@ function QueueRow({ job, onAction }) {
           {job.created_at && (
             <div className="text-gray-700">생성: {new Date(job.created_at).toLocaleString()}</div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/** Inline error detail — shows failed phase summary + expandable file list */
+function ErrorDetail({ jobId, failed, totalFailed }) {
+  const [errorList, setErrorList] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  const toggle = async (e) => {
+    e.stopPropagation();
+    if (open) { setOpen(false); return; }
+    if (!errorList) {
+      try {
+        const { getJobErrors } = await import('../../api/analysis');
+        const resp = await getJobErrors(jobId);
+        const data = resp.data ?? resp;
+        setErrorList(data.errors || []);
+      } catch { setErrorList([]); }
+    }
+    setOpen(true);
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="text-red-400">
+          실패: {Object.entries(failed).filter(([,v]) => v > 0).map(([k,v]) => `${k}:${v}`).join(' · ')}
+        </span>
+        <button onClick={toggle} className="text-red-400/60 hover:text-red-300 underline text-[9px]">
+          {open ? '닫기' : '상세'}
+        </button>
+      </div>
+      {open && errorList && (
+        <div className="mt-1 max-h-32 overflow-y-auto space-y-0.5">
+          {errorList.length === 0 ? (
+            <div className="text-gray-600">에러 정보 없음</div>
+          ) : errorList.map((err, i) => (
+            <div key={i} className="flex items-start gap-2 text-[9px]">
+              <span className="text-red-400 shrink-0">[{err.failed_phases.join(',')}]</span>
+              <span className="text-gray-400" title={err.file_name}>{err.file_name}</span>
+              {err.permanent && <span className="text-red-600 shrink-0">영구실패</span>}
+              {err.error && <span className="text-gray-600 truncate" title={err.error}>— {err.error}</span>}
+            </div>
+          ))}
         </div>
       )}
     </div>

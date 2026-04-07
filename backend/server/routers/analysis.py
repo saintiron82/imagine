@@ -306,6 +306,49 @@ def retry_failed_tasks(
     return {"success": True, "retried": count}
 
 
+@router.get("/api/v1/analysis-jobs/{job_id}/errors")
+def get_job_errors(
+    job_id: int,
+    _user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """List failed tasks with error details for an analysis job."""
+    cursor = db.conn.cursor()
+    cursor.execute("""
+        SELECT ft.file_id, f.file_name, ft.parse_status,
+               ft.mc_status, ft.vv_status, ft.mv_status,
+               ft.error_message, ft.retry_count, ft.max_retries
+        FROM file_tasks ft
+        JOIN files f ON ft.file_id = f.id
+        WHERE ft.analysis_job_id = ?
+          AND (ft.parse_status = 'failed'
+               OR ft.mc_status = 'failed'
+               OR ft.vv_status = 'failed'
+               OR ft.mv_status = 'failed')
+        ORDER BY ft.file_id
+    """, (job_id,))
+    rows = cursor.fetchall()
+
+    errors = []
+    for r in rows:
+        failed_phases = []
+        if r[2] == 'failed': failed_phases.append('parse')
+        if r[3] == 'failed': failed_phases.append('mc')
+        if r[4] == 'failed': failed_phases.append('vv')
+        if r[5] == 'failed': failed_phases.append('mv')
+        errors.append({
+            "file_id": r[0],
+            "file_name": r[1],
+            "failed_phases": failed_phases,
+            "error": r[6] or "",
+            "retry_count": r[7],
+            "max_retries": r[8],
+            "permanent": r[7] >= r[8] if r[8] is not None else False,
+        })
+
+    return {"errors": errors, "count": len(errors)}
+
+
 # ── Worker Task Claim ────────────────────────────────────────
 
 @router.post("/api/v1/tasks/claim")

@@ -45,3 +45,7 @@ export async function retryFailedTasks(jobId, phase = null) {
 export async function archiveAnalysisJob(jobId) {
   return apiClient.post(`/api/v1/analysis-jobs/${jobId}/archive`);
 }
+
+export async function getJobErrors(jobId) {
+  return apiClient.get(`/api/v1/analysis-jobs/${jobId}/errors`);
+}
