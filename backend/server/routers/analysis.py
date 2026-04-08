@@ -378,6 +378,19 @@ def dismiss_failed_tasks(
     """, (job_id,))
     count = cursor.rowcount
     db.conn.commit()
+
+    # Check if job can now be marked completed
+    if count > 0:
+        mgr = _get_manager(db)
+        # Use any dismissed task_id to trigger completion check
+        cursor.execute(
+            "SELECT id FROM file_tasks WHERE analysis_job_id = ? LIMIT 1",
+            (job_id,),
+        )
+        row = cursor.fetchone()
+        if row:
+            mgr._check_job_completion(row[0])
+
     return {"success": True, "dismissed": count}
 
 

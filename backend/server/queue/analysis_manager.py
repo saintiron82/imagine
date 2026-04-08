@@ -699,10 +699,11 @@ class AnalysisJobManager:
             return
         job_id = row[0]
 
-        # All tasks done?
+        # All tasks done? (dismissed tasks excluded — they're settled)
         cursor.execute("""
             SELECT COUNT(*) FROM file_tasks
             WHERE analysis_job_id = ?
+              AND dismissed_at IS NULL
               AND NOT (mc_status = 'done' AND vv_status = 'done' AND mv_status = 'done')
               AND mc_status != 'failed' AND vv_status != 'failed' AND mv_status != 'failed'
         """, (job_id,))
