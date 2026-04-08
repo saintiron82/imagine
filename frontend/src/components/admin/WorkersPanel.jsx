@@ -975,30 +975,38 @@ function QueueRow({ job, onAction }) {
             <ErrorDetail jobId={job.id} failed={failed} totalFailed={totalFailed} />
           )}
           {/* Controls */}
-          {isActive && onAction && (
+          {onAction && (
             <div className="flex items-center gap-2 pt-1">
-              {!isPaused && (
+              {isActive && !isPaused && (
                 <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'pause'); }}
                   className="px-2 py-0.5 rounded bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50 text-[9px]">
                   일시정지
                 </button>
               )}
-              {isPaused && (
+              {isActive && isPaused && (
                 <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'resume'); }}
                   className="px-2 py-0.5 rounded bg-green-900/30 text-green-400 hover:bg-green-900/50 text-[9px]">
                   재개
                 </button>
               )}
-              {totalFailed > 0 && (
+              {isActive && totalFailed > 0 && (
                 <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'retry'); }}
                   className="px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 text-[9px]">
                   재시도
                 </button>
               )}
-              <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'cancel'); }}
-                className="px-2 py-0.5 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 text-[9px]">
-                취소
-              </button>
+              {isActive && (
+                <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'cancel'); }}
+                  className="px-2 py-0.5 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 text-[9px]">
+                  취소
+                </button>
+              )}
+              {!isActive && (
+                <button onClick={(e) => { e.stopPropagation(); onAction(job.id, 'archive'); }}
+                  className="px-2 py-0.5 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 text-[9px]">
+                  삭제
+                </button>
+              )}
             </div>
           )}
           {job.created_at && (
