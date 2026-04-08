@@ -289,16 +289,21 @@ class FileTaskParsePool(BaseAheadPool):
             thumb_path = file_p.parent / f"{file_p.stem}_thumb.png"
             thumb.save(str(thumb_path), "PNG")
 
-            meta = AssetMeta()
-            meta.file_path = file_path
-            meta.file_name = file_p.name
-            meta.file_type = file_p.suffix.lower().lstrip(".")
-            meta.width = img.width
-            meta.height = img.height
-            meta.file_size = file_p.stat().st_size
-            meta.thumbnail_url = str(thumb_path)
-            meta.layer_count = 0
-            meta.semantic_tags = []
+            ext = file_p.suffix.lower().lstrip(".")
+            fmt = "PSD" if ext == "psd" else ext.upper()
+            if fmt == "JPG":
+                fmt = "JPG"
+
+            meta = AssetMeta(
+                file_path=file_path,
+                file_name=file_p.name,
+                file_size=file_p.stat().st_size,
+                format=fmt,
+                resolution=(img.width, img.height),
+                thumbnail_url=str(thumb_path),
+                layer_count=0,
+                semantic_tags="",
+            )
 
             logger.info(
                 f"FileTaskParse: fallback OK ({file_p.name}, "
