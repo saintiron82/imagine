@@ -470,7 +470,29 @@ def _startup_health_check(db, _log):
         """, task_ids)
         repairs.append(f"thumbnail missing → re-parse: {len(thumb_missing)}")
 
-    # 2. Stale assigned tasks: assigned but worker is offline → reset to pending
+    # 2. WebDAV files marked download=done but parse failed with "not yet downloaded"
+    #    → temp file was lost on restart, need to re-download
+    cursor.execute("""
+        UPDATE file_tasks SET
+            download_status = 'pending',
+            parse_status = 'pending',
+            parse_assigned_to = NULL,
+            parse_started_at = NULL,
+            parse_completed_at = NULL,
+            retry_count = 0,
+            max_retries = 3,
+            error_message = NULL,
+            updated_at = datetime('now')
+        WHERE parse_status = 'failed'
+          AND download_status = 'done'
+          AND file_path LIKE 'webdav://%'
+          AND error_message LIKE '%not yet downloaded%'
+          AND analysis_job_id IN (SELECT id FROM analysis_jobs WHERE status = 'active')
+    """)
+    if cursor.rowcount > 0:
+        repairs.append(f"WebDAV temp lost → re-download: {cursor.rowcount}")
+
+    # 3. Stale assigned tasks: assigned but worker is offline → reset to pending
     for phase in ("mc", "vv", "mv"):
         status_col = f"{phase}_status"
         assigned_col = f"{phase}_assigned_to"
