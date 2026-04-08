@@ -544,10 +544,10 @@ function App() {
     return () => clearTimeout(timer);
   }, [appMode, serverPort, serverRunning]);
 
-  // Server queue stats polling (server mode, 5s interval)
+  // Server queue stats polling (server mode, 5s interval, only when authenticated)
   const [serverQueueStats, setServerQueueStats] = useState(null);
   useEffect(() => {
-    if (!serverRunning) {
+    if (!serverRunning || !isAuthenticated) {
       setServerQueueStats(null);
       return;
     }
@@ -574,7 +574,7 @@ function App() {
     fetchStats();
     const interval = setInterval(fetchStats, 5000);
     return () => clearInterval(interval);
-  }, [serverRunning]);
+  }, [serverRunning, isAuthenticated]);
 
   // Domain setup check — show selection modal if no domain configured
   const domainCheckedRef = useRef(false);
