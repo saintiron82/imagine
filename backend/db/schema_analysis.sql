@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS file_tasks (
     retry_count INTEGER DEFAULT 0,
     max_retries INTEGER DEFAULT 3,
 
+    -- Dismiss (acknowledged permanent failure)
+    dismissed_at TEXT,              -- NULL = active, non-NULL = user acknowledged
+
     -- Metadata
     priority INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),

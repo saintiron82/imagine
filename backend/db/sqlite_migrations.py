@@ -844,6 +844,16 @@ def _ensure_analysis_tables(db):
         logger.info("Analysis Job tables verified")
 
 
+def migrate_dismissed_at(db):
+    """Add dismissed_at column to file_tasks for acknowledged permanent failures."""
+    try:
+        db.conn.execute("SELECT dismissed_at FROM file_tasks LIMIT 1")
+    except sqlite3.OperationalError:
+        logger.info("Migrating: adding dismissed_at to file_tasks")
+        db.conn.execute("ALTER TABLE file_tasks ADD COLUMN dismissed_at TEXT")
+        db.conn.commit()
+
+
 # ──────────────────────────────────────────────────────────────
 # Orchestrator: run all migrations in order
 # ──────────────────────────────────────────────────────────────
@@ -895,6 +905,7 @@ def run_migrations(db, *, existing_db: bool = True):
             ("phase_completed_vv_mv", lambda: migrate_phase_completed_vv_mv(db)),
             ("vv_mv_completed_at", lambda: migrate_vv_mv_completed_at(db)),
             ("analysis_tables", lambda: _ensure_analysis_tables(db)),
+            ("dismissed_at", lambda: migrate_dismissed_at(db)),
         ]
 
         slow = []

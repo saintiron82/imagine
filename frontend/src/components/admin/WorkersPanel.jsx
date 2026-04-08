@@ -16,6 +16,7 @@ import {
 import {
   listAnalysisJobs, pauseAnalysisJob, resumeAnalysisJob,
   cancelAnalysisJob, retryFailedTasks, getAnalysisMetrics, archiveAnalysisJob,
+  getJobErrors,
 } from '../../api/analysis';
 import AnalysisJobCard from '../AnalysisJobCard';
 // Legacy getJobStats removed — using analysis metrics API
@@ -850,6 +851,81 @@ export default function WorkersPanel() {
 
 // ── Queue Row (expandable) ─────────────────────────────────
 
+/** Inline error detail — shows failed phase summary + expandable file list */
+function ErrorDetail({ jobId, failed }) {
+  const [errorList, setErrorList] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
+
+  const loadErrors = async () => {
+    try {
+      const data = await getJobErrors(jobId);
+      setErrorList(data.errors || []);
+    } catch {
+      setErrorList([]);
+    }
+  };
+
+  const toggle = async (e) => {
+    e.stopPropagation();
+    if (open) { setOpen(false); return; }
+    if (!errorList) await loadErrors();
+    setOpen(true);
+  };
+
+  const handleDismiss = async (e) => {
+    e.stopPropagation();
+    if (!confirm('영구 실패 파일을 확인 처리하시겠습니까?\n작업 목록에서 제거됩니다.')) return;
+    setDismissing(true);
+    try {
+      const { dismissFailedTasks } = await import('../../api/analysis');
+      await dismissFailedTasks(jobId);
+      await loadErrors();
+    } catch { /* ignore */ }
+    setDismissing(false);
+  };
+
+  const hasPermanent = errorList?.some(e => e.permanent);
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="text-red-400">
+          실패: {Object.entries(failed).filter(([, v]) => v > 0).map(([k, v]) => `${k}:${v}`).join(' · ')}
+        </span>
+        <button onClick={toggle} className="text-red-400/60 hover:text-red-300 underline text-[9px]">
+          {open ? '닫기' : '상세'}
+        </button>
+      </div>
+      {open && errorList && (
+        <div className="mt-1 space-y-1">
+          <div className="max-h-32 overflow-y-auto space-y-0.5">
+            {errorList.length === 0 ? (
+              <div className="text-gray-600">에러 없음 (모두 확인 처리됨)</div>
+            ) : errorList.map((err, i) => (
+              <div key={i} className="flex items-start gap-2 text-[9px]">
+                <span className="text-red-400 shrink-0">[{err.failed_phases.join(',')}]</span>
+                <span className="text-gray-400" title={err.file_name}>{err.file_name}</span>
+                {err.permanent && <span className="text-red-600 shrink-0 font-bold">영구</span>}
+                {err.error && <span className="text-gray-600 truncate" title={err.error}>— {err.error}</span>}
+              </div>
+            ))}
+          </div>
+          {hasPermanent && (
+            <button
+              onClick={handleDismiss}
+              disabled={dismissing}
+              className="px-2 py-0.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-[9px] disabled:opacity-50"
+            >
+              {dismissing ? '처리 중...' : '영구 실패 확인 (목록에서 제거)'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function QueueRow({ job, onAction }) {
   const [expanded, setExpanded] = useState(false);
   const p = job.progress || {};
@@ -928,54 +1004,6 @@ function QueueRow({ job, onAction }) {
           {job.created_at && (
             <div className="text-gray-700">생성: {new Date(job.created_at).toLocaleString()}</div>
           )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-/** Inline error detail — shows failed phase summary + expandable file list */
-function ErrorDetail({ jobId, failed, totalFailed }) {
-  const [errorList, setErrorList] = useState(null);
-  const [open, setOpen] = useState(false);
-
-  const toggle = async (e) => {
-    e.stopPropagation();
-    if (open) { setOpen(false); return; }
-    if (!errorList) {
-      try {
-        const { getJobErrors } = await import('../../api/analysis');
-        const resp = await getJobErrors(jobId);
-        const data = resp.data ?? resp;
-        setErrorList(data.errors || []);
-      } catch { setErrorList([]); }
-    }
-    setOpen(true);
-  };
-
-  return (
-    <div>
-      <div className="flex items-center gap-2">
-        <span className="text-red-400">
-          실패: {Object.entries(failed).filter(([,v]) => v > 0).map(([k,v]) => `${k}:${v}`).join(' · ')}
-        </span>
-        <button onClick={toggle} className="text-red-400/60 hover:text-red-300 underline text-[9px]">
-          {open ? '닫기' : '상세'}
-        </button>
-      </div>
-      {open && errorList && (
-        <div className="mt-1 max-h-32 overflow-y-auto space-y-0.5">
-          {errorList.length === 0 ? (
-            <div className="text-gray-600">에러 정보 없음</div>
-          ) : errorList.map((err, i) => (
-            <div key={i} className="flex items-start gap-2 text-[9px]">
-              <span className="text-red-400 shrink-0">[{err.failed_phases.join(',')}]</span>
-              <span className="text-gray-400" title={err.file_name}>{err.file_name}</span>
-              {err.permanent && <span className="text-red-600 shrink-0">영구실패</span>}
-              {err.error && <span className="text-gray-600 truncate" title={err.error}>— {err.error}</span>}
-            </div>
-          ))}
         </div>
       )}
     </div>

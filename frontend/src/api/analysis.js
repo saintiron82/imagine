@@ -49,3 +49,7 @@ export async function archiveAnalysisJob(jobId) {
 export async function getJobErrors(jobId) {
   return apiClient.get(`/api/v1/analysis-jobs/${jobId}/errors`);
 }
+
+export async function dismissFailedTasks(jobId) {
+  return apiClient.post(`/api/v1/analysis-jobs/${jobId}/dismiss`);
+}

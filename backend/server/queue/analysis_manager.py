@@ -411,6 +411,7 @@ class AnalysisJobManager:
                 SUM(CASE WHEN mv_status = 'failed' THEN 1 ELSE 0 END) AS mv_failed
             FROM file_tasks
             WHERE analysis_job_id = ?
+              AND dismissed_at IS NULL
         """, (job_id,))
         r = cursor.fetchone()
         if not r or r[0] == 0:
@@ -420,8 +421,16 @@ class AnalysisJobManager:
         complete = r[6]
         pct = round(complete / total * 100, 1) if total > 0 else 0
 
+        # Count dismissed separately
+        cursor.execute(
+            "SELECT COUNT(*) FROM file_tasks WHERE analysis_job_id = ? AND dismissed_at IS NOT NULL",
+            (job_id,),
+        )
+        dismissed = cursor.fetchone()[0]
+
         return {
             "total": total,
+            "dismissed": dismissed,
             "complete": complete,
             "pct": pct,
             "downloaded": r[1],
