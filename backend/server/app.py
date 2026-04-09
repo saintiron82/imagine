@@ -517,7 +517,29 @@ def _startup_health_check(db, _log):
 
     db.conn.commit()
 
-    # 4. Report summary
+    # 4. Auto-complete active jobs that are actually finished
+    cursor.execute("""
+        SELECT aj.id, aj.name FROM analysis_jobs aj
+        WHERE aj.status = 'active'
+          AND NOT EXISTS (
+              SELECT 1 FROM file_tasks ft
+              WHERE ft.analysis_job_id = aj.id
+                AND ft.dismissed_at IS NULL
+                AND NOT (ft.mc_status = 'done' AND ft.vv_status = 'done' AND ft.mv_status = 'done')
+                AND ft.mc_status != 'failed' AND ft.vv_status != 'failed' AND ft.mv_status != 'failed'
+          )
+    """)
+    completable = cursor.fetchall()
+    if completable:
+        for job_id, job_name in completable:
+            cursor.execute(
+                "UPDATE analysis_jobs SET status = 'completed', completed_at = datetime('now') WHERE id = ?",
+                (job_id,),
+            )
+        db.conn.commit()
+        repairs.append(f"active → completed: {len(completable)} jobs ({', '.join(n for _, n in completable)})")
+
+    # 5. Report summary
     if repairs:
         for r in repairs:
             _log(f"Health check: {r}")
