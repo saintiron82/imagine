@@ -18,7 +18,6 @@ Environment variables (override config.yaml):
     IMAGINE_WORKER_PASSWORD  — Worker login password
 """
 
-import collections
 import gc
 import logging
 import signal
@@ -40,9 +39,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.worker.config import (
     get_server_url,
-    get_worker_credentials,
     get_claim_batch_size,
-    get_poll_interval,
     get_storage_mode,
     get_batch_capacity,
     get_heartbeat_interval,
@@ -130,11 +127,8 @@ class WorkerDaemon:
         self.storage_mode = get_storage_mode()
         self.tmp_dir = tempfile.mkdtemp(prefix="imagine_worker_")
 
-        # Prefetch pool
+        # Batch capacity (set per claim by worker_ipc loop)
         self.batch_capacity = get_batch_capacity()
-        self.pool_size = self.batch_capacity * 2  # Target pool size
-        self._job_pool = collections.deque()
-        self._pool_lock = threading.Lock()
 
         # Worker identity — set before connect, used in log prefix
         self.worker_name = None
@@ -188,7 +182,7 @@ class WorkerDaemon:
 
         logger.info(
             f"Worker initialized: server={self.server_url}, mode={self.storage_mode}, "
-            f"batch_capacity={self.batch_capacity}, pool_size={self.pool_size}"
+            f"batch_capacity={self.batch_capacity}"
         )
 
     # ── Dual-Thread Start/Stop ────────────────────────────────
@@ -377,65 +371,14 @@ class WorkerDaemon:
             logger.info("No token — using localhost auto-admin")
         return True
 
-    def exchange_worker_token(self, token_secret: str) -> bool:
-        """Exchange a worker token for JWT access/refresh tokens."""
-        try:
-            resp = self.session.post(
-                f"{self.server_url}/api/v1/auth/worker-token",
-                json={"token": token_secret},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                self.access_token = data["access_token"]
-                self.refresh_token = data.get("refresh_token")
-                self._worker_token_secret = token_secret
-                self.session.headers["Authorization"] = f"Bearer {self.access_token}"
-                logger.info("Worker token exchanged successfully")
-                return True
-            else:
-                logger.error(f"Worker token exchange failed: {resp.status_code} {resp.text}")
-                return False
-        except Exception as e:
-            logger.error(f"Worker token exchange request failed: {e}")
-            return False
-
-    def login(self) -> bool:
-        """Authenticate with the server and get JWT tokens."""
-        creds = get_worker_credentials()
-        if not (creds.get("username") or creds.get("email")) or not creds.get("password"):
-            logger.error("Worker credentials not configured. Set IMAGINE_WORKER_EMAIL/PASSWORD or config.yaml worker section.")
-            return False
-
-        try:
-            resp = self.session.post(
-                f"{self.server_url}/api/v1/auth/login",
-                json=creds,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                self.access_token = data["access_token"]
-                self.refresh_token = data.get("refresh_token")
-                self.session.headers["Authorization"] = f"Bearer {self.access_token}"
-                logger.info("Authenticated successfully")
-                return True
-            else:
-                logger.error(f"Login failed: {resp.status_code} {resp.text}")
-                return False
-        except Exception as e:
-            logger.error(f"Login request failed: {e}")
-            return False
-
     def _refresh_auth(self) -> bool:
-        """Refresh the access token using the refresh token or worker token."""
+        """Refresh the access token using the stored refresh token."""
         if not self.refresh_token:
-            logger.warning("[REFRESH] No refresh token — trying fallback login")
-            wt = getattr(self, '_worker_token_secret', None)
-            if wt:
-                return self.exchange_worker_token(wt)
-            return self.login()
+            logger.warning("[REFRESH] No refresh token available")
+            return False
 
         try:
-            rt_preview = self.refresh_token[:16] + "..." if self.refresh_token else "(none)"
+            rt_preview = self.refresh_token[:16] + "..."
             logger.info(f"[REFRESH] Attempting token refresh (refresh={rt_preview})")
             resp = self.session.post(
                 f"{self.server_url}/api/v1/auth/refresh",
@@ -448,17 +391,11 @@ class WorkerDaemon:
                 self.session.headers["Authorization"] = f"Bearer {self.access_token}"
                 logger.info("[REFRESH] Token refreshed OK")
                 return True
-            else:
-                logger.warning(f"[REFRESH] Failed: {resp.status_code} {resp.text[:200]}")
-                wt = getattr(self, '_worker_token_secret', None)
-                if wt:
-                    return self.exchange_worker_token(wt)
-                return self.login()
-        except Exception:
-            wt = getattr(self, '_worker_token_secret', None)
-            if wt:
-                return self.exchange_worker_token(wt)
-            return self.login()
+            logger.warning(f"[REFRESH] Failed: {resp.status_code} {resp.text[:200]}")
+            return False
+        except Exception as e:
+            logger.warning(f"[REFRESH] Request failed: {e}")
+            return False
 
     def _authed_request(self, method: str, url: str, **kwargs):
         """Make request with automatic token refresh on 401.
@@ -510,8 +447,6 @@ class WorkerDaemon:
             if resp.status_code == 200:
                 data = resp.json()
                 self.session_id = data["session_id"]
-                if data.get("pool_hint"):
-                    self.pool_size = data["pool_hint"]
                 if data.get("batch_hint"):
                     self.batch_capacity = data["batch_hint"]
                 if data.get("processing_mode"):
@@ -520,7 +455,7 @@ class WorkerDaemon:
                 name = self.worker_name or f"{socket.gethostname()}-worker"
                 self.worker_name = name
                 self._log_prefix = f"[{name}]"
-                logger.info(f"{self._log_prefix} Session registered: id={self.session_id}, pool_hint={self.pool_size}, batch={self.batch_capacity}, mode={self.processing_mode}")
+                logger.info(f"{self._log_prefix} Session registered: id={self.session_id}, batch={self.batch_capacity}, mode={self.processing_mode}")
                 return True
             else:
                 logger.error(f"Session connect failed: {resp.status_code} {resp.text[:200]}")
@@ -534,8 +469,6 @@ class WorkerDaemon:
         if not self.session_id:
             return {}
         try:
-            with self._pool_lock:
-                pool_sz = len(self._job_pool)
             # Collect system resource metrics + throttle level
             try:
                 from backend.worker.resource_monitor import collect_metrics, get_throttle_level
@@ -555,7 +488,6 @@ class WorkerDaemon:
                     "current_job_id": self._current_job_id,
                     "current_file": self._current_file,
                     "current_phase": self._current_phase,
-                    "pool_size": pool_sz,
                     "resources": resources,
                     "throttle_level": throttle_level,
                     "worker_state": self._state_machine.state_name,
@@ -565,8 +497,6 @@ class WorkerDaemon:
             )
             if resp.status_code == 200:
                 data = resp.json()
-                if data.get("pool_hint"):
-                    self.pool_size = data["pool_hint"]
                 # Embedded worker (__builtin__) decides its own batch size per-phase.
                 # Only external workers take batch_hint from server.
                 if data.get("batch_hint") and self.worker_name != "__builtin__":
@@ -690,28 +620,8 @@ class WorkerDaemon:
             logger.debug(f"Task phase report failed: {e}")
 
     def claim_jobs(self) -> list:
-        """Claim jobs using legacy batch size (for embedded worker compatibility)."""
+        """Claim jobs using configured batch size (used by worker_ipc loop)."""
         return self.claim_jobs_count(get_claim_batch_size())
-
-    def _fill_pool(self):
-        """Fill prefetch pool up to target size."""
-        with self._pool_lock:
-            current = len(self._job_pool)
-        deficit = self.pool_size - current
-        if deficit > 0:
-            jobs = self.claim_jobs_count(deficit)
-            if jobs:
-                with self._pool_lock:
-                    self._job_pool.extend(jobs)
-                logger.info(f"Pool filled: +{len(jobs)}, total={len(self._job_pool)}/{self.pool_size}")
-
-    def _take_batch(self) -> list:
-        """Take up to batch_capacity jobs from pool."""
-        batch = []
-        with self._pool_lock:
-            for _ in range(min(self.batch_capacity, len(self._job_pool))):
-                batch.append(self._job_pool.popleft())
-        return batch
 
     # ── Job Lifecycle ──────────────────────────────────────────
 
@@ -2310,14 +2220,6 @@ class WorkerDaemon:
         Models should already be unloaded by the throttle handler."""
         logger.info("Entering RESTING: resource pressure critical, waiting for recovery")
 
-    def _interruptible_sleep(self, seconds: float):
-        """Sleep that wakes early on shutdown signal."""
-        global _shutdown
-        elapsed = 0.0
-        while elapsed < seconds and not _shutdown:
-            time.sleep(min(1.0, seconds - elapsed))
-            elapsed += 1.0
-
     # ── Throttle Logic ────────────────────────────────────────
 
     def _check_throttle(self) -> str:
@@ -2338,247 +2240,3 @@ class WorkerDaemon:
         self._throttle_level = level
         return level
 
-    def _apply_throttle(self, level: str) -> bool:
-        """Apply throttle actions based on the current level.
-
-        Args:
-            level: Throttle level from _check_throttle().
-
-        Returns:
-            True if processing should proceed, False if this iteration
-            should be skipped (danger pause or critical halt).
-        """
-        if level == "normal":
-            # Restore original batch capacity if it was reduced
-            if self.batch_capacity < self._original_batch_capacity:
-                self.batch_capacity = self._original_batch_capacity
-                logger.info(f"Throttle normal: batch_capacity restored to {self.batch_capacity}")
-            return True
-
-        if level == "warning":
-            # Reduce batch capacity to ~50% (minimum 1)
-            reduced = max(1, self._original_batch_capacity // 2)
-            if self.batch_capacity != reduced:
-                logger.warning(f"Throttle warning: batch_capacity {self.batch_capacity} → {reduced}")
-                self.batch_capacity = reduced
-            return True
-
-        if level == "danger":
-            # Pause for N seconds, then allow retry
-            try:
-                from backend.utils.config import get_config
-                cfg = get_config()
-                wait_s = cfg.get("worker", {}).get("throttle", {}).get("danger_wait_seconds", 30)
-            except Exception:
-                wait_s = 30
-            logger.warning(f"Throttle danger: pausing {wait_s}s before retry")
-            for _ in range(wait_s):
-                if _shutdown:
-                    return False
-                time.sleep(1)
-            return False  # Skip this iteration, re-check on next loop
-
-        if level == "critical":
-            # Stop processing, unload all models, wait for recovery
-            logger.error("Throttle critical: unloading all models, waiting for recovery")
-            self._unload_vlm()
-            self._unload_vv()
-            self._unload_mv()
-            # Wait in 10-second intervals, re-checking level
-            for _ in range(6):  # Up to 60 seconds
-                if _shutdown:
-                    return False
-                time.sleep(10)
-                try:
-                    from backend.worker.resource_monitor import collect_metrics, get_throttle_level
-                    m = collect_metrics()
-                    new_level = get_throttle_level(m)
-                    if new_level != "critical":
-                        logger.info(f"Throttle recovered from critical → {new_level}")
-                        self._throttle_level = new_level
-                        return False  # Re-enter loop to apply new level
-                except Exception:
-                    pass
-            return False  # Still critical after 60s — skip this iteration
-
-        return True
-
-    # ── Main Loop ─────────────────────────────────────────────
-
-    def run(self):
-        """Main worker loop: login → connect → prefetch → process + heartbeat."""
-        logger.info("Imagine Worker Daemon starting...")
-
-        if not self.login():
-            logger.error("Authentication failed. Exiting.")
-            return
-
-        # Register session with server
-        self._connect_session()
-
-        poll_interval = get_poll_interval()
-        heartbeat_interval = get_heartbeat_interval()
-        last_heartbeat = time.time()
-        consecutive_empty = 0
-
-        # Initial pool fill
-        self._fill_pool()
-
-        while not _shutdown:
-            try:
-                # ── Schedule + State Machine check ──
-                scheduled_active = is_active_now()
-                throttle = self._check_throttle()
-
-                # Determine if there are pending jobs (pool + server)
-                with self._pool_lock:
-                    pool_count = len(self._job_pool)
-                has_pending = pool_count > 0
-
-                self._state_machine.update(
-                    is_scheduled_active=scheduled_active,
-                    throttle_level=throttle,
-                    has_pending_jobs=has_pending,
-                )
-
-                current_state = self._state_machine.state
-                if current_state in (WorkerState.IDLE, WorkerState.RESTING):
-                    # Not active — skip job processing, just heartbeat and wait
-                    if time.time() - last_heartbeat >= heartbeat_interval:
-                        hb = self._heartbeat()
-                        last_heartbeat = time.time()
-                        cmd = hb.get("command")
-                        if cmd in ("stop", "block"):
-                            logger.info(f"Server command received: {cmd}")
-                            break
-                    state_label = current_state.value
-                    logger.debug(f"Worker {state_label}: waiting {poll_interval}s")
-                    for _ in range(poll_interval):
-                        if _shutdown:
-                            break
-                        time.sleep(1)
-                    continue
-
-                # Heartbeat check
-                if time.time() - last_heartbeat >= heartbeat_interval:
-                    hb = self._heartbeat()
-                    last_heartbeat = time.time()
-                    # Process server commands
-                    cmd = hb.get("command")
-                    if cmd in ("stop", "block"):
-                        logger.info(f"Server command received: {cmd}")
-                        break
-
-                # Take a batch from pool
-                batch = self._take_batch()
-
-                if not batch:
-                    # Pool empty — try to fill
-                    self._fill_pool()
-                    batch = self._take_batch()
-
-                if not batch:
-                    # No jobs available anywhere
-                    consecutive_empty += 1
-                    wait = min(poll_interval * consecutive_empty, 300)  # Max 5 min
-                    logger.info(f"No jobs available. Waiting {wait}s...")
-                    for _ in range(wait):
-                        if _shutdown:
-                            break
-                        time.sleep(1)
-                        # Keep heartbeat alive during wait
-                        if time.time() - last_heartbeat >= heartbeat_interval:
-                            hb = self._heartbeat()
-                            last_heartbeat = time.time()
-                            if hb.get("command") in ("stop", "block"):
-                                _shutdown_from_server = True
-                                break
-                    else:
-                        continue
-                    # Check if we broke out due to server command
-                    if locals().get('_shutdown_from_server'):
-                        break
-                    continue
-
-                consecutive_empty = 0
-
-                # ── Throttle check before processing ──
-                throttle = self._check_throttle()
-                if not self._apply_throttle(throttle):
-                    # Put jobs back into pool (not lost)
-                    with self._pool_lock:
-                        self._job_pool.extendleft(reversed(batch))
-                    logger.info(f"Throttle ({throttle}): {len(batch)} jobs returned to pool")
-                    continue
-
-                # Start background refill while processing
-                refill_thread = threading.Thread(target=self._fill_pool, daemon=True)
-                refill_thread.start()
-
-                # Prefetch file downloads for this batch
-                self._prefetch_downloads(batch)
-
-                # Phase-level batch processing (all files through each phase)
-                if not _shutdown:
-                    self.process_batch_phased(batch)
-                    # Record job activity to reset idle timeout timer
-                    self._state_machine.record_job_activity()
-
-                # Wait for refill to complete
-                refill_thread.join(timeout=30)
-
-                # Rest after batch (configurable cooldown)
-                if not _shutdown:
-                    from backend.worker.config import get_rest_after_batch_s
-                    rest_s = get_rest_after_batch_s()
-                    if rest_s > 0:
-                        logger.info(f"Resting {rest_s}s after batch")
-                        self._interruptible_sleep(rest_s)
-
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                logger.error(f"Worker loop error: {e}", exc_info=True)
-                time.sleep(poll_interval)
-
-        # Graceful shutdown
-        self._clear_download_cache()
-        self._download_pool.shutdown(wait=False)
-        self._disconnect_session()
-        logger.info(f"Worker daemon shutting down. (completed={self._total_completed}, failed={self._total_failed})")
-        # Cleanup temp directory
-        import shutil
-        try:
-            shutil.rmtree(self.tmp_dir, ignore_errors=True)
-        except Exception:
-            pass
-
-
-def main():
-    """CLI entry point with optional --server/--token args."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Imagine Worker Daemon")
-    parser.add_argument("--server", type=str, help="Server URL (e.g., http://192.168.1.10:8000)")
-    parser.add_argument("--token", type=str, help="Worker token (from admin panel)")
-    args = parser.parse_args()
-
-    daemon = WorkerDaemon()
-
-    if args.server:
-        daemon.server_url = args.server
-        daemon.uploader.server_url = args.server
-
-    if args.token:
-        # Exchange worker token for JWT
-        if not daemon.exchange_worker_token(args.token):
-            logger.error("Worker token exchange failed. Exiting.")
-            sys.exit(1)
-        daemon.run()
-    else:
-        # Default: use env/config credentials
-        daemon.run()
-
-
-if __name__ == "__main__":
-    main()

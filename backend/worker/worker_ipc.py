@@ -68,36 +68,26 @@ class WorkerIPCController:
         self._thread = None
         self._running = False
 
-    def start(self, server_url: str, username: str = "", password: str = "",
-               access_token: str = "", refresh_token: str = ""):
+    def start(self, server_url: str, access_token: str = "", refresh_token: str = ""):
         """Start the worker loop in a background thread."""
         if self._running:
             _emit_log("Worker already running", "warning")
             return
 
+        if not access_token:
+            _emit_log("[START] FAILED: access_token is required", "error")
+            _emit_status("error")
+            return
+
         _emit_log(f"[START] server_url={server_url}", "info")
-        _emit_log(f"[START] username={'yes' if username else 'no'}, password={'yes' if password else 'no'}", "info")
-        _emit_log(f"[START] access_token={'yes(' + access_token[:16] + '...)' if access_token else 'no'}, refresh_token={'yes' if refresh_token else 'no'}", "info")
+        _emit_log(f"[START] access_token=yes({access_token[:16]}...), refresh_token={'yes' if refresh_token else 'no'}", "info")
 
         # Override config for this session
         import os
         os.environ["IMAGINE_SERVER_URL"] = server_url
-        _emit_log(f"[START] Set IMAGINE_SERVER_URL={server_url}", "info")
 
-        # Store auth info for the worker thread
-        self._auth_mode = "token" if access_token else "credentials"
         self._access_token = access_token
         self._refresh_token = refresh_token
-
-        # Always set credentials if provided (fallback for token refresh failure)
-        if username:
-            os.environ["IMAGINE_WORKER_USERNAME"] = username
-            _emit_log(f"[START] Set IMAGINE_WORKER_USERNAME={username}", "info")
-        if password:
-            os.environ["IMAGINE_WORKER_PASSWORD"] = "***set***"
-            os.environ["IMAGINE_WORKER_PASSWORD"] = password
-
-        _emit_log(f"[START] Auth mode: {self._auth_mode}", "info")
 
         self._running = True
         # Reset stop signal from previous session
@@ -168,53 +158,15 @@ class WorkerIPCController:
             daemon._state_machine._on_enter_active = _ipc_on_active
             daemon._state_machine._on_enter_resting = _ipc_on_resting
 
-            # ── Authentication ──
-            import os
-            username_env = os.getenv("IMAGINE_WORKER_USERNAME", "")
-            password_env = os.getenv("IMAGINE_WORKER_PASSWORD", "")
-            _emit_log(f"[AUTH] Env check: IMAGINE_WORKER_USERNAME={'yes' if username_env else 'no'}, IMAGINE_WORKER_PASSWORD={'yes' if password_env else 'no'}", "info")
-            _emit_log(f"[AUTH] access_token={'yes' if self._access_token else 'no'}", "info")
-
-            has_creds = bool(username_env and password_env)
-
-            if has_creds:
-                _emit_log(f"[AUTH] Mode: independent login (username={username_env})", "info")
-                _emit_log(f"[AUTH] Calling daemon.login() -> POST {daemon.server_url}/api/v1/auth/login ...", "info")
-                login_ok = daemon.login()
-                _emit_log(f"[AUTH] daemon.login() returned: {login_ok}", "info" if login_ok else "error")
-
-                if not login_ok:
-                    if self._access_token:
-                        _emit_log("[AUTH] Login failed, trying shared token fallback...", "warning")
-                        token_ok = daemon.set_tokens(self._access_token, self._refresh_token)
-                        _emit_log(f"[AUTH] set_tokens() returned: {token_ok}", "info" if token_ok else "error")
-                        if not token_ok:
-                            _emit_log("[AUTH] FAILED: both login and token injection failed", "error")
-                            _emit_status("error")
-                            self._running = False
-                            return
-                    else:
-                        _emit_log("[AUTH] FAILED: login failed, no tokens for fallback", "error")
-                        _emit_status("error")
-                        self._running = False
-                        return
-
-            elif self._access_token:
-                at_preview = (self._access_token[:20] + "...") if self._access_token else "(none)"
-                _emit_log(f"[AUTH] Mode: shared token (access={at_preview})", "info")
-                token_ok = daemon.set_tokens(self._access_token, self._refresh_token)
-                _emit_log(f"[AUTH] set_tokens() returned: {token_ok}", "info" if token_ok else "error")
-                if not token_ok:
-                    _emit_log("[AUTH] FAILED: token injection failed", "error")
-                    _emit_status("error")
-                    self._running = False
-                    return
-            else:
-                _emit_log("[AUTH] FAILED: no credentials AND no tokens available!", "error")
+            # ── Authentication (shared token from Electron only) ──
+            at_preview = self._access_token[:20] + "..."
+            _emit_log(f"[AUTH] Injecting shared token (access={at_preview})", "info")
+            token_ok = daemon.set_tokens(self._access_token, self._refresh_token)
+            if not token_ok:
+                _emit_log("[AUTH] FAILED: token injection failed", "error")
                 _emit_status("error")
                 self._running = False
                 return
-
             _emit_log("[AUTH] Authentication successful!", "success")
 
             # ── Network test: quick server ping ──
@@ -582,8 +534,6 @@ def main():
         if action == "start":
             controller.start(
                 server_url=cmd.get("server_url", "http://localhost:8000"),
-                username=cmd.get("username", ""),
-                password=cmd.get("password", ""),
                 access_token=cmd.get("access_token", ""),
                 refresh_token=cmd.get("refresh_token", ""),
             )

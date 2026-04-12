@@ -28,37 +28,9 @@ def get_server_url() -> str:
     return cfg.get("server_url", "http://localhost:8000").rstrip("/")
 
 
-def get_worker_credentials() -> dict:
-    """Get worker login credentials from env or config."""
-    server_password = os.getenv("IMAGINE_SERVER_PASSWORD", "")
-    username = os.getenv("IMAGINE_WORKER_USERNAME")
-    email = os.getenv("IMAGINE_WORKER_EMAIL")
-    password = os.getenv("IMAGINE_WORKER_PASSWORD")
-    if (username or email) and password:
-        creds = {"server_password": server_password, "password": password}
-        if username:
-            creds["username"] = username
-        if email:
-            creds["email"] = email
-        return creds
-    cfg = get_worker_config()
-    return {
-        "server_password": cfg.get("server_password", ""),
-        "username": cfg.get("username", ""),
-        "email": cfg.get("email", ""),
-        "password": cfg.get("password", ""),
-    }
-
-
 def get_claim_batch_size() -> int:
     cfg = get_worker_config()
     return cfg.get("claim_batch_size", 5)
-
-
-def get_poll_interval() -> int:
-    """Seconds to wait when no jobs are available."""
-    cfg = get_worker_config()
-    return cfg.get("poll_interval_seconds", 30)
 
 
 def get_batch_capacity() -> int:
