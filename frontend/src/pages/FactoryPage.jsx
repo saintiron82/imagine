@@ -8,7 +8,7 @@ import { useLocale } from '../i18n';
 import { isElectron } from '../api/client';
 import { getJobStats } from '../api/worker';
 import { WorkersPanel, DashboardPanel } from './AdminPage';
-import WorkerPage, { MyWorkersSection, ConnectMyPC } from './WorkerPage';
+import WorkerPage, { MyWorkersSection } from './WorkerPage';
 
 
 export default function FactoryPage({

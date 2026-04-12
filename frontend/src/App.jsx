@@ -20,7 +20,6 @@ import ServerInfoPanel from './components/ServerInfoPanel';
 import { useLocale } from './i18n';
 import { useAuth } from './contexts/AuthContext';
 import { isElectron, setServerUrl, getServerUrl, getAccessToken, getRefreshToken, clearTokens } from './api/client';
-import { getWorkerCredentials } from './api/auth';
 import { setUseLocalBackend, getActiveDomainConfig } from './services/bridge';
 import { registerPaths, scanFolder, resetDatabase, auditIntegrity, retryFailedJobs, forceRetryFailedJobs, dismissPermanentlyFailedJobs } from './api/admin';
 import { getJobStats } from './api/worker';
@@ -89,9 +88,6 @@ function App() {
   const [serverLanUrl, setServerLanUrl] = useState(null);
   const [serverLanAddresses, setServerLanAddresses] = useState([]);
   const [showServerInfo, setShowServerInfo] = useState(false);
-  const [tunnelRunning, setTunnelRunning] = useState(false);
-  const [tunnelUrl, setTunnelUrl] = useState(null);
-  const [tunnelDownloading, setTunnelDownloading] = useState(false);
 
   // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
   // Web mode: restrict tabs to search/download only
@@ -478,31 +474,11 @@ function App() {
       } else {
         setServerLanUrl(null);
         setServerLanAddresses([]);
-        setTunnelRunning(false);
-        setTunnelUrl(null);
       }
     });
 
-    // Tunnel status
-    if (window.electron?.tunnel) {
-      window.electron.tunnel.getStatus().then(s => {
-        setTunnelRunning(s.running);
-        setTunnelUrl(s.url || null);
-      });
-      window.electron.tunnel.onStatusChange((data) => {
-        if (data.downloading) {
-          setTunnelDownloading(true);
-        } else {
-          setTunnelDownloading(false);
-          setTunnelRunning(data.running);
-          setTunnelUrl(data.url || null);
-        }
-      });
-    }
-
     return () => {
       window.electron.server.offStatusChange();
-      window.electron?.tunnel?.offStatusChange();
     };
   }, []);
 
@@ -595,24 +571,6 @@ function App() {
     };
     checkDomain();
   }, [appMode, skipAuth, isAuthenticated]);
-
-  const handleTunnelStart = async () => {
-    if (!window.electron?.tunnel) return;
-    setTunnelDownloading(true);
-    const result = await window.electron.tunnel.start({ port: serverPort });
-    setTunnelDownloading(false);
-    if (result?.success) {
-      setTunnelRunning(true);
-      setTunnelUrl(result.url);
-    }
-  };
-
-  const handleTunnelStop = async () => {
-    if (!window.electron?.tunnel) return;
-    await window.electron.tunnel.stop();
-    setTunnelRunning(false);
-    setTunnelUrl(null);
-  };
 
   const handleServerToggle = async () => {
     if (!isElectron) return;
@@ -1684,11 +1642,6 @@ function App() {
                         serverPort={serverPort}
                         serverLanUrl={serverLanUrl}
                         serverLanAddresses={serverLanAddresses}
-                        tunnelUrl={tunnelUrl}
-                        tunnelRunning={tunnelRunning}
-                        tunnelDownloading={tunnelDownloading}
-                        onTunnelStart={handleTunnelStart}
-                        onTunnelStop={handleTunnelStop}
                         onClose={() => setShowServerInfo(false)}
                       />
                     )}

@@ -11,7 +11,6 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { isElectron, getAccessToken, setServerUrl, getServerUrl, setTokens, clearTokens } from '../api/client';
 import {
   getMe, logout as apiLogout, checkServerHealth,
-  storeWorkerCredentials, clearWorkerCredentials,
   firebaseConnect, getServerInfo,
 } from '../api/auth';
 import { onAuthStateChanged, getIdToken, signOut as firebaseSignOut } from '../api/firebaseAuth';
@@ -41,7 +40,6 @@ export function AuthProvider({ children }) {
   // ── On mount: clear server tokens (require fresh login every session) ──
   useEffect(() => {
     clearTokens();
-    clearWorkerCredentials();
   }, []);
 
   // ── Layer 1: Firebase Auth state listener ──────────────────
@@ -52,7 +50,6 @@ export function AuthProvider({ children }) {
 
       if (!fbUser) {
         clearTokens();
-        clearWorkerCredentials();
         setUser(null);
         setConnectedServer(null);
         setLoading(false);
@@ -146,44 +143,9 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // ── Legacy login (Electron local mode / backward compat) ───
-  const login = useCallback(async ({ server_password, username, password, serverUrl }) => {
-    setError('');
-    try {
-      if (serverUrl) setServerUrl(serverUrl);
-      const { login: apiLogin } = await import('../api/auth');
-      const data = await apiLogin({ server_password, username, password });
-      storeWorkerCredentials(server_password, username, password);
-      const me = await getMe();
-      setUser(me.user || me);
-      skipFirebase.current = true;
-      return true;
-    } catch (e) {
-      setError(e.detail || e.message || 'Login failed');
-      return false;
-    }
-  }, []);
-
-  // ── Legacy register ────────────────────────────────────────
-  const register = useCallback(async ({ server_password, username, email, password, serverUrl }) => {
-    setError('');
-    try {
-      if (serverUrl) setServerUrl(serverUrl);
-      const { register: apiRegister } = await import('../api/auth');
-      await apiRegister({ server_password, username, email, password });
-      const me = await getMe();
-      setUser(me.user || me);
-      return true;
-    } catch (e) {
-      setError(e.detail || e.message || 'Registration failed');
-      return false;
-    }
-  }, []);
-
   // ── Disconnect from server (keep Firebase session) ─────────
   const disconnectServer = useCallback(() => {
     clearTokens();
-    clearWorkerCredentials();
     setUser(null);
     setConnectedServer(null);
     localStorage.removeItem('imagine-last-server');
@@ -194,7 +156,6 @@ export function AuthProvider({ children }) {
   // ── Logout (server session only) ───────────────────────────
   const logout = useCallback(async () => {
     apiLogout();
-    clearWorkerCredentials();
     disconnectServer();
     skipFirebase.current = false;
   }, [disconnectServer]);
@@ -221,7 +182,6 @@ export function AuthProvider({ children }) {
         // Token invalid
       }
     }
-    if (mode === 'client') clearWorkerCredentials();
     setUser(null);
   }, []);
 
@@ -246,8 +206,6 @@ export function AuthProvider({ children }) {
     // Actions
     connectToServer,    // Layer 2: RTDB lookup + /auth/connect
     disconnectServer,   // Leave server, keep Firebase
-    login,              // Legacy (server_password based)
-    register,           // Legacy
     logout,             // Server session only
     fullLogout,         // Firebase + server
     checkServerHealth,

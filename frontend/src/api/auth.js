@@ -1,29 +1,8 @@
 /**
- * Auth API — register, login, refresh, me.
+ * Auth API — Firebase connect, refresh, me, server init/reset.
  */
 
 import { apiClient, setTokens, clearTokens, getServerUrl } from './client';
-
-export async function register({ server_password, username, email, password }) {
-  const data = await apiClient.post('/api/v1/auth/register', {
-    server_password,
-    username,
-    email,
-    password,
-  });
-  if (data.access_token) {
-    setTokens(data.access_token, data.refresh_token);
-  }
-  return data;
-}
-
-export async function login({ server_password, username, email, password }) {
-  const data = await apiClient.post('/api/v1/auth/login', { server_password, username, email, password });
-  if (data.access_token) {
-    setTokens(data.access_token, data.refresh_token);
-  }
-  return data;
-}
 
 export async function getMe() {
   return apiClient.get('/api/v1/auth/me');
@@ -31,27 +10,6 @@ export async function getMe() {
 
 export function logout() {
   clearTokens();
-}
-
-/** In-memory credential store for worker auth (not persisted to disk). */
-let _workerCredentials = null;
-
-/**
- * Store login credentials in memory (for worker to do independent login).
- * Called after successful login. Never persisted to localStorage.
- */
-export function storeWorkerCredentials(server_password, username, password) {
-  _workerCredentials = { server_password, username, password };
-}
-
-/** Retrieve stored worker credentials (one-time read, still kept in memory). */
-export function getWorkerCredentials() {
-  return _workerCredentials;
-}
-
-/** Clear stored worker credentials (on logout). */
-export function clearWorkerCredentials() {
-  _workerCredentials = null;
 }
 
 /**

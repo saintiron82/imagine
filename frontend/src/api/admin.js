@@ -135,12 +135,6 @@ export async function runBenchmark() {
   return apiClient.post('/api/v1/admin/workers/benchmark');
 }
 
-// ── Worker Self-service ──────────────────────────────────
-
-export async function registerWorker() {
-  return apiClient.post('/api/v1/worker/register');
-}
-
 // ── Members (Firebase Auth) ─────────────────────────────
 
 export async function listMembers() {
