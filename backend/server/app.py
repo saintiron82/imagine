@@ -286,7 +286,6 @@ from backend.server.routers.files import router as files_router
 from backend.server.routers.search import router as search_router
 # Note: pipeline_router removed (legacy /api/v1/jobs/* endpoints)
 from backend.server.routers.upload import router as upload_router
-from backend.server.routers.worker_setup import router as worker_setup_router
 from backend.server.routers.workers import router as workers_router
 from backend.server.routers.app_download import router as app_download_router
 from backend.server.routers.sync import router as sync_router
@@ -304,7 +303,6 @@ app.include_router(stats_router, prefix="/api/v1")
 app.include_router(files_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1")
 app.include_router(upload_router, prefix="/api/v1")
-app.include_router(worker_setup_router, prefix="/api/v1")
 app.include_router(workers_router, prefix="/api/v1")
 app.include_router(app_download_router, prefix="/api/v1")
 app.include_router(sync_router, prefix="/api/v1")
@@ -347,47 +345,6 @@ def health():
         "firebase_auth": is_firebase_available(),
         "cors": "allow_all" if "*" in _cors_origins else "restricted",
     }
-
-
-# ── Tunnel URL registration (Electron → Firestore) ──────────
-
-@app.put("/api/v1/server/tunnel-url")
-def set_tunnel_url(body: dict):
-    """Store Cloudflare Tunnel URL and update Firestore group record.
-
-    Called by Electron main process when tunnel starts.
-    Only accessible from localhost (Electron → embedded server).
-    """
-    from backend.server.deps import get_db
-    from backend.server.firebase_registry import register_group
-    import threading
-
-    tunnel_url = body.get("tunnel_url", "")
-    db = get_db()
-
-    # Save to system_meta
-    cursor = db.conn.cursor()
-    cursor.execute(
-        "INSERT OR REPLACE INTO system_meta (key, value) VALUES ('tunnel_url', ?)",
-        (tunnel_url,)
-    )
-    db.conn.commit()
-
-    # Update Firestore (if group_name is configured)
-    cursor.execute("SELECT value FROM system_meta WHERE key = 'group_name'")
-    row = cursor.fetchone()
-    if row and row[0]:
-        cfg = get_server_config()
-        port = cfg.get("port", 8000)
-        threading.Thread(
-            target=register_group,
-            args=(row[0], port),
-            kwargs={"tunnel_url": tunnel_url},
-            daemon=True,
-        ).start()
-        logger.info(f"Tunnel URL registered: {tunnel_url}")
-
-    return {"success": True, "tunnel_url": tunnel_url}
 
 
 # ── Default admin account ────────────────────────────────────

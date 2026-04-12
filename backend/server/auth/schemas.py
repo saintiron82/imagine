@@ -8,13 +8,6 @@ from pydantic import BaseModel, Field
 
 # ── Request schemas ──────────────────────────────────────────
 
-class RegisterRequest(BaseModel):
-    server_password: str = Field(..., min_length=1, max_length=128)
-    username: str = Field(..., min_length=2, max_length=50)
-    email: Optional[str] = Field(None, max_length=254)
-    password: str = Field(..., min_length=6, max_length=128)
-
-
 class ServerInitRequest(BaseModel):
     group_name: str = Field(..., min_length=1, max_length=100)
     server_password: str = Field(..., min_length=1, max_length=128)
@@ -23,13 +16,6 @@ class ServerInitRequest(BaseModel):
     # Optional: Firebase UID for 2-layer auth (server creator = admin)
     firebase_uid: Optional[str] = None
     firebase_email: Optional[str] = None
-
-
-class LoginRequest(BaseModel):
-    server_password: str = Field(..., min_length=1, max_length=128)
-    username: Optional[str] = None
-    email: Optional[str] = None
-    password: str
 
 
 class RefreshRequest(BaseModel):
@@ -78,28 +64,8 @@ class UserUpdateRequest(BaseModel):
     quota_search_per_min: Optional[int] = None
 
 
-class WorkerTokenCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    expires_in_days: Optional[int] = Field(30, ge=1, le=365)
-
-
-class WorkerTokenResponse(BaseModel):
-    id: int
-    name: str
-    token: Optional[str] = None  # Only shown on creation
-    created_by: Optional[int] = None
-    is_active: bool = True
-    expires_at: Optional[str] = None
-    created_at: Optional[str] = None
-    last_used_at: Optional[str] = None
-
-
 class ResetGroupRequest(BaseModel):
     server_password: str = Field(..., min_length=1, max_length=128)
-
-
-class WorkerTokenExchange(BaseModel):
-    token: str
 
 
 class FirebaseConnectRequest(BaseModel):

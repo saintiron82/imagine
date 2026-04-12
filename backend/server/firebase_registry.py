@@ -1,8 +1,8 @@
 """
 Firestore server group registration.
 
-On server init, register group info (group_name, LAN IP, port, tunnel_url)
-to Firestore so external clients can discover the server by group name.
+On server init, register group info (group_name, LAN IP, port) to Firestore
+so external clients can discover the server by group name.
 
 Uses Firestore REST API (no SDK dependency) — same collection as
 frontend/src/api/firebase.js.
@@ -53,7 +53,7 @@ def _get_public_ip() -> str:
         return ""
 
 
-def register_group(group_name: str, port: int, tunnel_url: str = "") -> bool:
+def register_group(group_name: str, port: int) -> bool:
     """Register server group to Firestore (best-effort).
 
     Returns True if successful, False otherwise.
@@ -71,7 +71,6 @@ def register_group(group_name: str, port: int, tunnel_url: str = "") -> bool:
             "lan_ip": {"stringValue": lan_ip},
             "public_ip": {"stringValue": public_ip},
             "port": {"integerValue": str(port)},
-            "tunnel_url": {"stringValue": tunnel_url},
             "updated_at": {"stringValue": datetime.now(timezone.utc).isoformat()},
         }
 
@@ -85,10 +84,9 @@ def register_group(group_name: str, port: int, tunnel_url: str = "") -> bool:
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             if resp.status == 200:
-                tunnel_info = f", tunnel={tunnel_url}" if tunnel_url else ""
                 logger.info(
                     f"Registered group '{group_name}' to Firestore "
-                    f"(LAN={lan_ip}, Public={public_ip}, port={port}{tunnel_info})"
+                    f"(LAN={lan_ip}, Public={public_ip}, port={port})"
                 )
                 return True
             else:

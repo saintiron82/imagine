@@ -130,7 +130,6 @@ a = Analysis(
         'backend.server.rate_limit',
         'backend.server.routers.workers',
         'backend.server.routers.pipeline',
-        'backend.server.routers.worker_setup',
         'backend.server.routers.classification',
         'backend.server.routers.database',
         'backend.server.queue.manager',

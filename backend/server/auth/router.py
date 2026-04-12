@@ -1,5 +1,5 @@
 """
-Authentication router — register, login, refresh, me.
+Authentication router — Firebase-based connect, refresh, me, group join.
 """
 
 import logging
@@ -11,12 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_db_safe, get_current_user
 from backend.server.rate_limit import (
-    check_login_rate, check_register_rate,
-    check_refresh_rate, check_worker_token_rate,
+    check_login_rate, check_register_rate, check_refresh_rate,
 )
 from backend.server.auth.schemas import (
-    RegisterRequest, LoginRequest, RefreshRequest,
-    TokenResponse, UserResponse, WorkerTokenExchange,
+    RefreshRequest, TokenResponse, UserResponse,
     FirebaseConnectRequest,
     FirebaseLoginRequest, JoinGroupRequest, MemberResponse,
 )
@@ -30,133 +28,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _hash_password(password: str) -> str:
-    """Hash password using bcrypt."""
-    import bcrypt
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
 def _verify_password(password: str, hashed: str) -> bool:
     """Verify password against bcrypt hash."""
     import bcrypt
     return bcrypt.checkpw(password.encode(), hashed.encode())
-
-
-@router.post("/register", response_model=TokenResponse,
-              dependencies=[Depends(check_register_rate)])
-def register(req: RegisterRequest, db: SQLiteDB = Depends(get_db_safe)):
-    """Register a new user with server password verification."""
-    cursor = db.conn.cursor()
-
-    # Validate server password
-    cursor.execute("SELECT value FROM system_meta WHERE key = 'server_password_hash'")
-    row = cursor.fetchone()
-    if row is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
-
-    if not _verify_password(req.server_password, row[0]):
-        raise HTTPException(status_code=403, detail="Invalid server password")
-
-    # Check username uniqueness
-    cursor.execute("SELECT id FROM users WHERE username = ?", (req.username,))
-    if cursor.fetchone():
-        raise HTTPException(status_code=409, detail="Username already taken")
-
-    # Check email uniqueness (only if provided)
-    if req.email:
-        cursor.execute("SELECT id FROM users WHERE email = ?", (req.email,))
-        if cursor.fetchone():
-            raise HTTPException(status_code=409, detail="Email already registered")
-
-    # Create user
-    password_hash = _hash_password(req.password)
-    cursor.execute(
-        """INSERT INTO users (username, email, password_hash, role, is_active)
-           VALUES (?, ?, ?, 'user', 1)""",
-        (req.username, req.email, password_hash)
-    )
-    user_id = cursor.lastrowid
-
-    # Generate tokens
-    access_token = create_access_token(user_id, req.username, "user")
-    refresh_token = create_refresh_token()
-
-    # Store refresh token
-    cursor.execute(
-        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-           VALUES (?, ?, ?)""",
-        (user_id, hash_refresh_token(refresh_token),
-         get_refresh_token_expiry().isoformat())
-    )
-
-    db.conn.commit()
-    logger.info(f"New user registered: {req.username} (ID: {user_id})")
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-    )
-
-
-@router.post("/login", response_model=TokenResponse,
-              dependencies=[Depends(check_login_rate)])
-def login(req: LoginRequest, db: SQLiteDB = Depends(get_db_safe)):
-    """Login with server password + username/email + password."""
-    import bcrypt
-    cursor = db.conn.cursor()
-
-    # Verify server password first
-    cursor.execute("SELECT value FROM system_meta WHERE key = 'server_password_hash'")
-    sp_row = cursor.fetchone()
-    if sp_row is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
-    if not bcrypt.checkpw(req.server_password.encode(), sp_row[0].encode()):
-        raise HTTPException(status_code=403, detail="Invalid server password")
-
-    # Try username first, then email
-    identifier = req.username or req.email
-    if not identifier:
-        raise HTTPException(status_code=400, detail="Username or email required")
-
-    cursor.execute(
-        "SELECT id, username, email, password_hash, role, is_active FROM users WHERE username = ? OR email = ?",
-        (identifier, identifier)
-    )
-    row = cursor.fetchone()
-    if row is None:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    user_id, username, email, password_hash, role, is_active = row
-
-    if not is_active:
-        raise HTTPException(status_code=403, detail="Account is deactivated")
-
-    if not _verify_password(req.password, password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    # Update last login
-    cursor.execute(
-        "UPDATE users SET last_login_at = datetime('now') WHERE id = ?",
-        (user_id,)
-    )
-
-    # Generate tokens
-    access_token = create_access_token(user_id, username, role)
-    refresh_token = create_refresh_token()
-
-    # Store refresh token
-    cursor.execute(
-        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-           VALUES (?, ?, ?)""",
-        (user_id, hash_refresh_token(refresh_token),
-         get_refresh_token_expiry().isoformat())
-    )
-
-    db.conn.commit()
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-    )
 
 
 @router.post("/refresh", response_model=TokenResponse,
@@ -201,67 +76,6 @@ def refresh(req: RefreshRequest, db: SQLiteDB = Depends(get_db_safe)):
     return TokenResponse(
         access_token=access_token,
         refresh_token=req.refresh_token,  # Return same refresh token
-    )
-
-
-@router.post("/worker-token", response_model=TokenResponse,
-              dependencies=[Depends(check_worker_token_rate)])
-def exchange_worker_token(req: WorkerTokenExchange, db: SQLiteDB = Depends(get_db_safe)):
-    """Exchange a worker token secret for JWT access/refresh tokens."""
-    import hashlib
-
-    token_hash = hashlib.sha256(req.token.encode()).hexdigest()
-
-    cursor = db.conn.cursor()
-    cursor.execute(
-        """SELECT wt.id, wt.is_active, wt.expires_at, wt.created_by,
-                  u.id, u.username, u.role, u.is_active
-           FROM worker_tokens wt
-           JOIN users u ON u.id = wt.created_by
-           WHERE wt.token_hash = ?""",
-        (token_hash,)
-    )
-    row = cursor.fetchone()
-    if row is None:
-        raise HTTPException(status_code=401, detail="Invalid worker token")
-
-    wt_id, wt_active, wt_expires, created_by, user_id, username, role, user_active = row
-
-    if not wt_active:
-        raise HTTPException(status_code=401, detail="Worker token has been revoked")
-
-    if not user_active:
-        raise HTTPException(status_code=403, detail="Token owner account is deactivated")
-
-    if wt_expires:
-        from datetime import datetime, timezone
-        exp = datetime.fromisoformat(wt_expires.replace("Z", "+00:00"))
-        if exp < datetime.now(timezone.utc):
-            raise HTTPException(status_code=401, detail="Worker token has expired")
-
-    # Update last_used_at
-    cursor.execute(
-        "UPDATE worker_tokens SET last_used_at = datetime('now') WHERE id = ?",
-        (wt_id,)
-    )
-
-    # Generate JWT tokens (1 hour access, standard refresh)
-    access_token = create_access_token(user_id, username, role, expires_minutes=60)
-    refresh_token = create_refresh_token()
-
-    cursor.execute(
-        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-           VALUES (?, ?, ?)""",
-        (user_id, hash_refresh_token(refresh_token),
-         get_refresh_token_expiry().isoformat())
-    )
-
-    db.conn.commit()
-    logger.info(f"Worker token exchanged for user {username} (token ID: {wt_id})")
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
     )
 
 
