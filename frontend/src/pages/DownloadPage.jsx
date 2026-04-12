@@ -176,7 +176,7 @@ export default function DownloadPage({ onBack }) {
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gray-700 hover:bg-gray-600 text-xs text-gray-300 hover:text-white transition-colors flex-shrink-0"
               >
                 {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                <span>{copied ? t('admin.worker_token_copied') : t('download.copy_url')}</span>
+                <span>{copied ? t('common.copied') : t('download.copy_url')}</span>
               </button>
             </div>
 
