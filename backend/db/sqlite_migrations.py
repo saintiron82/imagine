@@ -199,26 +199,15 @@ def migrate_auth_tables(db):
         logger.warning(f"Auth schema file not found: {auth_schema_path}")
 
 
-def migrate_worker_tokens(db):
-    """Create worker_tokens table if missing (added in v4.7)."""
-    if db._table_exists('worker_tokens'):
+def migrate_drop_worker_tokens(db):
+    """Drop legacy worker_tokens table (removed when WK_ token flow was retired)."""
+    if not db._table_exists('worker_tokens'):
         return
-    logger.info("Migrating: creating worker_tokens table...")
-    db.conn.execute("""
-        CREATE TABLE IF NOT EXISTS worker_tokens (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token_hash TEXT UNIQUE NOT NULL,
-            name TEXT NOT NULL,
-            created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            is_active INTEGER DEFAULT 1,
-            expires_at TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            last_used_at TEXT
-        )
-    """)
-    db.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_tokens_hash ON worker_tokens(token_hash)")
+    logger.info("Migrating: dropping legacy worker_tokens table...")
+    db.conn.execute("DROP INDEX IF EXISTS idx_worker_tokens_hash")
+    db.conn.execute("DROP TABLE IF EXISTS worker_tokens")
     db.conn.commit()
-    logger.info("worker_tokens table created")
+    logger.info("worker_tokens table dropped")
 
 
 def migrate_worker_sessions(db):
@@ -881,7 +870,7 @@ def run_migrations(db, *, existing_db: bool = True):
             ("system_meta", lambda: db._ensure_system_meta()),
             ("fts", lambda: db._ensure_fts()),
             ("auth_tables", lambda: migrate_auth_tables(db)),
-            ("worker_tokens", lambda: migrate_worker_tokens(db)),
+            ("drop_worker_tokens", lambda: migrate_drop_worker_tokens(db)),
             ("worker_sessions", lambda: migrate_worker_sessions(db)),
             ("parse_ahead_columns", lambda: migrate_parse_ahead_columns(db)),
             ("worker_session_tracking", lambda: migrate_worker_session_tracking(db)),
@@ -928,7 +917,6 @@ def run_migrations(db, *, existing_db: bool = True):
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()
         migrate_auth_tables(db)
-        migrate_worker_tokens(db)
         migrate_worker_sessions(db)
         migrate_parse_ahead_columns(db)
         migrate_worker_session_tracking(db)

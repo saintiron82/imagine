@@ -48,17 +48,6 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     revoked INTEGER DEFAULT 0        -- boolean: 0/1
 );
 
-CREATE TABLE IF NOT EXISTS worker_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    token_hash TEXT UNIQUE NOT NULL,  -- SHA256 of token secret
-    name TEXT NOT NULL,               -- Human-readable label (e.g. "김철수 GPU PC")
-    created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    is_active INTEGER DEFAULT 1,      -- boolean: 0/1
-    expires_at TEXT,                   -- ISO 8601
-    created_at TEXT DEFAULT (datetime('now')),
-    last_used_at TEXT
-);
-
 -- ═══════════════════════════════════════════════════════════════
 -- Worker Sessions (live monitoring & control)
 -- ═══════════════════════════════════════════════════════════════
