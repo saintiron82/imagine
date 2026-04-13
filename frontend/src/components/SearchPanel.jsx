@@ -963,10 +963,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [resetSignal, setResetSignal] = useState(0);
     const inputRef = useRef(null);
 
-    // Listen for search progress events (Electron IPC)
+    // Listen for search progress events (Electron IPC → window.electron.pipeline.onSearchProgress)
     useEffect(() => {
-        if (!window.electron?.onSearchProgress) return;
-        const cleanup = window.electron.onSearchProgress((stage) => {
+        const subscribe = window.electron?.pipeline?.onSearchProgress;
+        if (!subscribe) return;
+        const cleanup = subscribe((stage) => {
             setSearchStage(stage);
         });
         return () => cleanup?.();
@@ -974,7 +975,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     // Server mode: estimated stage progression (no IPC events available)
     useEffect(() => {
-        if (!isSearching || window.electron?.onSearchProgress) return;
+        if (!isSearching) return;
+        if (window.electron?.pipeline?.onSearchProgress) return;
         const stages = ['decompose', 'visual', 'semantic', 'keyword', 'ranking'];
         const delays = [0, 800, 1800, 2600, 3200]; // estimated ms
         const timers = stages.map((stage, i) =>
