@@ -912,7 +912,11 @@ def run_migrations(db, *, existing_db: bool = True):
         else:
             msg = f"Migrations: {total:.1f}s total (all fast)"
         logger.info(msg)
-        print(f"[DB] {msg}", flush=True)
+        # stderr, not stdout: subprocess consumers (e.g. api_search.py daemon)
+        # use stdout as a JSON IPC channel. A raw print() here pollutes the
+        # protocol and wedges main.cjs's line parser.
+        import sys as _sys
+        print(f"[DB] {msg}", flush=True, file=_sys.stderr)
     else:
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()
