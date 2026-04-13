@@ -207,39 +207,44 @@ class LocalTransport(WorkerTransport):
 
     def save_vision(self, file_id: int, fields: dict) -> bool:
         """Write MC vision fields directly to files table."""
-        try:
-            import json as _json
-            cursor = self.db.conn.cursor()
-            safe_fields = [
-                "mc_caption", "ai_tags", "image_type", "art_style",
-                "color_palette", "scene_type", "time_of_day", "weather",
-                "character_type", "item_type", "ui_type", "structured_meta",
-            ]
-            updates, values = [], []
-            for f in safe_fields:
-                if f in fields:
-                    val = fields[f]
-                    if isinstance(val, (list, dict)):
-                        val = _json.dumps(val, ensure_ascii=False)
-                    updates.append(f"{f} = ?")
-                    values.append(val)
+        import json as _json
+        safe_fields = [
+            "mc_caption", "ai_tags", "image_type", "art_style",
+            "color_palette", "scene_type", "time_of_day", "weather",
+            "character_type", "item_type", "ui_type", "structured_meta",
+        ]
+        updates, values = [], []
+        for f in safe_fields:
+            if f in fields:
+                val = fields[f]
+                if isinstance(val, (list, dict)):
+                    val = _json.dumps(val, ensure_ascii=False)
+                updates.append(f"{f} = ?")
+                values.append(val)
 
-            if updates:
-                values.append(file_id)
-                cursor.execute(
-                    f"UPDATE files SET {', '.join(updates)} WHERE id = ?",
-                    values,
-                )
-                self.db.conn.commit()
+        if not updates:
+            return True  # Nothing to persist; no transaction opened
+
+        try:
+            values.append(file_id)
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                f"UPDATE files SET {', '.join(updates)} WHERE id = ?",
+                values,
+            )
+            self.db.conn.commit()
             return True
         except Exception as e:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
             logger.error(f"LocalTransport save_vision failed: {e}")
             return False
 
     def save_vv(self, file_id: int, vector) -> bool:
         """Write VV vector directly to vec_files table."""
         try:
-            import numpy as np
             vec = vector if isinstance(vector, (list, tuple)) else vector.tolist()
             blob = struct.pack(f"<{len(vec)}f", *vec)
             cursor = self.db.conn.cursor()
@@ -251,6 +256,10 @@ class LocalTransport(WorkerTransport):
             self.db.conn.commit()
             return True
         except Exception as e:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
             logger.error(f"LocalTransport save_vv failed: {e}")
             return False
 
@@ -268,6 +277,10 @@ class LocalTransport(WorkerTransport):
             self.db.conn.commit()
             return True
         except Exception as e:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
             logger.error(f"LocalTransport save_mv failed: {e}")
             return False
 
@@ -276,26 +289,33 @@ class LocalTransport(WorkerTransport):
         """Register embedded worker session directly in DB."""
         from datetime import datetime
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        cursor = self.db.conn.cursor()
+        try:
+            cursor = self.db.conn.cursor()
 
-        # Find actual admin user_id (not hardcoded)
-        cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
-        user_row = cursor.fetchone()
-        user_id = user_row[0] if user_row else None
-        if not user_id:
-            # No admin user — create without FK
-            cursor.execute("SELECT id FROM users LIMIT 1")
-            any_user = cursor.fetchone()
-            user_id = any_user[0] if any_user else None
+            # Find actual admin user_id (not hardcoded)
+            cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
+            user_row = cursor.fetchone()
+            user_id = user_row[0] if user_row else None
+            if not user_id:
+                # No admin user — create without FK
+                cursor.execute("SELECT id FROM users LIMIT 1")
+                any_user = cursor.fetchone()
+                user_id = any_user[0] if any_user else None
 
-        cursor.execute("""
-            INSERT INTO worker_sessions
-                (user_id, worker_name, hostname, status, batch_capacity,
-                 connected_at, last_heartbeat)
-            VALUES (?, ?, ?, 'online', ?, ?, ?)
-        """, (user_id, worker_name, hostname, batch_capacity, now, now))
-        self.session_id = cursor.lastrowid
-        self.db.conn.commit()
+            cursor.execute("""
+                INSERT INTO worker_sessions
+                    (user_id, worker_name, hostname, status, batch_capacity,
+                     connected_at, last_heartbeat)
+                VALUES (?, ?, ?, 'online', ?, ?, ?)
+            """, (user_id, worker_name, hostname, batch_capacity, now, now))
+            self.session_id = cursor.lastrowid
+            self.db.conn.commit()
+        except Exception:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+            raise
 
         # Register GPU specs + scores with scheduler
         gpu = resources.get("gpu_name", "")
@@ -314,44 +334,59 @@ class LocalTransport(WorkerTransport):
         from datetime import datetime
         import json as _json
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        cursor = self.db.conn.cursor()
-        cursor.execute("""
-            UPDATE worker_sessions
-            SET status = 'online',
-                last_heartbeat = ?,
-                jobs_completed = ?,
-                current_phase = ?,
-                current_file = ?,
-                batch_capacity = ?,
-                resources_json = ?
-            WHERE id = ?
-        """, (
-            now,
-            data.get("jobs_completed", 0),
-            data.get("current_phase"),
-            data.get("current_file"),
-            data.get("batch_capacity", 0),
-            _json.dumps({
-                "phase_throughput": data.get("phase_throughput", {}),
-                "batch_throughput": data.get("batch_throughput", 0),
-                "worker_state": data.get("worker_state", "active"),
-            }) if data.get("phase_throughput") else None,
-            self.session_id,
-        ))
-        self.db.conn.commit()
-        return {"ok": True}
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute("""
+                UPDATE worker_sessions
+                SET status = 'online',
+                    last_heartbeat = ?,
+                    jobs_completed = ?,
+                    current_phase = ?,
+                    current_file = ?,
+                    batch_capacity = ?,
+                    resources_json = ?
+                WHERE id = ?
+            """, (
+                now,
+                data.get("jobs_completed", 0),
+                data.get("current_phase"),
+                data.get("current_file"),
+                data.get("batch_capacity", 0),
+                _json.dumps({
+                    "phase_throughput": data.get("phase_throughput", {}),
+                    "batch_throughput": data.get("batch_throughput", 0),
+                    "worker_state": data.get("worker_state", "active"),
+                }) if data.get("phase_throughput") else None,
+                self.session_id,
+            ))
+            self.db.conn.commit()
+            return {"ok": True}
+        except Exception as e:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+            logger.warning(f"LocalTransport heartbeat failed: {e}")
+            return {"ok": False}
 
     def disconnect(self, session_id: int):
         """Mark session offline."""
         from datetime import datetime
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        cursor = self.db.conn.cursor()
-        cursor.execute("""
-            UPDATE worker_sessions
-            SET status = 'offline', disconnected_at = ?
-            WHERE id = ?
-        """, (now, session_id or self.session_id))
-        self.db.conn.commit()
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute("""
+                UPDATE worker_sessions
+                SET status = 'offline', disconnected_at = ?
+                WHERE id = ?
+            """, (now, session_id or self.session_id))
+            self.db.conn.commit()
+        except Exception:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+            raise
 
 
 class HttpTransport(WorkerTransport):

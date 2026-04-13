@@ -219,6 +219,11 @@ class WorkerDaemon:
     def _io_loop(self):
         """IO thread: heartbeat, result upload, batch prefetch."""
         heartbeat_interval = 5
+        # Embedded worker holds a direct DB handle via LocalTransport; any
+        # leaked implicit transaction would wedge the entire process with
+        # "database is locked". Every iteration must end with an explicit
+        # rollback as a safety net (CLAUDE.md SQLite rule).
+        local_db = getattr(self.transport, "db", None)
         while not self._shutdown:
             try:
                 # 1. Heartbeat
@@ -251,6 +256,12 @@ class WorkerDaemon:
 
             except Exception as e:
                 logger.warning(f"[IO] loop error: {e}")
+            finally:
+                if local_db is not None:
+                    try:
+                        local_db.conn.rollback()
+                    except Exception:
+                        pass
 
             time.sleep(heartbeat_interval)
 
@@ -283,6 +294,13 @@ class WorkerDaemon:
             if success:
                 self._total_completed += 1
         except Exception as e:
+            # Release any implicit transaction before bubbling back to _io_loop.
+            local_db = getattr(self.transport, "db", None)
+            if local_db is not None:
+                try:
+                    local_db.conn.rollback()
+                except Exception:
+                    pass
             logger.warning(f"[IO] save {rtype} failed for file {file_id}: {e}")
 
     def _analysis_loop(self):
