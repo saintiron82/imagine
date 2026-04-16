@@ -51,7 +51,21 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
         from ..utils.config import get_config
         cfg = get_config()
 
-        self.model = model or cfg.get("vision.model", "qwen3.5:4b")
+        # v3 P17: explicit `model` from VisionAnalyzerFactory should always win.
+        # `vision.model` and `vision.*` are deprecated legacy keys kept only for
+        # back-compat with old user_settings.yaml. Warn when actually used.
+        if not model:
+            legacy_model = cfg.get("vision.model")
+            if legacy_model:
+                logger.warning(
+                    "[DEPRECATED] Using legacy `vision.model` config key (%s). "
+                    "Migrate to ai_mode.tiers.{tier}.vlm.backends.{platform}.ollama.model.",
+                    legacy_model,
+                )
+            self.model = legacy_model or "qwen3.5:4b"
+        else:
+            self.model = model
+
         self.host = host or cfg.get("vision.ollama_host", "http://localhost:11434")
         self.api_url = f"{self.host}/api/chat"
         self._temperature = cfg.get("vision.temperature", 0.1)

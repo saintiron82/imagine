@@ -75,6 +75,36 @@ class VisionAnalyzerFactory:
 
     _cached_analyzer = None
 
+    # ── Platform-aware model resolution (v3 P14/P15/P17) ─────
+
+    @staticmethod
+    def resolve_platform_model(vlm_config: dict, plat_key: str, target_backend: str):
+        """Resolve VLM model for (platform, backend) pair.
+
+        Priority:
+        1. backends.{plat}.{target_backend}.model        (v3 P14 schema)
+        2. mlx_model when target_backend == 'mlx'        (legacy darwin shortcut)
+        3. backends.{plat}.model (when backends.{plat}.backend == target)  (legacy)
+        4. vlm_config.model                              (top-level fallback)
+        """
+        plat_cfg = (vlm_config.get("backends", {}) or {}).get(plat_key, {}) or {}
+        per_backend = plat_cfg.get(target_backend)
+        if isinstance(per_backend, dict) and per_backend.get("model"):
+            return per_backend["model"]
+        if target_backend == "mlx" and vlm_config.get("mlx_model"):
+            return vlm_config["mlx_model"]
+        if plat_cfg.get("backend") == target_backend and plat_cfg.get("model"):
+            return plat_cfg["model"]
+        return vlm_config.get("model")
+
+    @staticmethod
+    def resolve_batch_size(vlm_config: dict, plat_key: str, target_backend: str):
+        plat_cfg = (vlm_config.get("backends", {}) or {}).get(plat_key, {}) or {}
+        per_backend = plat_cfg.get(target_backend)
+        if isinstance(per_backend, dict) and per_backend.get("batch_size"):
+            return per_backend["batch_size"]
+        return plat_cfg.get("batch_size") or vlm_config.get("batch_size")
+
     # ── Fallback Chain Resolution ────────────────────────────
 
     @classmethod
@@ -106,30 +136,30 @@ class VisionAnalyzerFactory:
 
         chain = []
 
-        # Resolve platform-specific config (has correct model names per backend)
+        # Resolve platform-specific config.
+        # v3 P14/P15: prefer backends.{plat}.{backend}.model (explicit per-backend),
+        # fall back to legacy backends.{plat}.model (whole-platform default).
         import platform as _plat
         plat_key = {"Darwin": "darwin", "Windows": "windows", "Linux": "linux"}.get(_plat.system(), "linux")
-        plat_cfg = vlm_config.get("backends", {}).get(plat_key, {})
 
         if backend == 'auto':
             # Auto-detect: use platform detector to find optimal backend
             detected = get_optimal_backend(tier_name)
-            # Use platform-specific model if available, else top-level
-            model = plat_cfg.get("model") if plat_cfg.get("backend") == detected else vlm_config.get("model")
+            model = VisionAnalyzerFactory.resolve_platform_model(vlm_config, plat_key, detected)
             logger.info(f"Auto-detected backend: {detected} (tier: {tier_name}, model: {model})")
             chain.append({
                 "backend": detected,
                 "model": model,
-                "batch_size": plat_cfg.get("batch_size") or vlm_config.get("batch_size"),
+                "batch_size": VisionAnalyzerFactory.resolve_batch_size(vlm_config, plat_key, detected),
             })
         else:
-            # Explicit backend — check if platform config has a model override
-            model = plat_cfg.get("model") if plat_cfg.get("backend") == backend else vlm_config.get("model")
+            # Explicit backend — use per-backend model if defined
+            model = VisionAnalyzerFactory.resolve_platform_model(vlm_config, plat_key, backend)
             logger.info(f"Explicit backend: {backend} (tier: {tier_name}, model: {model})")
             chain.append({
                 "backend": backend,
                 "model": model,
-                "batch_size": plat_cfg.get("batch_size") or vlm_config.get("batch_size"),
+                "batch_size": VisionAnalyzerFactory.resolve_batch_size(vlm_config, plat_key, backend),
             })
 
         # Always ensure transformers is the final fallback

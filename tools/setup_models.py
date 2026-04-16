@@ -18,24 +18,57 @@ import json
 from typing import List, Dict
 
 
-# 티어별 Ollama 모델 목록
-TIER_MODELS: Dict[str, List[str]] = {
-    "standard": [
-        # Standard tier: Lightweight models for ≤6GB VRAM
-        "qwen3.5:4b",               # VLM: Qwen3.5-4B (native multimodal)
-        "qwen3-embedding:0.6b",     # MV model: Qwen3-Embedding-0.6B
-    ],
-    "pro": [
-        # Pro tier: Balanced models for 8-16GB VRAM
-        "qwen3.5:9b",               # VLM: Qwen3.5-9B (native multimodal)
-        "qwen3-embedding:0.6b",     # MV model: Qwen3-Embedding-0.6B
-    ],
-    "ultra": [
-        # Ultra tier: High-end models for ≥20GB VRAM
-        "qwen3.5:9b",               # VLM: Qwen3.5-9B (native multimodal)
-        "qwen3-embedding:8b",       # MV model: Qwen3-Embedding-8B
-    ]
+# Fallback if config.yaml is unavailable. Single source of truth is now
+# config.yaml's ai_mode.tiers.{tier}.vlm.backends.{plat}.ollama.model and
+# ai_mode.tiers.{tier}.text_embed.model. See _load_tier_models_from_config().
+_FALLBACK_TIER_MODELS: Dict[str, List[str]] = {
+    "standard": ["qwen3.5:4b", "qwen3-embedding:0.6b"],
+    "pro": ["qwen3.5:9b", "qwen3-embedding:0.6b"],
+    "ultra": ["qwen3.5:9b", "qwen3-embedding:8b"],
 }
+
+
+def _load_tier_models_from_config() -> Dict[str, List[str]]:
+    """v3 P16: derive Ollama install list from config.yaml (single source).
+
+    Returns the same shape as _FALLBACK_TIER_MODELS, sourced from
+    ai_mode.tiers.{tier}.vlm.backends.{plat}.ollama.model + text_embed.model.
+    Falls back to constants if config can't be loaded.
+    """
+    try:
+        import platform as _plat
+        from pathlib import Path as _Path
+        # Avoid heavy imports — tools/setup_models.py runs before any backend init.
+        sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+        from backend.utils.config import get_config  # type: ignore
+        cfg = get_config()
+        plat_key = {"Darwin": "darwin", "Windows": "windows", "Linux": "linux"}.get(
+            _plat.system(), "linux"
+        )
+        tiers = (cfg.get("ai_mode.tiers") or {})
+        out: Dict[str, List[str]] = {}
+        for tier_name, tier_cfg in tiers.items():
+            if not isinstance(tier_cfg, dict):
+                continue
+            vlm = tier_cfg.get("vlm", {}) or {}
+            ollama_cfg = (vlm.get("backends", {}) or {}).get(plat_key, {}).get("ollama", {})
+            vlm_model = (ollama_cfg or {}).get("model") or vlm.get("model")
+            embed = tier_cfg.get("text_embed", {}) or {}
+            embed_model = embed.get("model")
+            models = []
+            if vlm_model and ":" in str(vlm_model):  # only Ollama-format names
+                models.append(vlm_model)
+            if embed_model and ":" in str(embed_model):
+                models.append(embed_model)
+            if models:
+                out[tier_name] = models
+        return out or _FALLBACK_TIER_MODELS
+    except Exception as e:
+        print(f"⚠️  config.yaml load failed ({e}); using fallback model list")
+        return _FALLBACK_TIER_MODELS
+
+
+TIER_MODELS: Dict[str, List[str]] = _load_tier_models_from_config()
 
 
 def check_ollama() -> bool:
