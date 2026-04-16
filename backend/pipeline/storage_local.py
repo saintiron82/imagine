@@ -18,10 +18,15 @@ logger = logging.getLogger("pipeline.storage_local")
 _VISION_FIELD_MAP = {
     "caption": "mc_caption",
     "tags": "ai_tags",
+    "color": "dominant_color",
+    "style": "ai_style",
 }
 _VISION_PASSTHROUGH = {
     "image_type", "art_style", "scene_type", "ocr_text",
-    "dominant_color", "character_type", "item_type", "ui_type",
+    "dominant_color", "ai_style", "character_type", "item_type", "ui_type",
+    "color_palette", "time_of_day", "weather",
+    "structured_meta", "perceptual_hash", "dup_group_id", "caption_model",
+    "processing_status", "processing_error",  # P05 observability
 }
 
 
@@ -57,6 +62,16 @@ class LocalDBStorage:
             for key in _VISION_PASSTHROUGH:
                 if vision_result.get(key) is not None:
                     fields[key] = vision_result[key]
+
+            # Coerce list/dict values for TEXT columns. ai_tags and structured_meta
+            # are JSON-serialized downstream; everything else gets joined.
+            _JSON_FIELDS = {"ai_tags", "structured_meta"}
+            for k, v in list(fields.items()):
+                if isinstance(v, (list, tuple)) and k not in _JSON_FIELDS:
+                    fields[k] = ", ".join(str(x) for x in v if x)
+                elif isinstance(v, dict) and k not in _JSON_FIELDS:
+                    import json as _j
+                    fields[k] = _j.dumps(v, ensure_ascii=False)
 
             if fields:
                 self._writer.submit_vision(item.file_path, fields)

@@ -144,6 +144,28 @@ class PhaseRunner:
                         result = {}
                     vlm_elapsed = time.perf_counter() - t_vlm
 
+                    # Compute perceptual hash before closing image (P02)
+                    # Independent of VLM success/failure — runs even if caption empty
+                    if isinstance(result, dict):
+                        try:
+                            from backend.utils.dhash import dhash64
+                            hash_val = dhash64(img)
+                            # SQLite INTEGER is signed 64-bit
+                            if hash_val >= 2**63:
+                                hash_val -= 2**64
+                            result["perceptual_hash"] = hash_val
+                        except Exception as dhash_err:
+                            logger.debug(
+                                f"[PHASE:vision] dHash failed for "
+                                f"{item.file_name}: {dhash_err}"
+                            )
+                        # Record actual VLM that produced this result (P13/P14)
+                        result["caption_model"] = _vlm_model
+                        # Snapshot full VLM JSON for SQL-queryable structured_meta (P01)
+                        result["structured_meta"] = json.dumps(
+                            result, ensure_ascii=False
+                        )
+
                     img.close()
 
                     # Store result on item
@@ -173,12 +195,18 @@ class PhaseRunner:
                         logger.warning(
                             f"[PHASE:vision] {item.file_name}: {item.error}"
                         )
+                        if isinstance(result, dict):
+                            result["processing_status"] = "error"
+                            result["processing_error"] = f"vision: {item.error}"
                     else:
                         logger.debug(
                             f"[PHASE:vision] {item.file_name}: OK "
                             f"({vlm_elapsed:.1f}s, "
                             f"caption_len={len(_caption)})"
                         )
+                        if isinstance(result, dict):
+                            result["processing_status"] = "vision_done"
+                            result["processing_error"] = None
 
                     # Save incrementally
                     self.storage.save_vision(item, result)
@@ -193,6 +221,14 @@ class PhaseRunner:
                         f"{type(e).__name__}: {e}"
                     )
                     item.error = f"{type(e).__name__}: {e}"
+                    # P05: persist error status so future runs can identify failures
+                    try:
+                        self.storage.save_vision(item, {
+                            "processing_status": "error",
+                            "processing_error": f"vision: {item.error}",
+                        })
+                    except Exception:
+                        pass
                     self.progress.file_done(
                         "vision", processed + i, count, item.file_name, False)
 

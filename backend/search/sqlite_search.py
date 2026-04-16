@@ -726,11 +726,8 @@ class SqliteVectorSearch:
                 logger.warning(f"No structure embedding found for file_id={file_id}")
                 return []
 
-            embedding_json = row[0]
-            # Convert JSON string back to list/array if needed, but search_structure needs ndarray
-            # SQLite stores it as JSON string '[-0.1, 0.5, ...]'
-            vec_list = json.loads(embedding_json)
-            query_vec = np.array(vec_list, dtype=np.float32)
+            # vec_structure stores embeddings as raw float32 bytes (sqlite-vec vec0 native format)
+            query_vec = np.frombuffer(row[0], dtype=np.float32)
 
             return self.search_structure(query_vec, top_k, threshold)
 
@@ -768,8 +765,8 @@ class SqliteVectorSearch:
                 logger.warning(f"No VV embedding found for file_id={file_id}")
                 return []
 
-            vec_list = json.loads(row[0])
-            query_vec = np.array(vec_list, dtype=np.float32)
+            # vec_files stores embeddings as raw float32 bytes (sqlite-vec vec0 native format)
+            query_vec = np.frombuffer(row[0], dtype=np.float32)
 
             results = self.vector_search_by_embedding(query_vec, top_k + 1, threshold)
             # Exclude self from results
@@ -828,11 +825,14 @@ class SqliteVectorSearch:
                 exclude_expr = " OR ".join(f'"{t}"' for t in exclude_tokens)
                 match_expr = f"({match_expr}) NOT ({exclude_expr})"
 
-        # Triaxis: Load BM25 weights from config (2 columns: meta_strong, meta_weak)
+        # v3 P07: Load BM25 weights from config (5 columns)
         from backend.utils.config import get_config as _cfg
         cfg = _cfg()
         w_strong = cfg.get("search.fts.bm25_weights.meta_strong", 3.0)
         w_weak = cfg.get("search.fts.bm25_weights.meta_weak", 1.5)
+        w_caption = cfg.get("search.fts.bm25_weights.caption", 2.5)
+        w_ai_tags = cfg.get("search.fts.bm25_weights.ai_tags", 2.0)
+        w_classification = cfg.get("search.fts.bm25_weights.classification", 1.5)
 
         cursor = self.db.conn.cursor()
 
@@ -868,14 +868,15 @@ class SqliteVectorSearch:
                     f.character_type,
                     f.item_type,
                     f.ui_type,
-                    bm25(files_fts, ?, ?) AS fts_rank
+                    bm25(files_fts, ?, ?, ?, ?, ?) AS fts_rank
                 FROM files_fts fts
                 JOIN files f ON f.id = fts.rowid
                 WHERE files_fts MATCH ?
                   AND f.preview_only = 0
                 ORDER BY fts_rank
                 LIMIT ?
-            """, (w_strong, w_weak, match_expr, top_k))
+            """, (w_strong, w_weak, w_caption, w_ai_tags, w_classification,
+                  match_expr, top_k))
 
             results = []
             for row in cursor.fetchall():

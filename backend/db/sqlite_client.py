@@ -50,7 +50,7 @@ def _retry_on_locked(func):
 class SQLiteDB:
     """SQLite database client with sqlite-vec support."""
     CURRENT_DATA_BUILD_LEVEL = 2
-    CURRENT_FTS_INDEX_VERSION = 2
+    CURRENT_FTS_INDEX_VERSION = 3
 
     _META_KEY_DATA_BUILD_LEVEL = "data_build_level"
     _META_KEY_FTS_INDEX_VERSION = "fts_index_version"
@@ -264,8 +264,12 @@ class SQLiteDB:
     #   file_path, text_content, user_note, folder_tags,
     #   image_type, scene_type, art_style
     #
-    # NOTE: caption column will be added when AI caption feature is implemented
-    _FTS_COLUMNS = ['meta_strong', 'meta_weak']
+    # v3 P07: 5-column FTS — caption, ai_tags, classification added.
+    # caption: mc_caption full text (BM25 2.5 — strong VLM signal)
+    # ai_tags: VLM-generated tags joined (BM25 2.0)
+    # classification: image_type/scene_type/art_style/character_type/item_type/
+    #                 time_of_day/weather joined (BM25 1.5 — categorical)
+    _FTS_COLUMNS = ['meta_strong', 'meta_weak', 'caption', 'ai_tags', 'classification']
 
     def _ensure_fts(self):
         """Ensure FTS5 table exists with correct schema and is populated."""
@@ -320,7 +324,7 @@ class SQLiteDB:
 
     def _rebuild_fts(self):
         """Drop and recreate FTS5 table, backfilling from files table."""
-        logger.info("Rebuilding FTS5 table (Triaxis: 2 columns, metadata-only)...")
+        logger.info("Rebuilding FTS5 table (v3 P07: 5 columns with VLM output)...")
 
         # Drop old FTS + triggers, then create fresh
         self.conn.executescript("""
@@ -331,14 +335,17 @@ class SQLiteDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
                 meta_strong,
-                meta_weak
+                meta_weak,
+                caption,
+                ai_tags,
+                classification
             );
 
-            -- Triggers: meta_strong, meta_weak need Python (complex JSON walking)
-            -- Set to '' here; patched immediately after INSERT in insert_file()
+            -- Triggers: all columns need Python builders (complex JSON walking).
+            -- Empty inserts get patched by _refresh_fts_row after INSERT/UPDATE.
             CREATE TRIGGER IF NOT EXISTS files_fts_insert AFTER INSERT ON files BEGIN
-                INSERT INTO files_fts(rowid, meta_strong, meta_weak)
-                VALUES (new.id, '', '');
+                INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification)
+                VALUES (new.id, '', '', '', '', '');
             END;
 
             -- UPDATE trigger removed: FTS is managed by Python (_refresh_fts_row)
@@ -350,12 +357,13 @@ class SQLiteDB:
             END;
         """)
 
-        # Backfill: Triaxis 2-column FTS (metadata-only)
+        # Backfill: v3 P07 5-column FTS
         cursor = self.conn.execute(
             "SELECT id, file_path, file_name, mc_caption, ai_tags, "
             "metadata, ocr_text, user_note, user_tags, "
             "folder_path, relative_path, "
-            "image_type, scene_type, art_style, folder_tags FROM files"
+            "image_type, scene_type, art_style, folder_tags, "
+            "character_type, item_type, time_of_day, weather FROM files"
         )
 
         rows_inserted = 0
@@ -367,13 +375,16 @@ class SQLiteDB:
             except (json.JSONDecodeError, TypeError):
                 meta = {}
 
-            # Build 2-column FTS (metadata-only, no caption)
             meta_strong = self._build_fts_meta_strong(row, meta)
             meta_weak = self._build_fts_meta_weak(row, meta)
+            caption_col = self._build_fts_caption(row)
+            ai_tags_col = self._build_fts_ai_tags(row)
+            classification_col = self._build_fts_classification(row)
 
             self.conn.execute(
-                "INSERT INTO files_fts(rowid, meta_strong, meta_weak) VALUES (?, ?, ?)",
-                (file_id, meta_strong, meta_weak)
+                "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (file_id, meta_strong, meta_weak, caption_col, ai_tags_col, classification_col)
             )
             rows_inserted += 1
 
@@ -591,7 +602,40 @@ class SQLiteDB:
 
         return ' '.join(str(p) for p in parts if p)
 
-    # Triaxis: _build_fts_caption() removed - AI content now handled by MV
+    @staticmethod
+    def _build_fts_caption(row) -> str:
+        """v3 P07: full mc_caption text. BM25 weight 2.5 (strong VLM signal)."""
+        cap = SQLiteDB._row_value(row, "mc_caption", 3)
+        return str(cap) if cap else ''
+
+    @staticmethod
+    def _build_fts_ai_tags(row) -> str:
+        """v3 P07: VLM-generated tags joined. BM25 weight 2.0."""
+        raw = SQLiteDB._row_value(row, "ai_tags", 4)
+        if not raw:
+            return ''
+        try:
+            tags = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(tags, list):
+                return ' '.join(str(t) for t in tags if t)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return str(raw)
+
+    @staticmethod
+    def _build_fts_classification(row) -> str:
+        """v3 P07: VLM classification fields joined. BM25 weight 1.5 (categorical)."""
+        keys = (
+            ("image_type", 11), ("scene_type", 12), ("art_style", 13),
+            ("character_type", 15), ("item_type", 16),
+            ("time_of_day", 17), ("weather", 18),
+        )
+        parts = []
+        for key, idx in keys:
+            val = SQLiteDB._row_value(row, key, idx)
+            if val:
+                parts.append(str(val))
+        return ' '.join(parts)
 
     # ── Phase-specific storage methods (v3.3) ─────────────────────────
 
@@ -602,7 +646,8 @@ class SQLiteDB:
                 "SELECT id, file_path, file_name, mc_caption, ai_tags, "
                 "metadata, ocr_text, user_note, user_tags, "
                 "folder_path, relative_path, "
-                "image_type, scene_type, art_style, folder_tags "
+                "image_type, scene_type, art_style, folder_tags, "
+                "character_type, item_type, time_of_day, weather "
                 "FROM files WHERE id = ?",
                 (file_id,)
             ).fetchone()
@@ -616,10 +661,16 @@ class SQLiteDB:
 
                 meta_strong = self._build_fts_meta_strong(file_data, meta)
                 meta_weak = self._build_fts_meta_weak(file_data, meta)
+                caption_col = self._build_fts_caption(file_data)
+                ai_tags_col = self._build_fts_ai_tags(file_data)
+                classification_col = self._build_fts_classification(file_data)
 
                 cursor.execute(
-                    "UPDATE files_fts SET meta_strong = ?, meta_weak = ? WHERE rowid = ?",
-                    (meta_strong, meta_weak, file_id)
+                    "UPDATE files_fts SET meta_strong = ?, meta_weak = ?, "
+                    "caption = ?, ai_tags = ?, classification = ? "
+                    "WHERE rowid = ?",
+                    (meta_strong, meta_weak, caption_col, ai_tags_col,
+                     classification_col, file_id)
                 )
         except Exception as e:
             logger.warning(f"⚠️ FTS refresh failed for file_id={file_id}: {e}")
@@ -764,6 +815,7 @@ class SQLiteDB:
                 'image_type', 'art_style', 'color_palette', 'scene_type',
                 'time_of_day', 'weather', 'character_type', 'item_type', 'ui_type',
                 'structured_meta', 'perceptual_hash', 'dup_group_id', 'caption_model',
+                'processing_status', 'processing_error',  # P05 observability
             }
 
             updates = {}

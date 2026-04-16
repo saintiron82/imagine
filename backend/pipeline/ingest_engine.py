@@ -1104,9 +1104,20 @@ def phase_store_metadata(parsed_files: List[ParsedFile]) -> int:
             continue
         try:
             pf.parser._save_json(pf.meta, pf.file_path)
+            meta_dict = pf.meta.model_dump(mode="json")
+            # Fallback: ensure modified_at populated from stat (P05).
+            # model_dump(mode="json") emits ISO strings; if parser left it None,
+            # backfill from filesystem here so DB column never stays NULL.
+            if not meta_dict.get("modified_at"):
+                try:
+                    meta_dict["modified_at"] = datetime.fromtimestamp(
+                        pf.file_path.stat().st_mtime
+                    ).isoformat()
+                except Exception:
+                    pass
             fut = writer.submit_metadata(
                 file_path=_nfc(pf.file_path),
-                metadata=pf.meta.model_dump()
+                metadata=meta_dict,
             )
             pending.append((pf, fut))
         except Exception as e:
