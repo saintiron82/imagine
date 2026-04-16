@@ -6,7 +6,7 @@ and serves as the contract between parsers and the vector database.
 """
 
 from typing import Dict, List, Literal, Optional, Tuple
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime
 
 
@@ -26,17 +26,44 @@ class LayerInfo(BaseModel):
 class AssetMeta(BaseModel):
     """
     Main metadata model for image assets.
-    
+
     This model is designed to be directly compatible with vector DB payload.
     All parsed images (PSD, PNG, JPG) produce this unified format.
     """
-    
+
+    # v3 P05: validate on assignment so VLM list/dict outputs get coerced
+    # by _coerce_text_field even when set via meta.dominant_color = [...]
+    model_config = ConfigDict(validate_assignment=True)
+
     # === File Information ===
     file_path: str = Field(..., description="Absolute path to the source file")
     file_name: str = Field(..., description="File name with extension")
     file_size: int = Field(..., description="File size in bytes")
-    format: Literal['PSD', 'PNG', 'JPG'] = Field(..., description="Image format")
+    format: str = Field(..., description="Image format (lowercase canonical: psd/png/jpg)")
     resolution: Tuple[int, int] = Field(..., description="(width, height) in pixels")
+
+    @field_validator("format", mode="before")
+    @classmethod
+    def _normalize_format(cls, v):
+        """v3 P08: accept any case + leading dot, normalize to lowercase canonical."""
+        if v is None:
+            return v
+        s = str(v).lower().lstrip(".")
+        return "jpg" if s == "jpeg" else s
+
+    @field_validator(
+        "dominant_color", "ai_style", "color_palette",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_text_field(cls, v):
+        """v3 P05: VLM may return list/tuple for color/style fields. Join to string."""
+        if isinstance(v, (list, tuple)):
+            return ", ".join(str(x) for x in v if x)
+        if isinstance(v, dict):
+            import json as _j
+            return _j.dumps(v, ensure_ascii=False)
+        return v
     
     # === Vector Source Fields ===
     # These fields are used to generate vectors in Phase 2

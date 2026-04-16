@@ -53,10 +53,10 @@ class ImageParser(BaseParser):
             with Image.open(file_path) as img:
                 width, height = img.size
                 
-                # Determine format
-                img_format = file_path.suffix.upper().lstrip('.')
-                if img_format == 'JPEG':
-                    img_format = 'JPG'
+                # Determine format (v3 P08: lowercase canonical)
+                img_format = file_path.suffix.lower().lstrip('.')
+                if img_format == 'jpeg':
+                    img_format = 'jpg'
                 
                 # Generate thumbnail
                 thumbnail_path = self._create_thumbnail(img, file_path)

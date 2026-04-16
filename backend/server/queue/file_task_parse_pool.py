@@ -250,6 +250,19 @@ class FileTaskParsePool(BaseAheadPool):
         except Exception as e:
             return f"metadata upsert failed: {e}"
 
+        # P10: record parse outcome via update_vision_fields (which accepts
+        # processing_status/processing_error). Lets SQL find rows that need re-parsing.
+        try:
+            status_fields = (
+                {"processing_status": "parse_fallback",
+                 "processing_error": "psd-tools could not extract layers"}
+                if parse_note == "thumbnail_only"
+                else {"processing_status": "parsed"}
+            )
+            self.db.update_vision_fields(nfc_path, status_fields)
+        except Exception as e:
+            logger.debug(f"FileTaskParse: status record failed: {e}")
+
         # Update thumbnail_url in files table
         if server_thumb_path:
             try:
@@ -289,10 +302,9 @@ class FileTaskParsePool(BaseAheadPool):
             thumb_path = file_p.parent / f"{file_p.stem}_thumb.png"
             thumb.save(str(thumb_path), "PNG")
 
+            # P08: lowercase canonical format
             ext = file_p.suffix.lower().lstrip(".")
-            fmt = "PSD" if ext == "psd" else ext.upper()
-            if fmt == "JPG":
-                fmt = "JPG"
+            fmt = "jpg" if ext == "jpeg" else ext
 
             meta = AssetMeta(
                 file_path=file_path,

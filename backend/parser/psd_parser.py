@@ -83,7 +83,7 @@ class PSDParser(BaseParser):
                 file_path=str(file_path.absolute()),
                 file_name=file_path.name,
                 file_size=file_stats.st_size,
-                format='PSD',
+                format='psd',  # v3 P08: lowercase canonical
                 resolution=(width, height),
                 visual_source_path=str(thumbnail_path) if thumbnail_path else None,
                 semantic_tags=semantic_tags,
