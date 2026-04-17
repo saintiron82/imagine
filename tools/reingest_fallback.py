@@ -66,29 +66,31 @@ def _select_targets(conn, scope: str, limit: int, resume: bool):
     return [row[0] for row in conn.execute(sql).fetchall()]
 
 
-def _run_batch(paths: list[str], no_skip: bool = True) -> tuple[bool, str]:
-    """Invoke ingest_engine --files for a single batch."""
-    payload = json.dumps(paths, ensure_ascii=False)
-    cmd = [sys.executable, "-m", "backend.pipeline.ingest_engine",
-           "--files", payload]
-    if no_skip:
-        cmd.append("--no-skip")
+def _run_single(path: str) -> tuple[bool, str]:
+    """Invoke ingest_engine --file for a single file (--no-skip).
 
-    # stdin=DEVNULL with /dev/zero substitute keeps watchdog from killing us
+    Uses --file (not --files) because the single-file process_file() path
+    correctly stores all columns including layer_tree, structured_meta,
+    width/height. The batch --files path has a known issue with PhaseRunner
+    vision result DB reflection.
+    """
+    cmd = [sys.executable, "-m", "backend.pipeline.ingest_engine",
+           "--file", path, "--no-skip"]
+
     try:
         with open("/dev/zero", "rb") as devzero:
             r = subprocess.run(
                 cmd, cwd=str(PROJECT_ROOT),
                 stdin=devzero,
                 capture_output=True, text=True,
-                timeout=3600 * 4,  # 4-hour ceiling per batch
+                timeout=600,  # 10 min per file
             )
         if r.returncode != 0:
-            tail = "\n".join(r.stderr.splitlines()[-15:])
+            tail = "\n".join(r.stderr.splitlines()[-10:])
             return False, f"exit={r.returncode}\n{tail}"
         return True, ""
     except subprocess.TimeoutExpired:
-        return False, "timeout (>4h)"
+        return False, "timeout (>10min)"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
 
@@ -144,35 +146,32 @@ def main():
         logger.info("No targets — nothing to do.")
         return
 
-    n_batches = (len(targets) + args.batch - 1) // args.batch
     succeeded = 0
     failed = 0
     t0 = time.time()
-    for i, start in enumerate(range(0, len(targets), args.batch)):
-        batch = targets[start:start + args.batch]
-        bidx = i + 1
-        logger.info(f"Batch {bidx}/{n_batches}: {len(batch)} files")
-        t_batch = time.time()
-        ok, err = _run_batch(batch)
-        dt = time.time() - t_batch
+    total = len(targets)
+    for i, path in enumerate(targets):
+        idx = i + 1
+        logger.info(f"[{idx}/{total}] {Path(path).name}")
+        t_file = time.time()
+        ok, err = _run_single(path)
+        dt = time.time() - t_file
         if ok:
-            succeeded += len(batch)
-            logger.info(f"Batch {bidx} OK in {dt:.0f}s "
-                        f"({len(batch) / dt:.2f} files/s)")
+            succeeded += 1
+            logger.info(f"  OK ({dt:.1f}s)")
         else:
-            failed += len(batch)
-            logger.error(f"Batch {bidx} FAIL after {dt:.0f}s: {err}")
+            failed += 1
+            logger.error(f"  FAIL ({dt:.1f}s): {err}")
 
-        # ETA
-        elapsed = time.time() - t0
-        done_files = succeeded + failed
-        if done_files:
-            rate = done_files / elapsed
-            remaining = len(targets) - done_files
+        # ETA every 5 files
+        if idx % 5 == 0 or idx == total:
+            elapsed = time.time() - t0
+            rate = idx / elapsed if elapsed else 0
+            remaining = total - idx
             eta = remaining / rate if rate else 0
             logger.info(
-                f"Progress: {done_files}/{len(targets)} "
-                f"({rate:.2f} files/s, ETA {eta / 60:.0f} min)"
+                f"Progress: {idx}/{total} ok={succeeded} fail={failed} "
+                f"({rate:.2f} f/s, ETA {eta / 60:.0f} min)"
             )
 
     logger.info(f"DONE. {succeeded} succeeded, {failed} failed "
