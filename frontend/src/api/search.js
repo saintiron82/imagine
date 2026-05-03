@@ -51,10 +51,3 @@ export async function searchSemantic(opts) {
 export async function searchKeyword(opts) {
   return apiClient.post('/api/v1/search/keyword', opts);
 }
-
-/**
- * Find similar images to a given file.
- */
-export async function searchSimilar(fileId, limit = 20) {
-  return apiClient.post(`/api/v1/search/similar/${fileId}`, { limit });
-}

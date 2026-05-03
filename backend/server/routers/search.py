@@ -46,6 +46,9 @@ class SearchRequest(BaseModel):
     threshold: float = Field(0.0, ge=0.0, le=1.0)
     filters: Optional[Dict[str, Any]] = None
     diagnostic: bool = False
+    use_codex: bool = True
+    effort: Optional[str] = None              # accepted for local/HTTP parity
+    file_ids: Optional[List[int]] = Field(None, max_length=5000)
 
 
 # ── Endpoints ────────────────────────────────────────────────
@@ -90,18 +93,14 @@ def search_keyword(
     return _do_search(req, mode="fts", user=_user, request=request)
 
 
-@router.post("/similar/{file_id}")
-def search_similar(
-    file_id: int,
+@router.post("/structure")
+def search_structure(
+    req: SearchRequest,
     request: Request,
-    limit: int = 20,
     _user: dict = Depends(get_current_user),
 ):
-    """Find similar images to a given file (VV + Structure)."""
-    return _do_search(
-        SearchRequest(query_file_id=file_id, limit=limit),
-        mode="triaxis", user=_user, request=request,
-    )
+    """Structure-only search (DINOv2 structural similarity)."""
+    return _do_search(req, mode="structure", user=_user, request=request)
 
 
 def _do_search(req: SearchRequest, mode: str,
@@ -121,6 +120,8 @@ def _do_search(req: SearchRequest, mode: str,
             query_images=req.query_images,
             image_search_mode=req.image_search_mode,
             query_file_id=req.query_file_id,
+            use_codex=req.use_codex,
+            file_ids=set(req.file_ids) if req.file_ids else None,
         )
 
         if req.diagnostic and isinstance(result_data, tuple):

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink, Archive } from 'lucide-react';
+import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink, Archive, Sparkles } from 'lucide-react';
 // SettingsModal removed — settings now in dedicated Settings tab
 import ImageSearchInput from './ImageSearchInput';
 import SearchHistorySidebar from './SearchHistorySidebar';
@@ -454,7 +454,7 @@ const MetadataModal = ({ metadata, onClose, onNavigateToFolder }) => {
 };
 
 // Search Result Card Component (memoized to avoid re-renders on scroll/parent update)
-const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavigateToFolder }) => {
+const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavigateToFolder, onFindSimilar }) => {
     const { t } = useLocale();
     const dbPath = result.db_path || result.path;
     const localPath = result.resolved_path || result.path;
@@ -544,24 +544,33 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                 {/* Line 1: filename + folder + action buttons */}
                 <div className="flex items-center gap-1">
                     <div className="text-[11px] font-medium text-white truncate flex-1">{fileName}</div>
-                    {isElectron && (
-                        <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                                onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(localPath); }}
-                                className="p-0.5 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
-                                title={t('action.show_in_folder')}
-                            >
-                                <FolderOpen size={12} />
-                            </button>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(localPath); }}
-                                className="p-0.5 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
-                                title={t('action.open_file')}
-                            >
-                                <ExternalLink size={12} />
-                            </button>
-                        </div>
-                    )}
+                    <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onFindSimilar?.(result.id); }}
+                            className="p-0.5 hover:bg-blue-600/40 rounded text-gray-400 hover:text-blue-300 transition-colors"
+                            title={t('action.find_similar_visual')}
+                        >
+                            <Sparkles size={12} />
+                        </button>
+                        {isElectron && (
+                            <>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); window.electron?.fs?.showInFolder(localPath); }}
+                                    className="p-0.5 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                                    title={t('action.show_in_folder')}
+                                >
+                                    <FolderOpen size={12} />
+                                </button>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); window.electron?.fs?.openFile(localPath); }}
+                                    className="p-0.5 hover:bg-gray-600 rounded text-gray-400 hover:text-white transition-colors"
+                                    title={t('action.open_file')}
+                                >
+                                    <ExternalLink size={12} />
+                                </button>
+                            </>
+                        )}
+                    </div>
                 </div>
                 {/* Line 2: folder path + caption (single truncated line) */}
                 <div className="text-[9px] text-gray-500 truncate mt-0.5" title={result.mc_caption || ''}>
@@ -713,7 +722,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
+const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, onFindSimilar, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -912,6 +921,7 @@ const SearchResults = React.memo(({ results, isSearching, searchStage, hasResult
                                                 onShowMeta={onShowMeta}
                                                 onContextMenu={(e) => onContextMenu(e, result)}
                                                 onNavigateToFolder={onNavigateToFolder}
+                                                onFindSimilar={onFindSimilar}
                                             />
                                         </div>
                                     ))}
@@ -1545,6 +1555,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 isLoadingMore={isLoadingMore}
                 onLoadMore={handleLoadMore}
                 onNavigateToFolder={onNavigateToFolder}
+                onFindSimilar={(fileId) => triggerStructureSearch(fileId, 'vector')}
                 activeFilters={activeFilters}
                 onRemoveFilter={(key) => setActiveFilters(prev => ({ ...prev, [key]: undefined }))}
                 searchScope={searchScope}

@@ -61,7 +61,7 @@ export async function searchImages(options) {
     vector: '/api/v1/search/visual',
     text_vector: '/api/v1/search/semantic',
     fts: '/api/v1/search/keyword',
-    structure: '/api/v1/search/triaxis',
+    structure: '/api/v1/search/structure',
   };
   const endpoint = modeMap[options.mode] || '/api/v1/search/triaxis';
 

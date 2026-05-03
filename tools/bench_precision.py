@@ -21,12 +21,14 @@ Usage:
     python tools/bench_precision.py --count 30
     python tools/bench_precision.py --count 30 --judge-mode keyword  # fast, no LLM
     python tools/bench_precision.py --count 30 --judge-mode llm      # accurate, slower
+    python tools/bench_precision.py --count 30 --export-standard-dir benchmarks/results/weak_search_eval_precision
 """
 
 import argparse
 import json
 import random
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -39,6 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmarks" / "results"
+TAG_FILTER_VERSION = "visible_known_tags_v3"
 
 # ── Korean tag mapping (reuse from realworld bench) ────────────────────
 
@@ -93,6 +96,18 @@ CONCRETE_OBJECTS = set(TAG_KO_MAP.keys()) | {
     "chandelier", "rug", "carpet", "vase",
 }
 
+_FILE_LIKE_TAG_RE = re.compile(r'\.(?:psd|png|jpe?g|webp|gif|bmp|tiff?)$', re.IGNORECASE)
+_SYSTEM_TAG_PREFIX_RE = re.compile(
+    r'^(?:imagine|imagine_dl|imagine_worker|imageparser|uploaded_media|thumb|thumbnail|preview)[_-]',
+    re.IGNORECASE,
+)
+_GENERIC_CODE_TAG_RE = re.compile(
+    r'^(?:platform|number|file|img|image|cos|bg|fg)[_-]?\d+[a-z0-9_-]*$',
+    re.IGNORECASE,
+)
+_SHORT_ASSET_CODE_RE = re.compile(r'^[a-z]{1,4}-\d{1,5}$', re.IGNORECASE)
+_HASHLIKE_ASSET_CODE_RE = re.compile(r'^[a-z]?\d+[a-z0-9]{4,}$', re.IGNORECASE)
+
 
 def _parse_tags(tags_raw):
     if not tags_raw:
@@ -104,6 +119,50 @@ def _parse_tags(tags_raw):
     except (json.JSONDecodeError, TypeError):
         pass
     return [t.strip() for t in tags_raw.split(",") if t.strip()]
+
+
+def _is_noisy_benchmark_tag(tag: str) -> bool:
+    """Exclude system/file/code tags from generated benchmark queries."""
+    raw = str(tag or "").strip()
+    if not raw:
+        return True
+
+    lowered = raw.lower()
+    compact = re.sub(r'[^a-z0-9]+', '', lowered)
+
+    if _FILE_LIKE_TAG_RE.search(lowered):
+        return True
+    if _SYSTEM_TAG_PREFIX_RE.search(lowered):
+        return True
+    if _GENERIC_CODE_TAG_RE.fullmatch(lowered):
+        return True
+    if _SHORT_ASSET_CODE_RE.fullmatch(lowered):
+        return True
+    if _HASHLIKE_ASSET_CODE_RE.fullmatch(compact):
+        return True
+    return False
+
+
+def _is_benchmark_tag_candidate(tag: str) -> bool:
+    """Return True when a tag is suitable as a user-facing query element."""
+    tag_text = str(tag or "").strip()
+    if len(tag_text) <= 2:
+        return False
+
+    tag_lower = tag_text.lower()
+    tag_words = tag_lower.replace("_", " ").split()
+    if tag_lower in SKIP_TAGS or (tag_words and tag_words[0] in SKIP_TAGS):
+        return False
+    if _is_noisy_benchmark_tag(tag_text):
+        return False
+    return True
+
+
+def _is_known_visible_tag(tag: str) -> bool:
+    """Return True when a tag maps to a known visible object/scene term."""
+    tag_lower = str(tag or "").lower().replace("_", " ")
+    first_word = tag_lower.split()[0] if " " in tag_lower else tag_lower
+    return tag_lower in CONCRETE_OBJECTS or first_word in CONCRETE_OBJECTS
 
 
 def _tag_to_korean(tag):
@@ -127,14 +186,21 @@ def _folder_short(folder_path):
 # ── Query + Ground Truth Generation ───────────────────────────────────
 
 
-def generate_queries_with_gt(db, count: int, judge_mode: str = "keyword") -> List[dict]:
+def generate_queries_with_gt(
+    db,
+    count: int,
+    judge_mode: str = "keyword",
+    scope_ground_truth: bool = False,
+) -> List[dict]:
     """
     Generate queries and find ground truth (relevant image sets) from DB.
 
     For each query:
       1. Pick a source image, extract 2 visual elements
       2. Build natural Korean query
-      3. Find ALL images in DB whose MC matches those elements → ground truth set
+      3. Find images whose MC matches those elements → ground truth set
+      4. If scope_ground_truth=True and the query has a folder, intersect
+         relevance with the folder scope so scoped queries measure scoped intent
     """
     cursor = db.conn.cursor()
 
@@ -146,7 +212,7 @@ def generate_queries_with_gt(db, count: int, judge_mode: str = "keyword") -> Lis
           AND ai_tags IS NOT NULL AND ai_tags != ''
         ORDER BY RANDOM()
         LIMIT ?
-    """, (count * 3,))
+    """, (count * 10,))
     columns = [d[0] for d in cursor.description]
     source_rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -158,16 +224,10 @@ def generate_queries_with_gt(db, count: int, judge_mode: str = "keyword") -> Lis
 
         tags = _parse_tags(row.get("ai_tags", ""))
         # Only pick concrete visible objects, not abstract adjectives
-        concrete = [t for t in tags
-                    if t.lower() not in SKIP_TAGS
-                    and len(t) > 2
-                    and not t.startswith("imagine_worker")  # system tags
-                    and not any(c.isdigit() for c in t[:3])  # file codes
-                    ]
+        concrete = [t for t in tags if _is_benchmark_tag_candidate(t)]
         # Prefer tags that are in our known objects list
-        known = [t for t in concrete if t.lower().replace("_", " ") in CONCRETE_OBJECTS
-                 or t.lower().split("_")[0] in CONCRETE_OBJECTS]
-        pool = known if len(known) >= 2 else concrete
+        known = [t for t in concrete if _is_known_visible_tag(t)]
+        pool = known
         if len(pool) < 2:
             continue
 
@@ -175,6 +235,8 @@ def generate_queries_with_gt(db, count: int, judge_mode: str = "keyword") -> Lis
         el1_en, el2_en = picks[0], picks[1]
         el1_ko = _tag_to_korean(el1_en)
         el2_ko = _tag_to_korean(el2_en)
+        if el1_ko.strip().lower() == el2_ko.strip().lower():
+            continue
         folder = _folder_short(row.get("folder_path", "") or "")
 
         # Build query
@@ -185,10 +247,14 @@ def generate_queries_with_gt(db, count: int, judge_mode: str = "keyword") -> Lis
 
         # Find ground truth: all images whose tags contain BOTH elements
         gt_ids = _find_ground_truth(cursor, el1_en, el2_en, judge_mode)
+        if scope_ground_truth and folder:
+            gt_ids = _filter_ground_truth_to_folder(cursor, gt_ids, folder)
 
         if len(gt_ids) < 2:
             # Too few matches — try with just 1 element
             gt_ids = _find_ground_truth_single(cursor, el1_en)
+            if scope_ground_truth and folder:
+                gt_ids = _filter_ground_truth_to_folder(cursor, gt_ids, folder)
 
         # Skip if GT too small or too large (>100 means query is too generic)
         if len(gt_ids) < 2 or len(gt_ids) > 100:
@@ -203,9 +269,25 @@ def generate_queries_with_gt(db, count: int, judge_mode: str = "keyword") -> Lis
             "folder": folder,
             "gt_ids": gt_ids,
             "gt_count": len(gt_ids),
+            "scope_ground_truth": bool(scope_ground_truth and folder),
         })
 
     return queries
+
+
+def _filter_ground_truth_to_folder(cursor, gt_ids: Set[int], folder: str) -> Set[int]:
+    """Intersect weak relevance labels with the query folder scope."""
+    if not gt_ids or not folder:
+        return set(gt_ids)
+
+    cursor.execute("""
+        SELECT id
+        FROM files
+        WHERE preview_only = 0
+          AND (folder_path LIKE ? OR file_path LIKE ?)
+    """, (f"%{folder}%", f"%{folder}%"))
+    folder_ids = {row[0] for row in cursor.fetchall()}
+    return set(gt_ids) & folder_ids
 
 
 def _find_ground_truth(cursor, el1: str, el2: str, judge_mode: str) -> Set[int]:
@@ -308,7 +390,12 @@ def evaluate_precision(
         gt_ids = q["gt_ids"]
         ranked_ids = search_fn(q["query"])
 
-        pq = {"file": q["file_name"], "query": q["query"][:60], "gt_size": len(gt_ids)}
+        pq = {
+            "file": q["file_name"],
+            "query": q["query"][:60],
+            "gt_size": len(gt_ids),
+            "ranked_ids": list(ranked_ids),
+        }
 
         for k in k_values:
             top_k_ids = set(ranked_ids[:k])
@@ -332,6 +419,190 @@ def evaluate_precision(
         "precision": mean_precision,
         "recall": mean_recall,
         "per_query": per_query,
+    }
+
+
+# ── Standard Search Evaluation Export ─────────────────────────────────
+
+
+def _write_jsonl(path: Path, rows: List[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False, default=str))
+            f.write("\n")
+
+
+def _standard_query_type(query: dict) -> str:
+    return "scoped" if query.get("folder") else "semantic"
+
+
+def _git_metadata() -> dict:
+    def run_git(args):
+        try:
+            return subprocess.check_output(
+                ["git", *args],
+                cwd=PROJECT_ROOT,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except Exception:
+            return None
+
+    status = run_git(["status", "--porcelain"])
+    return {
+        "commit": run_git(["rev-parse", "HEAD"]),
+        "dirty": bool(status),
+    }
+
+
+def build_standard_eval_rows(
+    queries: List[dict],
+    all_results: Dict[str, dict],
+    run_id: str,
+    created_at: str,
+    label_source: str = "weak",
+    label_version: str = "precision_keyword_v1",
+) -> Tuple[List[dict], List[dict], List[dict]]:
+    """Convert this benchmark run into Search Evaluation V1 JSONL rows."""
+    query_rows = []
+    label_rows = []
+    run_rows = []
+    query_ids = []
+
+    for index, query in enumerate(queries, start=1):
+        query_id = str(query.get("query_id") or f"precision-q{index:04d}")
+        query_ids.append(query_id)
+
+        query_rows.append({
+            "query_id": query_id,
+            "query_text": str(query["query"]),
+            "query_type": _standard_query_type(query),
+            "locale": "ko-KR",
+            "created_at": created_at,
+        })
+
+        for item_id in sorted(query["gt_ids"], key=lambda value: str(value)):
+            label_rows.append({
+                "query_id": query_id,
+                "item_id": str(item_id),
+                "relevance": 2,
+                "label_source": label_source,
+                "label_version": label_version,
+            })
+
+    for engine_id in sorted(all_results):
+        per_query = all_results[engine_id].get("per_query", [])
+        for query_id, query_result in zip(query_ids, per_query):
+            ranked_ids = query_result.get("ranked_ids", [])
+            for rank, item_id in enumerate(ranked_ids, start=1):
+                run_rows.append({
+                    "run_id": run_id,
+                    "engine_id": engine_id,
+                    "query_id": query_id,
+                    "rank": rank,
+                    "item_id": str(item_id),
+                    # bench_precision adapters currently return ranked IDs only.
+                    "score": 0.0,
+                    "latency_ms": None,
+                    "error": None,
+                    "cost_usd": None,
+                })
+
+    return query_rows, label_rows, run_rows
+
+
+def export_standard_evaluation(
+    output_dir: Path,
+    queries: List[dict],
+    all_results: Dict[str, dict],
+    run_id: str,
+    created_at: str,
+    judge_mode: str,
+    k_values: List[int],
+    scope_ground_truth: bool = False,
+) -> Dict[str, Path]:
+    """Write Search Evaluation V1 artifacts and a derived summary report."""
+    from tools.evaluate_search_quality import (
+        build_markdown as build_eval_markdown,
+        evaluate_all,
+        load_labels,
+        load_queries,
+        load_run,
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    queries_path = output_dir / "queryset.jsonl"
+    labels_path = output_dir / "labels.jsonl"
+    run_path = output_dir / "run_results.jsonl"
+    summary_path = output_dir / "evaluation.json"
+    report_path = output_dir / "evaluation.md"
+    manifest_path = output_dir / "manifest.json"
+
+    query_rows, label_rows, run_rows = build_standard_eval_rows(
+        queries=queries,
+        all_results=all_results,
+        run_id=run_id,
+        created_at=created_at,
+        label_source="weak",
+        label_version=(
+            f"precision_{judge_mode}_scoped_v2"
+            if scope_ground_truth
+            else f"precision_{judge_mode}_v1"
+        ),
+    )
+    _write_jsonl(queries_path, query_rows)
+    _write_jsonl(labels_path, label_rows)
+    _write_jsonl(run_path, run_rows)
+
+    summary = evaluate_all(
+        labels=load_labels(labels_path),
+        run_groups=load_run(run_path),
+        queries=load_queries(queries_path),
+        k_values=tuple(k_values),
+    )
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.write_text(build_eval_markdown(summary), encoding="utf-8")
+
+    manifest = {
+        "schema_version": "search_evaluation_v1",
+        "evaluation_status": "weak_labels_only",
+        "created_at": created_at,
+        "run_id": run_id,
+        "source": "tools/bench_precision.py",
+        "git": _git_metadata(),
+        "judge_mode": judge_mode,
+        "scope_ground_truth": scope_ground_truth,
+        "tag_filter_version": TAG_FILTER_VERSION,
+        "query_count": len(query_rows),
+        "label_count": len(label_rows),
+        "run_result_count": len(run_rows),
+        "engines": sorted(all_results),
+        "k_values": k_values,
+        "label_semantics": (
+            "weak labels generated from keyword/db-derived ground truth, intersected with folder scope for scoped queries; not human reviewed"
+            if scope_ground_truth
+            else "weak labels generated from keyword/db-derived ground truth; not human reviewed"
+        ),
+        "quality_claim_policy": "do not use this artifact alone to claim search quality improvement",
+        "score_semantics": "rank-only export; score is 0.0 because bench_precision returns IDs without engine scores",
+        "files": {
+            "queries": queries_path.name,
+            "labels": labels_path.name,
+            "run_results": run_path.name,
+            "evaluation_json": summary_path.name,
+            "evaluation_md": report_path.name,
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "queries": queries_path,
+        "labels": labels_path,
+        "run_results": run_path,
+        "evaluation_json": summary_path,
+        "evaluation_md": report_path,
+        "manifest": manifest_path,
     }
 
 
@@ -468,15 +739,25 @@ def main():
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--judge-mode", choices=["keyword", "llm"], default="keyword",
                         help="keyword=fast tag matching, llm=LLM judges relevance")
+    parser.add_argument("--scope-ground-truth", action="store_true",
+                        help="for scoped queries, restrict weak labels to the query folder scope")
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--run-id", default=None, help="run_id for standard Search Evaluation export")
+    parser.add_argument("--export-standard-dir", type=Path, default=None,
+                        help="write Search Evaluation V1 JSONL artifacts and evaluation report")
     args = parser.parse_args()
 
     random.seed(42)
     timing = {}
+    completed_at = datetime.now().astimezone()
+    created_at = completed_at.isoformat(timespec="seconds")
+    timestamp_label = completed_at.strftime("%Y%m%d_%H%M%S")
+    run_id = args.run_id or (args.output.stem if args.output else f"precision_{timestamp_label}")
 
     print("=" * 70)
     print("  Precision@K Benchmark — Real Search Quality")
     print(f"  Judge mode: {args.judge_mode}")
+    print(f"  Scope ground truth: {args.scope_ground_truth}")
     print("=" * 70)
 
     # Load
@@ -494,7 +775,12 @@ def main():
     # Generate queries + ground truth
     print("  Generating queries + ground truth...")
     t0 = time.perf_counter()
-    queries = generate_queries_with_gt(db, args.count, args.judge_mode)
+    queries = generate_queries_with_gt(
+        db,
+        args.count,
+        args.judge_mode,
+        scope_ground_truth=args.scope_ground_truth,
+    )
     timing["query_gen"] = round(time.perf_counter() - t0, 1)
     print(f"  Generated {len(queries)} queries")
 
@@ -539,8 +825,7 @@ def main():
     output_path = args.output
     if output_path is None:
         DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = DEFAULT_OUTPUT_DIR / f"precision_{ts}.md"
+        output_path = DEFAULT_OUTPUT_DIR / f"{run_id}.md"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -548,10 +833,14 @@ def main():
 
     json_path = output_path.with_suffix(".json")
     raw = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": created_at,
+        "run_id": run_id,
+        "git": _git_metadata(),
         "query_count": len(queries),
         "db_size": db_size,
         "judge_mode": args.judge_mode,
+        "scope_ground_truth": args.scope_ground_truth,
+        "tag_filter_version": TAG_FILTER_VERSION,
         "axes": {
             axis: {"precision": r["precision"], "recall": r["recall"]}
             for axis, r in all_results.items()
@@ -560,6 +849,19 @@ def main():
     }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(raw, f, ensure_ascii=False, indent=2, default=str)
+
+    standard_paths = None
+    if args.export_standard_dir:
+        standard_paths = export_standard_evaluation(
+            output_dir=args.export_standard_dir,
+            queries=queries,
+            all_results=all_results,
+            run_id=run_id,
+            created_at=created_at,
+            judge_mode=args.judge_mode,
+            k_values=sorted({3, 5, 10, args.top_k}),
+            scope_ground_truth=args.scope_ground_truth,
+        )
 
     # Console summary
     tri_p5 = all_results["triaxis"]["precision"]["P@5"]
@@ -580,6 +882,8 @@ def main():
     print(f"  Fusion Lift: {lift:+.1f}% over best single axis")
     print(f"{'─' * 70}")
     print(f"  Report: {output_path}")
+    if standard_paths:
+        print(f"  Standard eval: {standard_paths['evaluation_md']}")
     print(f"{'=' * 70}")
 
 

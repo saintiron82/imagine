@@ -318,21 +318,42 @@ def quality_rerank(
         s_norm = safe_norm(r.get("text_vec_score"), s_low, s_high)
         m_norm = safe_norm(r.get("text_score"), m_low, m_high)
 
+        # Per-axis contribution. Missing axes contribute 0 to the numerator
+        # and the FULL axis weight to the denominator — so a result that only
+        # fires on one strong axis cannot post a high blended score on its own.
+        # (Previously missing axes were excluded from the denominator, which
+        # let a single-axis spike on the dominant axis tie or beat results
+        # that matched on multiple axes weakly. Concrete failure: a query
+        # for "mountain" surfaced an irrelevant garden image at 96% (vector
+        # rank 5 + everything else missing) above a real mountain landscape
+        # at 33% (text_vec rank 39, vector missing).)
         axis_num = 0.0
-        axis_den = 0.0
+        axes_present = 0
         if v_norm is not None:
             axis_num += axis_w["visual"] * v_norm
-            axis_den += axis_w["visual"]
+            axes_present += 1
         if x_norm is not None:
             axis_num += axis_w["structure"] * x_norm
-            axis_den += axis_w["structure"]
+            axes_present += 1
         if s_norm is not None:
             axis_num += axis_w["text_vec"] * s_norm
-            axis_den += axis_w["text_vec"]
+            axes_present += 1
         if m_norm is not None:
             axis_num += axis_w["fts"] * m_norm
-            axis_den += axis_w["fts"]
-        axis_blend = (axis_num / axis_den) if axis_den > 0 else rrf_prior
+            axes_present += 1
+
+        axis_total_weight = sum(axis_w.values())
+        if axis_total_weight > 0:
+            axis_blend = axis_num / axis_total_weight
+        else:
+            axis_blend = rrf_prior
+
+        # Multi-axis agreement bonus: results that fire on 2+ axes signal
+        # cross-channel relevance and should outrank single-axis spikes.
+        # +5% / +10% / +15% for 2 / 3 / 4 axes (caps quality_score at ~1.15).
+        multi_axis_bonus = 0.0
+        if axes_present >= 2:
+            multi_axis_bonus = 0.05 * (axes_present - 1)
 
         # Metadata completeness
         has_caption = 1.0 if (r.get("mc_caption") or "").strip() else 0.0
@@ -399,10 +420,13 @@ def quality_rerank(
             (0.62 * axis_blend) +
             (0.23 * rrf_prior) +
             (0.10 * meta_completeness) +
-            (0.05 * intent_boost)
+            (0.05 * intent_boost) +
+            multi_axis_bonus
         )
 
         r["quality_score"] = quality_score
+        r["axes_present"] = axes_present
+        r["multi_axis_bonus"] = round(multi_axis_bonus, 4)
         rescored.append((r, quality_score, idx))
 
     rescored.sort(key=lambda x: (x[1], x[0].get("rrf_score", 0.0), -x[2]), reverse=True)

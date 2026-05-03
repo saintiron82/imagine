@@ -10,6 +10,14 @@ benchmarks/
 ├── baselines/                         # Reference baselines (model decisions)
 │   ├── YYYYMMDD_<description>.json    # Frozen baseline snapshots
 │   └── ...
+├── profiles/                          # Benchmark profiles for bench_*.py
+├── runs/                              # Standard Search Evaluation V1 runs
+│   └── search_YYYYMMDD_HHMMSS/
+│       ├── run_results.jsonl
+│       ├── query_events.jsonl
+│       ├── evaluation.json
+│       ├── evaluation.md
+│       └── manifest.json
 └── results/                           # Ad-hoc benchmark runs
     └── worker_sim_YYYYMMDD_HHMMSS.json
 ```
@@ -34,6 +42,18 @@ not overwritten, only new baselines are added when models change.
 
 `bench_worker_sim.py` output. Automatically saved with timestamps. Use `--compare` to 
 diff against baselines.
+
+### runs/
+
+`tools/run_search_benchmark.py` output. This is the standard objective search
+benchmark path:
+
+- input: fixed QuerySet JSONL and optional LabelSet JSONL
+- output: Search Evaluation V1 `RunResult` JSONL
+- optional: metric evaluation and baseline/candidate gate
+
+Use this path for before/after search quality comparison. Keep `results/` for
+older or ad-hoc benchmark scripts.
 
 ## Current Design Speed (2026-04-02, M5 32GB)
 
@@ -70,6 +90,21 @@ python tools/bench_worker_sim.py --compare benchmarks/baselines/20260402_full_pi
 
 # Custom image count
 python tools/bench_worker_sim.py --count 20 --output benchmarks/results/my_test.json
+
+# Standard search quality run (fixed QuerySet + LabelSet)
+python tools/run_search_benchmark.py \
+  --queries benchmarks/data/queries/queryset_v1.jsonl \
+  --labels benchmarks/data/labels/labels_v1.jsonl \
+  --engines vv,mv,fts,triaxis \
+  --top-k 50
+
+# Compare candidate against frozen search baseline
+python tools/run_search_benchmark.py \
+  --queries benchmarks/data/queries/queryset_v1.jsonl \
+  --labels benchmarks/data/labels/labels_v1.jsonl \
+  --baseline benchmarks/baselines/search_eval_triaxis.json \
+  --engines triaxis \
+  --top-k 50
 ```
 
 ## When to Run
@@ -78,6 +113,8 @@ python tools/bench_worker_sim.py --count 20 --output benchmarks/results/my_test.
 - **Config tuning**: Batch size, prompt changes, quantization changes
 - **Performance regression**: When actual worker throughput drops below design speed
 - **New hardware**: First setup on a new machine
+- **Search changes**: Run `tools/run_search_benchmark.py` before/after ranking,
+  fusion, query decomposition, or scoring changes
 
 ## Interpreting Results
 
@@ -90,3 +127,13 @@ python tools/bench_worker_sim.py --count 20 --output benchmarks/results/my_test.
 | > 50% | Bug — wrong model loaded, GPU contention, memory pressure |
 
 The factory bug discovered on 2026-04-02 (using fp16 instead of 4bit) caused a **10x** gap.
+
+## Search Quality Rules
+
+- Do not compare runs generated from different QuerySets or LabelSets.
+- Do not overwrite frozen baselines; add a new baseline file with date/context.
+- Weak labels are acceptable for smoke checks, but quality claims require
+  human or adjudicated labels.
+- A candidate run should produce at least the same evaluated query count as
+  the baseline.
+- Default gate metrics are `nDCG@10`, `P@10`, `Recall@10`, and `MRR@10`.

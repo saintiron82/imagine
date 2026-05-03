@@ -399,34 +399,72 @@ class TransformersEmbeddingProvider(EmbeddingProvider):
             return [np.zeros(self._dimensions, dtype=np.float32) for _ in texts]
 
 
-def build_document_text(caption: str, tags: list, facts: dict = None) -> str:
+_USER_NOTE_MAX_CHARS = 200
+
+
+def build_document_text(
+    caption: str,
+    tags: list,
+    facts: dict = None,
+    user_tags: Optional[list] = None,
+    user_category: Optional[str] = None,
+    user_note: Optional[str] = None,
+) -> str:
     """
     Build a document string for MV (text_vec) embedding.
 
-    v3.1: Two-section format for better semantic separation:
-    - [SEMANTIC]: MC caption + AI tags (high-level meaning)
-    - [FACTS]: Structured metadata (image_type, path, fonts, etc.)
+    Section order is intentional — earliest tokens carry the most weight in
+    Qwen3-Embedding's pooled representation, so user-authored signals (the
+    most authoritative description of the asset) come before VLM-inferred
+    caption/tags:
+
+      [USER_TAGS]      user_tags joined (highest authority, exact intent)
+      [USER_CATEGORY]  user_category
+      [USER_NOTE]      user_note, capped at _USER_NOTE_MAX_CHARS to
+                       prevent long memos from diluting the caption signal
+      [SEMANTIC]       VLM mc_caption + ai_tags
+      [FACTS]          structured metadata (image_type, scene_type, ...)
+
+    Each user field is optional; sections are skipped when empty so files
+    without user input degrade to the original caption-only embedding.
 
     Args:
         caption: MC caption (AI-generated with file metadata context)
         tags: AI-generated keyword tags
         facts: Optional structured metadata dict
                Keys: image_type, scene_type, art_style, fonts, path
+        user_tags: User-applied tags (list or JSON string)
+        user_category: User-chosen category
+        user_note: Free-form user memo (truncated)
 
     Returns:
         Combined text suitable for embedding
-
-    Example:
-        >>> build_document_text(
-        ...     "A warrior holding a sword",
-        ...     ["character", "fantasy", "weapon"],
-        ...     {"image_type": "character", "fonts": "NotoSans"}
-        ... )
-        '[SEMANTIC]\\nA warrior holding a sword\\nKeywords: character, fantasy, weapon\\n\\n[FACTS]\\nimage_type=character; fonts=NotoSans'
     """
     parts = []
 
-    # Section 1: SEMANTIC (caption + tags)
+    # Section 0: USER (highest priority — authoritative ground truth)
+    if user_tags:
+        if isinstance(user_tags, str):
+            try:
+                user_tags = json.loads(user_tags)
+            except (json.JSONDecodeError, TypeError):
+                user_tags = [user_tags]
+        if isinstance(user_tags, list):
+            ut = ", ".join(str(t).strip() for t in user_tags if str(t).strip())
+            if ut:
+                parts.append("[USER_TAGS]")
+                parts.append(ut)
+    if user_category and str(user_category).strip():
+        parts.append("[USER_CATEGORY]")
+        parts.append(str(user_category).strip())
+    if user_note and str(user_note).strip():
+        note = str(user_note).strip()
+        if len(note) > _USER_NOTE_MAX_CHARS:
+            note = note[:_USER_NOTE_MAX_CHARS].rstrip() + "…"
+        parts.append("[USER_NOTE]")
+        parts.append(note)
+
+    # Section 1: SEMANTIC (VLM caption + tags)
     semantic_parts = []
     if caption and caption.strip():
         semantic_parts.append(caption.strip())
@@ -454,7 +492,7 @@ def build_document_text(caption: str, tags: list, facts: dict = None) -> str:
                 fact_pairs.append(f"{key}={val}")
 
         if fact_pairs:
-            parts.append("\n[FACTS]")
+            parts.append("[FACTS]")
             parts.append("; ".join(fact_pairs))
 
     return "\n".join(parts) if parts else ""

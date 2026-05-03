@@ -15,6 +15,7 @@ User Filters: Format, category, rating, tags, folder paths
 import logging
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,9 +38,156 @@ from backend.search.scoring import (
 
 logger = logging.getLogger(__name__)
 
-# Search diagnostic logging (disable with SEARCH_DIAGNOSTIC=0)
-_DIAGNOSTIC_ENABLED = os.getenv("SEARCH_DIAGNOSTIC", "1") != "0"
+# Search diagnostic logging (disable with SEARCH_DIAGNOSTIC=0 or config)
 _DIAGNOSTIC_LOG_DIR = Path(__file__).parent.parent.parent / "logs"
+
+_KO_SCOPE_HINT_RE = re.compile(
+    r"^\s*(?P<scope>.+?)\s*(?:중에서|중에|에서)\b",
+    re.IGNORECASE,
+)
+_KO_SCOPE_SUFFIX_RE = re.compile(
+    r"(?:\s*(?:폴더|프로젝트|자료|이미지|사진|파일))+$",
+    re.IGNORECASE,
+)
+_SCOPE_HINT_BLOCKLIST = {
+    "이미지",
+    "사진",
+    "그림",
+    "파일",
+    "자료",
+    "폴더",
+    "프로젝트",
+    "asset",
+    "assets",
+    "image",
+    "images",
+    "file",
+    "files",
+}
+
+
+def _split_scope_segments(value: str) -> List[str]:
+    """Split a folder/path string into normalized path segments."""
+    if not value:
+        return []
+    normalized = str(value).replace("\\", "/").strip("/")
+    return [part.strip().lower() for part in normalized.split("/") if part.strip()]
+
+
+def _path_has_scope_segments(path_value: str, scope_value: str) -> bool:
+    """Return True when scope_value matches full path segment(s), not substring."""
+    path_segments = _split_scope_segments(path_value)
+    scope_segments = _split_scope_segments(scope_value)
+    if not path_segments or not scope_segments:
+        return False
+
+    width = len(scope_segments)
+    if width > len(path_segments):
+        return False
+
+    for idx in range(0, len(path_segments) - width + 1):
+        if path_segments[idx:idx + width] == scope_segments:
+            return True
+    return False
+
+
+def _bool_setting(value: Any, default: bool = True) -> bool:
+    """Parse bool-like config/env values without treating 'false' as truthy."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _diagnostic_log_enabled(config: Any = None) -> bool:
+    """Return whether diagnostic JSONL file logging is enabled."""
+    env_value = os.getenv("SEARCH_DIAGNOSTIC")
+    if env_value is not None:
+        return _bool_setting(env_value, default=True)
+
+    if config is None:
+        try:
+            from backend.utils.config import get_config
+            config = get_config()
+        except Exception:
+            config = None
+
+    if config is not None:
+        return _bool_setting(config.get("search.diagnostic.enabled", True), default=True)
+    return True
+
+
+def _query_explicitly_requests_format(query: str, fmt: str) -> bool:
+    """Return True when a format token is a user-requested file type."""
+    if not query or not fmt:
+        return False
+
+    fmt = str(fmt).lower()
+    aliases = {"jpg": {"jpg", "jpeg"}, "jpeg": {"jpg", "jpeg"}}.get(fmt, {fmt})
+    alias_expr = "|".join(re.escape(alias) for alias in sorted(aliases))
+    q = str(query).lower()
+
+    explicit_patterns = [
+        rf"(?<![\w.])(?:{alias_expr})(?![\w.])\s*(?:파일|포맷|형식|확장자|이미지)",
+        rf"(?:파일|포맷|형식|확장자)\s*(?:이|가|은|는|:)?\s*(?:{alias_expr})(?![\w.])",
+        rf"(?:{alias_expr})(?:만|로만|인\s*파일)(?![\w.])",
+    ]
+    return any(re.search(pattern, q, re.IGNORECASE) for pattern in explicit_patterns)
+
+
+def _relax_unmatched_scope(scope: dict, query: str) -> tuple[dict, set[str]]:
+    """Relax LLM-only scope filters that commonly cause false-empty results."""
+    if not scope or not scope.get("folder"):
+        return dict(scope or {}), set()
+
+    relaxed = dict(scope)
+    relaxed_keys: set[str] = set()
+    fmt = relaxed.get("format")
+    if fmt and not _query_explicitly_requests_format(query, str(fmt)):
+        relaxed["format"] = None
+        relaxed_keys.add("format")
+    return relaxed, relaxed_keys
+
+
+def _extract_scope_hint_candidates(query: str) -> List[str]:
+    """Return conservative folder-scope candidates from Korean scoped queries."""
+    if not query:
+        return []
+
+    match = _KO_SCOPE_HINT_RE.search(str(query).strip())
+    if not match:
+        return []
+
+    scope = match.group("scope").strip(" \t\r\n\"'`“”‘’[](){}")
+    scope = _KO_SCOPE_SUFFIX_RE.sub("", scope).strip(" \t\r\n\"'`“”‘’[](){}")
+    scope = re.sub(r"\s+", " ", scope)
+    if not scope:
+        return []
+
+    lowered = scope.lower()
+    if lowered in _SCOPE_HINT_BLOCKLIST:
+        return []
+    if len(scope) < 2 and not re.fullmatch(r"#\d+", scope):
+        return []
+
+    candidates = [scope]
+    if " " in scope:
+        candidates.append("/".join(part for part in scope.split(" ") if part))
+
+    deduped = []
+    seen = set()
+    for candidate in candidates:
+        key = candidate.lower()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(candidate)
+    return deduped
 
 
 class SqliteVectorSearch:
@@ -784,6 +932,7 @@ class SqliteVectorSearch:
         keywords: List[str],
         top_k: int = 20,
         exclude_keywords: Optional[List[str]] = None,
+        file_ids: Optional[set] = None,
     ) -> List[Dict[str, Any]]:
         """
         Full-text search using FTS5 (FTS: Metadata-only).
@@ -792,6 +941,15 @@ class SqliteVectorSearch:
             keywords: List of keywords to search (combined with OR)
             top_k: Number of results to return
             exclude_keywords: Optional list of keywords to exclude via FTS5 NOT operator
+            file_ids: Optional scope filter applied IN-SQL.
+                     When provided, only rows whose id is in this set are
+                     considered for ranking. This matters: a post-fetch
+                     Python filter on the global top-K can drop every
+                     scope-relevant match when the scope is small relative
+                     to the DB (e.g. 745 of 17k → top-60 likely contains
+                     0 in-scope rows). VV/MV axes already do this in-SQL
+                     via _vv_search_within / _mv_search_within; this
+                     parameter brings FTS to parity.
 
         Returns:
             List of file records with FTS rank scores
@@ -802,27 +960,49 @@ class SqliteVectorSearch:
         # Build FTS5 MATCH query: split multi-word keywords into individual
         # tokens so "crossroads at night" matches documents containing any of
         # those words, not just the exact phrase.
-        tokens = set()
+        # ASCII alphabetic tokens get a trailing '*' (FTS5 prefix match) so
+        # singular/plural/derived forms hit: query "mountain" matches captions
+        # like "mountains", "mountainous". CJK / numeric / single-char tokens
+        # stay literal (single-char Korean like "산" would over-match into
+        # 산책/산들/etc. with prefix).
+        wildcard_tokens = set()
+        literal_tokens = set()
         for kw in keywords:
             for word in kw.split():
                 word = word.strip().replace('"', '""')
-                if word:
-                    tokens.add(word)
-        if not tokens:
+                if not word:
+                    continue
+                if word.isascii() and word.isalpha() and len(word) >= 3:
+                    wildcard_tokens.add(word.lower())
+                else:
+                    literal_tokens.add(word)
+        if not wildcard_tokens and not literal_tokens:
             return []
 
-        match_expr = " OR ".join(f'"{t}"' for t in tokens)
+        # Wildcards must be unquoted in FTS5; literals stay quoted to escape
+        # tokenizer-special chars and to disable accidental prefix matching.
+        match_parts = [f'{t}*' for t in wildcard_tokens] + \
+                      [f'"{t}"' for t in literal_tokens]
+        match_expr = " OR ".join(match_parts)
 
-        # Build exclude expression using FTS5 NOT operator
+        # Build exclude expression using FTS5 NOT operator (same wildcard
+        # rule as positive tokens for symmetric behavior).
         if exclude_keywords:
-            exclude_tokens = set()
+            ex_wild = set()
+            ex_lit = set()
             for kw in exclude_keywords:
                 for word in kw.split():
                     word = word.strip().replace('"', '""')
-                    if word:
-                        exclude_tokens.add(word)
-            if exclude_tokens:
-                exclude_expr = " OR ".join(f'"{t}"' for t in exclude_tokens)
+                    if not word:
+                        continue
+                    if word.isascii() and word.isalpha() and len(word) >= 3:
+                        ex_wild.add(word.lower())
+                    else:
+                        ex_lit.add(word)
+            if ex_wild or ex_lit:
+                ex_parts = [f'{t}*' for t in ex_wild] + \
+                           [f'"{t}"' for t in ex_lit]
+                exclude_expr = " OR ".join(ex_parts)
                 match_expr = f"({match_expr}) NOT ({exclude_expr})"
 
         # v3 P07: Load BM25 weights from config (5 columns)
@@ -836,8 +1016,17 @@ class SqliteVectorSearch:
 
         cursor = self.db.conn.cursor()
 
+        # Optional in-SQL scope filter (see file_ids docstring above)
+        scope_clause = ""
+        scope_binds: tuple = ()
+        if file_ids:
+            id_list = list(file_ids)
+            placeholders = ",".join("?" * len(id_list))
+            scope_clause = f" AND f.id IN ({placeholders})"
+            scope_binds = tuple(id_list)
+
         try:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT
                     f.id,
                     f.file_path,
@@ -873,10 +1062,11 @@ class SqliteVectorSearch:
                 JOIN files f ON f.id = fts.rowid
                 WHERE files_fts MATCH ?
                   AND f.preview_only = 0
+                  {scope_clause}
                 ORDER BY fts_rank
                 LIMIT ?
             """, (w_strong, w_weak, w_caption, w_ai_tags, w_classification,
-                  match_expr, top_k))
+                  match_expr, *scope_binds, top_k))
 
             results = []
             for row in cursor.fetchall():
@@ -933,7 +1123,7 @@ class SqliteVectorSearch:
             return self.triaxis_search(query, None, top_k, threshold, return_diagnostic=return_diagnostic)
 
         # Stage 1: Apply scope → get file_id set
-        file_ids = self._apply_plan_filter(scope)
+        file_ids, scope_match_info = self._apply_plan_filter_with_info(scope)
         if not file_ids:
             logger.warning(f"Plan search: scope matched 0 files, falling back to triaxis")
             return self.triaxis_search(query, None, top_k, threshold, return_diagnostic=return_diagnostic)
@@ -1011,6 +1201,7 @@ class SqliteVectorSearch:
             diag = {
                 "mode": "plan",
                 "pre_filter": pre_filter,
+                "scope_match": scope_match_info,
                 "search_query": search_query,
                 "pre_filter_count": len(file_ids),
                 "result_count": len(results),
@@ -1019,30 +1210,240 @@ class SqliteVectorSearch:
             return results, diag
         return results
 
+    def _row_matches_folder_scope(self, row: Any, folder: str) -> bool:
+        """Check exact folder scope against full path segments."""
+        if not folder:
+            return False
+        try:
+            folder_path = row["folder_path"] if "folder_path" in row.keys() else None
+            file_path = row["file_path"] if "file_path" in row.keys() else None
+        except AttributeError:
+            folder_path = row[1] if len(row) > 1 else None
+            file_path = row[2] if len(row) > 2 else None
+        return (
+            _path_has_scope_segments(str(folder_path or ""), folder)
+            or _path_has_scope_segments(str(file_path or ""), folder)
+        )
+
+    def _folder_exact_scope_exists(self, folder: str) -> bool:
+        """Return True if folder exists as exact path segment(s)."""
+        if not folder:
+            return False
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id, folder_path, file_path
+                FROM files
+                WHERE preview_only = 0
+                  AND (folder_path LIKE ? OR file_path LIKE ?)
+                """,
+                (f"%{folder}%", f"%{folder}%"),
+            )
+            return any(self._row_matches_folder_scope(row, folder) for row in cursor.fetchall())
+        finally:
+            cursor.close()
+
+    def _filter_exact_folder_scope(self, rows: list[Any], folder: str) -> set:
+        """Keep only rows whose path contains folder as exact segment(s)."""
+        ids = set()
+        for row in rows:
+            if self._row_matches_folder_scope(row, folder):
+                ids.add(row["id"] if hasattr(row, "keys") else row[0])
+        return ids
+
+    @staticmethod
+    def _scope_match_info(
+        *,
+        requested_folder: str | None,
+        applied_folder: str | None,
+        match_mode: str,
+        resolved_folder: str | None = None,
+        resolved_match_mode: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "requested_folder": requested_folder or None,
+            "applied_folder": applied_folder or None,
+            "match_mode": match_mode,
+            "resolved_folder": resolved_folder or None,
+            "resolved_match_mode": resolved_match_mode or None,
+        }
+
+    def _apply_plan_filter_with_info(self, pre_filter: dict) -> tuple[set, dict[str, Any]]:
+        """Apply pre_filter to get file_id set from DB.
+
+        Folder matching is exact-first. If the requested folder exists as full
+        path segment(s), only those exact segments match, so `#3` does not also
+        match `#30` or `#33`. If no exact segment exists, the legacy substring
+        result is kept first; fuzzy correction is used only when the original
+        substring finds nothing. This prevents code-like scopes such as `3DBG`
+        from being "corrected" to a broad `bg` folder.
+        """
+        cursor = self.db.conn.cursor()
+        try:
+            img_type = pre_filter.get("image_type")
+            fmt = pre_filter.get("format")
+
+            def fetch_rows(folder_value: str | None) -> list[Any]:
+                conditions = ["preview_only = 0"]
+                params = []
+                if folder_value:
+                    conditions.append("(folder_path LIKE ? OR file_path LIKE ?)")
+                    params.extend([f"%{folder_value}%", f"%{folder_value}%"])
+                if img_type:
+                    conditions.append("image_type = ?")
+                    params.append(img_type)
+                if fmt:
+                    conditions.append("UPPER(format) = ?")
+                    params.append(fmt.upper())
+                where = " AND ".join(conditions)
+                cursor.execute(f"SELECT id, folder_path, file_path FROM files WHERE {where}", params)
+                return cursor.fetchall()
+
+            folder = pre_filter.get("folder", "")
+            if not folder:
+                return (
+                    {row[0] for row in fetch_rows(None)},
+                    self._scope_match_info(
+                        requested_folder=None,
+                        applied_folder=None,
+                        match_mode="no_folder",
+                    ),
+                )
+
+            if self._folder_exact_scope_exists(folder):
+                return (
+                    self._filter_exact_folder_scope(fetch_rows(folder), folder),
+                    self._scope_match_info(
+                        requested_folder=folder,
+                        applied_folder=folder,
+                        match_mode="exact_segment",
+                    ),
+                )
+
+            rows = fetch_rows(folder)
+            if rows:
+                return (
+                    {row[0] for row in rows},
+                    self._scope_match_info(
+                        requested_folder=folder,
+                        applied_folder=folder,
+                        match_mode="substring",
+                    ),
+                )
+
+            resolved = self._resolve_folder_name(folder)
+            if resolved and resolved != folder:
+                logger.info(f"Folder fuzzy-match: '{folder}' → '{resolved}'")
+                rows = fetch_rows(resolved)
+                if self._folder_exact_scope_exists(resolved):
+                    return (
+                        self._filter_exact_folder_scope(rows, resolved),
+                        self._scope_match_info(
+                            requested_folder=folder,
+                            applied_folder=resolved,
+                            resolved_folder=resolved,
+                            match_mode="fuzzy",
+                            resolved_match_mode="exact_segment",
+                        ),
+                    )
+                return (
+                    {row[0] for row in rows},
+                    self._scope_match_info(
+                        requested_folder=folder,
+                        applied_folder=resolved,
+                        resolved_folder=resolved,
+                        match_mode="fuzzy",
+                        resolved_match_mode="substring",
+                    ),
+                )
+
+            return (
+                set(),
+                self._scope_match_info(
+                    requested_folder=folder,
+                    applied_folder=None,
+                    match_mode="no_match",
+                ),
+            )
+        finally:
+            cursor.close()
+
     def _apply_plan_filter(self, pre_filter: dict) -> set:
         """Apply pre_filter to get file_id set from DB."""
-        cursor = self.db.conn.cursor()
-        conditions = ["preview_only = 0"]
-        params = []
+        file_ids, _match_info = self._apply_plan_filter_with_info(pre_filter)
+        return file_ids
 
-        folder = pre_filter.get("folder", "")
-        if folder:
-            conditions.append("(folder_path LIKE ? OR file_path LIKE ?)")
-            params.extend([f"%{folder}%", f"%{folder}%"])
+    def _scope_ids_from_query_hint(
+        self,
+        query: str,
+        base_scope: Optional[dict] = None,
+        skip_folder: Optional[str] = None,
+        return_match_info: bool = False,
+    ) -> tuple[Optional[str], set] | tuple[Optional[str], set, dict[str, Any]]:
+        """Resolve Korean `X에서 ...` scope hints only when they hit the DB."""
+        skip_key = (skip_folder or "").strip().lower()
+        for candidate in _extract_scope_hint_candidates(query):
+            if skip_key and candidate.lower() == skip_key:
+                continue
+            scope = dict(base_scope or {})
+            scope["folder"] = candidate
+            file_ids, match_info = self._apply_plan_filter_with_info(scope)
+            if file_ids:
+                if return_match_info:
+                    return candidate, file_ids, match_info
+                return candidate, file_ids
+        if return_match_info:
+            return None, set(), {}
+        return None, set()
 
-        img_type = pre_filter.get("image_type")
-        if img_type:
-            conditions.append("image_type = ?")
-            params.append(img_type)
+    def _resolve_folder_name(self, requested: str) -> Optional[str]:
+        """Map a possibly-misspelled folder query to a real folder substring.
 
-        fmt = pre_filter.get("format")
-        if fmt:
-            conditions.append("UPPER(format) = ?")
-            params.append(fmt.upper())
+        Strategy:
+          1. Literal exact-segment hit on folder_path/file_path → keep as-is.
+          2. Pull distinct folder path segments, find best match by
+             difflib ratio (≥0.6 threshold). Korean glyph variants like
+             ㅏ↔ㅑ score high enough to cross the threshold.
+        """
+        if not requested:
+            return None
+        cur = self.db.conn.cursor()
+        try:
+            if self._folder_exact_scope_exists(requested):
+                return requested  # exact segment works, no fuzzing needed
 
-        where = " AND ".join(conditions)
-        cursor.execute(f"SELECT id FROM files WHERE {where}", params)
-        return {row[0] for row in cursor.fetchall()}
+            # Build candidate folder name set: every distinct path segment
+            # from folder_path + each parent dir of file_path.
+            segments: set[str] = set()
+            for (fp,) in cur.execute(
+                "SELECT DISTINCT folder_path FROM files "
+                "WHERE folder_path IS NOT NULL AND folder_path != ''"
+            ):
+                for part in str(fp).replace("\\", "/").split("/"):
+                    if part:
+                        segments.add(part)
+            for (fp,) in cur.execute(
+                "SELECT DISTINCT file_path FROM files "
+                "WHERE file_path IS NOT NULL LIMIT 5000"
+            ):
+                parts = str(fp).replace("\\", "/").split("/")
+                for part in parts[:-1]:  # skip filename
+                    if part and part not in (".", ".."):
+                        segments.add(part)
+            if not segments:
+                return None
+
+            import difflib
+            matches = difflib.get_close_matches(
+                requested, list(segments), n=1, cutoff=0.6
+            )
+            return matches[0] if matches else None
+        except Exception as e:
+            logger.warning(f"Folder fuzzy-match failed: {e}")
+            return None
+        finally:
+            cur.close()
 
     def _mv_search_within(
         self, query: str, file_ids: set, top_k: int = 20, threshold: float = 0.0
@@ -1232,23 +1633,137 @@ class SqliteVectorSearch:
         find = unified.get("find", {})
         exclude = unified.get("exclude", {})
         legacy = unified.get("_legacy", {})
+        from backend.utils.config import get_config as _cfg
+        _search_cfg = _cfg()
 
         # Scope → file_id filter (search within scope only)
         scope_file_ids = file_ids  # Direct file_ids from refine search
+        scope_requested = bool(scope.get("folder") or scope.get("image_type") or scope.get("format"))
+        scope_unmatched = False
+        scope_source = "decomposition"
+        relaxed_scope_keys: set[str] = set()
+        soft_scope_file_ids: set = set()
+        soft_scope_folder: Optional[str] = None
+        scope_match_info: dict[str, Any] = {}
+        soft_scope_match_info: dict[str, Any] = {}
         t0 = time.perf_counter()
-        if not scope_file_ids and any(scope.get(k) for k in ("folder", "image_type", "format")):
-            scope_file_ids = self._apply_plan_filter(scope)
-            if scope_file_ids:
-                logger.info(f"Scope filter: {len(scope_file_ids)} files (scope={scope})")
-                diag["scope_filter"] = {"scope": scope, "file_count": len(scope_file_ids)}
+        if not scope_file_ids:
+            if scope_requested:
+                scope_file_ids, scope_match_info = self._apply_plan_filter_with_info(scope)
+                if not scope_file_ids:
+                    relaxed_scope, relaxed_keys = _relax_unmatched_scope(scope, query)
+                    if relaxed_keys:
+                        relaxed_ids, relaxed_match_info = self._apply_plan_filter_with_info(relaxed_scope)
+                        if relaxed_ids:
+                            scope = relaxed_scope
+                            scope_file_ids = relaxed_ids
+                            scope_match_info = relaxed_match_info
+                            relaxed_scope_keys = relaxed_keys
+                            scope_source = "decomposition_relaxed"
+                    if not scope_file_ids:
+                        hinted_folder, hinted_ids, hinted_match_info = self._scope_ids_from_query_hint(
+                            query,
+                            base_scope=scope,
+                            skip_folder=scope.get("folder"),
+                            return_match_info=True,
+                        )
+                        if hinted_ids:
+                            scope = dict(scope)
+                            scope["folder"] = hinted_folder
+                            scope_file_ids = hinted_ids
+                            scope_match_info = hinted_match_info
+                            scope_source = "query_hint"
+                    elif scope.get("folder"):
+                        hinted_folder, hinted_ids, hinted_match_info = self._scope_ids_from_query_hint(
+                            query,
+                            base_scope=scope,
+                            skip_folder=scope.get("folder"),
+                            return_match_info=True,
+                        )
+                        if hinted_ids:
+                            # The user's literal scope should win over an LLM
+                            # normalization when both hit the DB. Example:
+                            # `#02에서 ...` must not become `#2`.
+                            scope = dict(scope)
+                            scope["folder"] = hinted_folder
+                            scope_file_ids = hinted_ids
+                            scope_match_info = hinted_match_info
+                            scope_source = "query_hint_override"
             else:
-                logger.warning(f"Scope filter matched 0 files, searching full DB")
+                hinted_folder, hinted_ids, hinted_match_info = self._scope_ids_from_query_hint(
+                    query,
+                    return_match_info=True,
+                )
+                if hinted_ids:
+                    hard_max = int(_search_cfg.get("search.scope_hint.hard_max_files", 1000))
+                    if 0 < len(hinted_ids) <= hard_max:
+                        scope = dict(scope)
+                        scope["folder"] = hinted_folder
+                        scope_file_ids = hinted_ids
+                        scope_match_info = hinted_match_info
+                        scope_source = "query_hint_hard"
+                    else:
+                        soft_scope_folder = hinted_folder
+                        soft_scope_file_ids = hinted_ids
+                        soft_scope_match_info = hinted_match_info
+
+            if scope_file_ids:
+                logger.info(
+                    f"Scope filter: {len(scope_file_ids)} files "
+                    f"(scope={scope}, source={scope_source})"
+                )
+                diag["scope_filter"] = {
+                    "scope": scope,
+                    "file_count": len(scope_file_ids),
+                    "source": scope_source,
+                }
+                for key, value in scope_match_info.items():
+                    if value is not None:
+                        diag["scope_filter"][key] = value
+                if relaxed_scope_keys:
+                    diag["scope_filter"]["relaxed_keys"] = sorted(relaxed_scope_keys)
+            elif scope_requested:
+                # Strict policy: when the user explicitly asked for a scope
+                # (folder / image_type / format) and nothing matches even
+                # after fuzzy folder resolution, return empty rather than
+                # silently falling back to a full-DB search. Falling back
+                # produced confusing UX — the user typed
+                # "마카베리즈무에서 산 이미지" expecting that folder only,
+                # but every other folder's mountains showed up too.
+                logger.warning(f"Scope filter matched 0 files (scope={scope}); returning empty")
+                scope_unmatched = True
+                diag["scope_filter"] = {"scope": scope, "file_count": 0,
+                                         "out_of_scope": True}
+                for key, value in scope_match_info.items():
+                    if value is not None:
+                        diag["scope_filter"][key] = value
+            elif soft_scope_file_ids:
+                diag["scope_hint"] = {
+                    "folder": soft_scope_folder,
+                    "file_count": len(soft_scope_file_ids),
+                    "source": "query_hint",
+                    "mode": "soft_rerank",
+                }
+                for key, value in soft_scope_match_info.items():
+                    if value is not None:
+                        diag["scope_hint"][key] = value
         diag["scope_filter_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        if scope_unmatched:
+            diag["final_results_count"] = 0
+            diag["total_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
+            if return_diagnostic:
+                return [], diag
+            return []
 
         # Extract fields for triaxis (from unified + legacy fallback)
         vector_query = find.get("description", "") or legacy.get("vector_query", query)
         fts_keywords = find.get("keywords", []) or legacy.get("fts_keywords", [query])
         llm_filters = legacy.get("filters", {})
+        if relaxed_scope_keys and llm_filters:
+            llm_filters = dict(llm_filters)
+            for key in relaxed_scope_keys:
+                llm_filters.pop(key, None)
         negative_query = exclude.get("description", "")
         exclude_keywords = exclude.get("keywords", [])
         folder_filter = scope.get("folder", "")
@@ -1277,8 +1792,6 @@ class SqliteVectorSearch:
 
         # Per-axis thresholds: SigLIP (V) and Qwen3 (Tv) have very different score ranges
         # VV: 0.10-0.17 typical match, MV: 0.65-0.78 typical match
-        from backend.utils.config import get_config as _cfg
-        _search_cfg = _cfg()
         v_threshold = _search_cfg.get("search.threshold.visual", 0.05)
         tv_threshold = _search_cfg.get("search.threshold.text_vec", threshold)
 
@@ -1293,10 +1806,14 @@ class SqliteVectorSearch:
         v_query_embedding = None
         t0 = time.perf_counter()
         try:
+            # Encode unconditionally so v_query_embedding is available to
+            # enrich_axis_scores below (the scope path used to skip caching
+            # this, leaving every result with axes_present=1 and forcing
+            # quality_rerank to rank from single-axis scores only).
+            v_query_embedding = self.encode_text(vector_query)
             if scope_file_ids:
                 vector_results = self._vv_search_within(vector_query, scope_file_ids, candidate_k, v_threshold)
             else:
-                v_query_embedding = self.encode_text(vector_query)
                 vector_results = self.vector_search_by_embedding(
                     v_query_embedding, top_k=candidate_k, threshold=v_threshold
                 )
@@ -1324,10 +1841,13 @@ class SqliteVectorSearch:
         t0 = time.perf_counter()
         if self.text_search_enabled:
             try:
+                # Same parity fix as VV above: cache t_query_embedding for
+                # enrich_axis_scores so MV scores get backfilled into
+                # results that only matched on FTS or VV.
+                t_query_embedding = self.text_provider.encode(vector_query, is_query=True)
                 if scope_file_ids:
                     text_vec_results = self._mv_search_within(vector_query, scope_file_ids, candidate_k, tv_threshold)
                 else:
-                    t_query_embedding = self.text_provider.encode(vector_query, is_query=True)
                     text_vec_results = self._text_vector_search_by_embedding(
                         t_query_embedding, top_k=candidate_k, threshold=tv_threshold
                     )
@@ -1350,13 +1870,18 @@ class SqliteVectorSearch:
 
         _progress("keyword")
         # Step 3: FTS FTS5 search
+        # Pass scope_file_ids IN-SQL so ranking happens within scope.
+        # The previous post-filter on global top-K silently dropped
+        # every in-scope match when scope was small relative to the DB.
         fts_results = []
         t0 = time.perf_counter()
         try:
-            fts_results = self.fts_search(fts_keywords, top_k=candidate_k, exclude_keywords=exclude_keywords)
-            # Scope filter: keep only files within scope
-            if scope_file_ids:
-                fts_results = [r for r in fts_results if r.get("id") in scope_file_ids]
+            fts_results = self.fts_search(
+                fts_keywords,
+                top_k=candidate_k,
+                exclude_keywords=exclude_keywords,
+                file_ids=scope_file_ids,
+            )
         except Exception as e:
             logger.warning(f"FTS search unavailable: {e}")
             diag["fts_error"] = str(e)
@@ -1550,6 +2075,30 @@ class SqliteVectorSearch:
             "pool_size": min(len(merged), rerank_pool),
         }
 
+        # If the decomposer did not emit an explicit scope, treat `X에서 ...`
+        # as a soft intent signal only. This preserves recall while nudging
+        # matching folders upward for user-scoped Korean queries.
+        if soft_scope_file_ids and len(merged) > 1:
+            scope_hint_boost = float(_search_cfg.get("search.scope_hint.soft_boost", 0.05))
+            if scope_hint_boost > 0:
+                rescored = []
+                boosted = 0
+                for idx, r in enumerate(merged):
+                    base_score = float(r.get("quality_score") or r.get("rrf_score") or 0.0)
+                    bonus = scope_hint_boost if r.get("id") in soft_scope_file_ids else 0.0
+                    if bonus:
+                        boosted += 1
+                    r["scope_hint_score"] = bonus
+                    rescored.append((base_score + bonus, r.get("rrf_score", 0.0), -idx, r))
+                rescored.sort(reverse=True)
+                merged = [r for _, _, _, r in rescored]
+                diag["scope_hint_rerank"] = {
+                    "folder": soft_scope_folder,
+                    "file_count": len(soft_scope_file_ids),
+                    "boost": scope_hint_boost,
+                    "boosted_candidates": boosted,
+                }
+
         # Step 5e: FTS priority for keyword queries.
         # When query_type is "keyword", FTS results take full priority —
         # fill all slots with FTS matches first, remaining slots get VV/MV.
@@ -1620,7 +2169,7 @@ class SqliteVectorSearch:
         )
 
         # Write diagnostic log
-        if _DIAGNOSTIC_ENABLED:
+        if _diagnostic_log_enabled(_search_cfg):
             self._write_diagnostic(diag)
 
         if return_diagnostic:
@@ -1965,7 +2514,7 @@ class SqliteVectorSearch:
         )
 
         # Write diagnostic log
-        if _DIAGNOSTIC_ENABLED:
+        if _diagnostic_log_enabled():
             diag = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "query": query,
