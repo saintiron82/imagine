@@ -542,11 +542,28 @@ class PhaseRunner:
             if val:
                 facts[key] = val
 
+        # Pull user fields if the PhaseItem has a file_id (server batch path
+        # has them; pure ParsedFile path doesn't). User input is the most
+        # authoritative meaning signal, so include it in MV.
+        user_note, user_tags, user_category = "", [], ""
+        try:
+            fid = getattr(item, "file_id", None)
+            if fid:
+                from backend.pipeline.ingest_engine import _read_user_fields
+                # Reuse the in-process db handle if PhaseRunner has one
+                db = getattr(self, "_db", None) or getattr(self, "db", None)
+                if db is not None:
+                    user_note, user_tags, user_category = _read_user_fields(db, fid)
+        except Exception:
+            pass
+
         try:
             from backend.vector.text_embedding import build_document_text
-            return build_document_text(caption, tags, facts=facts)
+            return build_document_text(
+                caption, tags, facts=facts,
+                user_tags=user_tags, user_category=user_category, user_note=user_note,
+            )
         except ImportError:
-            # Fallback: simple concatenation
             if isinstance(tags, list):
                 tags = ", ".join(str(t) for t in tags)
             return f"{caption} {tags}".strip() or None

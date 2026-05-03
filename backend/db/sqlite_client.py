@@ -1281,6 +1281,20 @@ class SQLiteDB:
                 -- 여기에 절대 추가하지 말 것. 재분석 시 사용자 입력이 덮어쓰기됨.
                 -- 사용자 메타데이터는 update_user_metadata()로만 업데이트.
                 ON CONFLICT(file_path) DO UPDATE SET
+                    -- Objective file facts: re-ingest must refresh these
+                    -- (previously skipped, leaving width/height NULL on
+                    -- legacy parse_fallback_legacy rows after re-parse)
+                    file_size = excluded.file_size,
+                    format = excluded.format,
+                    width = excluded.width,
+                    height = excluded.height,
+                    modified_at = COALESCE(excluded.modified_at, files.modified_at),
+                    -- Refresh thumbnail_url too: hash-prefixed thumbnail
+                    -- naming changed in 04/25 to disambiguate same-stem
+                    -- collisions. Without this line the DB keeps the old
+                    -- non-prefixed path and the UI shows another file's
+                    -- (incorrectly shared) thumbnail.
+                    thumbnail_url = excluded.thumbnail_url,
                     mc_caption = excluded.mc_caption,
                     ai_tags = excluded.ai_tags,
                     ocr_text = excluded.ocr_text,
@@ -1311,7 +1325,13 @@ class SQLiteDB:
                     caption_model = excluded.caption_model,
                     text_embed_model = excluded.text_embed_model,
                     runtime_version = excluded.runtime_version,
-                    preprocess_params = excluded.preprocess_params
+                    preprocess_params = excluded.preprocess_params,
+                    -- Clear parse_fallback_legacy on successful re-ingest.
+                    -- Uses the same terminal value the PhaseRunner path
+                    -- writes (backend/pipeline/phase_runner.py:208) so
+                    -- downstream audits see one consistent success state.
+                    processing_status = 'vision_done',
+                    processing_error = NULL
             """, (
                 file_path,
                 metadata.get("file_name"),

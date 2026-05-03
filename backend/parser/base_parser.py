@@ -95,16 +95,18 @@ class BaseParser(ABC):
     def get_thumbnail_path(self, file_path: Path) -> Path:
         """
         Generate the path for the thumbnail file.
-        
-        Args:
-            file_path: Original file path
-            
-        Returns:
-            Path where thumbnail should be saved
+
+        Naming uses an 8-char SHA1 prefix of the absolute file_path so that
+        two PSDs sharing a stem (e.g., '실내소품/2.psd' and '금박문/2.psd')
+        do not overwrite each other's thumbnail. Same path → same hash, so
+        re-ingesting a file refreshes its own thumbnail in place. Stem is
+        kept after the prefix for human identification on disk.
         """
+        import hashlib
         thumbnail_dir = self.output_dir / "thumbnails"
         thumbnail_dir.mkdir(parents=True, exist_ok=True)
-        return thumbnail_dir / f"{file_path.stem}_thumb.png"
+        path_hash = hashlib.sha1(str(file_path.resolve()).encode("utf-8")).hexdigest()[:8]
+        return thumbnail_dir / f"{path_hash}_{file_path.stem}_thumb.png"
     
     def get_json_path(self, file_path: Path) -> Path:
         """
@@ -116,6 +118,9 @@ class BaseParser(ABC):
         Returns:
             Path where JSON should be saved
         """
+        # Same hash-prefix scheme as thumbnails to avoid same-stem collisions.
+        import hashlib
         json_dir = self.output_dir / "json"
         json_dir.mkdir(parents=True, exist_ok=True)
-        return json_dir / f"{file_path.stem}.json"
+        path_hash = hashlib.sha1(str(file_path.resolve()).encode("utf-8")).hexdigest()[:8]
+        return json_dir / f"{path_hash}_{file_path.stem}.json"

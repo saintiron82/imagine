@@ -213,6 +213,120 @@ class IngestHandler(FileSystemEventHandler):
                 process_file(fp, folder_path=folder_path, folder_depth=depth, folder_tags=tags)
 
 
+def _read_user_fields(db, file_id: int) -> tuple:
+    """Read (user_note, user_tags, user_category) for a file_id.
+
+    Returns ('', [], '') for missing rows or fields. user_tags is parsed
+    from the JSON-encoded TEXT column into a Python list so it can be
+    handed straight to build_document_text.
+    """
+    if not file_id:
+        return ("", [], "")
+    try:
+        row = db.conn.execute(
+            "SELECT COALESCE(user_note, ''), COALESCE(user_tags, '[]'), COALESCE(user_category, '') "
+            "FROM files WHERE id = ?",
+            (file_id,),
+        ).fetchone()
+    except Exception as e:
+        logger.warning(f"_read_user_fields: lookup failed for id={file_id}: {e}")
+        return ("", [], "")
+    if not row:
+        return ("", [], "")
+    note, tags_raw, cat = row
+    try:
+        import json as _j
+        tags = _j.loads(tags_raw) if tags_raw else []
+        if not isinstance(tags, list):
+            tags = []
+    except Exception:
+        tags = []
+    return (note or "", tags, cat or "")
+
+
+def reencode_mv_for_file(file_id: int) -> bool:
+    """Re-encode the MV (text) embedding for a single file.
+
+    Called by the API after user_note/user_tags/user_category change so
+    the new authoritative signals enter the meaning axis without waiting
+    for a full re-ingest. Cheap (~3-5s for Qwen3 0.6B on MPS) and runs
+    inline; callers that need it off the request path should dispatch to
+    a thread / task queue.
+
+    Returns True on success, False if the file is missing, MV is
+    disabled, or any sub-step fails (logged, never raised).
+    """
+    if not file_id:
+        return False
+    try:
+        from backend.utils.config import get_config as _get_cfg
+        if not _get_cfg().get("embedding.text.enabled"):
+            return False
+
+        global _global_sqlite_db, _global_text_provider
+        if '_global_sqlite_db' not in globals() or _global_sqlite_db is None:
+            from backend.db.sqlite_client import SQLiteDB
+            _global_sqlite_db = SQLiteDB()
+        if '_global_text_provider' not in globals() or _global_text_provider is None:
+            from backend.vector.text_embedding import get_text_embedding_provider
+            _global_text_provider = get_text_embedding_provider()
+        from backend.vector.text_embedding import build_document_text
+
+        cur = _global_sqlite_db.conn.cursor()
+        row = cur.execute(
+            "SELECT mc_caption, ai_tags, image_type, scene_type, art_style, "
+            "       relative_path, folder_path, metadata "
+            "FROM files WHERE id = ?",
+            (file_id,),
+        ).fetchone()
+        if not row:
+            return False
+        mc_caption, ai_tags_raw, img_type, scene_type, art_style, rel_path, folder_path, meta_json = row
+
+        import json as _j
+        try:
+            ai_tags = _j.loads(ai_tags_raw) if ai_tags_raw else []
+        except Exception:
+            ai_tags = []
+        used_fonts = []
+        try:
+            md = _j.loads(meta_json) if meta_json else {}
+            used_fonts = md.get("used_fonts") or []
+        except Exception:
+            pass
+
+        facts = {
+            "image_type": img_type,
+            "scene_type": scene_type,
+            "art_style": art_style,
+            "fonts": ", ".join(used_fonts[:5]) if used_fonts else None,
+            "path": rel_path or folder_path,
+        }
+        user_note, user_tags, user_category = _read_user_fields(_global_sqlite_db, file_id)
+        doc_text = build_document_text(
+            mc_caption or "", ai_tags, facts=facts,
+            user_tags=user_tags, user_category=user_category, user_note=user_note,
+        )
+        if not doc_text:
+            return False
+
+        text_emb = _global_text_provider.encode(doc_text)
+        if text_emb is None:
+            return False
+        emb_list = text_emb.astype(np.float32).tolist()
+        cur.execute("DELETE FROM vec_text WHERE file_id = ?", (file_id,))
+        cur.execute(
+            "INSERT INTO vec_text (file_id, embedding) VALUES (?, ?)",
+            (file_id, _j.dumps(emb_list)),
+        )
+        _global_sqlite_db.conn.commit()
+        logger.info(f"MV re-encoded for file_id={file_id} ({len(text_emb)}-dim)")
+        return True
+    except Exception as e:
+        logger.warning(f"reencode_mv_for_file({file_id}) failed: {e}")
+        return False
+
+
 def process_file(
     file_path: Path,
     folder_path: str = None,
@@ -515,7 +629,6 @@ def process_file(
 
                     from backend.vector.text_embedding import build_document_text
 
-                    # v3.1: Build MV document with [SEMANTIC]/[FACTS] format
                     facts = {
                         "image_type": meta.image_type,
                         "scene_type": meta.scene_type,
@@ -523,7 +636,22 @@ def process_file(
                         "fonts": ", ".join(meta.used_fonts[:5]) if meta.used_fonts else None,
                         "path": meta.relative_path or meta.folder_path,
                     }
-                    doc_text = build_document_text(meta.mc_caption, meta.ai_tags, facts=facts)
+                    # User fields are sticky across re-ingest: read the
+                    # row that may already exist (sqlite_client.insert_file
+                    # never overwrites them) so the new MV embedding picks
+                    # them up even if process_file is invoked from a
+                    # context that has no user input on hand.
+                    user_note, user_tags, user_category = _read_user_fields(
+                        _global_sqlite_db, file_id
+                    )
+                    doc_text = build_document_text(
+                        meta.mc_caption,
+                        meta.ai_tags,
+                        facts=facts,
+                        user_tags=user_tags,
+                        user_category=user_category,
+                        user_note=user_note,
+                    )
                     if doc_text:
                         text_emb = _global_text_provider.encode(doc_text)
                         if np.any(text_emb):

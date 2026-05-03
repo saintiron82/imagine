@@ -30,11 +30,8 @@ After completion, run audit_null_ratios SQL to confirm column recovery.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
 import sqlite3
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -66,33 +63,35 @@ def _select_targets(conn, scope: str, limit: int, resume: bool):
     return [row[0] for row in conn.execute(sql).fetchall()]
 
 
-def _run_single(path: str) -> tuple[bool, str]:
-    """Invoke ingest_engine --file for a single file (--no-skip).
+_process_file = None  # lazy import; first call loads backend
 
-    Uses --file (not --files) because the single-file process_file() path
-    correctly stores all columns including layer_tree, structured_meta,
-    width/height. The batch --files path has a known issue with PhaseRunner
-    vision result DB reflection.
+
+def _process_one(path: str) -> tuple[bool, str]:
+    """Re-ingest a single file IN-PROCESS.
+
+    Calls backend.pipeline.ingest_engine.process_file() directly so the
+    VLM / SigLIP2 / DINOv2 / text-embedding models — all stored in
+    module-level _global_* variables — load only once for the lifetime
+    of this script and stay warm across every file in the loop.
+
+    The previous subprocess-per-file approach paid ~15s of model-load
+    overhead per call (Qwen 4-bit MLX + SigLIP2 + DINOv2 + Qwen3-Embed
+    each cold-start), making per-file wall time ~21s when the actual
+    parse+vision+embed+store work is ~5-7s. In-process loop drops
+    that to a one-time ~15s warm-up plus per-file work only.
     """
-    cmd = [sys.executable, "-m", "backend.pipeline.ingest_engine",
-           "--file", path, "--no-skip"]
+    global _process_file
+    if _process_file is None:
+        from backend.pipeline.ingest_engine import process_file
+        _process_file = process_file
 
     try:
-        with open("/dev/zero", "rb") as devzero:
-            r = subprocess.run(
-                cmd, cwd=str(PROJECT_ROOT),
-                stdin=devzero,
-                capture_output=True, text=True,
-                timeout=600,  # 10 min per file
-            )
-        if r.returncode != 0:
-            tail = "\n".join(r.stderr.splitlines()[-10:])
-            return False, f"exit={r.returncode}\n{tail}"
+        _process_file(Path(path))
         return True, ""
-    except subprocess.TimeoutExpired:
-        return False, "timeout (>10min)"
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        import traceback
+        tb_tail = "\n".join(traceback.format_exc().splitlines()[-6:])
+        return False, f"{type(e).__name__}: {e}\n{tb_tail}"
 
 
 def main():
@@ -154,7 +153,7 @@ def main():
         idx = i + 1
         logger.info(f"[{idx}/{total}] {Path(path).name}")
         t_file = time.time()
-        ok, err = _run_single(path)
+        ok, err = _process_one(path)
         dt = time.time() - t_file
         if ok:
             succeeded += 1

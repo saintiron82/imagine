@@ -24,6 +24,10 @@ import {
   RefreshCw, Square, Ban, Pencil, AlertOctagon, Loader2, X,
 } from 'lucide-react';
 
+function sumFailedPhases(failed) {
+  if (!failed || typeof failed !== 'object') return 0;
+  return Object.values(failed).reduce((sum, value) => sum + (value || 0), 0);
+}
 
 // ── Resource Metrics Display ─────────────────────────────
 
@@ -212,11 +216,13 @@ export default function WorkersPanel() {
           const p = j.progress || {};
           acc.total += p.total || 0;
           acc.complete += p.complete || 0;
+          acc.failed += sumFailedPhases(p.failed);
           return acc;
-        }, { total: 0, complete: 0 });
+        }, { total: 0, complete: 0, failed: 0 });
         statsData.total = totals.total;
         statsData.completed = totals.complete;
-        statsData.failed = totals.total - totals.complete;
+        statsData.failed = totals.failed;
+        statsData.pending = Math.max(totals.total - totals.complete - totals.failed, 0);
       }
       if (statsData) setQueueStats(statsData);
     } catch (e) {
@@ -436,9 +442,9 @@ export default function WorkersPanel() {
           acc.mc += p.mc_done || 0;
           acc.vv += p.vv_done || 0;
           acc.mv += p.mv_done || 0;
+          acc.failed += sumFailedPhases(p.failed);
           return acc;
-        }, { total: 0, complete: 0, dl: 0, parse: 0, mc: 0, vv: 0, mv: 0 });
-        const remaining = totals.total - totals.complete;
+        }, { total: 0, complete: 0, dl: 0, parse: 0, mc: 0, vv: 0, mv: 0, failed: 0 });
         const pct = totals.total > 0 ? (totals.complete / totals.total * 100).toFixed(1) : 0;
         const s = queueStats || {};
         const speed = s.throughput || 0;
@@ -529,7 +535,7 @@ export default function WorkersPanel() {
                 </div>
                 {/* Action buttons */}
                 <div className="flex items-center gap-2">
-                  {remaining > 0 && (
+                  {totals.failed > 0 && (
                     <button onClick={async () => {
                       try {
                         for (const j of allJobs.filter(j => j.status === 'active')) {
@@ -935,7 +941,7 @@ function QueueRow({ job, onAction }) {
   const isActive = job.status === 'active' || job.status === 'paused';
   const isPaused = job.status === 'paused';
   const failed = p.failed || {};
-  const totalFailed = Object.values(failed).reduce((s, v) => s + (v || 0), 0);
+  const totalFailed = sumFailedPhases(failed);
 
   return (
     <div>

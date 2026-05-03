@@ -1,0 +1,69 @@
+# Imagine Worker — CUDA / Linux 전용 의존성
+#
+# 사용처: Elice Cloud 등 외부 GPU 인스턴스에서 worker_daemon 단독 실행.
+# 메인 requirements.txt 와 동일하나 macOS 전용 (mlx) 라인을 제거.
+#
+# 설치:
+#   pip install torch>=2.6.0 --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements-worker-cuda.txt
+#
+# torch 만 별도 설치하는 이유: 기본 PyPI는 CPU wheel 이라
+# CUDA 인덱스를 우선 지정해야 함.
+
+# PSD Parsing (워커는 parse 안 하지만 backend 모듈 import 시 의존)
+psd-tools>=1.12.0
+aggdraw>=1.4.0
+
+# Image Processing
+Pillow>=12.0.0
+numpy>=2.0.0
+
+# Data Validation
+pydantic>=2.10.0
+
+# File Watching (backend 모듈 import 시 의존)
+watchdog>=6.0.0
+
+# Metadata Extraction
+exifread>=3.5.0
+
+# CLI & Progress
+tqdm>=4.67.0
+
+# SQLite Vector
+sqlite-vec>=0.1.6
+
+# AI Models (transformers backend on CUDA)
+# torch 는 별도 설치 — 위 install 가이드 참조
+transformers>=5.4.0
+accelerate>=1.0.0
+
+# vLLM (Linux + CUDA 전용, continuous batching + PagedAttention)
+# vision_factory 가 Linux 환경에서 자동으로 VLLMAdapter 를 우선 선택.
+# Windows/macOS 에서는 코드가 차단하므로 sys_platform 마커로 보호.
+vllm>=0.11.0; sys_platform == 'linux'
+
+# FastAPI (backend 모듈 transitive import)
+fastapi>=0.115.0
+uvicorn>=0.34.0
+python-multipart>=0.0.20
+bcrypt>=4.0.0
+PyJWT>=2.9.0
+
+# HTTP Client (worker → server)
+requests>=2.32.0
+
+# Config
+PyYAML>=6.0.0
+
+# Translation
+deep-translator>=1.11.0
+
+# Environment Configuration
+python-dotenv>=1.0.0
+
+# System Monitoring
+psutil>=7.0.0
+
+# Firebase Auth (워커 인증)
+firebase-admin>=6.0.0
