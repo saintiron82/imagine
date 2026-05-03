@@ -1,0 +1,75 @@
+{
+  "schema_version": "search_evaluation_compare_v1",
+  "status": "pass",
+  "metrics": [
+    "nDCG@10",
+    "P@10",
+    "Recall@10",
+    "MRR@10"
+  ],
+  "engines": [
+    "triaxis"
+  ],
+  "rules": {
+    "min_delta": -0.01,
+    "min_query_ratio": 1.0,
+    "max_latency_ratio": null
+  },
+  "baseline": {
+    "label_query_count": 30,
+    "run_count": 4
+  },
+  "candidate": {
+    "label_query_count": 30,
+    "run_count": 1
+  },
+  "checks": [
+    {
+      "engine_id": "triaxis",
+      "check": "query_count",
+      "baseline": 30,
+      "candidate": 30,
+      "required_min": 30.0,
+      "status": "pass"
+    }
+  ],
+  "comparisons": [
+    {
+      "engine_id": "triaxis",
+      "metric": "nDCG@10",
+      "baseline": 0.577753,
+      "candidate": 0.638208,
+      "delta": 0.060455,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "P@10",
+      "baseline": 0.463333,
+      "candidate": 0.513333,
+      "delta": 0.05,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "Recall@10",
+      "baseline": 0.297402,
+      "candidate": 0.33448,
+      "delta": 0.037078,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "MRR@10",
+      "baseline": 0.738889,
+      "candidate": 0.794444,
+      "delta": 0.055555,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    }
+  ],
+  "failures": []
+}

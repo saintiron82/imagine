@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-05-02T00:01:53+09:00",
+  "run_id": "scoped_weak_v2_20260501",
+  "git": {
+    "commit": "963cbe46559be1cd2401f466782cee05eb670e01",
+    "dirty": true
+  },
+  "query_count": 30,
+  "db_size": 17725,
+  "judge_mode": "keyword",
+  "scope_ground_truth": true,
+  "axes": {
+    "vv": {
+      "precision": {
+        "P@3": 0.0778,
+        "P@5": 0.0867,
+        "P@10": 0.0767
+      },
+      "recall": {
+        "Recall@3": 0.0524,
+        "Recall@5": 0.0729,
+        "Recall@10": 0.0983
+      }
+    },
+    "mv": {
+      "precision": {
+        "P@3": 0.0556,
+        "P@5": 0.0733,
+        "P@10": 0.0633
+      },
+      "recall": {
+        "Recall@3": 0.0314,
+        "Recall@5": 0.0646,
+        "Recall@10": 0.0947
+      }
+    },
+    "fts": {
+      "precision": {
+        "P@3": 0.0111,
+        "P@5": 0.0133,
+        "P@10": 0.0133
+      },
+      "recall": {
+        "Recall@3": 0.0037,
+        "Recall@5": 0.0204,
+        "Recall@10": 0.0326
+      }
+    },
+    "triaxis": {
+      "precision": {
+        "P@3": 0.5,
+        "P@5": 0.42,
+        "P@10": 0.31
+      },
+      "recall": {
+        "Recall@3": 0.2879,
+        "Recall@5": 0.3714,
+        "Recall@10": 0.4508
+      }
+    }
+  },
+  "timing": {
+    "init": 0.3,
+    "query_gen": 0.7,
+    "vv": 58.2,
+    "mv": 54.1,
+    "fts": 0.1,
+    "triaxis": 226.3
+  }
+}

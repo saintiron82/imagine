@@ -1,0 +1,50 @@
+{
+  "schema_version": "search_benchmark_run_v1",
+  "created_at": "2026-05-01T23:15:19+09:00",
+  "completed_at": "2026-05-01T23:17:39+09:00",
+  "run_id": "candidate_scope_soft_20260501",
+  "git": {
+    "commit": "963cbe46559be1cd2401f466782cee05eb670e01",
+    "dirty": true
+  },
+  "inputs": {
+    "queries": "benchmarks/runs/weak_baseline_20260501/queryset.jsonl",
+    "labels": "benchmarks/runs/weak_baseline_20260501/labels.jsonl",
+    "baseline": "benchmarks/baselines/search_eval_weak_20260501.json"
+  },
+  "config": {
+    "engines": [
+      "triaxis"
+    ],
+    "top_k": 50,
+    "k_values": [
+      3,
+      5,
+      10,
+      50
+    ],
+    "metrics": [
+      "nDCG@10",
+      "P@10",
+      "Recall@10",
+      "MRR@10"
+    ],
+    "min_delta": -0.01,
+    "min_query_ratio": 1.0,
+    "max_latency_ratio": null
+  },
+  "counts": {
+    "run_result_rows": 1500,
+    "query_events": 30,
+    "errors": 0,
+    "empty_results": 0
+  },
+  "files": {
+    "run_results": "run_results.jsonl",
+    "query_events": "query_events.jsonl",
+    "evaluation_json": "evaluation.json",
+    "evaluation_md": "evaluation.md",
+    "compare_json": "compare.json",
+    "compare_md": "compare.md"
+  }
+}

@@ -1,0 +1,210 @@
+{
+  "schema_version": "search_evaluation_compare_v1",
+  "status": "pass",
+  "metrics": [
+    "nDCG@10",
+    "P@10",
+    "Recall@10",
+    "MRR@10"
+  ],
+  "engines": [
+    "fts",
+    "mv",
+    "triaxis",
+    "vv"
+  ],
+  "rules": {
+    "min_delta": -0.01,
+    "min_query_ratio": 1.0,
+    "max_latency_ratio": null
+  },
+  "baseline": {
+    "label_query_count": 30,
+    "run_count": 4
+  },
+  "candidate": {
+    "label_query_count": 30,
+    "run_count": 4
+  },
+  "checks": [
+    {
+      "engine_id": "fts",
+      "check": "query_count",
+      "baseline": 30,
+      "candidate": 30,
+      "required_min": 30.0,
+      "status": "pass"
+    },
+    {
+      "engine_id": "mv",
+      "check": "query_count",
+      "baseline": 30,
+      "candidate": 30,
+      "required_min": 30.0,
+      "status": "pass"
+    },
+    {
+      "engine_id": "triaxis",
+      "check": "query_count",
+      "baseline": 30,
+      "candidate": 30,
+      "required_min": 30.0,
+      "status": "pass"
+    },
+    {
+      "engine_id": "vv",
+      "check": "query_count",
+      "baseline": 30,
+      "candidate": 30,
+      "required_min": 30.0,
+      "status": "pass"
+    }
+  ],
+  "comparisons": [
+    {
+      "engine_id": "fts",
+      "metric": "nDCG@10",
+      "baseline": 0.134755,
+      "candidate": 0.134755,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "fts",
+      "metric": "P@10",
+      "baseline": 0.073333,
+      "candidate": 0.073333,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "fts",
+      "metric": "Recall@10",
+      "baseline": 0.10932,
+      "candidate": 0.10932,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "fts",
+      "metric": "MRR@10",
+      "baseline": 0.275873,
+      "candidate": 0.275873,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "mv",
+      "metric": "nDCG@10",
+      "baseline": 0.208415,
+      "candidate": 0.208415,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "mv",
+      "metric": "P@10",
+      "baseline": 0.12,
+      "candidate": 0.12,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "mv",
+      "metric": "Recall@10",
+      "baseline": 0.160752,
+      "candidate": 0.160752,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "mv",
+      "metric": "MRR@10",
+      "baseline": 0.417778,
+      "candidate": 0.417778,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "nDCG@10",
+      "baseline": 0.448008,
+      "candidate": 0.448008,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "P@10",
+      "baseline": 0.263333,
+      "candidate": 0.263333,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "Recall@10",
+      "baseline": 0.29494,
+      "candidate": 0.29494,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "MRR@10",
+      "baseline": 0.79537,
+      "candidate": 0.79537,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "vv",
+      "metric": "nDCG@10",
+      "baseline": 0.09549,
+      "candidate": 0.09549,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "vv",
+      "metric": "P@10",
+      "baseline": 0.086667,
+      "candidate": 0.086667,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "vv",
+      "metric": "Recall@10",
+      "baseline": 0.054917,
+      "candidate": 0.054917,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    },
+    {
+      "engine_id": "vv",
+      "metric": "MRR@10",
+      "baseline": 0.168413,
+      "candidate": 0.168413,
+      "delta": 0.0,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    }
+  ],
+  "failures": []
+}

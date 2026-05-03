@@ -1,0 +1,38 @@
+{
+  "schema_version": "search_evaluation_v1",
+  "evaluation_status": "weak_labels_only",
+  "created_at": "2026-05-02T00:01:53+09:00",
+  "run_id": "scoped_weak_v2_20260501",
+  "source": "tools/bench_precision.py",
+  "git": {
+    "commit": "963cbe46559be1cd2401f466782cee05eb670e01",
+    "dirty": true
+  },
+  "judge_mode": "keyword",
+  "scope_ground_truth": true,
+  "query_count": 30,
+  "label_count": 333,
+  "run_result_count": 5950,
+  "engines": [
+    "fts",
+    "mv",
+    "triaxis",
+    "vv"
+  ],
+  "k_values": [
+    3,
+    5,
+    10,
+    50
+  ],
+  "label_semantics": "weak labels generated from keyword/db-derived ground truth, intersected with folder scope for scoped queries; not human reviewed",
+  "quality_claim_policy": "do not use this artifact alone to claim search quality improvement",
+  "score_semantics": "rank-only export; score is 0.0 because bench_precision returns IDs without engine scores",
+  "files": {
+    "queries": "queryset.jsonl",
+    "labels": "labels.jsonl",
+    "run_results": "run_results.jsonl",
+    "evaluation_json": "evaluation.json",
+    "evaluation_md": "evaluation.md"
+  }
+}

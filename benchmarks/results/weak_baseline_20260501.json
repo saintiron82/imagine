@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-05-01T22:53:04+09:00",
+  "run_id": "weak_baseline_20260501",
+  "git": {
+    "commit": "963cbe46559be1cd2401f466782cee05eb670e01",
+    "dirty": true
+  },
+  "query_count": 30,
+  "db_size": 17725,
+  "judge_mode": "keyword",
+  "axes": {
+    "vv": {
+      "precision": {
+        "P@3": 0.1222,
+        "P@5": 0.1067,
+        "P@10": 0.0867
+      },
+      "recall": {
+        "Recall@3": 0.0244,
+        "Recall@5": 0.0309,
+        "Recall@10": 0.0549
+      }
+    },
+    "mv": {
+      "precision": {
+        "P@3": 0.1889,
+        "P@5": 0.16,
+        "P@10": 0.12
+      },
+      "recall": {
+        "Recall@3": 0.0856,
+        "Recall@5": 0.1198,
+        "Recall@10": 0.1608
+      }
+    },
+    "fts": {
+      "precision": {
+        "P@3": 0.1222,
+        "P@5": 0.0867,
+        "P@10": 0.0733
+      },
+      "recall": {
+        "Recall@3": 0.076,
+        "Recall@5": 0.0825,
+        "Recall@10": 0.1093
+      }
+    },
+    "triaxis": {
+      "precision": {
+        "P@3": 0.5556,
+        "P@5": 0.42,
+        "P@10": 0.2633
+      },
+      "recall": {
+        "Recall@3": 0.2039,
+        "Recall@5": 0.2499,
+        "Recall@10": 0.2949
+      }
+    }
+  },
+  "timing": {
+    "init": 0.4,
+    "query_gen": 0.7,
+    "vv": 73.9,
+    "mv": 45.2,
+    "fts": 0.1,
+    "triaxis": 133.8
+  }
+}

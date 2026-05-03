@@ -1,0 +1,50 @@
+{
+  "schema_version": "search_benchmark_run_v1",
+  "created_at": "2026-05-02T00:33:14+09:00",
+  "completed_at": "2026-05-02T00:35:33+09:00",
+  "run_id": "scope_relax_format_20260502",
+  "git": {
+    "commit": "963cbe46559be1cd2401f466782cee05eb670e01",
+    "dirty": true
+  },
+  "inputs": {
+    "queries": "benchmarks/runs/scoped_weak_v2_20260501/queryset.jsonl",
+    "labels": "benchmarks/runs/scoped_weak_v2_20260501/labels.jsonl",
+    "baseline": "benchmarks/baselines/search_eval_scoped_weak_v2_20260501.json"
+  },
+  "config": {
+    "engines": [
+      "triaxis"
+    ],
+    "top_k": 50,
+    "k_values": [
+      3,
+      5,
+      10,
+      50
+    ],
+    "metrics": [
+      "nDCG@10",
+      "P@10",
+      "Recall@10",
+      "MRR@10"
+    ],
+    "min_delta": -0.01,
+    "min_query_ratio": 1.0,
+    "max_latency_ratio": null
+  },
+  "counts": {
+    "run_result_rows": 1500,
+    "query_events": 30,
+    "errors": 0,
+    "empty_results": 0
+  },
+  "files": {
+    "run_results": "run_results.jsonl",
+    "query_events": "query_events.jsonl",
+    "evaluation_json": "evaluation.json",
+    "evaluation_md": "evaluation.md",
+    "compare_json": "compare.json",
+    "compare_md": "compare.md"
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "schema_version": "search_evaluation_compare_v1",
+  "status": "fail",
+  "metrics": [
+    "nDCG@10",
+    "P@10",
+    "Recall@10",
+    "MRR@10"
+  ],
+  "engines": [
+    "triaxis"
+  ],
+  "rules": {
+    "min_delta": -0.01,
+    "min_query_ratio": 1.0,
+    "max_latency_ratio": null
+  },
+  "baseline": {
+    "label_query_count": 30,
+    "run_count": 4
+  },
+  "candidate": {
+    "label_query_count": 30,
+    "run_count": 1
+  },
+  "checks": [
+    {
+      "engine_id": "triaxis",
+      "check": "query_count",
+      "baseline": 30,
+      "candidate": 30,
+      "required_min": 30.0,
+      "status": "pass"
+    }
+  ],
+  "comparisons": [
+    {
+      "engine_id": "triaxis",
+      "metric": "nDCG@10",
+      "baseline": 0.448008,
+      "candidate": 0.394878,
+      "delta": -0.05313,
+      "required_min_delta": -0.01,
+      "status": "fail"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "P@10",
+      "baseline": 0.263333,
+      "candidate": 0.203333,
+      "delta": -0.06,
+      "required_min_delta": -0.01,
+      "status": "fail"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "Recall@10",
+      "baseline": 0.29494,
+      "candidate": 0.271256,
+      "delta": -0.023684,
+      "required_min_delta": -0.01,
+      "status": "fail"
+    },
+    {
+      "engine_id": "triaxis",
+      "metric": "MRR@10",
+      "baseline": 0.79537,
+      "candidate": 0.796111,
+      "delta": 0.000741,
+      "required_min_delta": -0.01,
+      "status": "pass"
+    }
+  ],
+  "failures": [
+    "triaxis: nDCG@10 delta -0.053130 < -0.010000",
+    "triaxis: P@10 delta -0.060000 < -0.010000",
+    "triaxis: Recall@10 delta -0.023684 < -0.010000"
+  ]
+}
