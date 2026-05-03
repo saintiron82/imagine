@@ -215,7 +215,7 @@ def main():
     # Server
     p = sub.add_parser('server', help='FastAPI server')
     p.add_argument('--port', type=int, default=8000)
-    p.add_argument('--host', default='0.0.0.0')
+    p.add_argument('--host', default='127.0.0.1')
 
     # Stats
     sub.add_parser('stats', help='Database stats')

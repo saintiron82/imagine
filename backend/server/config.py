@@ -25,9 +25,21 @@ def get_server_config() -> dict:
     try:
         from backend.utils.config import get_config
         cfg = get_config()
-        return cfg.get("server", {})
+        server_cfg = dict(cfg.get("server", {}) or {})
     except Exception:
-        return {}
+        server_cfg = {}
+
+    host = os.getenv("IMAGINE_SERVER_HOST")
+    if host:
+        server_cfg["host"] = host
+
+    cors_allow_all = os.getenv("IMAGINE_CORS_ALLOW_ALL")
+    if cors_allow_all is not None:
+        server_cfg["cors_allow_all"] = cors_allow_all.strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+
+    return server_cfg
 
 
 def _save_jwt_secret(secret: str) -> None:
@@ -104,9 +116,8 @@ def get_refresh_token_days() -> int:
 
 def get_cors_origins() -> List[str]:
     cfg = get_server_config()
-    # Allow all origins when cors_allow_all is true (server mode, JWT-protected)
-    # Also auto-allow when host is 0.0.0.0 (accepting external connections)
-    if cfg.get("cors_allow_all", False) or cfg.get("host", "0.0.0.0") == "0.0.0.0":
+    # Wildcard CORS is opt-in. Binding to 0.0.0.0 alone is not enough.
+    if cfg.get("cors_allow_all", False):
         return ["*"]
     origins = cfg.get("cors_origins", ["http://localhost:9274", "http://localhost:8000"])
     # Electron built apps use file:// protocol which sends Origin: null

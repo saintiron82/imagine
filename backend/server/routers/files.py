@@ -13,8 +13,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from backend.db.sqlite_client import SQLiteDB
-from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
-from backend.server.auth.jwt import decode_access_token
+from backend.server.deps import get_db_safe, get_current_user
 from backend.utils.thumbnail_resolver import resolve_thumbnail
 
 logger = logging.getLogger(__name__)
@@ -29,7 +28,7 @@ def _get_user_or_query_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
     db: SQLiteDB = Depends(get_db_safe),
 ) -> dict:
-    """Auth via header OR ?token= query param OR localhost auto-admin."""
+    """Auth via header OR ?token= query param for browser image/download URLs."""
     # 1) Try Authorization header
     if credentials:
         return get_current_user(request, credentials, db)
@@ -37,13 +36,13 @@ def _get_user_or_query_token(
     # 2) Try ?token= query param
     token = request.query_params.get("token")
     if token:
-        payload = decode_access_token(token)
-        if payload:
-            user_id_raw = payload.get("sub")
-            if user_id_raw is not None:
-                return {"id": int(user_id_raw), "role": payload.get("role", "user")}
+        token_credentials = HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials=token,
+        )
+        return get_current_user(request, token_credentials, db)
 
-    # 3) Localhost auto-admin (embedded worker, Electron)
+    # 3) No credentials
     return get_current_user(request, credentials, db)
 
 
@@ -202,7 +201,24 @@ def update_user_meta(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update metadata")
 
-    return {"success": True}
+    # Re-encode MV so the new user signal enters the meaning axis
+    # immediately. user_rating-only updates skip this (rating doesn't
+    # influence the embedding doc). Runs inline (~3-5s on Qwen3 0.6B).
+    semantic_change = (
+        req.user_note is not None
+        or req.user_tags is not None
+        or req.user_category is not None
+    )
+    mv_reencoded = False
+    if semantic_change:
+        try:
+            from backend.pipeline.ingest_engine import reencode_mv_for_file
+            mv_reencoded = reencode_mv_for_file(file_id)
+        except Exception as e:
+            # Degrade gracefully — user metadata save already succeeded
+            logger.warning(f"MV re-encode after user-meta update failed: {e}")
+
+    return {"success": True, "mv_reencoded": mv_reencoded}
 
 
 @router.delete("/{file_id}")
@@ -287,7 +303,7 @@ def download_original(
     p = Path(file_path)
     if not p.is_absolute():
         p = _PROJECT_ROOT / file_path
-    if not p.exists():
+    if not p.exists() or not p.is_file():
         raise HTTPException(status_code=404, detail="Original file not found on disk")
 
     # Determine media type
@@ -298,6 +314,8 @@ def download_original(
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
     }
+    if suffix not in media_types:
+        raise HTTPException(status_code=403, detail="File type is not downloadable")
     media_type = media_types.get(suffix, 'application/octet-stream')
 
     return FileResponse(

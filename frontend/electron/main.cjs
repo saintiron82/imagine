@@ -2682,6 +2682,7 @@ ipcMain.handle('get-user-settings-path', () => userSettingsPath);
 let serverProc = null;
 let serverMainWindow = null;
 let serverPortCache = 8000;
+let serverHostCache = '127.0.0.1';
 
 /** Get all LAN IPv4 addresses (non-internal, non-VPN). */
 function getLocalNetworkAddresses() {
@@ -2712,28 +2713,29 @@ function loadAppConfig() {
 }
 
 /** Check if a TCP port is available. */
-function isPortAvailable(port) {
+function isPortAvailable(port, host = '127.0.0.1') {
     return new Promise((resolve) => {
         const net = require('net');
         const tester = net.createServer()
             .once('error', () => resolve(false))
             .once('listening', () => { tester.close(); resolve(true); })
-            .listen(port, '0.0.0.0');
+            .listen(port, host);
     });
 }
 
 /** Start embedded FastAPI server. Returns { success, port } or { success: false, error }. */
-async function startEmbeddedServer(port = 8000) {
+async function startEmbeddedServer(port = 8000, opts = {}) {
     if (serverProc) return { success: false, error: 'Server already running' };
+    const host = opts.host || (opts.lanAccess ? '0.0.0.0' : '127.0.0.1');
 
     // Check port availability before spawning to prevent restart loops
-    const portFree = await isPortAvailable(port);
+    const portFree = await isPortAvailable(port, host);
     if (!portFree) {
         console.warn(`[Server] Port ${port} is already in use`);
         return { success: false, error: `Port ${port} is already in use` };
     }
 
-    console.log(`[Server] Starting FastAPI on port ${port}...`);
+    console.log(`[Server] Starting FastAPI on ${host}:${port}...`);
 
     // Serialize WebDAV source configs for DownloadAheadPool registration
     let webdavSourcesJson = '';
@@ -2752,26 +2754,17 @@ async function startEmbeddedServer(port = 8000) {
         console.warn('[Server] Failed to serialize WebDAV sources:', e.message);
     }
 
-    // Firebase service account key: check bundled resources, then project root
-    let firebaseSaKey = '';
-    const saKeyCandidates = [
-        path.join(process.resourcesPath, 'firebase-service-account.json'),
-        path.join(projectRoot, 'firebase-service-account.json'),
-    ];
-    for (const candidate of saKeyCandidates) {
-        if (fs.existsSync(candidate)) { firebaseSaKey = candidate; break; }
-    }
-
     const serverEnv = {
         ...process.env,
         IMAGINE_USER_SETTINGS_PATH: userSettingsPath,
+        IMAGINE_SERVER_HOST: host,
+        IMAGINE_CORS_ALLOW_ALL: opts.corsAllowAll ? '1' : '0',
         ...(webdavSourcesJson ? { IMAGINE_WEBDAV_SOURCES: webdavSourcesJson } : {}),
-        ...(firebaseSaKey ? { FIREBASE_SERVICE_ACCOUNT_KEY: firebaseSaKey } : {}),
     };
 
     const cliPath = getBackendCliPath();
     if (cliPath) {
-        serverProc = spawn(cliPath, ['server', '--port', String(port), '--host', '0.0.0.0'], {
+        serverProc = spawn(cliPath, ['server', '--port', String(port), '--host', host], {
             cwd: projectRoot,
             env: serverEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -2780,7 +2773,7 @@ async function startEmbeddedServer(port = 8000) {
         const py = resolvePython();
         serverProc = spawn(py, [
             '-m', 'uvicorn', 'backend.server.app:app',
-            '--host', '0.0.0.0', '--port', String(port),
+            '--host', host, '--port', String(port),
         ], {
             cwd: projectRoot,
             env: { ...serverEnv, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8' },
@@ -2893,12 +2886,14 @@ async function startEmbeddedServer(port = 8000) {
     });
 
     serverPortCache = port;
+    serverHostCache = host;
     const lanAddresses = getLocalNetworkAddresses();
     const primaryLan = lanAddresses[0]?.address || null;
+    const lanEnabled = host === '0.0.0.0';
     return {
-        success: true, port,
+        success: true, port, host, lanEnabled,
         lanAddresses,
-        primaryLanUrl: primaryLan ? `http://${primaryLan}:${port}` : null,
+        primaryLanUrl: lanEnabled && primaryLan ? `http://${primaryLan}:${port}` : null,
     };
 }
 
@@ -2932,7 +2927,7 @@ async function waitForServerReady(port = 8000, timeoutMs = 30000) {
 ipcMain.handle('server-start', async (event, opts) => {
     const port = opts?.port || 8000;
     serverMainWindow = BrowserWindow.fromWebContents(event.sender);
-    return startEmbeddedServer(port);
+    return startEmbeddedServer(port, opts || {});
 });
 
 ipcMain.handle('server-stop', async () => {
@@ -2953,10 +2948,13 @@ ipcMain.handle('server-status', async () => {
     if (!serverProc) return { running: false };
     const lanAddresses = getLocalNetworkAddresses();
     const primaryLan = lanAddresses[0]?.address || null;
+    const lanEnabled = serverHostCache === '0.0.0.0';
     return {
         running: true,
+        host: serverHostCache,
+        lanEnabled,
         lanAddresses,
-        primaryLanUrl: primaryLan ? `http://${primaryLan}:${serverPortCache}` : null,
+        primaryLanUrl: lanEnabled && primaryLan ? `http://${primaryLan}:${serverPortCache}` : null,
     };
 });
 

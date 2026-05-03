@@ -4,7 +4,7 @@
  * Layer 1: Firebase Auth (personal identity — Google / email+password)
  * Layer 2: Server JWT (group access — server_name + server_password via /auth/connect)
  *
- * Electron local mode: localhost auto-admin (no Firebase needed)
+ * Electron local mode: server-password/JWT auth (no Firebase needed)
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
   // Connected server info { name, url }
   const [connectedServer, setConnectedServer] = useState(null);
 
-  // Track if we should skip Firebase (Electron localhost auto-admin)
+  // Track if we should skip Firebase (Electron local server auth)
   const skipFirebase = useRef(false);
 
   // ── On mount: clear server tokens (require fresh login every session) ──

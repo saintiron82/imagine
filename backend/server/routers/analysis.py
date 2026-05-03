@@ -22,6 +22,54 @@ def _get_manager(db: SQLiteDB) -> AnalysisJobManager:
     return AnalysisJobManager(db)
 
 
+def _worker_phase_columns(phase: str) -> tuple[str, str]:
+    if phase not in {"mc", "vv", "mv"}:
+        raise HTTPException(status_code=400, detail=f"Invalid worker phase: {phase}")
+    return f"{phase}_status", f"{phase}_assigned_to"
+
+
+def _require_worker_session(db: SQLiteDB, user: dict, worker_id: int) -> None:
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """SELECT id FROM worker_sessions
+           WHERE id = ? AND user_id = ? AND status = 'online'""",
+        (worker_id, user.get("id")),
+    )
+    if cursor.fetchone() is None:
+        raise HTTPException(status_code=403, detail="Worker session is not owned by current user")
+
+
+def _require_task_assignment(db: SQLiteDB, user: dict, task_id: int, phase: str) -> None:
+    status_col, assigned_col = _worker_phase_columns(phase)
+    cursor = db.conn.cursor()
+    cursor.execute(f"""
+        SELECT 1
+        FROM file_tasks ft
+        JOIN worker_sessions ws ON ws.id = ft.{assigned_col}
+        WHERE ft.id = ?
+          AND ws.user_id = ?
+          AND ft.{status_col} = 'assigned'
+    """, (task_id, user.get("id")))
+    if cursor.fetchone() is None:
+        raise HTTPException(status_code=403, detail="Task is not assigned to current user's worker")
+
+
+def _require_file_phase_assignment(db: SQLiteDB, user: dict, file_id: int, phase: str) -> None:
+    status_col, assigned_col = _worker_phase_columns(phase)
+    cursor = db.conn.cursor()
+    cursor.execute(f"""
+        SELECT 1
+        FROM file_tasks ft
+        JOIN worker_sessions ws ON ws.id = ft.{assigned_col}
+        WHERE ft.file_id = ?
+          AND ws.user_id = ?
+          AND ft.{status_col} = 'assigned'
+        LIMIT 1
+    """, (file_id, user.get("id")))
+    if cursor.fetchone() is None:
+        raise HTTPException(status_code=403, detail="File phase is not assigned to current user's worker")
+
+
 def _auto_start_worker():
     """Start embedded worker if not already running (called on new job creation)."""
     try:
@@ -302,7 +350,10 @@ def retry_failed_tasks(
 ):
     """Retry failed tasks in an analysis job."""
     mgr = _get_manager(db)
-    count = mgr.retry_failed(job_id, phase=req.phase)
+    try:
+        count = mgr.retry_failed(job_id, phase=req.phase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True, "retried": count}
 
 
@@ -400,7 +451,7 @@ def dismiss_failed_tasks(
 def claim_tasks(
     req: ClaimRequest,
     request: Request,
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Worker requests tasks. Server scheduler decides phase + count.
@@ -413,6 +464,8 @@ def claim_tasks(
     scheduler = getattr(request.app.state, 'scheduler', None)
     if not scheduler:
         scheduler = WorkerScheduler(db)
+
+    _require_worker_session(db, user, req.worker_id)
 
     # Scheduler decides phase + count
     decision = scheduler.assign(req.worker_id)
@@ -436,10 +489,11 @@ def claim_tasks(
 @router.get("/api/v1/files/{file_id}/mc")
 def get_file_mc(
     file_id: int,
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Get MC (vision) fields for a file — used by MV workers."""
+    _require_file_phase_assignment(db, user, file_id, "mv")
     cursor = db.conn.cursor()
     cursor.execute(
         """SELECT mc_caption, ai_tags, image_type, scene_type, art_style
@@ -469,10 +523,11 @@ def get_file_mc(
 async def save_vv_vector(
     file_id: int,
     request: Request,
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Save VV vector directly to vec_files table."""
+    _require_file_phase_assignment(db, user, file_id, "vv")
     import struct
     body = await request.json()
     vec = body.get("vector", [])
@@ -493,10 +548,11 @@ async def save_vv_vector(
 async def save_mv_vector(
     file_id: int,
     request: Request,
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Save MV vector directly to vec_text table."""
+    _require_file_phase_assignment(db, user, file_id, "mv")
     import struct
     body = await request.json()
     vec = body.get("vector", [])
@@ -514,10 +570,11 @@ async def save_mv_vector(
 async def save_vision_fields(
     file_id: int,
     request: Request,
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Save MC vision fields directly to files table."""
+    _require_file_phase_assignment(db, user, file_id, "mc")
     body = await request.json()
     cursor = db.conn.cursor()
     # Update vision fields
@@ -558,30 +615,38 @@ class StartPhaseRequest(BaseModel):
 @router.post("/api/v1/tasks/start")
 def start_task_phase(
     req: StartPhaseRequest,
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Worker reports actual processing start (not claim time)."""
+    _require_task_assignment(db, user, req.task_id, req.phase)
     mgr = _get_manager(db)
-    mgr.start_task_phase(req.task_id, req.phase)
+    try:
+        mgr.start_task_phase(req.task_id, req.phase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True}
 
 
 @router.post("/api/v1/tasks/complete")
 def complete_task_phase(
     req: CompletePhaseRequest,
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Worker reports phase completion for a task."""
+    _require_task_assignment(db, user, req.task_id, req.phase)
     mgr = _get_manager(db)
-    mgr.complete_task_phase(
-        task_id=req.task_id,
-        phase=req.phase,
-        success=req.success,
-        error_message=req.error_message,
-        elapsed_s=req.elapsed_s,
-    )
+    try:
+        mgr.complete_task_phase(
+            task_id=req.task_id,
+            phase=req.phase,
+            success=req.success,
+            error_message=req.error_message,
+            elapsed_s=req.elapsed_s,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True}
 
 

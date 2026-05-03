@@ -87,10 +87,6 @@
         "filter": [
           "**/*"
         ]
-      },
-      {
-        "from": "../firebase-service-account.json",
-        "to": "firebase-service-account.json"
       }
     ],
     "linux": {

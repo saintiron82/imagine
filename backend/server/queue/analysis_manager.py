@@ -23,9 +23,18 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("analysis_manager")
 
+AI_PHASES = {"mc", "vv", "mv"}
+RETRY_PHASES = {"download", "parse", "mc", "vv", "mv"}
+
 
 def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _require_phase(phase: str, allowed: set[str], context: str) -> None:
+    if phase not in allowed:
+        allowed_values = ", ".join(sorted(allowed))
+        raise ValueError(f"invalid {context}: {phase!r}; expected one of: {allowed_values}")
 
 
 class AnalysisJobManager:
@@ -567,41 +576,64 @@ class AnalysisJobManager:
 
         where, status_col, assigned_col, started_col = claim_sql[phase]
 
-        # Find claimable tasks (only from active jobs)
-        cursor.execute(f"""
-            SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id
-            FROM file_tasks ft
-            JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
-            WHERE aj.status = 'active'
-              AND {where}
-            ORDER BY ft.priority DESC, ft.created_at ASC
-            LIMIT ?
-        """, (count,))
-        rows = cursor.fetchall()
+        try:
+            # One writer at a time for claim selection + assignment. Without
+            # this, two workers can read the same pending rows before either
+            # marks them assigned.
+            cursor.execute("BEGIN IMMEDIATE")
 
-        if not rows:
-            return []
+            # Find claimable tasks (only from active jobs)
+            cursor.execute(f"""
+                SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id
+                FROM file_tasks ft
+                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                WHERE aj.status = 'active'
+                  AND {where}
+                ORDER BY ft.priority DESC, ft.created_at ASC
+                LIMIT ?
+            """, (count,))
+            rows = cursor.fetchall()
 
-        # Assign to worker
-        task_ids = [r[0] for r in rows]
-        placeholders = ",".join("?" * len(task_ids))
-        cursor.execute(f"""
-            UPDATE file_tasks
-            SET {status_col} = 'assigned',
-                {assigned_col} = ?,
-                updated_at = ?
-            WHERE id IN ({placeholders})
-        """, [worker_id, now] + task_ids)
+            if not rows:
+                self.db.conn.commit()
+                return []
 
-        # Mark job started_at (first claim ever)
-        job_ids = set(r[3] for r in rows)
-        for jid in job_ids:
-            cursor.execute(
-                "UPDATE analysis_jobs SET started_at = ? WHERE id = ? AND started_at IS NULL",
-                (now, jid),
-            )
+            # Assign to worker. Keep the original pending predicate in the
+            # UPDATE so a future code path cannot overwrite an already-claimed
+            # task even if it bypasses the transaction discipline.
+            task_ids = [r[0] for r in rows]
+            placeholders = ",".join("?" * len(task_ids))
+            cursor.execute(f"""
+                UPDATE file_tasks
+                SET {status_col} = 'assigned',
+                    {assigned_col} = ?,
+                    updated_at = ?
+                WHERE id IN ({placeholders})
+                  AND {where}
+            """, [worker_id, now] + task_ids)
 
-        self.db.conn.commit()
+            if cursor.rowcount != len(task_ids):
+                cursor.execute(f"""
+                    SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id
+                    FROM file_tasks ft
+                    WHERE ft.id IN ({placeholders})
+                      AND ft.{status_col} = 'assigned'
+                      AND ft.{assigned_col} = ?
+                """, task_ids + [worker_id])
+                rows = cursor.fetchall()
+
+            # Mark job started_at (first claim ever)
+            job_ids = set(r[3] for r in rows)
+            for jid in job_ids:
+                cursor.execute(
+                    "UPDATE analysis_jobs SET started_at = ? WHERE id = ? AND started_at IS NULL",
+                    (now, jid),
+                )
+
+            self.db.conn.commit()
+        except Exception:
+            self.db.conn.rollback()
+            raise
 
         return [
             {"task_id": r[0], "file_id": r[1], "file_path": r[2], "job_id": r[3]}
@@ -610,6 +642,7 @@ class AnalysisJobManager:
 
     def start_task_phase(self, task_id: int, phase: str):
         """Record actual processing start time (not claim time)."""
+        _require_phase(phase, AI_PHASES, "worker phase")
         cursor = self.db.conn.cursor()
         started_col = f"{phase}_started_at"
         cursor.execute(f"""
@@ -626,6 +659,7 @@ class AnalysisJobManager:
             elapsed_s: Actual processing time measured by worker (seconds).
                        If provided, started_at is back-calculated from now - elapsed_s.
         """
+        _require_phase(phase, AI_PHASES, "worker phase")
         cursor = self.db.conn.cursor()
         now = _now()
         completed_col = f"{phase}_completed_at"
@@ -829,6 +863,8 @@ class AnalysisJobManager:
             job_id: Analysis job ID
             phase: Optional — retry only specific phase failures
         """
+        if phase:
+            _require_phase(phase, RETRY_PHASES, "retry phase")
         cursor = self.db.conn.cursor()
         now = _now()
 
@@ -840,8 +876,10 @@ class AnalysisJobManager:
                 WHERE analysis_job_id = ? AND {status_col} = 'failed'
                   AND retry_count < max_retries
             """, (now, job_id))
+            retried = cursor.rowcount
         else:
             # Retry all phases
+            retried = 0
             for p in ("download", "parse", "mc", "vv", "mv"):
                 col = f"{p}_status"
                 cursor.execute(f"""
@@ -850,8 +888,8 @@ class AnalysisJobManager:
                     WHERE analysis_job_id = ? AND {col} = 'failed'
                       AND retry_count < max_retries
                 """, (now, job_id))
+                retried += cursor.rowcount
 
-        retried = cursor.rowcount
         self.db.conn.commit()
 
         # Re-activate job if it was completed

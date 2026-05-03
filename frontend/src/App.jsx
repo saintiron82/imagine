@@ -85,6 +85,7 @@ function App() {
   // Server mode state (Electron only)
   const [serverRunning, setServerRunning] = useState(false);
   const [serverPort, setServerPort] = useState(8000);
+  const [serverLanAccess, setServerLanAccess] = useState(false);
   const [serverLanUrl, setServerLanUrl] = useState(null);
   const [serverLanAddresses, setServerLanAddresses] = useState([]);
   const [showServerInfo, setShowServerInfo] = useState(false);
@@ -105,6 +106,7 @@ function App() {
         if (result?.success) {
           const port = result.config?.server?.port || 8000;
           setServerPort(port);
+          setServerLanAccess(result.config?.server?.lan_access === true);
         }
       } catch (e) {
         console.error('Failed to load config:', e);
@@ -131,7 +133,7 @@ function App() {
       try {
         const status = await window.electron?.server?.getStatus();
         if (!status?.running) {
-          await window.electron?.server?.start({ port });
+          await window.electron?.server?.start({ port, lanAccess: serverLanAccess });
           await new Promise(r => setTimeout(r, 1500));
         }
         setServerRunning(true);
@@ -502,7 +504,7 @@ function App() {
           setServerRunning(true);
           return;
         }
-        const result = await window.electron.server.start({ port: serverPort });
+        const result = await window.electron.server.start({ port: serverPort, lanAccess: serverLanAccess });
         if (result.success) {
           setServerRunning(true);
           setServerLanUrl(result.primaryLanUrl || null);
@@ -518,7 +520,7 @@ function App() {
     const delay = serverStartAttemptRef.current > 1 ? 3000 : 500;
     const timer = setTimeout(autoStart, delay);
     return () => clearTimeout(timer);
-  }, [appMode, serverPort, serverRunning]);
+  }, [appMode, serverPort, serverRunning, serverLanAccess]);
 
   // Server queue stats polling (server mode, 5s interval, only when authenticated)
   const [serverQueueStats, setServerQueueStats] = useState(null);
@@ -582,7 +584,7 @@ function App() {
       clearTokens();
       logout(); // reset user state → LoginPage reappears
     } else {
-      const result = await window.electron.server.start({ port: serverPort });
+      const result = await window.electron.server.start({ port: serverPort, lanAccess: serverLanAccess });
       if (result.success) {
         setServerRunning(true);
         setServerLanUrl(result.primaryLanUrl || null);

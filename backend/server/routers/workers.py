@@ -501,12 +501,19 @@ def worker_disconnect(
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Worker graceful disconnect. Reclaims assigned tasks back to pending."""
+    now = _utcnow_sql()
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT id FROM worker_sessions WHERE id = ? AND user_id = ?",
+        (req.session_id, user["id"]),
+    )
+    if cursor.fetchone() is None:
+        raise HTTPException(status_code=403, detail="Worker session is not owned by current user")
+
     from backend.server.queue.analysis_manager import AnalysisJobManager
     mgr = AnalysisJobManager(db)
     reclaimed = mgr.reclaim_worker_tasks(req.session_id)
 
-    now = _utcnow_sql()
-    cursor = db.conn.cursor()
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
            WHERE id = ? AND user_id = ?""",

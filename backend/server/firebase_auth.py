@@ -9,7 +9,7 @@ Credential resolution order:
   4. Application Default Credentials (GCP environments)
 
 If initialization fails (e.g., no credentials), the server still runs
-but Firebase token verification returns None (allowing localhost auto-admin to work).
+but Firebase token verification returns None.
 """
 
 import logging
@@ -76,11 +76,11 @@ def _init_firebase():
             _available = True
             return
 
-        # 2. Service account key from config.yaml
+        # 2. Service account key from config.yaml / user-settings.yaml
         try:
-            from backend.server.config import get_config
+            from backend.utils.config import get_config
             cfg = get_config()
-            cfg_key_path = cfg.get('server', {}).get('firebase', {}).get('service_account_key', '')
+            cfg_key_path = cfg.get('server.firebase.service_account_key', '')
             if cfg_key_path and os.path.isfile(cfg_key_path):
                 cred = credentials.Certificate(cfg_key_path)
                 firebase_admin.initialize_app(cred)
@@ -90,20 +90,7 @@ def _init_firebase():
         except Exception:
             pass
 
-        # 3. Bundled key (project root or Electron resources)
-        project_root = Path(__file__).resolve().parent.parent.parent
-        for candidate in [
-            project_root / "firebase-service-account.json",
-            project_root / "resources" / "firebase-service-account.json",
-        ]:
-            if candidate.is_file():
-                cred = credentials.Certificate(str(candidate))
-                firebase_admin.initialize_app(cred)
-                logger.info(f"Firebase Admin initialized with bundled key: {candidate}")
-                _available = True
-                return
-
-        # 4. firebase-tools CLI token
+        # 3. firebase-tools CLI token
         tools_cred = _try_firebase_tools_credential()
         if tools_cred is not None:
             firebase_admin.initialize_app(tools_cred, options={'projectId': PROJECT_ID})
@@ -111,7 +98,7 @@ def _init_firebase():
             _available = True
             return
 
-        # 5. Application Default Credentials
+        # 4. Application Default Credentials
         firebase_admin.initialize_app(options={'projectId': PROJECT_ID})
         logger.info("Firebase Admin initialized with default credentials")
         _available = True
@@ -119,8 +106,8 @@ def _init_firebase():
     except Exception as e:
         logger.warning(f"Firebase Admin SDK not available: {e}")
         logger.warning(
-            "External PC login will fail. Place firebase-service-account.json "
-            "in project root or set FIREBASE_SERVICE_ACCOUNT_KEY env var."
+            "Firebase login will fail until FIREBASE_SERVICE_ACCOUNT_KEY, "
+            "server.firebase.service_account_key, firebase-tools, or ADC is configured."
         )
         _available = False
 

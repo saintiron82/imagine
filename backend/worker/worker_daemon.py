@@ -376,7 +376,8 @@ class WorkerDaemon:
     def set_tokens(self, access_token: str, refresh_token: str = None) -> bool:
         """Inject existing JWT tokens (skip login, reuse session from Electron).
 
-        Empty token is allowed for embedded worker (localhost auto-admin).
+        Empty token is allowed only for non-HTTP transports such as the
+        embedded LocalTransport path.
         """
         self.access_token = access_token or ""
         self.refresh_token = refresh_token
@@ -384,9 +385,9 @@ class WorkerDaemon:
             self.session.headers["Authorization"] = f"Bearer {self.access_token}"
             logger.info("Tokens injected from existing session")
         else:
-            # No token — localhost auto-admin (embedded worker)
+            # No token — valid only when the daemon is not using HTTP auth.
             self.session.headers.pop("Authorization", None)
-            logger.info("No token — using localhost auto-admin")
+            logger.info("No token injected")
         return True
 
     def _refresh_auth(self) -> bool:
@@ -2257,4 +2258,3 @@ class WorkerDaemon:
             logger.info(f"Throttle level changed: {self._throttle_level} → {level}")
         self._throttle_level = level
         return level
-

@@ -7,8 +7,10 @@ GET  /server/info        — Public server info (no auth required)
 """
 
 import logging
+import os
+from ipaddress import ip_address
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_db_safe
@@ -31,10 +33,30 @@ def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
+def _require_init_allowed(request: Request) -> None:
+    """Allow first-run init from localhost, or from LAN with a setup token."""
+    token = os.getenv("IMAGINE_SETUP_TOKEN")
+    if token and request.headers.get("x-imagine-setup-token") == token:
+        return
+
+    host = request.client.host if request.client else ""
+    try:
+        if host and ip_address(host).is_loopback:
+            return
+    except ValueError:
+        pass
+
+    raise HTTPException(
+        status_code=403,
+        detail="Server initialization is restricted to localhost unless IMAGINE_SETUP_TOKEN is provided.",
+    )
+
+
 @router.post("/init", response_model=TokenResponse)
-def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db_safe)):
+def init_server(req: ServerInitRequest, request: Request, db: SQLiteDB = Depends(get_db_safe)):
     """Initialize server with group name, server password, and admin account.
     Can only be called once (before any admin exists)."""
+    _require_init_allowed(request)
     try:
         cursor = db.conn.cursor()
 
@@ -123,11 +145,12 @@ def init_server(req: ServerInitRequest, db: SQLiteDB = Depends(get_db_safe)):
 
 
 @router.post("/firebase-init", response_model=TokenResponse)
-def firebase_init_server(req: FirebaseServerInitRequest, db: SQLiteDB = Depends(get_db_safe)):
+def firebase_init_server(req: FirebaseServerInitRequest, request: Request, db: SQLiteDB = Depends(get_db_safe)):
     """Initialize server with Firebase Auth (no server password needed).
 
     The first user (from Firebase ID Token) becomes the admin.
     """
+    _require_init_allowed(request)
     from backend.server.firebase_auth import verify_firebase_token
 
     decoded = verify_firebase_token(req.id_token)

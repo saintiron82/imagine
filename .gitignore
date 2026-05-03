@@ -42,6 +42,7 @@ thumbnails/
 *.db
 *.db-shm
 *.db-wal
+*.db.bak_*
 # Legacy (deprecated)
 chroma_db/
 
