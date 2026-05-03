@@ -228,6 +228,78 @@ Stage 4: Reranking → final = weighted features - penalties (conflicting eviden
 
 ---
 
+## 6. Cloud Worker Migration (vLLM Remote API)
+
+> **상태**: 미구현 — 실제 대량 처리 고객 확보 시 착수 (예상 소요: 반나절)
+> **진단일**: 2026-04-06
+
+### 6.1 현재 코드 상태 진단 결과
+
+| 항목 | 상태 | 비고 |
+|------|------|------|
+| **API 인터페이스** | `requests` + 로컬 모델 직접 호출 혼합 | vLLM 어댑터는 `from vllm import LLM` (로컬 전용) |
+| **이미지 전달** | Base64 (모든 어댑터) | 클라우드 전환 시 변경 불필요 |
+| **워커 독립 실행** | CLI 완전 독립 (`--server`, `--token`) | 컨테이너 단독 실행 가능 |
+| **배치 처리** | MC=1(순차), VV=8, MV=16 | MC가 병목, vLLM Continuous Batching으로 해소 |
+| **경로 변환** | `server_upload` 모드 자동 감지 | 원격 서버 → 썸네일 API 다운로드, 변경 불필요 |
+
+**핵심 결론**: 90%+ 마이그레이션 장애물이 이미 해결됨. `vllm_adapter.py` 1파일 수정으로 전환 가능.
+
+### 6.2 수정 계획
+
+**대상 파일**: `backend/vision/vllm_adapter.py` (단일 파일)
+
+**변경 내용**:
+```
+AS-IS: from vllm import LLM → 로컬 GPU에서 모델 직접 구동
+TO-BE: from openai import OpenAI → 원격 vLLM 서버 OpenAI-compatible API 호출
+```
+
+**인터페이스 유지**: `BaseVisionAnalyzer` 상속 구조, 2-Stage 파이프라인 (classify → analyze_structured) 그대로 유지. 팩토리 패턴으로 자동 선택.
+
+**동기 호출 유지**: 워커 데몬이 동기 스레드 기반이므로 `AsyncOpenAI`가 아닌 동기 `OpenAI` 사용. asyncio 도입은 워커 전체 리팩토링이 되므로 불필요.
+
+### 6.3 Continuous Batching 전략
+
+vLLM 서버는 외부에서 요청이 동시에 도착하면 자체적으로 PagedAttention 배칭을 수행.
+
+**권장 방식**: 워커 N대 × 동기 요청 (워커 코드 변경 없음)
+```
+워커 A (컨테이너 1): 동기 1-by-1 ──┐
+워커 B (컨테이너 2): 동기 1-by-1 ──┼──→ vLLM 서버 (자체 Continuous Batching)
+워커 C (컨테이너 3): 동기 1-by-1 ──┘
+```
+
+**단일 워커 내 동시성이 필요한 경우** (선택):
+```python
+from concurrent.futures import ThreadPoolExecutor
+with ThreadPoolExecutor(max_workers=8) as pool:
+    futures = [pool.submit(client.chat.completions.create, ...) for img in batch]
+    results = [f.result() for f in futures]
+```
+
+asyncio.gather 방식은 워커 전체 리팩토링이 필요하므로 **비권장**.
+
+### 6.4 Claim 크기 조정
+
+코드 수정 불필요 — `config.yaml > worker.claim_batch_size` 값만 변경:
+```yaml
+worker:
+  claim_batch_size: 32   # A100 환경 (기본값 5에서 증가)
+  batch_capacity: 32
+```
+
+MC 전용 모드 (`processing_mode: "mc"`) 사용 시 VLM만 돌리고 즉시 업로드하므로 대용량 claim에도 Phase 간 대기 없음.
+
+### 6.5 착수 조건
+
+- [x] 실제 대량 처리 고객 확보 — 1호 고객 WebDAV 30만 장 (2026-04-06 확인)
+- [ ] `refactor/server-scheduler` 브랜치 작업 완료 후 즉시 착수
+- [ ] vLLM 서버 테스트 환경 확보 (A100 또는 동급 GPU 인스턴스)
+- [ ] 서버 → 클라우드 워커 간 네트워크 경로 확인 (썸네일 API 응답 속도)
+
+---
+
 ## Open Decision Items
 
 | Decision | Options | Current |

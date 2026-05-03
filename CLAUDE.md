@@ -1,1690 +1,544 @@
 # CLAUDE.md
 
-## 언어 규칙 (MANDATORY)
+이 문서는 Imagine의 **동작 원리, 모델 접근 논리, 처리 구조, 핵심 알고리즘**을 빠르게 파악하기 위한 기술 개요다.
 
-**모든 응답은 반드시 한국어로 작성합니다.** 코드 주석, 커밋 메시지, 변수명 등 코드 자체는 영어를 사용하되, 사용자에게 보여주는 설명·요약·보고는 항상 한국어로 합니다.
+## 프로젝트의 기본 문제 설정
 
-## 금지 용어 (MANDATORY)
+Imagine은 PSD, PNG, JPG 같은 시각 자산을 단순 파일이 아니라 **검색 가능한 분석 단위**로 바꾸는 시스템이다.
 
-- **"고아(orphan)"**: 어떤 맥락에서도 사용 금지. 대신 "참조 없는(unreferenced)", "매칭되지 않는(unmatched)", "잔여(residual)" 등으로 표현할 것.
+이 시스템이 푸는 문제는 세 가지다.
 
-## Git 브랜치 워크플로우 (MANDATORY)
+1. 파일 내부의 구조와 팩트를 뽑아내야 한다.
+2. 이미지의 시각적 유사성과 의미적 유사성을 함께 다뤄야 한다.
+3. 단일 로컬 환경과 서버-워커 분산 환경에서 같은 처리 모델을 유지해야 한다.
 
-**모든 작업은 브랜치에서 수행합니다. `main`에 직접 커밋하지 않습니다.**
+이 때문에 Imagine은 파싱, 비전 분석, 벡터화, 검색, 스케줄링을 각각 분리된 계층으로 두고, 그 사이를 명시적인 데이터 구조로 연결한다.
 
-### 브랜치 전략
+## 핵심 개념
 
-```
-main (안정) ← merge ← feat/xxx, fix/xxx, refactor/xxx, ...
-```
+### VV
 
-| 항목 | 규칙 |
-|------|------|
-| **main** | 항상 안정 상태 유지. 직접 커밋 금지 |
-| **작업 브랜치** | main에서 분기하여 작업 수행 |
-| **병합** | 작업 완료 후 main으로 merge |
-| **삭제** | 병합 완료 후 로컬 브랜치 삭제 |
+`VV`는 Visual Vector다.  
+이미지 픽셀에서 직접 추출한 시각 임베딩으로, “이것과 비슷하게 생긴 이미지”를 찾기 위한 축이다.
 
-### 브랜치 명명 규칙
+주로 담당하는 신호:
 
-```
-<type>/<간결한-설명>
-```
+- 구도
+- 실루엣
+- 색감
+- 밀도감
+- 전반적 비주얼 스타일
 
-| type | 용도 | 예시 |
-|------|------|------|
-| `feat` | 새 기능 | `feat/parse-ahead-pool` |
-| `fix` | 버그 수정 | `fix/worker-ipc-hang` |
-| `refactor` | 리팩토링 | `refactor/cleanup-unused-code` |
-| `docs` | 문서 변경 | `docs/update-api-spec` |
-| `chore` | 설정/빌드 | `chore/update-deps` |
+### MC
 
-### 워크플로우
+`MC`는 Meta-Context Caption이다.  
+비전 모델이 이미지와 파싱 컨텍스트를 함께 보고 만든 해석 결과다.
 
-```
-1. git checkout -b <type>/<설명>   ← main에서 브랜치 생성
-2. 작업 + 커밋 (아래 커밋 규칙 동일 적용)
-3. 작업 완료 → git checkout main && git merge <브랜치>
-4. 버전 bump (main에서 1회)
-5. git branch -d <브랜치>   ← 로컬 브랜치 삭제
-```
+MC는 단순 캡션이 아니라 다음을 묶는다.
 
-### main 직접 커밋 예외
+- 핵심 설명 텍스트
+- 태그
+- 분류 결과
+- 도메인별 구조화 정보
 
-- 버전 bump 커밋
-- CLAUDE.md 규칙 변경
-- 긴급 핫픽스 (1-2줄 수정)
+### MV
 
----
+`MV`는 Meaning Vector다.  
+MC 텍스트를 다시 텍스트 임베딩 모델에 넣어 만든 의미 임베딩이다.
 
-## 커밋 규칙 (MANDATORY)
+VV가 픽셀의 유사성을 보는 축이라면, MV는 설명 가능한 의미와 용도를 본다.
 
-**작업 단위(논리적으로 완결된 변경)마다 커밋합니다.** 사용자가 별도로 커밋을 요청하지 않아도, 하나의 작업 단위가 끝나면 자동으로 커밋합니다.
+### FTS
 
-### 작업 단위 기준
+`FTS`는 SQLite FTS5 기반의 팩트 검색 축이다.  
+이 축은 생성형 추론이 아니라 **정확한 텍스트 단서**를 다룬다.
 
-| 작업 단위 | 커밋 시점 | 예시 |
-|-----------|----------|------|
-| 새 기능/모듈 추가 | 기능이 동작하는 상태에 도달했을 때 | i18n 인프라 생성, 새 파서 추가 |
-| 기존 파일 수정 (일괄) | 동일 목적의 수정이 모든 대상 파일에 적용되었을 때 | 7개 컴포넌트 하드코딩 문자열 치환 |
-| 설정/문서 변경 | 해당 변경이 완료되었을 때 | CLAUDE.md 규칙 추가, 스킬/워크플로우 생성 |
-| 버그 수정 | 수정 및 검증 완료 시 | 빌드 에러 수정, 런타임 오류 수정 |
-| 리팩토링 | 리팩토링 단위 완료 시 | 함수 분리, 모듈 재구성 |
+대표 입력:
 
-### 커밋 메시지 형식
+- 파일명
+- 경로
+- 레이어명
+- 텍스트 레이어
+- OCR
+- 사용자 메모/태그
+- 구조화 메타데이터
 
-```
-<type>: <간결한 설명 (영어)>
+### Structure
 
-<변경 내용 상세 (선택, 영어)>
+검색 엔진은 기본적으로 Triaxis를 중심으로 설명할 수 있지만, 실제 구현은 필요 시 **구조 축**도 함께 다룬다.
 
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-```
+구조 축은 주로 다음 성질을 본다.
 
-**type 종류**: `feat`, `fix`, `refactor`, `docs`, `chore`, `style`, `test`
+- 큰 형태 배치
+- 구조적 균형
+- 레이아웃의 골격
+- 이미지 간 형태적 배열 유사성
 
-### 규칙
+코드상으로는 `vec_structure`, `structure_score`, `structural_similarity` 같은 이름으로 드러난다.
 
-- **하나의 커밋 = 하나의 논리적 작업 단위** (너무 크지도, 너무 작지도 않게)
-- **빌드가 깨지는 상태로 커밋 금지** (커밋 전 빌드 확인)
-- **관련 없는 변경을 하나의 커밋에 섞지 않기**
-- **사용자에게 커밋 내용을 간략히 보고** (커밋 후 한국어로 요약)
+## 전체 구조
 
-## 버전 규칙 (MANDATORY)
+Imagine의 큰 흐름은 아래와 같다.
 
-**브랜치가 main에 병합된 후 1회 버전을 올립니다.** 작업 브랜치 내에서는 version bump를 하지 않습니다.
-
-### 현재 버전
-
-```
-v0.1.1
+```text
+원본 파일
+  -> Parse
+  -> Vision
+  -> VV Encode
+  -> MV Encode
+  -> SQLite 저장
+  -> Triaxis Search
 ```
 
-### 형식
+실제로는 이 흐름이 단일 머신, Electron 내장 서버, 브라우저 서버 모드, 외부 워커 모드에서 같은 논리로 반복된다.
 
-```
-M.m.p.YYYYMMDD_NN
-```
+## 파싱 계층
 
-| 필드 | 설명 | 예시 |
-|------|------|------|
-| `M` | Major — 대규모 아키텍처 변경 | `0` → `1` |
-| `m` | Minor — 새 기능 추가 | `0.5` → `0.6` |
-| `p` | Patch — 버그 수정, 소규모 개선 | `0.5.0` → `0.5.1` |
-| `YYYYMMDD` | 수정 날짜 | `20260222` |
-| `NN` | 해당 날짜의 수정 순번 (01부터) | `01`, `02`, `03` |
+### 목적
 
-`M.m.p` 부분은 이 섹션의 **현재 버전** 값을 사용합니다. 메이저/마이너/패치 변경 시 여기를 먼저 업데이트하세요.
+파싱 계층은 원본 파일을 검색 가능한 기본 재료로 바꾸는 단계다.
 
-### 표기 위치
+여기서 만들어지는 것은 대략 다음과 같다.
 
-- `frontend/src/components/StatusBar.jsx` — UI 하단에 표시
+- 파일 메타데이터
+- 썸네일
+- PSD 레이어 트리
+- 텍스트 레이어 내용
+- 폰트 정보
+- 구조 태그와 의미 단서
 
-### 절차
+### PSD 접근 논리
 
-1. 작업 단위 커밋 완료
-2. (M.m.p 변경이 필요하면) 이 섹션의 **현재 버전** 값을 먼저 업데이트
-3. `StatusBar.jsx`의 버전 문자열 업데이트 (`현재 버전.YYYYMMDD_NN`)
-4. `chore: version bump to vX.X.X.YYYYMMDD_NN` 커밋
+PSD는 단순 이미지가 아니라 계층 구조를 가진 문서이므로, 파서는 최종 합성 이미지뿐 아니라 내부 레이어 구조를 함께 읽는다.
 
----
+`backend/parser/psd_parser.py` 기준 흐름:
 
-이 파일은 Claude Code (claude.ai/code)가 이 저장소에서 작업할 때 참고하는 가이드입니다.
+1. PSD 열기
+2. 캔버스 크기 확인
+3. 레이어 트리 재귀 순회
+4. 텍스트 레이어에서 문자열과 폰트 추출
+5. 합성 이미지 또는 대체 경로로 썸네일 생성
+6. 레이어명 기반 의미 태그 생성
+7. `AssetMeta` 구조로 저장
 
-## 프로젝트 개요
+### PSD 파서의 핵심 판단
 
-**ImageParser**는 PSD, PNG, JPG 파일을 AI 검색 가능한 데이터로 변환하는 멀티모달 이미지 데이터 추출 및 벡터화 시스템입니다. **Triaxis 아키텍처** (VV + MV + FTS)를 사용합니다:
+레이어 파서는 레이어를 단순히 나열하지 않는다.  
+다음 판단을 함께 만든다.
 
-1. **VV (Visual Vector)**: SigLIP2로 시각적 임베딩 (이미지 픽셀 유사도 검색, `vec_files`)
-2. **MV (Meaning Vector)**: Qwen3-Embedding으로 MC를 벡터화 (의미 기반 검색, `vec_text`)
-3. **MC (Meta-Context Caption)**: VLM(Qwen3.5)이 생성한 캡션/태그 (`mc_caption`, `ai_tags`)
-4. **FTS (Full-Text Search)**: FTS5 BM25로 파일명/레이어명/태그 키워드 검색 (`files_fts`)
+- 레이어 이름 정제
+- 레이어 위치와 크기
+- 그룹/비그룹 구조
+- content type 추론
 
-**기술 스택**:
-- **Backend**: Python 3.x + `psd-tools`, `Pillow`, `transformers`, `sqlite-vec`
-- **Server**: FastAPI (JWT 인증, 분산 워커 지원, REST API)
-- **Frontend**: React 19 + Electron 40 + Vite + Tailwind CSS (데스크탑 + 웹 듀얼 모드)
-- **Database**: SQLite + sqlite-vec (통합 메타데이터 + 벡터 저장소, Docker 불필요)
-- **AI 모델**: SigLIP2 (VV), Qwen3.5 (VLM/MC), Qwen3-Embedding (MV)
+즉 PSD 파싱은 “포토샵 문서를 이미지 검색 재료로 바꾸는 구조화 단계”다.
 
-## 설계 근거 (Design Rationale)
+## 비전 분석 계층
 
-**이 프로젝트의 핵심 아키텍처 결정과 그 이유를 기록합니다.**
+### 역할 분리
 
-### 플랫폼 구조: 왜 Electron + 웹 듀얼 모드인가?
+비전 분석 계층의 목적은 이미지에 대해 사람이 검색에 사용할 수 있는 설명을 만드는 것이다.
 
-**대상 사용자**: 게임/일러스트 스튜디오의 아티스트.
-**핵심 제약**: 아티스트에게 Docker, PostgreSQL, CLI 설치를 요구할 수 없다.
+이 계층은 대체로 두 가지 역할을 한다.
 
-| 시나리오 | 필요한 것 | 해결 |
-|---------|----------|------|
-| 개인 아티스트 1명 | 내 PC에서 바로 실행, 설치 간편 | **Electron 앱** — 더블클릭으로 실행, 로컬 DB, 로컬 GPU |
-| 스튜디오 팀 (5-20명) | 공유 에셋 검색, 한 명이 처리하면 전원이 검색 | **서버 모드** — Electron 앱에서 [Server] 토글, 나머지는 브라우저 접속 |
-| 처리량 확장 | GPU 머신 여러 대로 분산 처리 | **워커 시스템** — 별도 머신에서 워커 데몬 연결 |
+1. 이미지에서 MC를 생성
+2. 이후 MV 생성을 위한 의미 입력을 정리
 
-**같은 React 코드베이스**가 Electron(IPC) / 브라우저(HTTP API) 양쪽 모드로 동작 → 유지보수 비용 1x.
-**Python 백엔드**는 Electron에서 subprocess로 직접 호출하거나, FastAPI 서버로 독립 실행 가능.
+### 모델 접근 논리
 
-### Triaxis 검색: 왜 3축인가?
+Imagine은 비전 모델을 단순히 “좋은 캡션 생성기”로 쓰지 않는다.  
+핵심은 **검색 중간 표현 생성기**로 쓴다는 점이다.
 
-이미지 에셋 검색에서 단일 벡터는 한계가 있다:
+즉 비전 모델의 목표는 문학적 설명이 아니라 다음에 가깝다.
 
-| 축 | 검색 의도 | 예시 쿼리 | 단독으로 부족한 이유 |
-|----|---------|---------|-----------------|
-| **VV** (시각) | "이것과 비슷하게 생긴 이미지" | 참조 이미지 업로드 | 의미("검 든 기사") 검색 불가 |
-| **MV** (의미) | "검 든 판타지 기사" | 텍스트 쿼리 | 시각적 유사성 무시 (같은 설명이라도 스타일 다름) |
-| **FTS** (키워드) | "character_hero_v2.psd" | 파일명/태그 직접 검색 | AI 이해 없이 정확한 키워드 매칭만 |
+- 검색에 유리한 짧고 밀도 높은 설명
+- 분류 가능한 태그
+- 후속 MV 임베딩에 적합한 텍스트
+- 도메인별로 통제 가능한 출력
 
-**RRF (Reciprocal Rank Fusion)** 으로 3축 결과를 결합하면, 텍스트 쿼리 하나로 의미+시각+키워드를 동시에 검색 가능.
-각 축의 가중치는 쿼리 유형(visual/semantic/keyword)에 따라 자동 조절 (`search.rrf.presets`).
+### 구현 구조
 
-### SQLite: 왜 PostgreSQL이 아닌가?
+모델 선택과 생명주기 관리는 분리되어 있다.
 
-| 기준 | SQLite | PostgreSQL |
-|------|--------|------------|
-| **설치** | 없음 (Python 내장) | Docker 또는 시스템 설치 필요 |
-| **배포** | `.db` 파일 1개 복사 = 전체 백업 | 덤프/복원 절차 필요 |
-| **벡터 검색** | sqlite-vec (vec0 가상 테이블) | pgvector |
-| **전문 검색** | FTS5 (내장) | pg_trgm / tsquery |
-| **동시성** | 단일 writer (서버 모드 uvicorn 1 worker) | 다중 writer |
-| **대상 규모** | ~100만 파일 (충분) | 수천만+ |
+- 모델 생명주기: `backend/pipeline/model_manager.py`
+- 비전 분석 인터페이스: `backend/vision/base.py`
+- 기본 구현 축: `backend/vision/analyzer.py`
+- 플랫폼/백엔드 선택: `backend/vision/vision_factory.py`
+- 플랫폼별 어댑터: `mlx_adapter.py`, `ollama_adapter.py`, `vllm_adapter.py`
 
-**결정**: 대상 사용자(아티스트)에게 Docker 설치를 요구하는 것은 채택 장벽.
-**트레이드오프**: 서버 모드에서 동시 쓰기 제한 → uvicorn 단일 워커로 해결. 아티스트 스튜디오 규모(수만~수십만 파일)에서 SQLite 성능은 충분.
+### 핵심 설계 포인트
 
-### 3-Tier 시스템: 왜 standard / pro / ultra인가?
+비전 계층은 다음 원칙으로 움직인다.
 
-**현실의 GPU 다양성**에 대응:
+- lazy load: 필요할 때만 모델 적재
+- explicit unload: phase 종료 후 메모리 해제
+- backend abstraction: MLX, transformers, Ollama, vLLM을 같은 인터페이스 뒤로 숨김
+- prompt shaping: 장황한 자유 생성이 아니라 구조화된 검색 재료 생성
+- domain injection: 이미지 유형에 따라 분류 기준과 태그 공간을 바꿈
 
-| Tier | 타겟 하드웨어 | VRAM | VLM | 품질 |
-|------|-------------|------|-----|------|
-| **standard** | 통합 GPU 노트북, 저사양 | ~6GB | Qwen3.5-**4B** | 기본 캡션/태그 |
-| **pro** | Mac M-시리즈 (32GB+) | 8-16GB | Qwen3.5-**9B** | 상세 캡션, 정확한 분류 |
-| **ultra** | RTX 4090, A100 서버 | 20GB+ | Qwen3.5-**9B** (또는 27B) | 최고 품질 |
+## VV 계층
 
-**핵심 설계**: VV(SigLIP2)와 MV(0.6B)를 standard↔pro에서 **동일 모델**로 통일 → Tier 전환 시 벡터 재생성 불필요.
-VLM만 Tier에 따라 교체되므로, Tier 업그레이드 = MC만 재생성 (VV/MV 유지).
+VV 계층은 이미지 자체를 벡터로 바꾸는 부분이다.
 
-**왜 3단계인가**: 2단계(light/full)로는 8GB Mac과 24GB RTX를 같은 설정으로 쓸 수 없고, 4단계 이상은 관리 복잡도 대비 이점이 없음.
+이 계층의 목표는 자연어 의미가 아니라 “픽셀 레벨에서 닮음”을 보존하는 것이다.
 
-### VLM 선택: Qwen3-VL → Qwen3.5 전환 (2026-04-01)
+대표적으로 잘 잡는 것:
 
-**Qwen3.5**(2026-03-02 출시)는 별도 `-VL` 모델 없이 **네이티브 멀티모달**을 지원하는 세대 교체 모델.
+- 동일한 구도
+- 비슷한 배색
+- 유사한 톤
+- 반복되는 디자인 패턴
 
-| 모델 | 아키텍처 | 크기 범위 | MMMU-Pro | 라이선스 | 비고 |
-|------|---------|----------|---------|---------|------|
-| ~~Qwen3-VL~~ | 볼트온 VL | 2B/4B/8B | 52.0 (4B) | Apache 2.0 | **이전 기본값** |
-| **Qwen3.5** | Early Fusion 네이티브 멀티모달 | 0.8B~397B | 66.3 (4B) / 70.1 (9B) | Apache 2.0 | **현재 기본값** |
+VV는 검색에서 다음 상황에 강하다.
 
-**전환 근거**:
-1. **동일 4B에서 MMMU-Pro +14점** (52.0 → 66.3) — 벤치마크 대폭 향상
-2. **9B가 Qwen3-VL-30B-A3B(30B) 초과** — 같은 메모리로 더 높은 품질
-3. **네이티브 멀티모달** — `qwen_vl_utils` 불필요, `apply_chat_template`으로 이미지 처리 통합
-4. **Apache 2.0** — 라이선스 동일
-5. **MLX 4bit 지원** — `mlx-community/Qwen3.5-9B-MLX-4bit` (6.6GB Metal)
-6. **Thinking 모드 제어 필수** — `enable_thinking=False` 미설정 시 12.7배 느림 + JSON 파싱 실패
+- 유사 레퍼런스 찾기
+- 업로드 이미지 기반 검색
+- 말로 설명하기 어려운 스타일 매칭
 
-### Qwen3.5 벤치마크 (2026-04-01 M5 32GB 실측)
+## MV 계층
 
-**배치 모드 10장 처리 실측 (MLX 4bit, 2-Stage Pipeline):**
+MV 계층은 MC를 다시 임베딩해 의미 공간으로 보내는 단계다.
 
-| 모델 | files/min | Avg S1 | Avg S2 | Avg Total | Metal Peak | 성공률 |
-|------|:---------:|:------:|:------:|:---------:|:----------:|:------:|
-| Qwen3-VL-4B (이전) | 6.8 | 1.4s | 7.4s | 8.8s | 3.8GB | 10/10 |
-| Qwen3.5-4B | 2.5 | 2.6s | 21.0s | 23.6s | 3.9GB | 9/10 |
-| Qwen3.5-9B (장황 프롬프트) | 2.3 | 3.1s | 23.1s | 26.3s | 6.6GB | 10/10 |
-| **Qwen3.5-9B (최적화 프롬프트)** | **6.4** | **1.6-3.6s** | **3.7-8.9s** | **5.2-12.5s** | **6.6GB** | **10/10** |
+핵심 아이디어는 단순하다.
 
-**tok/s 비교 (MLX 4bit, Stage 2):**
+- 원본 이미지를 바로 텍스트 임베딩하지 않는다.
+- 먼저 비전 모델이 해석한 MC를 만든다.
+- 그 MC를 의미 벡터로 바꾼다.
 
-| 모델 | Prefill (tok/s) | Generation (tok/s) | 생성 토큰 수 |
-|------|:-:|:-:|:-:|
-| Qwen3-VL-4B | 419 | 47.4 | 58 |
-| Qwen3.5-4B | 588 | 45.9 | 100 |
-| Qwen3.5-9B | 290 | 24.8 | 201 (장황) / ~80 (최적화) |
+이 구조를 쓰는 이유는 이미지의 의미를 직접 임베딩하는 대신, **해석된 중간 언어 표현**을 거쳐 더 안정적인 검색 신호를 만들기 위해서다.
 
-**핵심 발견**:
-- **tok/s는 모델 크기에 비례하여 감소** (9B = 4B의 약 절반)
-- **Qwen3.5가 같은 프롬프트에 더 장황하게 응답** — 속도 병목의 주원인
-- **프롬프트 최적화 ("max 20 words, max 8 tags")로 해결** — 23s → 3.7-8.9s (2.6-6x 단축)
-- **9B + 최적화 프롬프트 = VL-4B와 동급 속도 + 더 높은 품질**
+즉 MV는 “설명 가능한 의미 공간”을 담당한다.
 
-### Qwen3.5 Thinking 모드 제어 (MANDATORY)
+## 파이프라인 실행 구조
 
-Qwen3.5는 기본적으로 Thinking 모드가 ON. **MC 생성에서 반드시 비활성화해야 함.**
+### Phase 분리
 
-| 백엔드 | 비활성화 방법 |
-|--------|------------|
-| **MLX** (`mlx_adapter.py`) | `tokenizer.apply_chat_template(msgs, enable_thinking=False)` — `mlx_vlm.prompt_utils`는 이 파라미터를 전달하지 않으므로 tokenizer 직접 호출 필수 |
-| **Transformers** (`analyzer.py`) | `processor.apply_chat_template(msgs, chat_template_kwargs={"enable_thinking": False})` |
-| **Ollama** | TODO: 아직 미적용 |
+Imagine의 파이프라인은 크게 아래처럼 본다.
 
-**Thinking ON vs OFF 실측:**
-
-| 항목 | Thinking ON | Thinking OFF |
-|------|:---:|:---:|
-| 생성 시간 | 11.8s | **0.9s** |
-| JSON 파싱 | **실패** (자연어 출력) | **성공** (Tier 1 직접 파싱) |
-| 속도 차이 | — | **12.7x 빠름** |
-
-### VLM 선택 이력
-
-| 시점 | VLM | 근거 |
-|------|-----|------|
-| 2026-02-20 | Qwen3-VL-4B | 2B/4B/8B 라인업, Apache 2.0, MLX+Ollama 지원 |
-| **2026-04-01** | **Qwen3.5-9B** | 세대 교체 (Early Fusion), 동급 속도에서 품질 대폭 향상, 32GB Mac에서 6.6GB Metal로 여유 |
-
-**다음 재평가 시점**: Qwen4 시리즈 출시 시, 또는 경쟁 모델(InternVL3 등)이 동급 크기에서 유의미한 성능 차이를 보일 때
-
-**결정 근거 (기존 유지)**:
-1. **한국어+영어 캡션 품질** — 한국 아티스트 대상, 한국어 MC가 MV 검색 품질에 직접 영향
-2. **크로스 플랫폼** — transformers(범용) + MLX(macOS) + Ollama(Windows) 모두 지원
-3. **Apache 2.0** — 상업적 제약 없음
-4. **Qwen3-Embedding과 동일 패밀리** — MC→MV 변환 시 의미 손실 최소화
-
-### MV 선택: 왜 Qwen3-Embedding인가?
-
-| 모델 | 크기 | 차원 | MRL | 다국어 | 라이선스 |
-|------|------|------|-----|--------|---------|
-| **Qwen3-Embedding** | 0.6B / 8B | 1024 / 4096 | ✅ | ✅ 한/영 | Apache 2.0 |
-| BGE-M3 | 0.6B | 1024 | ❌ | ✅ | MIT |
-| Jina-Embeddings-v3 | 0.6B | 1024 | ✅ | ✅ | CC-BY-NC |
-| E5-Mistral | 7B | 4096 | ❌ | △ | MIT |
-
-**결정 근거**:
-1. **MRL 지원** — 차원 truncation으로 저장 공간/속도 최적화 가능 (미래 활용)
-2. **0.6B + 8B 이중 라인업** — standard/pro는 0.6B(가벼움), ultra는 8B(고품질)
-3. **한국어 임베딩 품질** — MC가 한국어일 때 MV 검색 정확도에 직접 영향
-4. **Qwen3-VL과 같은 패밀리** — 토크나이저/언어 모델 기반이 유사하여 MC→MV 변환 시 의미 손실 최소화 기대
-
-### FTS5: 왜 Elasticsearch가 아닌가?
-
-| 기준 | FTS5 (SQLite 내장) | Elasticsearch |
-|------|-------------------|---------------|
-| **설치** | 없음 (SQLite에 포함) | JVM + 별도 서비스 |
-| **메모리** | ~0 (인덱스만) | 최소 1GB+ |
-| **역할** | Triaxis 3축 중 보조축 (RRF 결합) | 단독 검색 엔진 |
-| **기능** | BM25 + prefix match | 형태소 분석, 퍼지 매칭 |
-
-**결정**: FTS는 Triaxis에서 **보조축**. VV+MV가 AI 검색의 핵심이고, FTS는 파일명/태그 **정확 키워드 매칭** 전담.
-이 역할에 Elasticsearch의 복잡도는 과잉. FTS5 BM25 + RRF 결합으로 충분.
-
-### 워커 배치: 왜 서버 Phase 큐 분리가 아닌 워커 내부 배치인가?
-
-**검토한 대안**:
-- (A) 서버가 Phase별 큐를 관리: Job을 P큐 → V큐 → VV큐 → MV큐로 이동
-- (B) 워커 내부에서 Claim한 N개를 Phase별로 묶어 처리
-
-**사용자 피드백**: *"로컬에 있지도 않는 파일을 처리하려고 모델 스위칭 비용이 더 들 것 같다"*
-
-| 기준 | (A) 서버 Phase 큐 | (B) 워커 내부 배치 ✅ |
-|------|------------------|-------------------|
-| **서버 복잡도** | 큐 4개 + Phase 간 상태 전이 관리 | 기존 1 Job = 1 파일 구조 유지 |
-| **네트워크** | Phase마다 중간 결과 서버↔워커 전송 | 최초 다운로드 1회, 최종 업로드 1회 |
-| **모델 언로드** | 워커가 Phase 전담이면 모델 상주 가능하나, 1워커=1Phase → 워커 4배 필요 | 워커 내부에서 Phase 순서대로 로드/언로드 |
-| **장애 복구** | Phase 간 중간 상태가 서버 DB에 → 복잡 | Job 단위 실패 = 단순 재시도 |
-
-**결정**: 서버 변경 없이 워커 내부에서 `process_batch_phased()`로 Phase별 배치 처리.
-서버는 "Job 할당/완료" 만 관리하므로 단순하고 안정적.
-
-### SigLIP2 so400m-naflex: 왜 이 VV 모델인가?
-
-> 이 항목은 **모델 선택 근거 (2026-02-20 조사 결과)** 섹션에 상세 기록됨.
-
-요약:
-1. **Apache 2.0** — PE-Core(최강 성능)는 CC-BY-NC 비상업
-2. **transformers 네이티브** — PE-Core는 자체 라이브러리/OpenCLIP 필요
-3. **MPS 검증** — macOS M5에서 동작 확인 (PE-Core는 미검증)
-4. **NaFlex** — 다양한 종횡비 PSD/PNG에 유리 (고정 크기 리사이즈 불필요)
-5. **성능 차이 0.5% 미만** — 라이선스+생태계 이점이 크게 상회
-6. **재평가 시점**: PE-Core transformers 통합 + 라이선스 변경 시, 또는 SigLIP3 출시 시
-
-## 용어 사전 (MANDATORY)
-
-**이 프로젝트의 공식 용어입니다. 코드 주석, 문서, 대화에서 반드시 이 용어를 사용하세요.**
-
-### 핵심 약어
-
-| 약어 | 정식 명칭 | 설명 | DB 테이블/컬럼 |
-|------|----------|------|---------------|
-| **VV** | Visual Vector | SigLIP2가 이미지 픽셀로부터 생성하는 시각 임베딩 벡터. 이미지↔이미지 유사도 검색에 사용 | `vec_files.embedding` |
-| **MV** | Meaning Vector | Qwen3-Embedding이 MC 텍스트로부터 생성하는 의미 임베딩 벡터. 텍스트↔텍스트 유사도 검색에 사용 | `vec_text.embedding` |
-| **MC** | Meta-Context Caption | VLM이 이미지 + 파일 메타데이터(경로, 레이어 등) 컨텍스트를 보고 생성한 캡션과 태그. "Meta-Context"는 단순 AI 캡션이 아닌 메타데이터 맥락 포함을 의미. MV의 입력 소스 | `files.mc_caption`, `files.ai_tags` |
-| **FTS** | Full-Text Search | FTS5 BM25 기반 키워드 전문 검색. 파일명, 레이어명, 태그 등 메타데이터 검색 | `files_fts` |
-| **VLM** | Vision-Language Model | 이미지를 보고 자연어를 생성하는 AI 모델 (현재: Qwen3.5). MC를 생성하는 주체 | — |
-| **RRF** | Reciprocal Rank Fusion | VV, MV, FTS 3축 검색 결과를 하나로 결합하는 랭킹 알고리즘 | — |
-| **MRL** | Matryoshka Representation Learning | 고차원 임베딩을 저차원으로 잘라도 품질이 유지되는 학습 기법. MV 차원 조절에 사용 | — |
-
-### 데이터 흐름 관계
-
-```
-이미지 파일 ──→ [Parser] ──→ 메타데이터 (AssetMeta)
-                                 │
-                                 ▼
-                            [VLM: Qwen3.5]
-                                 │
-                                 ├──→ MC (mc_caption + ai_tags)  ──→ [Qwen3-Embedding] ──→ MV (vec_text)
-                                 │
-이미지 픽셀  ──→ [SigLIP2] ──→ VV (vec_files)
-                                 │
-메타데이터   ──→ [FTS5 Indexer] ──→ FTS (files_fts)
-                                 │
-                                 ▼
-                         [Triaxis Search: VV + MV + FTS → RRF 결합]
+```text
+DL: Download
+P: Parse
+V: Vision
+VV: Visual Vector
+MV: Meaning Vector
 ```
 
-### 모델 역할 매핑
+`backend/pipeline/phase_runner.py`는 Vision, VV, MV 단계의 공통 실행기를 담당한다.  
+Parse는 입력 경로와 실행 모드에 따라 처리 형태가 다르기 때문에 별도 풀과 별도 경로로 관리된다.  
+원격 소스에서는 Download 단계가 먼저 개입하며, 실제 서버 상태 모델은 `file_tasks`의 phase status로 유지된다.
 
-| 모델 | 입력 | 출력 | 역할 |
-|------|------|------|------|
-| **SigLIP2** | 이미지 픽셀 | VV 벡터 | 이미지를 시각적으로 벡터화 (비전 인코더) |
-| **Qwen3.5** | 이미지 + 프롬프트 | MC 텍스트 | 이미지를 보고 캡션/태그 생성 (VLM, 네이티브 멀티모달) |
-| **Qwen3-Embedding** | MC 텍스트 | MV 벡터 | 텍스트를 의미 벡터로 변환 (텍스트 인코더, 비전 없음) |
+### 왜 이런 구조를 쓰는가
 
-### 금지 용어 → 올바른 용어
+이 구조는 세 가지 문제를 동시에 해결한다.
 
-| 금지 | 올바른 표현 |
-|------|-----------|
-| V-axis, V축 | **VV** (Visual Vector) |
-| S-axis, S축, Semantic축 | **MV** (Meaning Vector) |
-| M-axis, M축 | **FTS** (Full-Text Search) |
-| ai_caption | **mc_caption** (MC = Meta-Context Caption, AI 캡션뿐 아니라 파일 메타데이터 컨텍스트 포함) |
-| 시각 임베딩, visual embedding | **VV** |
-| 텍스트 임베딩, text embedding | **MV** |
-| 캡션/태그 | **MC** (VLM이 생성한 경우) |
+1. 실패 복구를 단순하게 만든다.
+2. 각 단계의 비용이 매우 다르다는 점을 반영한다.
+3. 모델 메모리 점유를 단계별로 분리한다.
 
-## 개발 명령어
+Vision은 무겁고, VV와 MV는 상대적으로 가볍다.  
+따라서 한 번에 모든 모델을 상주시켜 돌리기보다 단계별로 적재하고 해제하는 쪽이 더 안정적이다.
 
-### Backend (Python)
+### 모델 생명주기
 
-```powershell
-# 의존성 설치
-python -m pip install -r requirements.txt
+`ModelManager`의 핵심 철학은 간단하다.
 
-# 단일 파일 처리
-python backend/pipeline/ingest_engine.py --file "path/to/image.psd"
+- VLM, VV, MV를 모두 lazy load
+- phase 완료 후 unload
+- GPU cache clear + gc를 함께 수행
 
-# 여러 파일 배치 처리
-python backend/pipeline/ingest_engine.py --files "[\"file1.psd\", \"file2.png\"]"
+이 방식은 속도만이 아니라 **VRAM 경쟁 회피**가 목적이다.
 
-# 디렉토리 DFS 탐색 (하위 폴더 재귀 스캔 + 스마트 스킵)
-python backend/pipeline/ingest_engine.py --discover "C:\path\to\assets"
+### 작업 상태 모델
 
-# DFS 탐색 (스마트 스킵 비활성화, 전체 재처리)
-python backend/pipeline/ingest_engine.py --discover "C:\path\to\assets" --no-skip
+현재 서버의 작업 단위는 `analysis_jobs`와 `file_tasks`로 구성된다.
 
-# 디렉토리 감시 (초기 DFS 스캔 + 실시간 변경 감지)
-python backend/pipeline/ingest_engine.py --watch "C:\path\to\assets"
+- `analysis_jobs`: 사용자가 인식하는 작업 묶음
+- `file_tasks`: 파일별 실제 처리 상태
 
-# Triaxis 검색 (VV + MV + FTS, SQLite + sqlite-vec)
-# 프론트엔드 Electron 앱에서 검색 UI 사용
-# 또는 백엔드 API 직접 호출:
-python -c "from backend.search.sqlite_search import SqliteVectorSearch; s=SqliteVectorSearch(); print(s.triaxis_search('fantasy character'))"
+`file_tasks`는 대체로 아래 상태들을 가진다.
 
-# 특정 테스트 실행
-python test_image_parser.py
-python test_psd_parser_mock.py
+- `download_status`
+- `parse_status`
+- `mc_status`
+- `vv_status`
+- `mv_status`
+
+즉 Imagine의 파이프라인은 “파일 하나를 순차적으로 완성하는 상태 기계”로 볼 수 있다.
+
+## 검색 구조: Triaxis
+
+### 기본 사고방식
+
+Imagine 검색은 단일 점수 함수보다 **여러 독립 축을 먼저 만들고 나중에 합치는 구조**를 선택한다.
+
+이유는 축마다 잘 잡는 것이 다르기 때문이다.
+
+- VV는 시각 유사도에 강하다.
+- MV는 의미와 용도에 강하다.
+- FTS는 정확 키워드와 팩트에 강하다.
+
+단일 모델로 이 셋을 모두 완전히 해결하려고 하면 제어력이 떨어진다.  
+그래서 Imagine은 아예 세 축을 분리하고 융합한다.
+
+### Query Decomposition
+
+`backend/search/query_decomposer.py`는 자연어 질의를 바로 검색하지 않고 중간 구조로 바꾼다.
+
+출력의 핵심은 다음과 같다.
+
+- `vector_query`
+- `negative_query`
+- `fts_keywords`
+- `exclude_keywords`
+- `filters`
+- `query_type`
+
+이 단계의 목적은 검색을 “질문 하나”가 아니라 “여러 축에 걸친 실행 계획”으로 바꾸는 것이다.
+
+즉 사용자의 한 문장을 다음처럼 쪼갠다.
+
+- 시각 축에서 쓸 설명
+- 의미 축에서 쓸 설명
+- FTS에서 쓸 키워드
+- 제외해야 할 조건
+- 구조화 필터
+- 어떤 축을 더 믿어야 하는지에 대한 힌트
+
+Query Decomposer 자체도 단일 구현이 아니라 backend resolution을 가진다.
+
+- Codex CLI
+- MLX text LLM
+- Ollama
+- 규칙 기반 fallback
+
+즉 질의 분해 역시 “LLM 1개에 전적으로 묶인 기능”이 아니라, 사용 가능한 backend에 따라 실행 경로가 달라지는 계층이다.
+
+### Candidate-First 구조
+
+Triaxis 검색은 일반적으로 모든 축을 끝까지 전수 계산하지 않는다.  
+먼저 후보군을 만들고, 그 뒤에 재정렬과 보정을 한다.
+
+핵심 흐름은 대략 이렇다.
+
+```text
+Query
+  -> Decompose
+  -> Per-axis retrieval
+  -> RRF merge
+  -> Negative filter
+  -> Quality rerank
+  -> Axis score enrichment
+  -> Final top-k
 ```
 
-### Frontend (Electron + React)
+### RRF 융합 알고리즘
 
-```powershell
-cd frontend
+`backend/search/scoring.py`의 `rrf_merge`와 `rrf_merge_multi`는 축별 랭킹을 합친다.
 
-# 의존성 설치
-npm install
+핵심 아이디어는 점수 절대값을 직접 섞기보다 **순위 기반으로 결합**하는 것이다.
 
-# 개발 모드 실행 (Electron + 핫 리로드)
-npm run electron:dev
+RRF의 장점:
 
-# 프로덕션 빌드
-npm run build
+- 각 축의 점수 스케일 차이에 덜 민감함
+- 어느 한 축의 극단값에 덜 끌려감
+- 독립적인 후보 생성기의 장점을 유지하기 쉬움
 
-# Electron 실행 파일 빌드
-npm run electron:build
+Imagine은 단순 2축이 아니라 다축 버전 `rrf_merge_multi`를 사용해 visual, text_vec, fts, structure 축을 합칠 수 있다.
+
+즉 개념 설명은 Triaxis지만, 실제 점수 결합 계층은 이미 **N-axis merge**를 받아들일 수 있게 설계되어 있다.
+
+### Negative Filter
+
+질의에 “제외” 조건이 있으면 `apply_negative_filter`가 후속 필터/패널티로 개입한다.
+
+이 구조를 분리한 이유는, 긍정 질의와 부정 질의를 같은 벡터 공간 점수에 섞는 대신 **후처리 패널티**로 다루는 것이 더 제어 가능하기 때문이다.
+
+### Quality Rerank
+
+`quality_rerank`는 RRF 이후의 후보 풀을 다시 정리한다.
+
+이 단계의 목적은 단순 회수율이 아니라 **교차 축 합의가 강한 결과를 위로 올리는 것**이다.
+
+여기서 보는 신호는 예를 들면 다음과 같다.
+
+- 각 축의 정규화된 점수
+- 쿼리 토큰과의 부드러운 일치
+- 경로 힌트
+- 메타데이터 밀도
+- 필터와의 합치 여부
+
+즉 RRF가 “축별 회수력 확보”라면, quality rerank는 “최종 체감 품질 정리”에 가깝다.
+
+### Axis Score Enrichment
+
+최종 결과에 대해 `enrich_axis_scores`가 추가 축 점수를 보충한다.
+
+이 단계는 순위를 바꾸기 위한 것이 아니라, UI에서 결과를 설명할 수 있게 하기 위한 성격이 강하다.
+
+즉 “왜 이 결과가 나왔는가”를 더 잘 보여주기 위한 display layer다.
+
+## 스케줄링 구조
+
+### 문제 설정
+
+워커 시스템의 핵심 문제는 단순 큐 소비가 아니다.
+
+- MC는 무겁다.
+- VV/MV는 상대적으로 가볍다.
+- GPU 성능이 워커마다 다르다.
+- phase 전환은 모델 스위칭 비용을 만든다.
+
+이 때문에 Imagine은 단순 round-robin보다 **pressure-based scheduling**을 택한다.
+
+### Scheduler의 핵심 모델
+
+`backend/server/queue/scheduler.py`는 다음 아이디어를 사용한다.
+
+1. 워커를 GPU class로 분류
+2. phase별 pending 압력을 계산
+3. MC는 GPU class에 따라 penalty 적용
+4. 현재 phase를 유지하는 안정성 보정 적용
+5. 완료 직전 단계(MV)에 보너스 부여
+6. 측정된 처리량으로 batch size를 동적으로 조절
+
+즉 스케줄러는 “어떤 작업이 남았는가”만 보지 않고, “누가 어떤 일을 가장 싸게 처리할 수 있는가”를 함께 본다.
+
+### Pressure-based Scheduling의 직관
+
+압력은 대체로 다음 성격을 가진다.
+
+```text
+pressure ≈ pending / (workers_on + 1) × phase_weight
 ```
 
-### Server (FastAPI)
-
-```bash
-# 서버 시작 (개발 모드, 핫 리로드)
-python -m backend.server.app
-# 또는
-uvicorn backend.server.app:app --host 0.0.0.0 --port 8000 --reload
-
-# 워커 데몬 시작 (서버에 접속하여 작업 처리)
-python -m backend.worker.worker_daemon --server http://서버IP:8000 --username USER --password PASS
-
-# 헬스 체크
-curl http://localhost:8000/api/v1/health
-```
-
-### 진단 스크립트
-
-```powershell
-# 디렉토리 배치 분석
-python scripts/batch_analyze.py
-
-# 단일 이미지 진단
-python scripts/diagnose_image.py "path/to/image.psd"
-
-# CLI에서 이미지 검색
-python scripts/search_images.py "검색어"
-```
-
-## 클라이언트-서버 아키텍처 (v4.x)
-
-**하나의 React 프론트엔드가 두 가지 모드로 동작합니다.**
-
-### 듀얼 모드 구조
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   동일한 React 프론트엔드                       │
-│                                                             │
-│  ┌───────────────────────┐   ┌────────────────────────────┐ │
-│  │   Electron 모드 (앱)    │   │   Web 모드 (브라우저)       │ │
-│  │                       │   │                            │ │
-│  │ • Auth 바이패스         │   │ • JWT 로그인 필수           │ │
-│  │ • 자동 admin 권한       │   │ • 역할 기반 (admin/user)   │ │
-│  │ • IPC → Python 직접    │   │ • HTTP API → FastAPI       │ │
-│  │ • 로컬 DB 직접 접근     │   │ • 서버 DB 간접 접근         │ │
-│  │                       │   │                            │ │
-│  │ [Server] 버튼으로      │   │  서버에 접속하여 사용        │ │
-│  │  FastAPI 서버 내장 시작  │   │                            │ │
-│  └───────────────────────┘   └────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 모드 판별
-
-- **`isElectron`** (`api/client.js:14`): `window.electron` 존재 여부로 판별
-- **`skipAuth`** (`AuthContext.jsx:20`): Electron이면 `true` → 인증 생략, `{ username: 'local', role: 'admin' }` 자동 부여
-- **`bridge.js`**: `isElectron`이면 IPC, 아니면 HTTP API 호출 (검색, 메타데이터 등)
-
-### 서버 모드 (Electron → FastAPI)
-
-- **위치**: Electron 앱 헤더 바 우측 `[Server]` 토글 버튼
-- **동작**: `window.electron.server.start({ port })` → FastAPI 프로세스 기동
-- **SPA 서빙**: `app.py:122-137`에서 `frontend/dist` 빌드 결과를 정적 파일로 서빙
-- 서버가 켜지면 다른 사용자가 `http://서버IP:포트`로 브라우저 접속 가능
-
-### 인증 시스템 (JWT)
-
-| 구성요소 | 파일 | 설명 |
-|---------|------|------|
-| 라우터 | `backend/server/auth/router.py` | 로그인/회원가입/토큰 갱신 API |
-| 스키마 | `backend/server/auth/schemas.py` | Pydantic 모델 (LoginRequest 등) |
-| JWT | `backend/server/auth/jwt.py` | 토큰 발급/검증 |
-| 의존성 | `backend/server/deps.py` | `get_current_user`, `require_admin` |
-| DB | `backend/db/sqlite_schema_auth.sql` | `users`, `invite_codes`, `worker_tokens`, `worker_sessions` 테이블 |
-| 프론트 | `frontend/src/contexts/AuthContext.jsx` | React 인증 Context |
-| API | `frontend/src/api/client.js` | JWT 자동 첨부 + 401 시 refresh |
-
-### 역할 기반 접근
-
-| 역할 | 접근 가능 탭 | 서버 API 접근 |
-|------|------------|--------------|
-| **admin** | Search, Archive, Worker, Admin | 전체 API + 사용자/워커/초대 관리 |
-| **user** | Search, Archive, Worker | 파이프라인 실행, 검색, 내 워커 관리 |
-| **Electron (local)** | 전체 (auth 바이패스) | IPC 직접 호출 (서버 불필요) |
-
----
-
-## 워커 시스템 (v10.x)
-
-**분산 이미지 처리를 위한 워커 풀 시스템. Phase별 배치 처리 + 모델 언로드로 GPU 메모리 최적화.**
-
-### 개요
-
-서버가 작업(Job) 큐를 관리하고, 워커가 서버에 접속하여 작업을 가져가 처리하는 구조.
-
-```
-Server (FastAPI)                    Worker (Python daemon / Electron IPC)
-┌──────────────┐                   ┌──────────────────────┐
-│ Job Queue    │◄── claim(N) ────  │ Prefetch Pool        │
-│ (SQLite)     │── jobs[] ───────► │ (deque, capacity×2)  │
-│              │                   │                      │
-│ worker_      │◄── heartbeat ──── │ 30초마다 하트비트      │
-│ sessions     │── command ──────► │ stop/block 명령 수신   │
-│              │                   │                      │
-│ job_queue    │◄── complete ────  │ Phase별 배치 처리     │
-│ (throughput) │                   │ (P→V→VV→MV→Upload)   │
-└──────────────┘                   └──────────────────────┘
-```
-
-### Phase별 배치 처리 (v10.0, process_batch_phased)
-
-**기존**: 파일 1개씩 4 Phase 순차 처리 → 3개 모델 동시 메모리 상주
-**변경**: N개 파일을 Phase별로 묶어 배치 처리 → Phase당 모델 1개만 메모리
-
-```
-Claim 5 jobs → Download/resolve all →
-  Phase P:  Parse(1,2,3,4,5)       → report progress
-  Phase V:  Vision(1,2,3,4,5)      → report progress    [VLM only in memory]
-  ── unload VLM ──
-  Phase VV: embed_vv(1,2,3,4,5)    → report progress    [SigLIP2 only in memory]
-  ── unload SigLIP2 ──
-  Phase MV: embed_mv(1,2,3,4,5)    → report progress    [Qwen3-Embed only in memory]
-  ── unload Qwen3-Embed ──
-  Upload: complete_job(1), complete_job(2), ...
-```
-
-**이점**:
-- Phase당 모델 1개만 메모리 → GPU 메모리 효율 극대화
-- 서브배치 추론 활용: VV `encode_image_batch(batch=8)`, MV `encode_batch(batch=16)`
-- MC(VLM)는 MLX/transformers 제약으로 batch_size=1 (순차 처리)
-
-### 모델 언로드
-
-| 메서드 | 대상 | 시점 |
-|--------|------|------|
-| `_unload_vlm()` | VLM (Qwen3.5) | Phase V 완료 후 |
-| `_unload_vv()` | SigLIP2 인코더 | Phase VV 완료 후 |
-| `_unload_mv()` | Qwen3-Embedding | Phase MV 완료 후 |
-
-각 언로드 후 `gc.collect()` + `torch.cuda.empty_cache()` / `torch.mps.empty_cache()` 호출.
-
-### IPC 이벤트 프로토콜 (Electron ↔ Python)
-
-**배치 이벤트** (worker_ipc.py → main.cjs → preload.cjs → App.jsx):
-
-| 이벤트 | 데이터 | 설명 |
-|--------|--------|------|
-| `batch_start` | `{batch_size: N}` | 배치 처리 시작 |
-| `batch_phase_start` | `{phase, count}` | Phase 시작 ("parse"/"vision"/"embed_vv"/"embed_mv") |
-| `batch_file_done` | `{phase, file_name, index, count, success}` | Phase 내 파일 1개 완료 |
-| `batch_phase_complete` | `{phase, count}` | Phase 완료 |
-| `batch_complete` | `{batch_size, completed, failed}` | 배치 전체 완료 |
-| `job_done` | `{job_id, file_path, file_name, success}` | Job 최종 완료 (기존 호환) |
-
-**데이터 흐름**:
-```
-worker_daemon.py::process_batch_phased(5 jobs)
-  ↓ progress_callback("file_done", {...})
-worker_ipc.py::_batch_progress_cb()
-  ↓ stdout: {"event":"batch_file_done","phase":"vision","file_name":"hero.psd","index":3,"count":5}
-main.cjs::processWorkerOutput()
-  ↓ sendWorkerEvent('worker-batch-file-done', parsed)
-preload.cjs → App.jsx::onBatchFileDone
-  ↓ setWorkerProgress({currentPhase: "vision", phaseIndex: 3, phaseCount: 5})
-StatusBar: "MC 3/5 | 15/741 | 4.2/min | ~12m"
-```
-
-### 스마트 Prefetch 풀
-
-- **풀 크기**: `batch_capacity × 2` (예: capacity=8 → 풀에 16개 유지)
-- **동작**: 현재 배치 처리 중 백그라운드 스레드가 부족분만큼 claim
-- **설정**: `config.yaml > worker.batch_capacity` (기본값: 5)
-
-```
-기존: claim(5) → process(5) → claim(5) → ...
-변경: fill_pool(16) → take_batch(8) + refill_thread → process(8) → ...
-```
-
-### 하트비트 + 명령 피기백
-
-- 워커가 30초마다 서버에 하트비트 전송 (메트릭 보고)
-- 서버는 응답에 `pending_command`를 포함 (stop/pause/block)
-- 명령은 **일회성 소비**: 한 번 전달되면 DB에서 NULL로 리셋
-- `pool_hint`: 서버가 권장하는 풀 크기 (batch_capacity × 2)
-- **중요**: IPC 모드(Electron)에서도 `_connect_session()` / `_heartbeat()` / `_disconnect_session()` 호출 필수
-
-### Admin 모니터링 API (v10.2+)
-
-**큐 통계 + 처리속도** (`GET /api/v1/admin/queue/stats`):
-- `throughput`: 슬라이딩 윈도우 처리속도 (files/min) — 1분 우선, 5분 폴백
-- `recent_1min`, `recent_5min`: 각 윈도우 내 완료 파일 수
-- `pending`, `assigned`, `processing`, `completed`, `failed`: 상태별 카운트
-
-**워커별 처리속도** (`GET /api/v1/admin/workers`):
-- 각 워커에 `throughput` 필드 추가 (개별 files/min)
-- `job_queue.assigned_to` 기준으로 per-user 집계
-- 프론트엔드: WorkersPanel에 종합 속도 + 워커별 속도 컬럼 표시
-
-### 워커 세션 관리 API
-
-| 엔드포인트 | 역할 | 권한 |
-|-----------|------|------|
-| `POST /api/v1/workers/connect` | 워커 세션 시작 | 인증된 사용자 |
-| `POST /api/v1/workers/heartbeat` | 하트비트 + 명령 수신 | 인증된 사용자 |
-| `POST /api/v1/workers/disconnect` | 정상 종료 알림 | 인증된 사용자 |
-| `GET /api/v1/workers/my` | 내 워커 목록 | 인증된 사용자 |
-| `POST /api/v1/workers/{id}/stop` | 내 워커 정지 | 본인 소유만 |
-| `GET /api/v1/admin/workers` | 전체 워커 목록 | Admin |
-| `POST /api/v1/admin/workers/{id}/stop` | 워커 정지 명령 | Admin |
-| `POST /api/v1/admin/workers/{id}/block` | 워커 차단 (재접속 불가) | Admin |
-
-### 워커 토큰 (원클릭 셋업)
-
-- Admin이 워커 토큰 생성 → 토큰 포함 셋업 스크립트 제공
-- 외부 PC에서 스크립트 실행 → 자동 환경 설정 + 워커 데몬 시작
-- `backend/server/routers/worker_setup.py`: 토큰 생성/관리 API
-
-### 프론트엔드 UI
-
-| 위치 | 컴포넌트 | 설명 |
-|------|---------|------|
-| Admin 탭 → Workers | `WorkersPanel` | 전체 워커 목록 (이름, 상태, 배치용량, 작업수, 현재태스크, 정지/차단) |
-| Worker 탭 상단 | `MyWorkersSection` | 내 워커 현황 (이름, 하트비트, 작업수, 정지) |
-| Worker 탭 | `ConnectMyPC` | 워커 토큰 기반 원클릭 셋업 스크립트 다운로드 |
-| Admin 탭 → Worker Tokens | 토큰 관리 | 토큰 생성/폐기/목록 |
-
-### DB 테이블 (`sqlite_schema_auth.sql`)
-
-```sql
-worker_sessions (id, user_id, worker_name, hostname, status, batch_capacity,
-                 jobs_completed, jobs_failed, current_job_id, current_file,
-                 current_phase, pending_command, connected_at, last_heartbeat,
-                 disconnected_at)
--- status: 'online' | 'offline' | 'blocked'
--- pending_command: NULL | 'stop' | 'pause' | 'block'
-```
-
-### 워커 설정 (`config.yaml`)
-
-```yaml
-worker:
-  batch_capacity: 5        # 배치 처리 능력 (파일 수)
-  heartbeat_interval: 30   # 하트비트 주기 (초)
-  poll_interval: 10        # 작업 없을 때 대기 (초)
-```
-
----
-
-## 아키텍처 & 데이터 흐름
-
-### 데이터 파이프라인 (Ingest → Vector DB)
-
-```
-원본 이미지 파일 (PSD/PNG/JPG)
-    ↓
-[--discover] DFS 폴더 탐색 (discover_files)
-    ├─ 재귀 DFS로 지원 파일 수집
-    ├─ 폴더 메타데이터 계산 (folder_path, folder_depth, folder_tags)
-    └─ 스마트 스킵 (modified_at 비교)
-    ↓
-ParserFactory.get_parser(file_path)
-    ↓
-[BaseParser 하위 클래스: PSDParser | ImageParser]
-    ├─ 메타데이터, 레이어, 텍스트 추출
-    ├─ 썸네일 생성 (utils/thumbnail_generator.py)
-    ├─ 레이어 이름 정제 (parser/cleaner.py)
-    └─ AssetMeta 반환 (parser/schema.py)
-    ↓
-폴더 메타데이터 주입 (process_file)
-    ├─ folder_path: 상대 경로 (e.g., "Characters/Hero")
-    ├─ folder_depth: 깊이 (0 = 루트)
-    └─ folder_tags: 폴더명 태그 (e.g., ["Characters", "Hero"])
-    ↓
-자동 번역 (deep-translator)
-    ├─ semantic_tags → translated_tags (ko/en)
-    ├─ text_content → translated_text (ko/en)
-    └─ layer_tree → translated_layer_tree (ko/en)
-    ↓
-Phase V: AI Vision (vision_factory.py)
-    ├─ VLM 캡션/태그/분류 생성 (Qwen3.5, tier별 backend)
-    ├─ 2-Stage Pipeline: 빠른 분류 → 상세 캡션
-    └─ 서브배치마다 즉시 DB 저장 (mc_caption, ai_tags → files)
-    ↓
-Phase E: Embedding (siglip2_encoder.py + text_embedding.py)
-    ├─ SigLIP2 → VV 생성 (이미지 시각 벡터, tier별 차원)
-    ├─ Qwen3-Embedding → MV 생성 (MC 텍스트 의미 벡터)
-    └─ 서브배치마다 즉시 DB 저장 (VV → vec_files, MV → vec_text)
-    ↓
-Phase S: Summary (완료 확인)
-    ├─ [OK] emit (프론트엔드 processedCount 추적용)
-    └─ 실제 저장은 P/V/E에서 이미 완료
-```
-
-### 파서 선택 (Factory Pattern)
-
-`backend/pipeline/ingest_engine.py`:
-- **PSDParser**: `.psd` 파일 처리 (`psd-tools` 사용)
-- **ImageParser**: `.png`, `.jpg`, `.jpeg` 처리 (`Pillow` 사용)
-- 각 파서는 `can_parse(file_path)` 클래스 메서드로 자동 감지
-- **CLI 입력 모드**: `--file` (단일), `--files` (배치 JSON), `--discover` (DFS 폴더 탐색), `--watch` (감시+초기스캔)
-- **스마트 스킵**: `--discover`/`--watch` 시 `modified_at` 비교로 변경되지 않은 파일 자동 건너뜀 (`--no-skip`으로 비활성화)
-
-### 스키마 (단일 진실 공급원, Single Source of Truth)
-
-`backend/parser/schema.py`:
-- **AssetMeta**: 모든 이미지 타입에 대한 통합 메타데이터 모델
-- **LayerInfo**: 개별 레이어 구조 (PSD 전용)
-- **ParseResult**: 성공 상태, 오류, 경고를 포함하는 래퍼
-
-모든 파서는 `AssetMeta`를 포함하는 `ParseResult`를 반환해야 합니다.
-
-### SQLite Database (v3.1: Triaxis Data Storage)
-
-> 상세 DB/검색/모델/Tier 스펙은 아래 **인프라 스펙 (MANDATORY)** 섹션을 참조하세요.
-
-`backend/db/sqlite_client.py` (SQLiteDB):
-- **files 테이블**: 파일 메타데이터 + AI 생성 필드
-  - `mc_caption`, `ai_tags`: VLM이 생성한 MC (2-Stage Vision)
-  - `image_type`, `scene_type`, `art_style`: VLM 분류 필드
-  - `folder_path`, `folder_depth`, `folder_tags`: DFS 폴더 탐색 메타데이터
-- **vec_files**: SigLIP2 VV (sqlite-vec)
-- **vec_text**: Qwen3-Embedding MV (sqlite-vec)
-- **files_fts**: FTS5 전문 검색 인덱스 (BM25 키워드)
-
-`backend/search/sqlite_search.py` (SqliteVectorSearch):
-- **triaxis_search()**: VV + MV + FTS 3축 통합 검색 (RRF 결합)
-- **vector_search()**: SigLIP2 VV 시각 유사도 검색
-- **text_vector_search()**: Qwen3-Embedding MV 의미 검색
-- **fts_search()**: FTS5 BM25 키워드 검색
-
-## 유닛 개발 프로토콜 (필수)
-
-**이 프로젝트는 엄격한 5단계 유닛 개발 워크플로우를 사용합니다**. 모든 개발 작업은 이 프로토콜을 따라야 합니다 (`INSTRUCT.md` 및 `.agent/skills/unit_dev_agent/SKILL.md` 참조).
-
-### 필수 워크플로우 명령어
-
-```
-/unit-start    # 새 유닛 시작 (5단계 프로세스 트리거)
-/unit-status   # 현재 진행 상태 확인
-/unit-done     # 유닛 완료 및 회고 작성
-/troubleshoot  # 문제 및 해결책 기록
-/build         # 의존성 설치
-```
-
-### 5단계 프로세스 (유닛당)
-
-각 유닛(U-001, U-002 등)은 모든 단계를 완료해야 합니다:
-
-1. **목표 (Goal)**: 측정 가능한 성공 기준 정의
-2. **정의 (Definition)**: 상세 명세 작성
-3. **개발 (Development)**: 코드 구현
-4. **테스트 (Test)**: 실행 가능한 테스트 명령어로 검증
-5. **회고 (Retrospective)**: 배운 점 및 개선 사항 문서화
-
-**핵심 규칙**:
-- ❌ 테스트나 회고를 절대 건너뛰지 마세요
-- ❌ 현재 유닛이 테스트를 통과하기 전에 다음 유닛을 시작하지 마세요
-- ❌ `docs/troubleshooting.md`에 실패 사항을 기록하지 않고 진행하지 마세요
-- ✅ 항상 워크플로우 명령어를 사용하세요 (`/unit-start`, `/unit-done`)
-
-### 현재 유닛 목록
-
-- **U-001**: 프로젝트 초기화 ✅
-- **U-002**: 데이터 스키마 정의 ✅
-- **U-003**: 데이터 정제 모듈 ✅
-- **U-004**: 기본 파서 인터페이스 ✅
-- **U-005**: 이미지 파서 (PNG/JPG) ✅
-- **U-006**: PSD 파서 ✅
-- **U-007**: 파이프라인 통합 ✅
-- **U-008**: 통합 테스트 (진행 중)
-
-## 주요 기술 패턴
-
-### PSD 파싱 (`psd-tools`)
-
-```python
-from psd_tools import PSDImage
-
-psd = PSDImage.open('file.psd')
-
-# 전체 합성 이미지 (모든 효과, 레이어, 마스크 적용)
-composite = psd.composite()
-composite.save('output.png')
-
-# 레이어 순회
-for layer in psd.descendants():
-    print(f"이름: {layer.name}, 종류: {layer.kind}")
-    # 종류: 'group', 'pixel', 'type', 'shape', 'smartobject', 'adjustment'
-
-    if layer.kind == 'type':
-        # 텍스트 레이어에서 텍스트 추출
-        text_data = layer.engine_dict
-        text = text_data.get('Editor', {}).get('Text', '')
-```
-
-**중요**: `layer.composite()`는 조정 레이어 효과 없이 개별 레이어만 렌더링합니다. 전체 충실도 미리보기는 `psd.composite()`를 사용하세요.
-
-### 번역 청킹 전략
-
-`backend/pipeline/ingest_engine.py`는 API 호출을 최소화하기 위해 **배치 번역**을 사용합니다:
-- 모든 텍스트를 구분자 `" ||| "`로 결합
-- 4000자 청크로 분할
-- 청크 번역 후 다시 분할
-- DFS 순회를 통해 레이어 트리의 순서 유지
-
-### 메모리 관리
-
-- **VV 인코더**: 첫 사용 시 SigLIP2 모델 지연 로드
-- **CUDA 정리**: 이미지 10개마다 `torch.cuda.empty_cache()` 실행
-- **전역 싱글톤**: `_global_indexer`가 장시간 실행 프로세스에서 모델 재로딩 방지
-
-## 주요 파일 위치
-
-| 경로 | 목적 |
-|------|------|
-| `backend/parser/schema.py` | **표준 데이터 스키마** (AssetMeta) |
-| `backend/pipeline/ingest_engine.py` | **4단계 처리 파이프라인** (메인 진입점) |
-| `backend/db/sqlite_client.py` | **SQLite 클라이언트** (메타데이터 + VV + MV 저장) |
-| `backend/db/sqlite_schema.sql` | SQLite 스키마 정의 |
-| `backend/search/sqlite_search.py` | **Triaxis 검색 엔진** (VV + MV + FTS) |
-| `backend/search/rrf.py` | RRF 가중치 프리셋 (query_type별) |
-| `backend/search/query_decomposer.py` | LLM 쿼리 분류기 (query_type 판별) |
-| `backend/vision/vision_factory.py` | VLM 백엔드 자동 선택 (Factory) |
-| `backend/vision/analyzer.py` | Transformers VLM 어댑터 (2-Stage) |
-| `backend/vector/siglip2_encoder.py` | SigLIP2 VV 인코더 |
-| `backend/vector/text_embedding.py` | Qwen3-Embedding MV 인코더 (Transformers/Ollama) |
-| `backend/api_search.py` | 프론트엔드 검색 API 브리지 |
-| `backend/server/app.py` | **FastAPI 서버** (라우터 등록, SPA 서빙) |
-| `backend/server/deps.py` | 서버 의존성 (`get_current_user`, `require_admin`) |
-| `backend/server/auth/router.py` | JWT 인증 API (로그인/회원가입/갱신) |
-| `backend/server/routers/workers.py` | **워커 세션 API** (connect/heartbeat/admin) |
-| `backend/server/routers/pipeline.py` | 파이프라인 API (업로드/claim/완료) |
-| `backend/server/routers/worker_setup.py` | 워커 토큰 + 원클릭 셋업 API |
-| `backend/server/routers/classification.py` | 분류 도메인 관리 API (CRUD + active 설정) |
-| `backend/server/routers/database.py` | DB 관리 API (reset + admin 비밀번호 재검증) |
-| `backend/vision/domain_loader.py` | 도메인 YAML 로더 (프롬프트/스키마 동적 구성) |
-| `backend/vision/domains/` | 도메인 프리셋 YAML 파일 (`_base`, `game_asset`, `illustration`, `stock_photo`) |
-| `frontend/src/components/DomainSelectModal.jsx` | 첫 실행 시 도메인 선택 모달 |
-| `backend/server/queue/manager.py` | **작업 큐 관리자** (Job 생성/claim/완료) |
-| `backend/worker/worker_daemon.py` | **워커 데몬** (prefetch 풀 + 배치 처리 + 하트비트) |
-| `backend/worker/worker_ipc.py` | **워커 IPC 브리지** (Electron ↔ Python JSON 프로토콜) |
-| `backend/worker/config.py` | 워커 설정 (batch_capacity, heartbeat 등) |
-| `backend/db/sqlite_schema_auth.sql` | 인증 DB 스키마 (users, worker_sessions 등) |
-| `frontend/src/api/client.js` | API 클라이언트 (JWT 자동 첨부, isElectron 판별) |
-| `frontend/src/api/admin.js` | Admin/Worker API 함수 |
-| `frontend/src/contexts/AuthContext.jsx` | React 인증 Context |
-| `frontend/src/services/bridge.js` | Electron/Web 모드 브리지 (IPC ↔ HTTP) |
-| `backend/setup/installer.py` | **통합 설치 프로그램** |
-| `config.yaml` | **Tier/검색/배치 설정** (단일 소스) |
-| `output/thumbnails/` | 썸네일 이미지 (gitignore됨) |
-| `docs/troubleshooting.md` | **모든 문제에 대한 필수 로깅** |
-| `INSTALLATION.md` | **신규 설치 가이드** |
-| `frontend/src/i18n/` | **프론트엔드 로컬라이제이션 시스템** |
-| `frontend/src/i18n/locales/en-US.json` | 영어 번역 파일 |
-| `frontend/src/i18n/locales/ko-KR.json` | 한국어 번역 파일 |
-| `tools/bench_worker_sim.py` | **워커 시뮬레이션 벤치마크** (Phase별 속도 + 메모리 + A/B 비교) |
-| `benchmarks/` | **벤치마크 결과 저장소** (baselines + results) |
-| `benchmarks/README.md` | 벤치마크 폴더 구조, 현재 설계 속도, 사용법 |
-| `benchmarks/baselines/` | 모델 결정 시점 동결 기준값 (JSON) |
-| `docs/issues/` | **버그 리포트** (YYYYMMDD_설명.md 형식) |
-
-**핵심 문서** (작업 시 반드시 참조):
-
-| 문서 | 용도 | 참조 시점 |
-|------|------|----------|
-| `phase.md` | **개발 로드맵** — Phase 1~9 체크리스트, 완료/미완료 현황 | 새 기능 개발 전, 진행 상황 파악 시 |
-| `docs/project_report.md` | **프로젝트 종합 보고서** — 아키텍처, 기술 스택, 완료 Phase 상세, 코드 통계 | 프로젝트 전체 구조 파악 시 |
-| `docs/V3.1.md` | **핵심 설계 명세** — VV/MC/MV/FTS 파이프라인, MC 2-Stage, MV 입력 포맷, 검색 로직 | 파이프라인/검색 로직 수정 시 |
-| `docs/triaxis_search_architecture.md` | **검색 시스템 해설** — 3축(VV/MV/FTS) 동작 원리, RRF 공식, 점수 범위, DB 스키마 | 검색 관련 작업 시 |
-| `docs/future_roadmap.md` | **미래 계획 통합** — 클라우드 확장, DB 최적화, 벤치마크, ECM 설계 | 아키텍처 확장/최적화 논의 시 |
-| `docs/platform_optimization.md` | **플랫폼별 VLM 최적화** — MLX/vLLM/Ollama/Transformers 폴백 체인 | VLM 백엔드 관련 작업 시 |
-| `docs/troubleshooting.md` | **트러블슈팅 기록** — 알려진 문제와 해결책 | 에러 발생 시 |
-| `benchmarks/README.md` | **워커 성능 벤치마크** — 설계 속도 기준표, A/B 비교 결과, 실행 방법 | 모델 교체, 성능 회귀, 새 하드웨어 시 |
-
-## 워커 성능 벤치마크 (Worker Performance Benchmark)
-
-**모델 교체·설정 변경 시 반드시 벤치마크를 실행하여 baselines에 기록합니다.**
-
-### 현재 설계 속도 (2026-04-02, M5 32GB, MLX 4bit)
-
-| Phase | Model | files/min | per-file | Memory Peak |
-|-------|-------|:---------:|:--------:|:-----------:|
-| MC (VLM) | Qwen3.5-9B MLX 4bit | 7.8 | 7.7s | Metal 5.7GB |
-| VV (SigLIP2) | SigLIP2-NaFlex | 81.1 | 0.74s | MPS 2.2GB |
-| MV (Embed) | Qwen3-Embed 0.6B | 119.3 | 0.5s | MPS 1.1GB |
-| **Full Pipeline** | V→VV→MV | **7.1** | **8.4s** | — |
-
-MC가 bottleneck. VV/MV는 무시할 수준.
-
-### 4B vs 9B 비교 (2026-04-02, 동일 10장, 간결 프롬프트)
-
-| 항목 | Qwen3.5-**4B** | Qwen3.5-**9B** | 비고 |
-|------|:-:|:-:|------|
-| files/min | **13.6** | 8.2 | 4B가 1.7배 빠름 |
-| per-file | **4.4s** | 7.4s | |
-| Metal | **2.9GB** | 5.7GB | |
-| 성공률 | 10/10 | 10/10 | |
-
-**9B 선택 근거**: 속도보다 캡션 품질 우선 (MMMU-Pro 70.1 vs 66.3). 32GB Mac에서 메모리 여유 충분.
-
-### 실행 방법
-
-```bash
-# 전체 벤치마크 (Phase별 + Full pipeline)
-python tools/bench_worker_sim.py --count 10
-
-# MC Phase만 (빠른 확인)
-python tools/bench_worker_sim.py --phases mc --no-full
-
-# A/B 모델 비교
-python tools/bench_worker_sim.py --ab <MODEL_A> <MODEL_B> --count 10
-
-# 기존 baselines와 비교
-python tools/bench_worker_sim.py --compare benchmarks/baselines/<파일>.json
-
-# 특정 모델 지정
-python tools/bench_worker_sim.py --vlm-model mlx-community/Qwen3.5-4B-MLX-4bit
-```
-
-### 벤치마크 실행 시점
-
-- **모델 교체 후**: 새 모델 벤치마크 → baselines에 저장
-- **설정 변경 후**: 프롬프트, 배치 크기, 양자화 변경 시
-- **성능 회귀 시**: 실제 워커 throughput이 설계 속도보다 20% 이상 낮을 때
-- **새 하드웨어**: 첫 셋업 시
-
-### 설계 속도 vs 실제 속도 해석
-
-| Gap | 원인 |
-|-----|------|
-| < 20% | 정상 — 네트워크, DB, prefetch 오버헤드 |
-| 20-50% | 확인 필요 — 다운로드 병목, DB 경합, prefetch 풀 설정 |
-| > 50% | 버그 — 잘못된 모델 로드, GPU 경합, 메모리 압박 |
-
-## 테스트 전략
-
-### 테스트 데이터
-
-테스트 파일 위치:
-- `test_assets/`: PSD, PNG, JPG 샘플 파일
-- `output_mock/`: 유닛 테스트용 모의 데이터
-
-### 테스트 실행
-
-```powershell
-# 유닛 테스트 (개별 파서)
-python test_base_parser.py
-python test_image_parser.py
-python test_psd_parser_mock.py
-
-# 통합 테스트
-python -m pytest tests/
-```
-
-### 테스트 검증 사항
-
-모든 테스트는 다음을 검증해야 합니다:
-1. **스키마 준수**: 출력이 `AssetMeta` 구조와 일치
-2. **데이터 무결성**: 레이어 개수, 텍스트 추출 정확도
-3. **파일 출력**: JSON 파일이 올바른 위치에 저장됨
-4. **오류 처리**: 적절한 로깅과 함께 우아한 실패
-
-## 일반적인 문제 및 해결책
-
-### 문제: SigLIP2 모델 로드 실패
-**원인**: PyTorch 누락 또는 CUDA 불일치
-**해결**: `python backend/setup/installer.py --check` 실행하여 진단
-
-### 문제: Ollama 연결 실패 ("connection refused")
-**원인**: Ollama 서버가 실행되지 않음
-**해결**:
-```powershell
-# Ollama 상태 확인
-ollama list
-
-# Ollama 서비스 시작 (Windows: 자동 시작됨)
-# 필요 모델 확인
-ollama pull qwen3-embedding:0.6b
-```
-
-### 문제: 검색 결과가 너무 적음
-**원인**: SigLIP2 점수 범위 (0.06~0.17)와 threshold 불일치
-**해결**: 프론트엔드 threshold를 0으로 설정 (기본값). config.yaml의 `search.thresholds` 확인.
-
-### 문제: MV 결과 없음 (vec_text 비어있음)
-**원인**: STEP 2 (AI Vision)가 실행되지 않은 파일은 MC가 없으므로 MV도 생성 불가
-**해결**: `--no-skip` 옵션으로 파일 재처리
-```powershell
-python backend/pipeline/ingest_engine.py --discover "경로" --no-skip
-```
-
-### 문제: 번역 API 속도 제한
-**원인**: Google Translate에 대한 요청이 너무 많음
-**해결**: 배치 크기가 이미 최적화됨; 재시도 로직이나 지연 추가 고려
-
-### 문제: PSD 레이어 텍스트 추출 시 빈 값 반환
-**원인**: 비표준 PSD 필드에 텍스트 저장됨
-**해결**: `layer.engine_dict` 구조 확인; `layer.text` 속성으로 폴백
-
-### 문제: Electron 앱이 시작되지 않음
-**원인**: 프론트엔드 개발 서버가 준비되지 않음
-**해결**: `wait-on`이 Electron 전에 Vite가 시작되도록 보장; 포트 5173 가용성 확인
-
-### 문제: 검색 그리드 깜빡임 (스크롤바 진동)
-**원인**: `overflow-y: auto` 컨테이너에서 ResizeObserver 무한 루프 발생. 스크롤바 등장 → 컨테이너 ~48px 축소 → 카드 축소 → 콘텐츠 줄어듬 → 스크롤바 소멸 → 컨테이너 확대 → 카드 확대 → 콘텐츠 넘침 → 스크롤바 등장 (반복)
-**해결**: `useResponsiveColumns` 훅에서 **최대 관측 너비 래치** 적용. 60px 이내 너비 감소(스크롤바)는 무시하고 넓은 값 유지. 500ms 안정 후 리셋하여 실제 창 크기 변경은 정상 반영.
-**교훈**: `overflow-y: auto` + `ResizeObserver` 조합은 스크롤바 toggle로 인한 무한 루프 위험이 있다. 항상 스크롤바 폭 변동을 고려해야 한다.
-
-## 단계별 로드맵
-
-- ✅ **Phase 1**: 구조적 파싱 (PSD 레이어, 메타데이터 추출)
-- ✅ **Phase 2**: VV 벡터화 (SigLIP2 임베딩, ChromaDB → SQLite 마이그레이션 완료)
-- ✅ **Phase 3**: SQLite + sqlite-vec 통합 (Triaxis Data Storage)
-- ✅ **Phase 4**: VLM + MC 생성 + Electron GUI
-- ⏳ **Phase 5**: UI/UX 개선 (라이트박스 뷰어, 검색 히스토리, 뷰 모드)
-- ⏳ **Phase 6**: 검색 고도화 (고급 필터, 컬렉션, 유사 이미지)
-- ⏳ **Phase 7**: 성능 최적화 (증분 인덱싱, 병렬 파싱, 캐싱)
-- ⏳ **Phase 8**: 패키징/배포 (인스톨러, 자동 업데이트)
-- ⏳ **Phase 9**: 협업 기능 (DB 공유, 코멘트)
-
-자세한 로드맵은 `phase.md`, 기능 명세는 `Spec.md` 참조.
-
-## 인프라 스펙 (MANDATORY)
-
-**이 섹션은 DB, 검색, 모델, 배포 구조의 단일 진실 공급원(Single Source of Truth)입니다.**
-
-### DB: SQLite + sqlite-vec (단일 소스)
-
-| 항목 | 값 |
-|------|------|
-| **주력 DB** | SQLite (`imageparser.db`, 프로젝트 루트) |
-| **벡터 확장** | sqlite-vec (vec0 가상 테이블) |
-| **전문 검색** | FTS5 (BM25, Triaxis FTS축) |
-| **스키마 파일** | `backend/db/sqlite_schema.sql` |
-| **클라이언트** | `backend/db/sqlite_client.py` (SQLiteDB) |
-| **자동 마이그레이션** | 연결 시 자동 스키마 업그레이드 |
-
-**PostgreSQL은 미사용** (레거시 마이그레이션 코드만 보존). Docker 불필요.
-
-### 검색: Triaxis (VV + MV + FTS)
-
-| 축 | 역할 | 모델 | DB 테이블 |
-|----|------|------|----------|
-| **VV** (Visual Vector) | 이미지 픽셀 유사도 | SigLIP2 (tier별, HuggingFace) | `vec_files` |
-| **MV** (Meaning Vector) | MC 캡션/태그 텍스트 유사도 | Qwen3-Embedding (Transformers/Ollama) | `vec_text` |
-| **FTS** (Full-Text Search) | 파일명/레이어명/태그 키워드 | FTS5 BM25 | `files_fts` |
-
-**결합**: RRF (Reciprocal Rank Fusion), 가중치는 `config.yaml` > `search.rrf.presets` 설정.
-**검색 엔진**: `backend/search/sqlite_search.py` (SqliteVectorSearch)
-
-### Tier 시스템 (config.yaml) — 2026-04-01 기준
-
-**VV/MV 크로스 티어 호환성 확보 완료. VLM은 Qwen3.5로 세대 교체.**
-
-| Tier | VRAM | VV 모델 (SigLIP2) | VLM (MC 생성) | MV 모델 (Qwen3-Embedding) | 검색 LLM (쿼리 분해) |
-|------|------|-------------------|---------------|----------------------|----------------------|
-| **standard** | ~6GB | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3.5-4B` (transformers) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-0.8B` (mlx/transformers) |
-| **pro** | 8-16GB | `siglip2-so400m-patch16-naflex` (1152d) | 플랫폼별 (아래 참조) | `Qwen3-Embedding-0.6B` (1024d) | `Qwen3.5-4B-OptiQ-4bit` (mlx/transformers) |
-| **ultra** | 20GB+ | `siglip2-so400m-patch16-naflex` (1152d) | `Qwen3.5-9B` (auto: mlx/ollama/vllm/transformers) | `Qwen3-Embedding-8B` (4096d) | `Qwen3.5-9B` (mlx/transformers) |
-
-**Pro Tier VLM 플랫폼별 설정:**
-
-| 플랫폼 | 백엔드 | 모델 | 폴백 |
-|--------|--------|------|------|
-| **macOS** | **MLX** | **`mlx-community/Qwen3.5-9B-MLX-4bit`** | transformers |
-| **Windows** | **Ollama** | **`qwen3.5:4b`** | transformers |
-| Linux | transformers | `Qwen/Qwen3.5-9B` | - |
-
-### macOS VLM 선택 근거 (2026-04-01 벤치마크)
-
-**테스트 환경**: Apple M5 32GB, MLX 4bit, 동일 이미지 10장 배치
-
-| 모델 | files/min | Avg S1 | Avg S2 | Metal Peak | 성공률 |
-|------|:---------:|:------:|:------:|:----------:|:------:|
-| Qwen3-VL-4B MLX (이전) | 6.8 | 1.4s | 7.4s | 3.8GB | 10/10 |
-| Qwen3.5-4B MLX | 2.5 | 2.6s | 21.0s | 3.9GB | 9/10 |
-| Qwen3.5-9B MLX (장황 프롬프트) | 2.3 | 3.1s | 23.1s | 6.6GB | 10/10 |
-| **Qwen3.5-9B MLX (최적화 프롬프트)** | **6.4** | **1.6-3.6s** | **3.7-8.9s** | **6.6GB** | **10/10** |
-
-**Qwen3.5-9B 선택 이유:**
-1. **최적화 프롬프트로 VL-4B와 동급 속도** (6.4 vs 6.8 files/min)
-2. **품질 대폭 향상** — MMMU-Pro 70.1 (VL-4B: 52.0), 더 상세한 캡션, 이미지 내 텍스트(OCR) 인식
-3. **32GB Mac에서 여유** — Metal 6.6GB peak, RSS 증가 48MB (안정)
-4. **메모리 누수 없음** — 5장 배치 후 Metal 성장 0MB
-5. **Apache 2.0 라이선스**
-
-**tok/s 실측 (MLX 4bit):**
-
-| 모델 | Prefill (tok/s) | Generation (tok/s) | 비고 |
-|------|:-:|:-:|------|
-| Qwen3-VL-4B | 419 | 47.4 | — |
-| Qwen3.5-4B | 588 | 45.9 | Prefill 빠르지만 생성 토큰 수 많음 |
-| Qwen3.5-9B | 290 | 24.8 | 프롬프트 최적화로 토큰 수 제어 필수 |
-
-**속도 병목 해결**: Qwen3.5가 같은 질문에 3.5배 많은 토큰을 생성하는 것이 주 원인. 프롬프트에 "max 20 words caption, max 8 tags, no markdown fences" 제약 → Stage 2를 23s에서 3.7-8.9s로 단축.
-
-### Windows VLM 선택 근거 (2026-04-01 벤치마크)
-
-**테스트 환경**: RTX 3060 Ti 8GB, Ollama, 동일 이미지 3회 반복
-
-| 모델 | 속도(avg) | VRAM | 캡션 품질 | 안정성 |
-|------|----------|------|----------|:------:|
-| qwen3-vl:4b | ~10s | 7.0GB | **불안정 (0/3 빈 결과)** | ❌ |
-| qwen3-vl:8b-q4_K_M | 7.2s | 7.2GB | 안정, 347-434자 | 3/3 ✅ |
-| **qwen3.5:4b** | **6.2s** | 7.5GB | **상세, 392-620자** | **3/3 ✅** |
-| qwen3.5:9b | 13.2s | 7.5GB | 가장 상세, 450-599자 | 3/3 ✅ |
-
-**qwen3.5:4b 선택 이유:**
-1. **최고 속도** (6.2s/장, 4.7s/장 warm) — 9b 대비 2배 빠름
-2. **안정적 JSON 출력** — 3/3 성공, 캡션+태그 정상
-3. **배치 가능** — 5장 동시 처리 시 1.5배 추가 속도 향상 확인
-4. **VRAM 적합** — 7.5GB/8GB (모델 1개만 로드 원칙)
-5. **Unified VL 아키텍처** — Qwen3-VL보다 벤치마크 상위 (early fusion)
-6. **CPU 폴백 가능** — GPU 없는 환경에서 5-10 tok/s (백업용)
-7. **Apache 2.0 라이선스**
-
-**qwen3-vl:4b 탈락 이유:** Ollama에서 thinking 모드 문제로 빈 결과 반복. think=True/False 모두 불안정.
-
-**Ollama API 주의사항:** `/api/generate`가 아닌 **`/api/chat` + `think: False`** 사용 필수. Qwen3-VL/3.5 모델은 `/api/generate`에서 응답이 `thinking` 필드로 라우팅되어 `response`가 비는 알려진 이슈.
-
-**핵심 설계 결정 (2026-04-01):**
-- **VLM Qwen3.5 전환**: Qwen3-VL → Qwen3.5 (네이티브 멀티모달).
-- **플랫폼별 최적 모델**: macOS=9B MLX 4bit (32GB), Windows=4B Ollama (8GB GPU).
-- **Thinking 모드 비활성화 필수**: 모든 백엔드에서 `enable_thinking=False` / `think: False`.
-- **간결 프롬프트 적용**: "max 20 words, max 8 tags" 제약으로 토큰 수 제어 → 속도 3x 단축.
-- **VV 모델 통일**: 모든 Tier에서 동일한 `siglip2-so400m-patch16-naflex` (1152d) 사용. Tier 전환 시 VV 재생성 불필요.
-- **MV 모델 통일 (standard/pro)**: 동일한 `qwen3-embedding:0.6b` (1024d). standard/pro 전환이 **완전 무중단**.
-- **MV ultra 분리**: ultra는 `qwen3-embedding:8b` (4096d)로 모델 자체가 다름. 전환 시 MV만 재생성.
-- **SigLIP2 so400m NaFlex 선택 근거**: Meta PE-Core(2025.04)가 성능 최강이나 CC-BY-NC 라이선스 + transformers 미통합 + MPS 미검증. SigLIP2는 Apache 2.0, transformers 네이티브, MPS 검증됨. 동급 파라미터 대비 성능 차이 0.5% 미만.
-- **워커 모델 1개 동시 로드 원칙**: MC/VV/MV 중 한 모델만 VRAM에 올림. 8GB GPU에서 OOM 방지.
-
-**Tier 전환 호환성 매트릭스:**
-
-| 전환 | VV | MV | MC | FTS | 판정 |
-|------|----|----|----|----|------|
-| standard ↔ pro | 호환 | 호환 | 호환 | 호환 | **완전 호환** |
-| standard/pro ↔ ultra | 호환 | MV만 재생성 | 호환 | 호환 | MV만 재생성 |
-
-**설정 파일**: `config.yaml` > `ai_mode.override` (현재: `pro`)
-**Tier 로더**: `backend/utils/tier_config.py` > `get_active_tier()`
-**호환성 매트릭스**: `backend/utils/tier_compatibility.py`
-
-### 파이프라인 4단계 (process_batch_phased, ingest_engine.py)
-
-```
-Phase P (Parse)   → PSD/PNG/JPG 파싱, 썸네일 생성, 메타데이터 추출 → 즉시 DB 저장
-Phase V (Vision)  → VLM으로 MC(캡션/태그/분류) 생성 → 서브배치마다 즉시 DB 저장
-Phase E (Embed)   → SigLIP2→VV, Qwen3-Embedding→MV 벡터화 → 서브배치마다 즉시 DB 저장
-Phase S (Summary) → 완료 확인 ([OK] emit, 프론트엔드 카운트용, 실제 저장 아님)
-```
-
-**핵심 원칙**:
-- **각 Phase는 서브배치 단위로 즉시 저장**. 1000개 파일이라도 배치(2~16개)씩 처리→저장→다음 배치. 중간 크래시 시 이미 저장된 파일은 Smart Skip으로 건너뜀.
-- Phase S는 별도 저장이 아닌 **요약 단계** (모든 데이터는 P/V/E에서 이미 저장 완료).
-- Tier 메타데이터(mode_tier, embedding_model 등)는 Phase V 전에 설정되므로 Vision 실패와 무관하게 항상 기록됨.
-
-### 도메인 분류 시스템 (v0.6.0)
-
-**YAML 기반 도메인 프리셋으로 VLM 분류 프롬프트와 스키마를 동적으로 구성합니다.**
-
-| 구성요소 | 파일 | 설명 |
-|---------|------|------|
-| 도메인 YAML | `backend/vision/domains/*.yaml` | 분류 타입/태그/프롬프트 정의 |
-| 도메인 로더 | `backend/vision/domain_loader.py` | YAML 파싱 + 프롬프트/스키마 빌드 |
-| 분류 API | `backend/server/routers/classification.py` | 도메인 CRUD + active 도메인 설정 |
-| DB 초기화 API | `backend/server/routers/database.py` | admin 비밀번호 재검증 + 파일 데이터 전체 삭제 |
-| 선택 모달 | `frontend/src/components/DomainSelectModal.jsx` | 첫 실행 시 도메인 선택 UI |
-| Admin UI | `frontend/src/pages/AdminPage.jsx` | Classification 패널 (도메인 목록/상세/AI 생성) |
-
-**도메인 프리셋 구조** (`_base.yaml` 상속):
-```yaml
-domain_id: game_asset
-image_types:            # VLM 분류 선택지 (character, background, ui, ...)
-  - id: character
-    name: Character
-    tags: [full_body, bust, ...]
-classification_prompt:  # VLM에 전달되는 분류 프롬프트
-tag_prompt:             # VLM에 전달되는 태그 프롬프트
-```
-
-**동작 흐름**: 활성 도메인 설정 → Phase V에서 `domain_loader`가 해당 도메인 YAML 로드 → VLM 프롬프트에 도메인별 `image_types`/`tags` 주입 → 분류 결과가 `files.image_type`, `files.ai_tags`에 저장
-
-**DB 초기화 (Reset)**:
-- 헤더 DB 메뉴 → "Reset DB" (admin 전용, 빨간색)
-- 확인 모달에서 admin 비밀번호 재입력 필수
-- **삭제**: `files`, `layers`, `vec_files`, `vec_text`, `vec_structure`, `files_fts`, `job_queue`, `system_meta` 값 리셋
-- **유지**: `users`, `invite_codes`, `worker_tokens`, `worker_sessions`, 썸네일 (`output/thumbnails/`)
-
-### Adaptive Batch Controller
-
-```yaml
-# config.yaml
-batch_processing:
-  adaptive:
-    enabled: true
-    memory_budget_gb: 20        # 메모리 예산
-    vlm_initial_batch: 2        # Vision 초기 배치 (→ 메모리에 따라 자동 증감)
-    vv_initial_batch: 4         # VV 초기 배치
-    mv_initial_batch: 16        # MV 초기 배치
-```
-
-- **Triangular-step 성장**: 배치 크기가 메모리 여유에 따라 점진적으로 증가
-- **메모리 압박 시 자동 축소**: OOM 방지
-- **Phase별 독립 배치**: VLM(무거움)은 작게, MV(가벼움)는 크게 시작
-- **StatusBar 표시**: 노란색 `B:N` 뱃지에서 현재 배치 크기 실시간 확인
-
-### Smart Skip (Phase별 재개)
-
-```python
-_check_phase_skip(parsed_files)  # 파일별로 이미 완료된 Phase 확인
-```
-
-- **파일별 Phase 완료 추적**: MC 존재→Vision 스킵, VV 존재→VV 스킵, MV 존재→MV 스킵
-- **Resume 시 미완료 Phase부터 이어서 처리**: 이전 세션에서 Parse 완료 → 재시작 시 Vision부터 시작
-- Discover 모드와 Pipeline 모드 모두 동일한 `process_batch_phased` 사용
-
-### Discover 모드 (Resume/Auto-scan)
-
-- `--discover` CLI 또는 Electron IPC `run-discover`로 실행
-- DFS 폴더 탐색 → Smart Skip 필터링 → `process_batch_phased` 호출
-- **프론트엔드 진행 UI**: Pipeline과 동일한 4-Phase Pills (P/V/E/S) + processed/total + 배치 크기 표시
-- **세션 추적**: `config.yaml > last_session.folders`에 작업 대상 기록, 완료 시 초기화
-- **앱 재시작 시 Resume Dialog**: 미완료 작업이 있으면 팝업으로 이어하기 제안
-
-### 배포 원칙 (MANDATORY)
-
-**배포 파이프라인: Tag Push → GitHub Actions → GitHub Releases → Firebase 웹사이트 자동 반영**
-
-```
-git tag v0.1.0.YYYYMMDD_NN → git push origin --tags
-    ↓
-GitHub Actions (.github/workflows/release.yml)
-    ├─ build-win (windows-latest): PyInstaller + Electron → .zip/.exe
-    ├─ build-mac (macos-latest):   PyInstaller + Electron → .dmg/.zip
-    └─ release: 양쪽 아티팩트 수집 → GitHub Release 자동 생성
-    ↓
-Firebase 웹사이트 (website/public/)
-    ├─ index.html: GitHub Releases API → 최신 버전 + 다운로드 링크 표시
-    └─ release.html: GitHub Releases API → 전체 릴리즈 이력 표시
-```
-
-| 대상 | 빌드 | 배포 | 위치 |
-|------|------|------|------|
-| **데스크탑 앱** (Win+Mac) | GitHub Actions (자동) | GitHub Releases (자동) | `github.com/.../releases` |
-| **웹사이트** (랜딩/릴리즈) | 없음 (정적 HTML) | `firebase deploy --only hosting` | Firebase Hosting (`imagine-b1e9c`) |
-
-#### 릴리즈 절차
-
-```bash
-# 1. 버전 bump (vite.config.js BUILD_ID)
-# 2. 커밋 + 태그
-git tag v0.1.0.YYYYMMDD_NN
-git push origin main --tags
-# 3. GitHub Actions가 자동으로 Win+Mac 빌드 → Release 생성
-# 4. Firebase 웹사이트는 GitHub API를 읽으므로 자동 반영 (재배포 불필요)
-```
-
-#### 웹사이트만 변경한 경우
-
-```bash
-cd website && firebase deploy --only hosting
-```
-
-#### 규칙
-
-- **"배포해라" = 태그 push** (데스크탑 앱) 또는 **`firebase deploy`** (웹사이트)
-- **웹사이트의 릴리즈 정보는 GitHub Releases API에서 읽음** — Firestore 미사용
-- **`website/public/`은 Electron 앱과 별개**: React SPA(`frontend/dist/`)를 Firebase에 올리는 것이 아님
-- **GitHub Actions 워크플로우**: `.github/workflows/release.yml` — Win+Mac 동시 빌드
-
-### 배포 구조
-
-**A) 로컬 데스크탑 모드 (Electron)**
-
-| 구성요소 | 기술 |
-|---------|------|
-| **프론트엔드** | Electron 40 + React 19 + Vite + Tailwind CSS |
-| **백엔드 통신** | IPC → Python subprocess (stdio JSON) |
-| **DB** | SQLite (로컬 파일, Docker 불필요) |
-| **VLM** | transformers (standard/pro) 또는 Ollama (ultra) |
-| **VV 인코더** | SigLIP2 (HuggingFace, 로컬 캐시) |
-| **서버** | 선택적 — [Server] 버튼으로 FastAPI 내장 시작 가능 |
-
-**B) 서버 모드 (FastAPI + 분산 워커)**
-
-| 구성요소 | 기술 |
-|---------|------|
-| **서버** | FastAPI (uvicorn, 단일 워커 — SQLite 제약) |
-| **프론트엔드** | `frontend/dist` SPA 정적 서빙 |
-| **인증** | JWT (access + refresh 토큰) |
-| **DB** | SQLite (`imageparser_server.db`) |
-| **작업 큐** | SQLite `job_queue` 테이블 |
-| **워커** | Python 데몬 (`worker_daemon.py`), 여러 대 연결 가능 |
-| **워커 통신** | REST API (claim → process → complete) + 하트비트 |
-
-### 필수 설치 요소 (standard tier 기준)
-
-```powershell
-# 1. Python 3.11+ (venv)
-python -m venv .venv && .venv\Scripts\activate
-
-# 2. Ollama 설치 (https://ollama.com/download) - MV 모델용
-# 3. Ollama 모델 pull (MV용만, VLM은 HuggingFace 자동 다운로드)
-ollama pull qwen3-embedding:0.6b
-
-# 4. Python 패키지 + SigLIP2/Qwen3-VL 모델 + DB 초기화
-python backend/setup/installer.py --full-setup
-
-# 또는 개별 실행:
-python backend/setup/installer.py --install          # pip 패키지
-python backend/setup/installer.py --download-model    # SigLIP2 + Qwen3-VL (HuggingFace)
-python backend/setup/installer.py --setup-ollama      # Ollama MV 모델 확인/pull
-python backend/setup/installer.py --init-db           # SQLite 스키마
-
-# 5. 상태 진단
-python backend/setup/installer.py --check
-```
-
-### 관련 파일 인덱스
-
-| 파일 | 역할 | 수정 가능 |
-|------|------|----------|
-| `config.yaml` | Tier/검색/배치 설정 (단일 소스) | ✅ |
-| `backend/db/sqlite_client.py` | SQLite 클라이언트 | ❌ |
-| `backend/db/sqlite_schema.sql` | DB 스키마 정의 | ❌ |
-| `backend/search/sqlite_search.py` | Triaxis 검색 엔진 | ❌ |
-| `backend/pipeline/ingest_engine.py` | 4단계 처리 파이프라인 | ❌ |
-| `backend/vision/vision_factory.py` | VLM 백엔드 자동 선택 | ❌ |
-| `backend/vision/analyzer.py` | Transformers VLM 어댑터 (2-Stage) | ❌ |
-| `backend/vision/ollama_adapter.py` | Ollama VLM 어댑터 (2-Stage) | ❌ |
-| `backend/vector/siglip2_encoder.py` | SigLIP2 VV 인코더 | ❌ |
-| `backend/utils/tier_config.py` | Tier 설정 로더 | ❌ |
-| `backend/setup/installer.py` | 통합 설치 프로그램 | ❌ |
-| `backend/server/app.py` | FastAPI 서버 진입점 | ❌ |
-| `backend/server/routers/workers.py` | 워커 세션 관리 API | ❌ |
-| `backend/server/queue/manager.py` | 작업 큐 관리자 | ❌ |
-| `backend/worker/worker_daemon.py` | 워커 데몬 (배치 처리 + prefetch 풀) | ❌ |
-| `backend/worker/worker_ipc.py` | 워커 IPC 브리지 (Electron ↔ Python) | ❌ |
-| `backend/worker/config.py` | 워커 설정 | ✅ |
-| `backend/db/sqlite_schema_auth.sql` | 인증 DB 스키마 | ❌ |
-| `tools/setup_models.py` | Ollama 모델 설치 스크립트 | ❌ |
-
-### 금지 사항
-
-- ❌ **PostgreSQL 사용** (SQLite 단일 소스)
-- ❌ **Docker 의존** (로컬 SQLite + Ollama로 충분)
-- ❌ **config.yaml 외 하드코딩** (Tier/모델 설정은 config.yaml에서만)
-- ❌ **CLIP ViT-L-14 사용** (SigLIP2로 교체 완료)
-- ❌ **ChromaDB 사용** (deprecated, 삭제 예정)
-
----
-
-## Windows 관련 참고사항
-
-- 명령어는 **PowerShell** 또는 **Git Bash** 사용
-- 파일 경로는 백슬래시(`C:\Users\...`) 사용하지만 Python은 슬래시로 정규화
-- CUDA는 호환되는 NVIDIA GPU + 드라이버 필요 (`nvidia-smi`로 확인)
-- **인코딩은 무조건 UTF-8** (MANDATORY): 모든 파일 I/O, subprocess 출력, DB 읽기/쓰기에서 `encoding='utf-8'`을 명시해야 함. Windows 기본 인코딩(cp949)에 의존하면 한글 경로/데이터가 깨짐
-
-## 개발 흐름 예시
-
-```powershell
-# 1. 현재 상태 확인
-/unit-status
-
-# 2. 새 유닛 시작
-/unit-start
-
-# 3. 기능 개발 (예: 새 파서)
-# backend/parser/ 에서 파일 편집
-
-# 4. 테스트
-python test_new_parser.py
-# 실패 시:
-/troubleshoot  # 문제 문서화
-
-# 5. 통과하면:
-/unit-done  # 회고 작성
-
-# 6. 테스트 파일 처리
-python backend/pipeline/ingest_engine.py --file "test.psd"
-
-# 7. Triaxis 검색 검증 (프론트엔드 Electron 앱 사용)
-npm run electron:dev  # frontend/ 에서 실행
-```
-
-## 프론트엔드 로컬라이제이션 (i18n) 규칙
-
-**모든 프론트엔드 UI 문자열은 반드시 i18n 키를 사용해야 합니다.**
-
-### 시스템 구조
-
-```
-frontend/src/i18n/
-├── LocaleContext.jsx   ← React Context + useLocale 훅
-├── index.js            ← 진입점 (re-export)
-└── locales/
-    ├── en-US.json      ← 영어 번역
-    └── ko-KR.json      ← 한국어 번역
-```
-
-### 사용법
-
-```jsx
-import { useLocale } from '../i18n';
-
-const { t } = useLocale();
-// 기본: t('app.title')
-// 보간: t('status.selected', { count: 5 })
-```
-
-### 새 문자열 추가 절차
-
-1. 키 이름 결정 (컨벤션: `prefix.name`)
-2. `en-US.json`에 영어 값 추가
-3. `ko-KR.json`에 한국어 값 추가
-4. 코드에서 `t('key')` 사용
-
-### 키 접두사 컨벤션
-
-| 접두사 | 용도 | 예시 |
-|--------|------|------|
-| `app.` | 앱 전역 | `app.title` |
-| `tab.` | 탭 이름 | `tab.search` |
-| `action.` | 버튼/액션 | `action.process` |
-| `label.` | 폼 라벨 | `label.notes` |
-| `placeholder.` | 입력 힌트 | `placeholder.search` |
-| `status.` | 상태 표시 | `status.loading` |
-| `msg.` | 알림/메시지 | `msg.no_results` |
-
-### 금지 사항
-
-- **하드코딩 UI 텍스트 금지**: `<span>Search</span>` 대신 `<span>{t('tab.search')}</span>`
-- **한쪽만 업데이트 금지**: en-US와 ko-KR 양쪽 파일 동시 업데이트 필수
-- **중첩 키 금지**: 플랫 도트 표기법만 사용 (`app.title`, `{ app: { title } }` 아님)
-
-### 검증 워크플로우
-
-- `/localize-scan` - 하드코딩 문자열 탐색 리포트
-- `/localize-add` - 새 번역 키 추가 (양쪽 동시)
-
-## 프로젝트 핵심 원칙
-
-1. **5단계 유닛 프로토콜 준수**: 모든 개발은 정의된 워크플로우를 따라야 함
-2. **AssetMeta 스키마 준수**: 모든 파서 출력은 표준 스키마를 따라야 함
-3. **Triaxis 데이터 분해**: VV (시각 벡터) + MV (의미 벡터) + FTS (키워드) 3축 검색
-4. **Factory Pattern 사용**: 새 파서는 BaseParser를 상속하고 can_parse() 구현
-5. **문제 발생 시 기록 필수**: troubleshooting.md에 모든 이슈와 해결책 문서화
-6. **UI 문자열 로컬라이제이션 필수**: 모든 프론트엔드 텍스트는 i18n 키 사용
-7. **플랫폼별 최적화 우선**: AUTO 모드를 사용하여 플랫폼에 맞는 백엔드 자동 선택
-
----
-
-## 크로스 플랫폼 VLM 폴백 체인 (v8.1, 2026-02-20 기준)
-
-**VLM 팩토리(`vision_factory.py`)는 명시적 폴백 체인을 사용합니다.**
-
-### 폴백 체인 매트릭스
-
-모든 플랫폼 × 티어 조합에서 `transformers`가 최종 안전망.
-
-| 티어 | macOS | Windows | Linux |
-|------|-------|---------|-------|
-| **standard** | `[transformers]` | `[transformers]` | `[transformers]` |
-| **pro** | `[mlx → transformers]` | `[transformers]` | `[transformers]` |
-| **ultra** | `[mlx → transformers]` | `[ollama → transformers]` | `[vllm → ollama → transformers]` |
-
-### 동작 원리
-
-1. `_resolve_backend_chain()`: config.yaml의 `backend` + `fallback` 필드에서 체인 구성
-2. `_check_backend_available()`: 사전 가용성 검사 (is_mlx_vlm_available, is_vllm_available, is_ollama_available)
-3. `_instantiate_backend()`: 체인 순서대로 시도, 실패 시 다음으로
-4. `transformers`: 항상 마지막에 보장 (torch는 필수 의존성)
-
-### config.yaml 폴백 설정
-
-```yaml
-# pro/ultra tier의 backends.{platform} 섹션에 fallback 필드 사용
-backends:
-  darwin:
-    backend: mlx
-    fallback: transformers    # MLX 불가 시 transformers로 폴백
-  windows:
-    backend: ollama
-    fallback: transformers    # Ollama 불가 시 transformers로 폴백
-  linux:
-    backend: vllm
-    fallback: ollama          # vLLM 불가 시 ollama, 그래도 불가 시 transformers (암묵적)
-```
-
-### 로그 패턴
-
-```
-INFO VLM backend chain (tier: pro): mlx → transformers
-INFO [SKIP] mlx: not available, trying next       # 또는
-INFO [OK] VLM backend: mlx (tier: pro)            # 또는
-WARNING [FAIL] mlx: <error>, trying next
-```
-
-### VV/MV는 폴백 불필요
-
-- **VV (SigLIP2)**: 모든 플랫폼에서 `transformers` 직접 사용 — 폴백 체인 없음
-- **MV (Qwen3-Embedding)**: `text_embedding.py`에 자체 `Transformers → Ollama` 폴백 구현됨
-
-### 개발 가이드라인
-
-```python
-# ✅ 올바른 방법 - Factory 사용 (폴백 체인 자동 작동)
-from backend.vision.vision_factory import get_vision_analyzer
-analyzer = get_vision_analyzer()
-
-# ❌ 잘못된 방법 - 직접 adapter 초기화
-from backend.vision.ollama_adapter import OllamaVisionAdapter
-analyzer = OllamaVisionAdapter()  # 폴백 체인 무시
-```
-
-### 핵심 파일
-
-| 파일 | 역할 |
-|------|------|
-| `backend/vision/vision_factory.py` | VLM 폴백 체인 팩토리 (v8.0 리팩토링) |
-| `backend/utils/platform_detector.py` | 플랫폼 감지 + 가용성 검사 함수 |
-| `backend/utils/tier_config.py` | Tier 설정 로더 |
-| `config.yaml` > `ai_mode.tiers.{tier}.vlm.backends` | 플랫폼별 백엔드 + 폴백 설정 |
-
-### 성능 참고 (2026-02-20 기준)
-
-| 백엔드 | 장점 | 단점 | 적합 플랫폼 |
-|--------|------|------|------------|
-| **MLX** | Apple Silicon 네이티브, 3-4x TTFT 향상 | macOS 전용, 배치 불가 (batch_size=1) | macOS |
-| **vLLM** | 8-16x 배치 처리, 최고 처리량 | CUDA 필수, Windows 미지원 | Linux (GPU) |
-| **Ollama** | 설치 간편, 모델 자동 관리 | 배치 성능 저하, batch_size=1 권장 | Windows, 범용 |
-| **Transformers** | 항상 사용 가능, MPS/CUDA/CPU 자동 | MLX/vLLM 대비 느릴 수 있음 | 최종 폴백 |
-
-### 모델 선택 근거 (2026-02-20 조사 결과)
-
-**조사 대상**: SigLIP2 (Google, 2025.02), Meta PE-Core (2025.04), OpenVision (UCSC, 2025.05), Jina-CLIP-v2 (2024.12), AIMv2 (Apple, 2024.11)
-
-**SigLIP2 so400m-naflex 유지 결정 이유:**
-1. **라이선스**: Apache 2.0 (PE-Core는 CC-BY-NC 비상업)
-2. **생태계**: HuggingFace transformers 네이티브 (PE-Core는 자체 라이브러리/OpenCLIP)
-3. **MPS 호환**: macOS M5에서 검증됨 (PE-Core는 MPS 미검증, xformers 의존)
-4. **성능 차이**: PE-Core-L14 vs SigLIP2-so400m — ImageNet ZS 0.5% 차이 (83.5% vs ~83%)
-5. **NaFlex**: 종횡비 보존 (PSD/PNG 다양한 비율에 적합), HuggingFace 다운로드 1위 (1.31M+)
-6. **가성비**: So400m(400M) → giant-opt(1B): 파라미터 2.5배, 메모리 2배, 검색 성능 +0.3%
-
-**재평가 시점**: PE-Core가 transformers 통합 + 라이선스 변경 시, 또는 SigLIP3 출시 시
-
-## 개발/테스트 환경 (macOS)
-
-### 현재 시스템
-- **HW**: Apple M5, 32GB Unified Memory, Metal 4
-- **OS**: macOS 26.2 (Darwin 25.2.0, arm64)
-- **Tier**: pro (8-16GB VRAM range)
-- **Python**: 3.12.12 (.venv)
-- **Node**: v24.13.0
-- **Vite dev port**: 9274
-
-### 빌드 검증 (2026-03-06)
-- **PyInstaller 백엔드**: `.venv/bin/python -m PyInstaller backend_cli.spec --noconfirm` → 성공 (`dist/backend_cli/`)
-- **Electron 앱**: `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:build` → 성공 (`frontend/dist-electron/Imagine-0.6.4-arm64.dmg`, `.zip`)
-- **프론트엔드 Vite**: `npm run build` → 성공 (`frontend/dist/`)
-- **Electron dev**: `npm run electron:dev` → 정상 실행 확인
-
-### 테스트 이미지 경로
-- **테스트 폴더**: `/Users/saintiron/imageDB/마캬베리즈무/실내소품`
-  - PSD 파일 다수 (실내 소품 배경 원화)
-  - 파이프라인 E2E 테스트용
-
-### 알려진 이슈
-- **Ollama + M5 Metal 4**: `mlx_metal_device_info` 심볼 로드 실패 → 모델 로딩 불가
-  - 원인: Ollama 0.15.5의 Metal shader가 M5 Metal 4 bfloat 미지원
-  - 해결: MV 생성을 TransformersEmbeddingProvider로 전환 (Ollama 우회)
-  - Ollama는 현재 MV 생성에 사용하지 않음
-- **VLM (Qwen3.5-9B)**: transformers 5.4.0+ 필수 (5.3.0 이하에서 비디오 입력 버그)
-  - mlx-vlm 0.3.12 동작 확인, 0.4.2에서 Qwen3.5 버그 수정 포함
-  - Thinking 모드 미비활성화 시 JSON 파싱 100% 실패 — `enable_thinking=False` 필수
-- **멀티워커 동일 GPU 경합**: 같은 머신에서 워커 N개 실행 시 각 워커 속도 1/N (총 처리량 이득 없음)
-  - 원인: GPU 시분할로 인한 경합
-  - 멀티워커는 **별도 GPU 머신에 분산 배치할 때만 효과적**
-- **Windows 워커 stdin 파이프 데드락**: Electron에서 spawn한 Python 워커가 Parse Phase에서 무한 행
-  - 원인: Windows CRT I/O 락 — piped stdin 블로킹 읽기가 백그라운드 스레드의 C-extension(numpy, psd-tools) 작업을 차단
-  - 해결: Win32 `PeekNamedPipe` 논블로킹 폴링으로 stdin 읽기 교체 (`worker_ipc.py`)
-  - macOS/Linux에서는 발생하지 않음 (POSIX I/O 모델 차이)
-  - 상세: `docs/troubleshooting.md` 참조
-
-### 플랫폼별 분기 처리 (MANDATORY)
-
-**Electron에서 spawn하는 Python subprocess에 적용되는 플랫폼별 규칙입니다.**
-
-| 항목 | Windows | macOS / Linux | 관련 파일 |
-|------|---------|---------------|----------|
-| subprocess stdin 읽기 | Win32 PeekNamedPipe 논블로킹 | `for line in sys.stdin` 블로킹 | `backend/utils/win32_stdin.py` |
-| 무거운 모듈 import | 메인 스레드 사전 import 필수 | 불필요 (안전) | `worker_ipc.py` |
-| stdout/stderr 인코딩 | UTF-8 강제 래핑 (기본 cp949) | UTF-8 기본 | `ingest_engine.py` |
-| 프로세스 종료 (사용자 요청) | SIGKILL (SIGTERM 비신뢰) | SIGTERM 정상 | `main.cjs` |
-| 프로세스 트리 킬 | `taskkill /F /T /PID` | `process.kill(-pid, 'SIGKILL')` | `main.cjs:killProcessTree()` |
-| 부모 사망 감지 (커널) | stdin 파이프 EOF | Linux: `prctl(PR_SET_PDEATHSIG)`, macOS: stdin EOF | `parent_watchdog.py` |
-| 파일 경로 구분자 | `\` (pathlib 자동 처리) | `/` | 전역 |
-
-**규칙:**
-
-1. **stdin 파이프 + 백그라운드 스레드 조합**: 새 Python subprocess가 Electron에서 stdin 파이프로 장수명 실행되고 백그라운드 스레드에서 C-extension(numpy, torch, psd-tools 등)을 사용하는 경우, 반드시 `backend/utils/win32_stdin.py`의 `make_stdin_reader()` 사용.
-2. **C-extension 모듈 사전 import**: Windows에서 백그라운드 스레드가 numpy/torch를 최초 import하면 DLL 로딩 데드락 발생. 메인 스레드에서 사전 import 필수.
-3. **단일 스레드 stdin 데몬은 안전**: 검색 데몬(`api_search.py`)처럼 stdin 블로킹 읽기를 사용하더라도 백그라운드 스레드가 없으면 데드락 없음. 분기 처리 불필요.
-4. **공용 유틸리티**: `backend/utils/win32_stdin.py` — 플랫폼 자동 감지, `make_stdin_reader()` 호출 시 Windows/Unix 자동 분기.
-5. **부모 프로세스 워치독 (3계층 방어)**: 장수명 subprocess에 반드시 `start_parent_watchdog()` 적용.
-   - Layer 1 (Linux): `prctl(PR_SET_PDEATHSIG, SIGKILL)` — 커널이 즉시 SIGKILL 전달
-   - Layer 2 (전체): stdin 파이프 EOF 감지 (`os.read()`) — 수ms 반응
-   - Layer 3 (폴백): PID 폴링 — 2초 간격 (터미널 직접 실행 시)
-6. **spawn 시 stdio 필수**: Electron에서 Python subprocess spawn 시 반드시 `stdio: ['pipe', 'pipe', 'pipe']` 명시. 미지정 시 부모 stdio 상속으로 stdin 파이프 lifeline 없음.
-7. **프로세스 트리 킬**: Windows에서 `process.kill(-pid)` 미동작 (POSIX 전용). 반드시 `killProcessTree()` 헬퍼 사용.
-
-**적용 현황:**
-
-| 프로세스 | stdin 파이프 | stdin 자체 읽기 | 부모 워치독 | 잔류 방지 |
-|---------|------------|---------------|-----------|----------|
-| Worker IPC | ✅ | ✅ PeekNamedPipe | 불필요 (stdin으로 감지) | ✅ |
-| Search Daemon | ✅ | ✅ `for line in sys.stdin` | 불필요 (stdin으로 감지) | ✅ |
-| FastAPI Server | ✅ | ❌ | ✅ `start_parent_watchdog()` | ✅ |
-| Pipeline/Discover | ✅ | ❌ | ✅ `start_parent_watchdog()` | ✅ |
-| 기타 API 스크립트 | 다양 | 다양 | 불필요 (단수명) | ✅ |
-
-**공용 유틸리티:**
-
-| 모듈 | 역할 | 사용 시점 |
-|------|------|----------|
-| `backend/utils/win32_stdin.py` | Windows CRT I/O 락 회피 (PeekNamedPipe) | stdin + 백그라운드 C-extension 조합 |
-| `backend/utils/parent_watchdog.py` | 부모 사망 감지 → 자동 종료 (3계층: prctl + stdin EOF + PID) | stdin을 읽지 않는 장수명 프로세스 |
-| `main.cjs:killProcessTree()` | 크로스 플랫폼 프로세스 트리 킬 | before-quit, stop-pipeline 등 |
-
-### 양자화 옵션 (조사 완료, 미적용)
-
-Mac MPS (Apple Silicon)에서 사용 가능한 양자화 방법 3가지. 현재는 적용하지 않음.
-
-| 방법 | 지원 | 장점 | 단점 |
-|------|------|------|------|
-| **optimum-quanto** | MPS int4/int8 | HuggingFace 공식, `QuantoConfig` 추가만으로 적용, 메모리 ~40-50% 절감 | 속도 동일~약간 느림 |
-| **torchao** | MPS int4 weight-only | PyTorch 공식, `quantize_(model, int4_weight_only())` | quanto보다 생태계 작음 |
-| **MLX** | M-시리즈 네이티브 int4 | Apple 공식, Neural Engine TensorOps 활용, 최고 속도 | transformers API 비호환, 코드 전면 재작성 필요 |
-
-**현재 상태**: pro tier fp16 기준 ~11GB 사용, 32GB 시스템에서 여유 충분 → 양자화 불필요
-**적용 시점**: ultra tier 지원 또는 저메모리(8GB) 기기 타겟 시 검토
-**참고**: bitsandbytes는 여전히 CUDA 전용 (MPS 미지원)
+여기에 MC penalty, phase stability, completion bias가 추가된다.
+
+이 구조는 다음 효과를 노린다.
+
+- 느린 워커가 MC에 과투입되는 것을 방지
+- 같은 phase를 계속 처리해 모델 스위칭 비용 완화
+- 끝나기 직전 작업을 빨리 닫아 전체 완료 체감 향상
+
+## 서버와 워커의 역할 분리
+
+현재 구조에서는 서버와 워커가 완전히 같은 일을 하지 않는다.
+
+### 서버가 강한 영역
+
+- Analysis Job 생성
+- file task 상태 관리
+- DB 커밋
+- 다운로드 선행 처리
+- 파싱 선행 처리
+- 스케줄링과 세션 관리
+- phase pause/resume 제어
+- 오류 조회와 진행률 집계
+
+### 워커가 강한 영역
+
+- MC
+- VV
+- MV
+- 실제 추론 처리
+- 하트비트와 성능 보고
+
+즉 서버는 orchestration 쪽이고, 워커는 inference executor 쪽이다.
+
+단, 이 경계는 완전히 절대적이지 않다.  
+현재 구현에는 **embedded worker**가 있어서 서버 프로세스 내부에서도 추론 실행 경로가 존재한다.
+
+따라서 구조적으로는 다음처럼 이해하는 것이 맞다.
+
+- 외부 워커: 분산 inference executor
+- embedded worker: 서버 내부 inference executor
+- 서버 본체: 상태 관리와 orchestration
+
+## WebDAV와 원격 처리 논리
+
+Imagine은 로컬 폴더만 가정하지 않는다.  
+WebDAV/NAS 원격 경로도 현재 구조의 일부다.
+
+핵심 접근은 다음과 같다.
+
+- 원본 대용량 파일을 즉시 전부 가져오지 않는다.
+- 필요한 다운로드를 선행 처리 풀에서 관리한다.
+- 파싱 풀은 준비된 파일만 잡아 처리한다.
+- 가능한 한 썸네일/메타데이터 중심으로 먼저 움직인다.
+
+즉 원격 처리 구조의 핵심은 “원본 파일 이동 최소화”다.
+
+여기서 중요한 점은 다운로드와 파싱이 같은 단계가 아니라는 것이다.
+
+- DownloadAheadPool은 원격 원본 확보를 맡고
+- FileTaskParsePool은 준비된 입력을 파싱하며
+- 이후 AI 단계는 별도 phase로 이어진다
+
+즉 원격 처리 경로는 `download -> parse -> ai`의 분리 구조를 가진다.
+
+## 프런트엔드 구조
+
+프런트엔드는 하나의 React 앱이 두 실행 표면을 가진다.
+
+### Electron 모드
+
+- 로컬 프로세스 제어
+- IPC 브리지
+- 로컬 서버 제어
+- 데스크톱 앱 경험
+
+### Web 모드
+
+- HTTP API 호출
+- 인증 기반 서버 접속
+- 브라우저 UI
+
+핵심은 UI를 두 벌 만드는 것이 아니라, **실행 표면만 다르게 두고 상태/화면 구조는 공유**한다는 점이다.
+
+## 인증 구조
+
+인증은 단순 로그인 화면이 아니라 두 층으로 구성된다.
+
+- 개인 신원: Firebase 계층
+- 서버 역할/세션: JWT 계층
+
+즉 “누구인가”와 “이 서버에서 무엇을 할 수 있는가”를 분리한다.
+
+이 구조는 개인 계정 체계와 서버별 권한 체계를 따로 관리하기 위한 것이다.
+
+## 이 문서를 읽을 때 중요한 관점
+
+Imagine은 다음 네 가지를 동시에 만족시키려는 설계다.
+
+1. 로컬 우선
+2. 분산 가능
+3. 검색 품질 중심
+4. 모델/플랫폼 교체 가능
+
+그래서 구현이 다소 층화되어 있다.
+
+- parser는 구조를 만든다.
+- VLM은 해석을 만든다.
+- embedding은 검색 축을 만든다.
+- scheduler는 계산 자원을 배분한다.
+- search는 다축 후보를 융합한다.
+
+이 다섯 층을 따로 이해하면 전체 구조가 빠르게 보인다.
+
+## 빠른 진입 파일
+
+처음 읽을 때는 아래 순서가 가장 효율적이다.
+
+1. `backend/server/app.py`
+2. `backend/server/routers/analysis.py`
+3. `backend/server/queue/analysis_manager.py`
+4. `backend/pipeline/phase_runner.py`
+5. `backend/pipeline/model_manager.py`
+6. `backend/search/sqlite_search.py`
+7. `backend/search/scoring.py`
+8. `backend/search/query_decomposer.py`
+9. `frontend/src/App.jsx`
+10. `frontend/src/contexts/AuthContext.jsx`
+
+## 한 줄 요약
+
+Imagine은 **파싱으로 구조를 만들고, 비전 모델로 해석을 만들고, 두 종류의 임베딩으로 검색 축을 만들고, RRF와 재정렬로 최종 결과를 만드는 로컬 우선 멀티모달 자산 검색 시스템**이다.
