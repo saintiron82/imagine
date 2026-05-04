@@ -71,7 +71,7 @@ QueryDecomposer auto-selects weight presets (visual/keyword/semantic/balanced).
 **Recent User Management Features (Firebase 2-Layer Auth):**
 - **2-Layer Identity**: Layer 1 (Firebase Auth) handles personal identity (Google/Email), Layer 2 (Local JWT) issues specific role access (admin/user) per server.
 - **Group-Based Setup**: Invite codes replaced by Firebase Firestore discovery. Users join specific Team Groups directly.
-- **Persistent App Mode**: Bypasses SetupPage on automatic restart, showing quick-reconnect Group cards.
+- **Persistent App Mode**: Restores through LoginPageV2 on automatic restart, showing quick-reconnect Group cards.
 
 ### 2.4 Distributed Worker System
 

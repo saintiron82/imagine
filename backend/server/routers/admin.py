@@ -393,21 +393,6 @@ async def unregister_webdav_source(
     return {"success": True}
 
 
-@router.post("/recovery/scan")
-def run_recovery_scan(
-    db: SQLiteDB = Depends(get_db_safe),
-    admin=Depends(require_admin),
-):
-    """Placeholder — legacy Recovery Factory removed.
-
-    Use analysis jobs retry (POST /api/v1/analysis-jobs/{id}/retry) instead.
-    """
-    return {
-        "success": False,
-        "error": "Legacy recovery scan removed. Use analysis job retry API.",
-    }
-
-
 @router.get("/storage-info")
 def get_storage_info(
     admin: dict = Depends(require_admin),

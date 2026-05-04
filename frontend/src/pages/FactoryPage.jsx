@@ -2,47 +2,16 @@
  * FactoryPage — Processing factory: Pipeline dashboard + Workers + Dashboard + Logs
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { Activity, Server, BarChart3, FileText, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { Server, BarChart3, FileText } from 'lucide-react';
 import { useLocale } from '../i18n';
-import { isElectron } from '../api/client';
-import { getJobStats } from '../api/worker';
 import { WorkersPanel, DashboardPanel } from './AdminPage';
-import WorkerPage, { MyWorkersSection } from './WorkerPage';
+import WorkerPage from './WorkerPage';
 
 
-export default function FactoryPage({
-  isAdmin,
-  appMode,
-  queueReloadSignal,
-}) {
+export default function FactoryPage({ isAdmin }) {
   const { t } = useLocale();
   const [activeTab, setActiveTab] = useState('workers');
-  const [stats, setStats] = useState(null);
-
-  // Fetch queue stats for summary bar
-  const fetchStats = useCallback(async () => {
-    try {
-      if (isElectron && window.electron?.queue) {
-        const data = await window.electron.queue.getStats();
-        if (data.success !== false) setStats(data);
-        return;
-      }
-      const data = await getJobStats();
-      if (data.success !== false) setStats(data);
-    } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => {
-    fetchStats();
-    const interval = setInterval(fetchStats, 5000);
-    return () => clearInterval(interval);
-  }, [fetchStats]);
-
-  const pending = stats?.pending ?? 0;
-  const processing = (stats?.assigned ?? 0) + (stats?.processing ?? 0);
-  const completed = stats?.completed ?? 0;
-  const failed = stats?.failed ?? 0;
 
   const allTabs = [
     { id: 'workers', label: t('factory.tab_workers'), icon: Server, adminOnly: false },
@@ -53,7 +22,7 @@ export default function FactoryPage({
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white">
-      {/* Legacy summary bar removed — WorkersPanel has unified dashboard */}
+      {/* WorkersPanel owns the queue summary dashboard. */}
 
       {/* Sub-tabs */}
       <div className="flex overflow-x-auto border-b border-gray-700 px-4 pt-2">

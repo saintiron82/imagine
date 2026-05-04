@@ -90,7 +90,7 @@ function App() {
   const [serverLanAddresses, setServerLanAddresses] = useState([]);
   const [showServerInfo, setShowServerInfo] = useState(false);
 
-  // Load server port from config.yaml (Electron only, mode is NOT loaded — SetupPage decides)
+  // Load server port from config.yaml (Electron only; LoginPageV2 decides mode).
   // Web mode: restrict tabs to search/download only
   useEffect(() => {
     if (!isElectron && (currentTab === 'archiving' || currentTab === 'admin')) {
@@ -529,10 +529,9 @@ function App() {
       setServerQueueStats(null);
       return;
     }
-    const useIPC = isElectron && window.electron?.queue;
     const fetchStats = async () => {
       try {
-        const data = useIPC ? await window.electron.queue.getStats() : await getJobStats();
+        const data = await getJobStats();
         if (data && data.success !== false) {
           setServerQueueStats({
             total: data.total || 0,
@@ -642,7 +641,9 @@ function App() {
           }
         }
       }
-    } catch { }
+    } catch {
+      // Folder stats are advisory; selected files can still be queued.
+    }
 
     setIsProcessing(true);
     etaRef.current = { startTime: Date.now(), lastFileTime: Date.now(), emaMs: null };
@@ -654,25 +655,8 @@ function App() {
       type: 'info'
     });
 
-    // Server mode Electron: register files into job queue via IPC (direct DB)
-    if (appMode === 'server' && isElectron && window.electron?.queue) {
-      try {
-        const result = await window.electron.queue.registerPaths(fileArray);
-        appendLog({
-          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
-          type: 'success'
-        });
-        setQueueReloadSignal(prev => prev + 1);
-      } catch (e) {
-        appendLog({ message: `Queue registration failed: ${e.message}`, type: 'error' });
-      }
-      setIsProcessing(false);
-      setProcessProgress(prev => ({ ...prev, processed: 0, total: 0 }));
-      return;
-    }
-
-    // Web client mode: register files via server API → queue for workers
-    if (!isElectron) {
+    // Server/web mode: register files through the HTTP analysis job API.
+    if (appMode === 'server' || !isElectron) {
       try {
         const result = await registerPaths(fileArray);
         appendLog({
@@ -717,46 +701,14 @@ function App() {
       type: 'info'
     });
 
-    // WebDAV folder: route through WebDAV processSource
-    if (folderPath.startsWith('webdav://') && window.electron?.webdav) {
+    // Standalone WebDAV processing is local-only; server mode scans via HTTP API.
+    if (appMode !== 'server' && folderPath.startsWith('webdav://') && window.electron?.webdav) {
       window.electron.webdav.processSource(folderPath);
       return;
     }
 
-    // Server mode Electron: scan folder → create jobs in queue via IPC (direct DB)
-    if (appMode === 'server' && isElectron && window.electron?.queue) {
-      try {
-        const result = await window.electron.queue.scanFolder(folderPath);
-        appendLog({
-          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
-          type: 'success'
-        });
-        setQueueReloadSignal(prev => prev + 1);
-      } catch (e) {
-        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
-      }
-      setIsDiscovering(false);
-      return;
-    }
-
-    // Web client mode: scan folder via server API → queue for workers
-    if (!isElectron) {
-      try {
-        const result = await scanFolder(folderPath);
-        appendLog({
-          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
-          type: 'success'
-        });
-        setQueueReloadSignal(prev => prev + 1);
-      } catch (e) {
-        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
-      }
-      setIsDiscovering(false);
-      return;
-    }
-
-    // Electron client mode with active worker: route through server API → queue for workers
-    if (appMode === 'client' && false) {
+    // Server/web mode: scan folder through the HTTP analysis job API.
+    if (appMode === 'server' || !isElectron) {
       try {
         const result = await scanFolder(folderPath);
         appendLog({
@@ -776,7 +728,7 @@ function App() {
     window.electron?.pipeline?.runDiscover({ folderPath, noSkip });
   };
 
-  // Process multiple selected folders as ONE work_request (queue)
+  // Process multiple selected folders through the current processing path.
   const handleProcessFolders = async (folderPaths) => {
     if (isProcessing || isDiscovering || !folderPaths.length) return;
     setIsDiscovering(true);
@@ -786,24 +738,8 @@ function App() {
       type: 'info'
     });
 
-    // Server mode Electron: scan folders → create ONE work_request via IPC
-    if (appMode === 'server' && isElectron && window.electron?.queue) {
-      try {
-        const result = await window.electron.queue.scanFolders(folderPaths, 0);
-        appendLog({
-          message: t('archive.queue_registered', { jobs: result.jobs_created || 0 }),
-          type: 'success'
-        });
-        setQueueReloadSignal(prev => prev + 1);
-      } catch (e) {
-        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
-      }
-      setIsDiscovering(false);
-      return;
-    }
-
-    // Web/Client mode: scan each folder via API (creates separate work_requests)
-    if (!isElectron || (appMode === 'client' && false)) {
+    // Server/web mode: scan each folder via HTTP API.
+    if (appMode === 'server' || !isElectron) {
       let totalJobs = 0;
       try {
         for (const folder of folderPaths) {
@@ -841,8 +777,8 @@ function App() {
     setCurrentTab('archiving');
     setCurrentPath(incompleteFolders[0]);
 
-    // Client mode with active worker: route all folders through server API
-    if (appMode === 'client' && false) {
+    // Server/web mode: route all folders through the HTTP analysis job API.
+    if (appMode === 'server' || !isElectron) {
       let totalJobs = 0;
       try {
         for (const folder of incompleteFolders) {
@@ -882,28 +818,8 @@ function App() {
     setCurrentTab('archiving');
     setCurrentPath(folderPaths[0]);
 
-    // Server mode Electron: scan folders → create WR + jobs via IPC (direct DB)
-    if (appMode === 'server' && isElectron && window.electron?.queue) {
-      let totalJobs = 0;
-      try {
-        for (const folder of folderPaths) {
-          const result = await window.electron.queue.scanFolder(folder);
-          totalJobs += result.jobs_created || 0;
-        }
-        appendLog({
-          message: t('archive.queue_registered', { jobs: totalJobs }),
-          type: 'success'
-        });
-        setQueueReloadSignal(prev => prev + 1);
-      } catch (e) {
-        appendLog({ message: `Folder scan failed: ${e.message}`, type: 'error' });
-      }
-      setIsDiscovering(false);
-      return;
-    }
-
-    // Client mode with active worker: route all folders through server API
-    if (appMode === 'client' && false) {
+    // Server/web mode: route all folders through the HTTP analysis job API.
+    if (appMode === 'server' || !isElectron) {
       let totalJobs = 0;
       try {
         for (const folder of folderPaths) {
@@ -1039,9 +955,7 @@ function App() {
     try {
       const result = retryResetStuck
         ? await forceRetryFailedJobs()
-        : await (isElectron && window.electron?.queue?.retryFailed
-            ? window.electron.queue.retryFailed()
-            : retryFailedJobs());
+        : await retryFailedJobs();
       const count = result?.retried || 0;
       if (count > 0) {
         showToast(t('audit.retry_result', { count }), 'warn');

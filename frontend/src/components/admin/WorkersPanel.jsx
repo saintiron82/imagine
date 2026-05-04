@@ -7,10 +7,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocale } from '../../i18n';
 import {
   listWorkerSessions, stopWorkerSession, blockWorkerSession,
-  updateWorkerConfig,
   getAutoProcessing, updateAutoProcessing,
   getEmbeddedWorker,
-  forceRetryFailedJobs,
   getPausedPhases, setPausedPhases,
 } from '../../api/admin';
 import {
@@ -21,7 +19,7 @@ import {
 import AnalysisJobCard from '../AnalysisJobCard';
 // Legacy getJobStats removed — using analysis metrics API
 import {
-  RefreshCw, Square, Ban, Pencil, AlertOctagon, Loader2, X,
+  RefreshCw, Square, Ban, X,
 } from 'lucide-react';
 
 function sumFailedPhases(failed) {
@@ -161,12 +159,8 @@ export default function WorkersPanel() {
   const { t } = useLocale();
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [editingCapacity, setEditingCapacity] = useState(null); // { id, value }
   const [autoProcessing, setAutoProcessing] = useState(true);
-  const [restAfterBatch, setRestAfterBatch] = useState(30);
-  const [batchSize, setBatchSize] = useState(5);
   const [verboseLog, setVerboseLog] = useState(false);
-  const [embeddedEnabled, setEmbeddedEnabled] = useState(false);
   const [embeddedStatus, setEmbeddedStatus] = useState({ running: false, status: 'idle', jobs_completed: 0 });
   const [dbStats, setDbStats] = useState(null);
   const [queueStats, setQueueStats] = useState(null);
@@ -208,7 +202,9 @@ export default function WorkersPanel() {
               statsData.mv_throughput = pm.mv?.fpm || (pm.mv?.avg_s > 0 ? Math.round(60 / pm.mv.avg_s * 10) / 10 : 0);
             }
           }
-        } catch {}
+        } catch {
+          // Metrics are advisory; the worker list still renders without them.
+        }
       }
 
       if (statsData && activeJobs.length > 0) {
@@ -240,14 +236,11 @@ export default function WorkersPanel() {
     // Load auto_processing config once
     getAutoProcessing().then(data => {
       if (data.enabled != null) setAutoProcessing(data.enabled);
-      if (data.rest_after_batch_s != null) setRestAfterBatch(data.rest_after_batch_s);
-      if (data.batch_size != null) setBatchSize(data.batch_size);
       if (data.verbose_log != null) setVerboseLog(data.verbose_log);
     }).catch(() => {});
     // Load embedded worker status
     const loadEmbedded = () => {
       getEmbeddedWorker().then(data => {
-        if (data.enabled != null) setEmbeddedEnabled(data.enabled);
         setEmbeddedStatus({ running: data.running, status: data.status, jobs_completed: data.jobs_completed || 0 });
       }).catch(() => {});
     };
@@ -276,59 +269,7 @@ export default function WorkersPanel() {
     }
   };
 
-  const handleCapacitySave = async (sessionId) => {
-    if (!editingCapacity) return;
-    try {
-      await updateWorkerConfig(sessionId, { batch_capacity: editingCapacity.value });
-      setEditingCapacity(null);
-      load();
-    } catch (e) {
-      console.error('Failed to update capacity:', e);
-    }
-  };
-
   const onlineCount = workers.filter(w => w.status === 'online').length;
-  const totalThroughput = workers.reduce((sum, w) => sum + (w.throughput || 0), 0);
-  const totalCompleted = workers.reduce((sum, w) => sum + (w.jobs_completed || 0), 0);
-
-  // Combined state badge: online/offline/blocked + worker_state + throttle_level
-  const stateBadge = (w) => {
-    if (w.status === 'blocked') {
-      return <span className="px-2 py-0.5 rounded text-xs bg-red-900/50 text-red-300">{t('admin.worker_status_blocked')}</span>;
-    }
-    if (w.status === 'offline') {
-      return <span className="px-2 py-0.5 rounded text-xs bg-gray-700 text-gray-400">{t('admin.worker_status_offline')}</span>;
-    }
-    const workerState = w.resources?.worker_state || 'active';
-    const throttle = w.resources?.throttle_level || 'normal';
-    const stateMap = {
-      active: { bg: 'bg-green-900/50', text: 'text-green-300', dot: 'bg-green-400', label: t('admin.worker_state_active') },
-      idle: { bg: 'bg-blue-900/50', text: 'text-blue-300', dot: 'bg-blue-400', label: t('admin.worker_state_idle') },
-      resting: { bg: 'bg-yellow-900/50', text: 'text-yellow-300', dot: 'bg-yellow-400', label: t('admin.worker_state_resting') },
-    };
-    const s = stateMap[workerState] || stateMap.active;
-    const showThrottle = throttle === 'warning' || throttle === 'danger';
-    return (
-      <span className="flex items-center gap-1">
-        <span className={`px-2 py-0.5 rounded text-xs ${s.bg} ${s.text} flex items-center gap-1`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-          {s.label}
-        </span>
-        {showThrottle && (
-          <AlertOctagon size={12} className={throttle === 'danger' ? 'text-red-400' : 'text-yellow-400'}
-            title={t(`admin.worker_throttle_${throttle}`)} />
-        )}
-      </span>
-    );
-  };
-
-  const timeAgo = (isoStr) => {
-    if (!isoStr) return '-';
-    const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
-    if (diff < 60) return `${diff}s`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-    return `${Math.floor(diff / 3600)}h`;
-  };
 
   if (loading) return <div className="text-gray-400 text-sm">{t('status.loading')}</div>;
 
@@ -398,8 +339,7 @@ export default function WorkersPanel() {
               onClick={async () => {
                 const newVal = !autoProcessing;
                 setAutoProcessing(newVal);
-                setEmbeddedEnabled(newVal);
-                try { await updateAutoProcessing({ enabled: newVal }); } catch (e) { console.error(e); setAutoProcessing(!newVal); setEmbeddedEnabled(!newVal); }
+                try { await updateAutoProcessing({ enabled: newVal }); } catch (e) { console.error(e); setAutoProcessing(!newVal); }
               }}
               className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
                 autoProcessing
@@ -581,159 +521,6 @@ export default function WorkersPanel() {
         );
       })()}
 
-      {/* Legacy pipeline phase dashboard — disabled */}
-      {false && onlineCount > 0 && (
-        <div className="mb-4 space-y-3">
-          {/* System performance dashboard */}
-          {queueStats && (() => {
-            const s = queueStats;
-            const total = s.total || 0;
-            const done = s.completed || 0;
-            const failed = s.failed || 0;
-            const inProgress = (s.assigned || 0) + (s.processing || 0);
-            const waiting = (s.pending || 0);
-            const pct = total > 0 ? ((done / total) * 100).toFixed(1) : 0;
-            const speed = s.throughput || 0;
-            const eta = s.eta_seconds;
-            const etaStr = eta ? (eta >= 3600 ? `${Math.floor(eta/3600)}h ${Math.floor((eta%3600)/60)}m` : `${Math.floor(eta/60)}m`) : null;
-            const secPerFile = speed > 0 ? Math.round(60 / speed) : null;
-
-            // Pipeline position: each file counted in exactly ONE stage
-            const phases = [
-              { name: 'Download', pending: s.pipe_download ?? s.download_waiting ?? 0, color: 'yellow', speed: null },
-              { name: 'Parse', pending: s.pipe_parse ?? s.parse_pending ?? 0, color: 'sky', speed: s.parse_throughput },
-              { name: 'MC', pending: s.pipe_mc ?? s.mc_pending ?? 0, color: 'purple', speed: s.mc_throughput },
-              { name: 'VV', pending: s.pipe_vv ?? 0, color: 'blue', speed: s.vv_throughput },
-              { name: 'MV', pending: s.pipe_mv ?? 0, color: 'green', speed: s.mv_throughput },
-            ];
-            const workerPhases = phases.filter(p => p.name !== 'Download');
-            const bottleneck = workerPhases.filter(p => p.pending > 0).reduce((a, b) => a.pending > b.pending ? a : b, workerPhases[0]);
-
-            return (
-              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
-                {/* Row 1: Queue summary — total / in-progress / done */}
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-6 flex-1">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold font-mono text-white">{total}</div>
-                      <div className="text-[10px] text-gray-500">전체 큐</div>
-                    </div>
-                    <div className="text-gray-600">→</div>
-                    <div className="text-center">
-                      <div className={`text-2xl font-bold font-mono ${inProgress > 0 ? 'text-cyan-400' : 'text-gray-600'}`}>{inProgress}</div>
-                      <div className="text-[10px] text-gray-500">진행 중</div>
-                    </div>
-                    <div className="text-gray-600">→</div>
-                    <div className="text-center">
-                      <div className={`text-2xl font-bold font-mono ${done > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>{done}</div>
-                      <div className="text-[10px] text-gray-500">완료</div>
-                    </div>
-                    {failed > 0 && <>
-                      <div className="text-gray-600">|</div>
-                      <div className="text-center cursor-pointer" onClick={async () => {
-                        try {
-                          const data = await forceRetryFailedJobs();
-                          const retried = data.retried || 0;
-                          const dlRecovered = data.downloads_recovered || 0;
-                          const msg = [
-                            retried > 0 ? `${retried}개 실패 작업 재등록` : null,
-                            dlRecovered > 0 ? `${dlRecovered}개 다운로드 복원` : null,
-                          ].filter(Boolean).join(', ');
-                          alert(msg
-                            ? msg
-                            : '복구 가능한 실패 파일이 없습니다');
-                          load();
-                        } catch (e) { alert('복구 실패'); }
-                      }} title="실패 파일을 작업큐에 재등록">
-                        <div className="text-2xl font-bold font-mono text-red-400 hover:text-red-300">{failed}</div>
-                        <div className="text-[10px] text-red-400/60 hover:text-red-300">실패 (복구)</div>
-                      </div>
-                    </>}
-                  </div>
-
-                  {/* Progress bar */}
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-gray-400">{pct}%</span>
-                    </div>
-                    <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                        style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-
-                  {/* Speed / ETA */}
-                  <div className="text-center shrink-0">
-                    <div className={`text-2xl font-bold font-mono ${speed > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>
-                      {speed > 0 ? speed.toFixed(1) : '-'}
-                    </div>
-                    <div className="text-[10px] text-gray-500">files/min</div>
-                  </div>
-
-                  {/* Per-file time */}
-                  <div className="text-center shrink-0">
-                    <div className={`text-2xl font-bold font-mono ${secPerFile ? 'text-amber-400' : 'text-gray-600'}`}>
-                      {secPerFile ? (secPerFile >= 60 ? `${Math.floor(secPerFile/60)}m${secPerFile%60}s` : `${secPerFile}s`) : '-'}
-                    </div>
-                    <div className="text-[10px] text-gray-500">/file</div>
-                  </div>
-
-                  {/* ETA */}
-                  <div className="text-center shrink-0">
-                    <div className={`text-2xl font-bold font-mono ${etaStr ? 'text-white' : 'text-gray-600'}`}>
-                      {etaStr || '-'}
-                    </div>
-                    <div className="text-[10px] text-gray-500">남은시간</div>
-                  </div>
-
-                  {/* Workers */}
-                  <div className="text-center shrink-0">
-                    <div className="text-2xl font-bold font-mono text-green-400">{onlineCount}</div>
-                    <div className="text-[10px] text-gray-500">workers</div>
-                  </div>
-                </div>
-
-                {/* Row 2: Phase pipeline — pending + speed + bottleneck */}
-                <div className="flex items-stretch gap-0.5">
-                  {phases.map((p, i) => {
-                    const isBn = p.name !== 'Download' && p === bottleneck && p.pending > 0;
-                    const phaseSpeed = p.speed;
-                    const phaseSecPer = phaseSpeed > 0 ? Math.round(60 / phaseSpeed) : null;
-                    return (
-                      <div key={p.name} className="flex items-center flex-1">
-                        <div className={`flex-1 text-center py-2 rounded ${
-                          isBn ? 'bg-red-900/20 border border-red-700/50' : 'bg-gray-750'
-                        }`}>
-                          <div className="flex items-center justify-center gap-1 mb-0.5">
-                            <span className={`text-[10px] font-medium ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-600'}`}>{p.name}</span>
-                            {isBn && <span className="text-[8px] text-red-400">bottleneck</span>}
-                          </div>
-                          <div className={`text-lg font-bold font-mono ${p.pending > 0 ? `text-${p.color}-400` : 'text-gray-700'}`}>
-                            {p.pending}
-                          </div>
-                          {p.pending > 0 && <div className="text-[8px] text-gray-500">대기</div>}
-                          {phaseSpeed > 0 && (
-                            <div className="text-[9px] text-gray-400 font-mono">
-                              {phaseSpeed}/m {phaseSecPer && <span className="text-gray-500">· {phaseSecPer}s</span>}
-                            </div>
-                          )}
-                        </div>
-                        {i < phases.length - 1 && <span className="text-gray-700 mx-0.5 text-xs">→</span>}
-                      </div>
-                    );
-                  })}
-                  <span className="text-gray-700 mx-0.5 text-xs self-center">→</span>
-                  <div className="text-center py-2 flex-1">
-                    <div className="text-[10px] text-emerald-400/60 mb-0.5">Done</div>
-                    <div className="text-lg font-bold font-mono text-emerald-400">{done}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
       {/* Worker table — phase columns with count + speed */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-x-auto">
         <table className="w-full text-sm">
@@ -760,7 +547,6 @@ export default function WorkersPanel() {
                 (w.current_phase === 'embed_vv' || w.current_phase === 'vv') ? 'vv' :
                 (w.current_phase === 'embed_mv' || w.current_phase === 'mv') ? 'mv' :
                 w.current_phase === 'parse' ? 'parse' : null;
-              const batchSize = w.batch_capacity_override || w.batch_capacity;
               const fileName = w.current_file ? w.current_file.split(/[/\\]/).pop() : null;
 
               const phaseLabel = cur === 'mc' ? 'MC' : cur === 'vv' ? 'VV' : cur === 'mv' ? 'MV' : cur === 'parse' ? 'Parse' : null;

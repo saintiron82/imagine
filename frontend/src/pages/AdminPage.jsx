@@ -17,7 +17,6 @@ import ToolsPanel from '../components/admin/ToolsPanel';
 export { default as WorkersPanel } from '../components/admin/WorkersPanel';
 export { default as DashboardPanel } from '../components/admin/DashboardPanel';
 export { default as DiscoverPanel } from '../components/admin/DiscoverPanel';
-export { default as QueuePanel } from '../components/admin/QueuePanel';
 
 export default function AdminPage() {
   const { t } = useLocale();
