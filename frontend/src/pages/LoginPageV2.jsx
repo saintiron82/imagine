@@ -9,10 +9,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocale } from '../i18n';
-import { isElectron, setServerUrl as setClientServerUrl } from '../api/client';
-import { signUp, signIn, signInWithGoogle, getIdToken } from '../api/firebaseAuth';
+import { isElectron, setServerUrl as setClientServerUrl, setTokens as setClientTokens } from '../api/client';
+import { signUp, signIn, signInWithGoogle } from '../api/firebaseAuth';
 import { getServerInfo, initServer } from '../api/auth';
-import { registerGroup } from '../api/firebase';
+import { isGroupNameTaken, registerGroup } from '../api/firebase';
 import { getServerHistory, addServerToHistory } from '../utils/serverHistory';
 import {
   LogIn, UserPlus, Eye, EyeOff, Loader2, ArrowLeft,
@@ -81,6 +81,10 @@ function SubmitButton({ children, loading, disabled }) {
   );
 }
 
+function isSetupTokenRequiredError(message = '') {
+  return message.includes('IMAGINE_SETUP_TOKEN') || message.includes('restricted to localhost');
+}
+
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
@@ -125,6 +129,8 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   const [newServerPasswordConfirm, setNewServerPasswordConfirm] = useState('');
   const [selectedTier, setSelectedTier] = useState('pro');
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [setupToken, setSetupToken] = useState('');
+  const [showSetupToken, setShowSetupToken] = useState(false);
 
   // --- Status ---
   const [loading, setLoading] = useState(false);
@@ -142,12 +148,22 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   const serverPwRef = useRef(null);
 
   // --- Server history (localStorage) ---
-  const [serverHistory, setServerHistory] = useState(() => getServerHistory());
+  const [, setServerHistory] = useState(() => getServerHistory());
 
   const addToHistory = useCallback((name, url) => {
     addServerToHistory({ url: url || '', name });
     setServerHistory(getServerHistory());
   }, []);
+
+  const completeInitialServerLogin = useCallback((name, url, tokens) => {
+    if (!tokens?.access_token) {
+      throw new Error('Server initialized but did not return an access token');
+    }
+    setClientTokens(tokens.access_token, tokens.refresh_token);
+    addToHistory(name, url);
+    setLocalGroupName(name);
+    onLoginComplete?.('server');
+  }, [addToHistory, onLoginComplete]);
 
   // ── When Firebase user is available, switch to server_select stage ──
   useEffect(() => {
@@ -314,13 +330,20 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         if (info.ok && !info.initialized) {
           // Not initialized — auto-initialize with entered group name + password
           const adminName = firebaseUser?.displayName || firebaseUser?.email?.split('@')[0] || 'admin';
-          await initServer(directUrl, {
+          if (await isGroupNameTaken(name)) {
+            setError(t('validation.group_name_taken'));
+            setLoading(false);
+            return;
+          }
+
+          const initTokens = await initServer(directUrl, {
             group_name: name,
             server_password: serverPassword,
             admin_username: adminName,
             admin_password: serverPassword,
             firebase_uid: firebaseUser?.uid || null,
             firebase_email: firebaseUser?.email || null,
+            setupToken,
           });
 
           // Register to Firestore for external discovery
@@ -334,6 +357,9 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
               return;
             }
           }
+
+          completeInitialServerLogin(name, directUrl, initTokens);
+          return;
         }
       }
 
@@ -345,11 +371,17 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         onLoginComplete?.(mode);
       }
     } catch (err) {
-      setError(err.message || 'Connection failed');
+      const message = err.message || 'Connection failed';
+      if (isSetupTokenRequiredError(message)) {
+        setShowSetupToken(true);
+        setError(t('setup.token_required'));
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
-  }, [serverName, serverPassword, isServerAdmin, localServerReady, port, firebaseUser, connectToServer, addToHistory, onLoginComplete, t]);
+  }, [serverName, serverPassword, isServerAdmin, localServerReady, port, firebaseUser, setupToken, connectToServer, addToHistory, completeInitialServerLogin, onLoginComplete, t]);
 
   // -----------------------------------------------------------------------
   // Create server handler (Electron only)
@@ -380,13 +412,20 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
 
       // Initialize server — Firebase user becomes admin automatically
       const adminName = firebaseUser?.displayName || firebaseUser?.email?.split('@')[0] || 'admin';
-      await initServer(baseUrl, {
+      if (await isGroupNameTaken(name)) {
+        setError(t('validation.group_name_taken'));
+        setLoading(false);
+        return;
+      }
+
+      const initTokens = await initServer(baseUrl, {
         group_name: name,
         server_password: newServerPassword,
         admin_username: adminName,
         admin_password: newServerPassword,
         firebase_uid: firebaseUser?.uid || null,
         firebase_email: firebaseUser?.email || null,
+        setupToken,
       });
 
       // Register to Firestore for discovery (reject duplicate names)
@@ -405,19 +444,19 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         // Other registration errors are best-effort (network issues etc.)
       }
 
-      // Connect using 2-layer auth
-      const success = await connectToServer(name, newServerPassword, baseUrl);
-      if (success) {
-        addToHistory(name, baseUrl);
-        setLocalGroupName(name);
-        onLoginComplete?.('server');
-      }
+      completeInitialServerLogin(name, baseUrl, initTokens);
     } catch (err) {
-      setError(err.message || 'Server creation failed');
+      const message = err.message || 'Server creation failed';
+      if (isSetupTokenRequiredError(message)) {
+        setShowSetupToken(true);
+        setError(t('setup.token_required'));
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
-  }, [newGroupName, newServerPassword, newServerPasswordConfirm, firebaseUser, selectedTier, port, localServerReady, connectToServer, addToHistory, onLoginComplete, t]);
+  }, [newGroupName, newServerPassword, newServerPasswordConfirm, firebaseUser, selectedTier, port, localServerReady, setupToken, completeInitialServerLogin, t]);
 
   const handleFullLogout = useCallback(async () => {
     await fullLogout();
@@ -432,6 +471,36 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
   }
   const togglePassword = () => setShowPassword(!showPassword);
   const pwProps = { showPassword, onTogglePassword: togglePassword };
+  const renderSetupTokenControl = () => {
+    if (!showSetupToken && !setupToken) {
+      return (
+        <button
+          type="button"
+          onClick={() => setShowSetupToken(true)}
+          className="text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors"
+        >
+          {t('setup.token_show')}
+        </button>
+      );
+    }
+
+    return (
+      <div className="space-y-1">
+        <InputField
+          icon={Shield}
+          label={t('setup.token_label')}
+          type="password"
+          value={setupToken}
+          onChange={setSetupToken}
+          placeholder={t('setup.token_placeholder')}
+          disabled={loading}
+        />
+        <p className="text-[10px] text-zinc-600 leading-relaxed">
+          {t('setup.token_hint')}
+        </p>
+      </div>
+    );
+  };
 
   // -----------------------------------------------------------------------
   // Stage 1: Firebase Auth
@@ -629,6 +698,8 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
           </div>
         )}
 
+        {isServerAdmin && renderSetupTokenControl()}
+
         <SubmitButton loading={loading}>
           <LogIn size={15} />
           {t('login2.connect')}
@@ -701,6 +772,8 @@ export default function LoginPageV2({ onLoginComplete, serverPort }) {
         showPassword={showNewPassword}
         onTogglePassword={() => setShowNewPassword(!showNewPassword)}
       />
+
+      {renderSetupTokenControl()}
 
       {/* Tier selection */}
       <div className="border-t border-zinc-700/40 pt-3">

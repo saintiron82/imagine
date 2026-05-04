@@ -4,6 +4,15 @@
 
 import { apiClient, setTokens, clearTokens, getServerUrl } from './client';
 
+function buildInitHeaders(setupToken) {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = (setupToken || '').trim();
+  if (token) {
+    headers['X-Imagine-Setup-Token'] = token;
+  }
+  return headers;
+}
+
 export async function getMe() {
   return apiClient.get('/api/v1/auth/me');
 }
@@ -60,13 +69,22 @@ export async function getServerInfo(baseUrl) {
 /**
  * Initialize server (first-time setup).
  */
-export async function initServer(baseUrl, { group_name, server_password, admin_username, admin_password, firebase_uid, firebase_email }) {
+export async function initServer(baseUrl, {
+  group_name,
+  server_password,
+  admin_username,
+  admin_password,
+  firebase_uid,
+  firebase_email,
+  setupToken,
+  setup_token,
+}) {
   const body = { group_name, server_password, admin_username, admin_password };
   if (firebase_uid) body.firebase_uid = firebase_uid;
   if (firebase_email) body.firebase_email = firebase_email;
   const resp = await fetch(`${baseUrl}/api/v1/server/init`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildInitHeaders(setupToken || setup_token),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10000),
   });
@@ -79,7 +97,7 @@ export async function initServer(baseUrl, { group_name, server_password, admin_u
   if (!resp.ok) {
     throw new Error(data.detail || `HTTP ${resp.status}`);
   }
-  // Don't store tokens — user must login manually after group creation
+  // Return first-run tokens; the caller stores them only after post-init work succeeds.
   return data;
 }
 
@@ -103,10 +121,10 @@ export async function firebaseConnect(idToken, serverPassword) {
 /**
  * Initialize server with Firebase Auth (Electron create group).
  */
-export async function firebaseInitServer(baseUrl, { group_name, id_token }) {
+export async function firebaseInitServer(baseUrl, { group_name, id_token, setupToken, setup_token }) {
   const resp = await fetch(`${baseUrl}/api/v1/server/firebase-init`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildInitHeaders(setupToken || setup_token),
     body: JSON.stringify({ group_name, id_token }),
     signal: AbortSignal.timeout(10000),
   });
