@@ -11,6 +11,7 @@ from tools.evaluate_search_quality import (
 from tools.bench_precision import build_standard_eval_rows
 from tools.build_search_label_review import (
     build_review_rows,
+    classify_metadata_status,
     enrich_rows_with_item_metadata,
     load_item_metadata,
 )
@@ -211,6 +212,7 @@ def test_build_search_label_review_filters_queries_and_keeps_run_ranks(tmp_path:
             "query_type": "scoped",
             "locale": "ko-KR",
             "created_at": "2026-05-01T00:00:00+09:00",
+            "scope": "작품/#3",
         },
         {
             "query_id": "q2",
@@ -264,6 +266,7 @@ def test_build_search_label_review_filters_queries_and_keeps_run_ranks(tmp_path:
 
     assert len(rows) == 1
     assert rows[0]["query_id"] == "q1"
+    assert rows[0]["query_scope"] == "작품/#3"
     assert rows[0]["best_rank"] == 2
     assert rows[0]["engine_ranks"] == {"triaxis": 2}
     assert rows[0]["run_ranks"] == {
@@ -284,12 +287,15 @@ def test_build_search_label_review_loads_item_metadata(tmp_path: Path):
             thumbnail_url TEXT,
             mc_caption TEXT,
             ai_tags TEXT,
-            image_type TEXT
+            image_type TEXT,
+            caption_model TEXT,
+            processing_status TEXT,
+            processing_error TEXT
         )
     """)
     conn.execute(
-        "INSERT INTO files (id, file_path, file_name, folder_path, thumbnail_url, mc_caption, ai_tags, image_type) "
-        "VALUES (10, '/asset/a.png', 'a.png', '홍콩사무실', '/thumb/a.jpg', '소파와 창문', '[\"소파\"]', 'background')"
+        "INSERT INTO files (id, file_path, file_name, folder_path, thumbnail_url, mc_caption, ai_tags, image_type, caption_model, processing_status, processing_error) "
+        "VALUES (10, '/asset/a.png', 'a.png', '홍콩사무실', '/thumb/a.jpg', '소파와 창문', '[\"소파\"]', 'background', 'Qwen/Qwen3.5-9B', 'vision_done', '')"
     )
     conn.commit()
     conn.close()
@@ -304,4 +310,34 @@ def test_build_search_label_review_loads_item_metadata(tmp_path: Path):
     assert rows[0]["folder_path"] == "홍콩사무실"
     assert rows[0]["mc_caption"] == "소파와 창문"
     assert rows[0]["ai_tags"] == "[\"소파\"]"
+    assert rows[0]["metadata_status"] == "ok"
     assert rows[1]["file_path"] is None
+
+
+def test_classify_metadata_status_separates_repair_targets_from_relevance_review():
+    assert classify_metadata_status({
+        "mc_caption": "unknown",
+        "ai_tags": "[]",
+        "processing_status": "parse_fallback_legacy",
+        "processing_error": "pre-fix: psd-tools failed, fell back to thumbnail-only",
+    }) == {
+        "metadata_status": "repair_required",
+        "metadata_issue": "parse_fallback_legacy",
+    }
+
+    assert classify_metadata_status({
+        "mc_caption": "",
+        "ai_tags": "",
+        "caption_model": "Qwen/Qwen3.5-9B",
+    }) == {
+        "metadata_status": "repair_required",
+        "metadata_issue": "caption_model_marked_but_empty",
+    }
+
+    assert classify_metadata_status({
+        "mc_caption": "A room with a sofa.",
+        "ai_tags": "[]",
+    }) == {
+        "metadata_status": "metadata_partial",
+        "metadata_issue": "missing_tags",
+    }

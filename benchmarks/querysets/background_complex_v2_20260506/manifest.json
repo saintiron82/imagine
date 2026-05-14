@@ -1,0 +1,14 @@
+{
+  "name": "background_complex_v2",
+  "created_at": "2026-05-06T00:00:00+09:00",
+  "query_count": 40,
+  "query_type": "complex",
+  "locale": "ko-KR",
+  "difficulty_counts": {
+    "easy": 3,
+    "extreme": 5,
+    "hard": 8,
+    "medium": 24
+  },
+  "purpose": "background/scene search evaluation with easy-to-extreme compound prompts and hard negatives"
+}

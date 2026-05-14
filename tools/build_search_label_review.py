@@ -37,6 +37,14 @@ ITEM_METADATA_FIELDS = [
     "scene_type",
     "time_of_day",
     "weather",
+    "caption_model",
+    "processing_status",
+    "processing_error",
+]
+
+REVIEW_METADATA_FIELDS = [
+    "metadata_status",
+    "metadata_issue",
 ]
 
 
@@ -61,6 +69,64 @@ def load_label_metadata(path: Path | None) -> dict[tuple[str, str], dict[str, An
 
 def _empty_item_metadata() -> dict[str, Any]:
     return {field: None for field in ITEM_METADATA_FIELDS}
+
+
+def _has_bad_caption(row: dict[str, Any]) -> bool:
+    caption = str(row.get("mc_caption") or "").strip()
+    return not caption or caption.lower() == "unknown"
+
+
+def _has_bad_tags(row: dict[str, Any]) -> bool:
+    tags = str(row.get("ai_tags") or "").strip()
+    return not tags or tags == "[]"
+
+
+def classify_metadata_status(row: dict[str, Any]) -> dict[str, str]:
+    """Separate repair-target metadata gaps from normal relevance review."""
+    bad_caption = _has_bad_caption(row)
+    bad_tags = _has_bad_tags(row)
+    processing_status = str(row.get("processing_status") or "").strip()
+    processing_error = str(row.get("processing_error") or "").strip()
+    caption_model = str(row.get("caption_model") or "").strip()
+
+    legacy_parse_failure = (
+        processing_status == "parse_fallback_legacy"
+        or caption_model == "unknown_legacy"
+        or "psd-tools failed" in processing_error
+    )
+    if legacy_parse_failure:
+        return {
+            "metadata_status": "repair_required",
+            "metadata_issue": "parse_fallback_legacy",
+        }
+
+    if bad_caption and bad_tags:
+        if caption_model:
+            return {
+                "metadata_status": "repair_required",
+                "metadata_issue": "caption_model_marked_but_empty",
+            }
+        return {
+            "metadata_status": "repair_required",
+            "metadata_issue": "missing_caption_and_tags",
+        }
+
+    if bad_caption:
+        return {
+            "metadata_status": "repair_required",
+            "metadata_issue": "missing_caption",
+        }
+
+    if bad_tags:
+        return {
+            "metadata_status": "metadata_partial",
+            "metadata_issue": "missing_tags",
+        }
+
+    return {
+        "metadata_status": "ok",
+        "metadata_issue": "",
+    }
 
 
 def load_item_metadata(db_path: Path, item_ids: set[str]) -> dict[str, dict[str, Any]]:
@@ -112,7 +178,8 @@ def enrich_rows_with_item_metadata(
     for row in rows:
         metadata = _empty_item_metadata()
         metadata.update(item_metadata.get(str(row["item_id"]), {}))
-        enriched.append({**row, **metadata})
+        merged = {**row, **metadata}
+        enriched.append({**merged, **classify_metadata_status(merged)})
     return enriched
 
 
@@ -128,6 +195,11 @@ def build_review_rows(
         raise ValueError("top_k must be >= 1")
 
     queries = load_queries(queries_path)
+    query_metadata = {
+        str(row.get("query_id")): row
+        for row in read_jsonl(queries_path)
+        if row.get("query_id")
+    }
     run_groups = load_run(run_path)
     labels = load_label_metadata(labels_path)
     candidates: dict[tuple[str, str], dict[str, Any]] = {}
@@ -153,10 +225,12 @@ def build_review_rows(
                 run_ranks[key][f"{record.run_id}:{engine_id}"] = record.rank
                 if key not in candidates:
                     label = labels.get(key, {})
+                    query_meta = query_metadata.get(query_id, {})
                     candidates[key] = {
                         "query_id": query_id,
                         "query_text": query.query_text,
                         "query_type": query.query_type,
+                        "query_scope": str(query_meta.get("scope") or ""),
                         "item_id": record.item_id,
                         "suggested_relevance": label.get("suggested_relevance"),
                         "suggested_label_source": label.get("suggested_label_source"),
@@ -189,18 +263,36 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             f.write("\n")
 
 
+def _csv_engines(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return ",".join(str(item) for item in value)
+
+
+def _csv_json_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "query_id",
         "query_text",
         "query_type",
+        "query_scope",
         "item_id",
         "best_rank",
         "engines",
         "engine_ranks",
         "run_ranks",
         *ITEM_METADATA_FIELDS,
+        *REVIEW_METADATA_FIELDS,
         "suggested_relevance",
         "suggested_label_source",
         "suggested_label_version",
@@ -214,9 +306,9 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         for row in rows:
             writer.writerow({
                 **row,
-                "engines": ",".join(row["engines"]),
-                "engine_ranks": json.dumps(row["engine_ranks"], ensure_ascii=False),
-                "run_ranks": json.dumps(row["run_ranks"], ensure_ascii=False),
+                "engines": _csv_engines(row.get("engines")),
+                "engine_ranks": _csv_json_cell(row.get("engine_ranks")),
+                "run_ranks": _csv_json_cell(row.get("run_ranks")),
             })
 
 

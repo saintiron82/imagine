@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 
 DEFAULT_K = (5, 10, 50)
-VALID_QUERY_TYPES = {"exact", "semantic", "scoped", "complex", "ambiguous"}
+VALID_QUERY_TYPES = {"exact", "semantic", "scoped", "complex", "ambiguous", "blind_random"}
 VALID_LABEL_SOURCES = {"weak", "human", "adjudicated"}
 
 

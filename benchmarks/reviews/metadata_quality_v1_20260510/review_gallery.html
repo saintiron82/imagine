@@ -1,0 +1,938 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Imagine Metadata Quality Review</title>
+  <style>
+    :root {
+      --bg: #101418;
+      --panel: #182028;
+      --panel-2: #202a34;
+      --text: #edf4f8;
+      --muted: #93a4b2;
+      --line: #30404e;
+      --accent: #7dd3fc;
+      --good: #86efac;
+      --mid: #fde68a;
+      --bad: #fca5a5;
+      --shadow: rgba(0, 0, 0, 0.28);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 16% 8%, rgba(125, 211, 252, 0.16), transparent 26rem),
+        linear-gradient(135deg, #0b1014, #121922 46%, #101418);
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--line);
+      background: rgba(16, 20, 24, 0.94);
+      backdrop-filter: blur(16px);
+      padding: 10px 18px;
+    }
+    h1 { margin: 0 0 4px; font-size: 18px; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      align-items: center;
+    }
+    select, button, textarea {
+      font: inherit;
+    }
+    select, .action {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+    .status {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .status.ok { color: var(--good); }
+    .status.error { color: var(--bad); }
+    main { padding: 12px 16px 32px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+      gap: 10px;
+    }
+    .card {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr);
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(24, 32, 40, 0.92);
+      box-shadow: 0 14px 36px var(--shadow);
+      overflow: hidden;
+    }
+    .thumb-button {
+      display: block;
+      width: 160px;
+      height: 160px;
+      padding: 0;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: #0b0f13;
+      cursor: zoom-in;
+    }
+    .thumb {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .body { padding: 9px 10px 9px 0; min-width: 0; }
+    .side-panel {
+      grid-column: 1;
+      grid-row: 2;
+      padding: 0 8px 8px;
+      min-width: 0;
+    }
+    .side-name {
+      margin: 4px 0 6px;
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .main-panel {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+      min-width: 0;
+    }
+    .full-panel {
+      grid-column: 1 / -1;
+      grid-row: 3;
+      padding: 0 10px 10px;
+      min-width: 0;
+    }
+    .full-panel details {
+      margin-top: 7px;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      padding-top: 7px;
+    }
+    .optional-panel[open] {
+      border: 1px solid rgba(125, 211, 252, 0.22);
+      border-radius: 12px;
+      background: rgba(11, 18, 24, 0.72);
+      padding: 8px;
+      overflow: hidden;
+    }
+    .issue-memo-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+      gap: 12px;
+      align-items: start;
+      margin-top: 7px;
+    }
+    .issue-memo-grid > * {
+      min-width: 0;
+    }
+    .issue-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .memo-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .raw-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 5px 12px;
+      overflow-wrap: anywhere;
+    }
+    .meta {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .badge {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 6px;
+      background: rgba(255,255,255,0.04);
+    }
+    .caption {
+      margin: 8px 0 10px;
+      line-height: 1.45;
+      font-size: 14px;
+    }
+    .caption-box {
+      display: grid;
+      gap: 4px;
+      margin: 4px 0 6px;
+    }
+    .caption-line {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 9px;
+      background: rgba(255,255,255,0.035);
+      padding: 6px 8px;
+      line-height: 1.35;
+      font-size: 13px;
+    }
+    .caption-line b {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .caption-line.ko {
+      border-color: rgba(125, 211, 252, 0.22);
+      background: rgba(125, 211, 252, 0.07);
+    }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 4px 0 7px;
+    }
+    .tag {
+      border: 1px solid rgba(125, 211, 252, 0.28);
+      background: rgba(125, 211, 252, 0.08);
+      border-radius: 999px;
+      padding: 3px 6px;
+      color: #d8f3ff;
+      font-size: 11px;
+    }
+    .tag.missing {
+      border-color: rgba(252, 165, 165, 0.36);
+      background: rgba(252, 165, 165, 0.09);
+      color: var(--bad);
+    }
+    .score-guide {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.035);
+      padding: 8px 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin-top: 8px;
+    }
+    .score-guide[open] {
+      display: grid;
+      gap: 4px;
+    }
+    .score-guide summary {
+      cursor: pointer;
+      color: var(--text);
+      list-style: none;
+    }
+    .score-guide summary::-webkit-details-marker { display: none; }
+    .score-guide summary::after {
+      content: "보기";
+      margin-left: 8px;
+      color: var(--accent);
+      font-size: 11px;
+    }
+    .score-guide[open] summary::after { content: "닫기"; }
+    .score-guide strong { color: var(--text); }
+    .score-guide .score-2 { color: var(--good); }
+    .score-guide .score-1 { color: var(--mid); }
+    .score-guide .score-0 { color: var(--bad); }
+    .section-title {
+      margin: 7px 0 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .rating-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin: 7px 0 9px;
+      padding: 7px 8px;
+      min-width: 0;
+      flex-wrap: nowrap;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-left: 4px solid rgba(125, 211, 252, 0.82);
+      border-radius: 12px;
+      background:
+        linear-gradient(135deg, rgba(125, 211, 252, 0.17), rgba(125, 211, 252, 0.06)),
+        rgba(8, 14, 18, 0.72);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.035);
+    }
+    .rating-row.caption-score {
+      border-left-color: #fbbf24;
+      background:
+        linear-gradient(135deg, rgba(251, 191, 36, 0.20), rgba(251, 191, 36, 0.055)),
+        rgba(17, 13, 5, 0.76);
+    }
+    .rating-row.tag-score {
+      border-left-color: #34d399;
+      background:
+        linear-gradient(135deg, rgba(52, 211, 153, 0.20), rgba(52, 211, 153, 0.055)),
+        rgba(4, 17, 13, 0.76);
+    }
+    .rating-row:focus-within {
+      border-color: rgba(255, 255, 255, 0.32);
+      box-shadow:
+        0 0 0 2px rgba(125, 211, 252, 0.12),
+        inset 0 0 0 1px rgba(255,255,255,0.06);
+    }
+    .rating-label {
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 800;
+      flex: 0 0 auto;
+      background: rgba(0, 0, 0, 0.22);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 999px;
+      padding: 3px 7px;
+    }
+    .rating-control {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      flex: 1 1 auto;
+      flex-wrap: nowrap;
+    }
+    .rating { display: flex; gap: 3px; flex-wrap: nowrap; align-items: center; }
+    .pill {
+      border: 1px solid var(--line);
+      background: rgba(6, 10, 13, 0.82);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 4px 6px;
+      cursor: pointer;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .rating-row .pill:hover {
+      border-color: rgba(255,255,255,0.34);
+      background: rgba(255,255,255,0.08);
+    }
+    .pill.r0.selected { border-color: var(--bad); background: rgba(252, 165, 165, 0.18); color: #fee2e2; }
+    .pill.r1.selected { border-color: var(--mid); background: rgba(253, 230, 138, 0.18); color: #fef3c7; }
+    .pill.r2.selected { border-color: var(--good); background: rgba(134, 239, 172, 0.18); color: #dcfce7; }
+    .issue.selected { border-color: var(--accent); background: rgba(125, 211, 252, 0.14); color: var(--accent); }
+    .save-state { min-height: 14px; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .rating-row .save-state {
+      display: inline;
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .save-state.ok { color: var(--good); }
+    .save-state.error { color: var(--bad); }
+    details {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .optional-panel summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    textarea {
+      width: 100%;
+      max-width: 100%;
+      min-height: 44px;
+      display: block;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #101820;
+      color: var(--text);
+      padding: 8px;
+    }
+    textarea:focus {
+      outline: 2px solid #60a5fa;
+      outline-offset: -2px;
+    }
+    .empty {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 22px;
+      color: var(--muted);
+      background: var(--panel);
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(0,0,0,0.82);
+    }
+    .modal.open { display: flex; }
+    .modal-card {
+      max-width: min(96vw, 1400px);
+      max-height: 94vh;
+      display: grid;
+      gap: 8px;
+    }
+    .modal-card img {
+      max-width: 100%;
+      max-height: 88vh;
+      object-fit: contain;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: #050607;
+    }
+    .modal-caption {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+    @media (max-width: 640px) {
+      .grid { grid-template-columns: 1fr; }
+      .card { grid-template-columns: 1fr; }
+      .thumb-button { width: 100%; height: 240px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .side-panel, .main-panel, .full-panel { grid-column: auto; grid-row: auto; }
+      .issue-memo-grid { grid-template-columns: 1fr; }
+      .body { padding: 14px; }
+      .status { margin-left: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Imagine AI 캡션/태그 품질 리뷰</h1>
+    <div class="sub">
+      이미지를 직접 보고 AI 캡션과 AI 태그가 맞는지만 0/1/2로 평가합니다.
+    </div>
+    <details class="score-guide">
+      <summary><strong>기준</strong>: 2 맞음 · 1 일부 · 0 다름</summary>
+      <div><span class="score-2">2</span>: 핵심 설명이 대부분 맞음</div>
+      <div><span class="score-1">1</span>: 일부 맞지만 핵심 누락/오탐 있음</div>
+      <div><span class="score-0">0</span>: 핵심 설명이 다름</div>
+    </details>
+    <div class="toolbar">
+      <select id="filterMode" aria-label="filter">
+        <option value="all">전체</option>
+        <option value="unreviewed">미평가</option>
+        <option value="issue">이슈 표시됨</option>
+        <option value="low">낮은 점수</option>
+      </select>
+      <button class="action" type="button" id="reloadBtn">새로고침</button>
+      <span class="status" id="serverStatus">서버 확인 중...</span>
+    </div>
+  </header>
+
+  <main>
+    <div id="app" class="grid"></div>
+  </main>
+
+  <div id="imageModal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <img id="modalImage" alt="" />
+      <div id="modalCaption" class="modal-caption"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = location.protocol === 'file:' ? 'http://127.0.0.1:8765' : location.origin;
+    const SCORE_VALUES = ['0', '1', '2'];
+    const ISSUE_TYPES = [
+      ['caption_wrong', '캡션 오판'],
+      ['tag_false_positive', '태그 오탐'],
+      ['tag_missing_key', '핵심 태그 누락'],
+      ['too_generic', '너무 일반적'],
+      ['spatial_missing', '위치/구도 누락'],
+      ['parse_or_thumb_issue', '파싱/썸네일 문제'],
+      ['duplicate_variant', '중복/변형'],
+    ];
+    const TERM_KO = new Map([
+      ['classroom', '교실'], ['empty', '비어 있음'], ['anime', '애니풍'], ['school', '학교'],
+      ['wooden_floor', '나무 바닥'], ['wooden floor', '나무 바닥'], ['chalkboard', '칠판'],
+      ['teacher_desk', '교사용 책상'], ['teacher desk', '교사용 책상'], ['natural_light', '자연광'],
+      ['natural light', '자연광'], ['peaceful', '평온한'], ['night', '밤'], ['sky', '하늘'],
+      ['moon', '달'], ['stars', '별'], ['starry sky', '별이 있는 하늘'], ['forest', '숲'],
+      ['trees', '나무'], ['city', '도시'], ['street', '거리'], ['alley', '골목'],
+      ['building facade', '건물 외관'], ['facade', '외관'], ['windows', '창문'], ['building', '건물'],
+      ['window', '창문'], ['desk', '책상'], ['bookshelf', '책장'],
+      ['indoor', '실내'], ['outdoor', '야외'], ['background', '배경'], ['character', '캐릭터'],
+      ['rain', '비'], ['fog', '안개'], ['clouds', '구름'], ['water', '물'], ['bridge', '다리'],
+      ['light', '빛'], ['lighting', '조명'], ['lamp', '램프'], ['streetlight', '가로등'],
+      ['characters', '캐릭터'], ['anime-style', '애니메이션풍'], ['anime style', '애니메이션풍'],
+      ['scene', '장면'], ['traditional building', '전통 건물'], ['modern skyscrapers', '현대식 고층 건물'],
+      ['skyscrapers', '고층 건물'], ['traditional', '전통적인'], ['building', '건물'],
+      ['buildings', '건물'], ['cobblestone pavement', '자갈 포장 바닥'], ['pavement', '포장 바닥'],
+      ['bright daylight', '밝은 낮빛'], ['daylight', '낮빛'], ['urban street', '도시 거리'],
+      ['plaza', '광장'], ['industrial interior', '산업 시설 내부'], ['pillars', '기둥'],
+      ['pipes', '배관'], ['wire mesh', '철망'], ['concrete', '콘크리트'], ['stairs', '계단'],
+      ['ceiling', '천장'], ['interior', '실내'], ['exterior', '외관'], ['room', '방'],
+      ['wall', '벽'], ['walls', '벽'], ['floor', '바닥'], ['tiles', '타일'],
+      ['shadow', '그림자'], ['person', '인물'], ['silhouette', '실루엣'], ['monochrome', '단색'],
+      ['digital sketch', '디지털 스케치'], ['digital art', '디지털 아트'], ['digital', '디지털'],
+      ['structural lines', '구조선'], ['structural', '구조적인'], ['lines', '선'],
+      ['blueprint', '청사진'], ['architecture', '건축'], ['fantasy', '판타지'], ['mysterious', '신비로운'],
+      ['portrait', '인물화'], ['blue', '푸른색'], ['sketch', '스케치'], ['overlay', '오버레이'],
+      ['background', '배경'], ['foreground', '전경'], ['front', '앞'], ['modern', '현대적인'],
+      ['one', '한'], ['two', '두'], ['three', '세'], ['four', '네'], ['stand', '서 있음'],
+      ['stands', '서 있음'], ['standing', '서 있는'], ['lush', '무성한'],
+      ['lush green landscape', '무성한 초록 풍경'], ['green landscape', '초록 풍경'],
+      ['green', '초록'], ['blue-lit', '푸른 조명이 비치는'], ['starry', '별이 있는'],
+      ['starry sky', '별이 있는 하늘'], ['starry night sky', '별이 있는 밤하늘'],
+      ['giant monster', '거대한 괴물'], ['monster', '괴물'], ['lava', '용암'],
+      ['warm-toned', '따뜻한 색감의'], ['interior scene', '실내 장면'],
+      ['abstract', '추상적인'], ['cityscape', '도시 풍경'], ['geometric', '기하학적'],
+      ['overlays', '오버레이'], ['winged', '날개 달린'], ['mechanical', '기계적인'],
+      ['creature', '생물'], ['rocky cliff', '바위 절벽'], ['misty', '안개 낀'],
+      ['flowing hair', '흐르는 머리카락'], ['closed eyes', '감은 눈'],
+      ['soft pastel tones', '부드러운 파스텔 톤'], ['pastel tones', '파스텔 톤'],
+      ['vertical color distortion effects', '세로 색상 왜곡 효과'],
+      ['color distortion effects', '색상 왜곡 효과'], ['dimly lit', '어둡게 조명된'],
+      ['gothic', '고딕풍'], ['dungeon', '던전'], ['shelf', '선반'],
+      ['purple', '보라색'], ['purple wall', '보라색 벽'],
+      ['purple glowing accents', '보라색으로 빛나는 강조 요소'],
+      ['intricate carvings', '정교한 조각'], ['wooden notice board', '나무 게시판'],
+      ['notice board', '게시판'], ["children's drawings", '어린이 그림'],
+      ['sunny outdoor setting', '햇빛 드는 야외 환경'], ['anatomical lines', '해부학적 선'],
+      ['foot', '발'], ['hand sketch', '손그림 스케치'], ['street scene', '거리 장면'],
+      ['ice cream', '아이스크림'], ['traditional japanese thatched house', '전통적인 일본식 초가집'],
+      ['thatched house', '초가집'], ['japanese', '일본식'],
+      ['snowy autumn landscape', '눈 덮인 가을 풍경'], ['red', '붉은'],
+      ['white foliage', '흰 잎'], ['serene', '고요한'],
+      ['nostalgic rural atmosphere', '향수를 불러일으키는 시골 분위기'],
+      ['rural atmosphere', '시골 분위기'], ['quiet', '조용한'], ['urban setting', '도시 환경'],
+      ['cool twilight light', '차가운 황혼빛'], ['muted tones', '차분한 색조'],
+      ['solitary signpost', '홀로 선 표지판'], ['signpost', '표지판'],
+      ['pedestrian crossing', '횡단보도'], ['moonlit', '달빛이 비치는'],
+      ['moonlit medieval courtyard', '달빛이 비치는 중세풍 안뜰'],
+      ['medieval courtyard', '중세풍 안뜰'], ['courtyard', '안뜰'],
+      ['stone buildings', '석조 건물'], ['glowing windows', '빛나는 창문'],
+      ['mecha dragon', '메카 드래곤'], ['dragon', '용'], ['canyon', '협곡'],
+      ['aurora-like lights', '오로라 같은 빛'], ['decorative lines', '장식적인 선'],
+      ['red-tinted illustration', '붉은 색조의 일러스트'], ['torso', '몸통'],
+      ['wooden panels', '나무 패널'], ['motion blur effect', '모션 블러 효과'],
+      ['motion blur', '모션 블러'], ['dynamic', '역동적인'],
+      ['high intensity', '고강도'], ['high-intensity', '고강도'],
+    ]);
+    const CAPTION_TERM_PAIRS = [...TERM_KO.entries()].sort((a, b) => b[0].length - a[0].length);
+
+    let rows = [];
+    let saving = new Set();
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[ch]));
+    }
+
+    function assetSrc(value) {
+      const raw = String(value || '');
+      if (!raw) return '';
+      if (/^https?:\/\//.test(raw)) return raw;
+      const path = raw.startsWith('/') ? raw : `/${raw}`;
+      return path.split('/').map(part => {
+        if (part === '..' || part === '.' || part === '') return part;
+        return encodeURIComponent(part);
+      }).join('/');
+    }
+
+    function setStatus(text, kind = '') {
+      const el = document.getElementById('serverStatus');
+      el.textContent = text;
+      el.className = `status ${kind}`.trim();
+    }
+
+    function openImageModal(src, caption) {
+      const modal = document.getElementById('imageModal');
+      const image = document.getElementById('modalImage');
+      const text = document.getElementById('modalCaption');
+      image.src = src;
+      image.alt = caption || '';
+      text.textContent = caption || '';
+      modal.classList.add('open');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeImageModal() {
+      const modal = document.getElementById('imageModal');
+      const image = document.getElementById('modalImage');
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
+      image.src = '';
+    }
+
+    function parseTags(raw) {
+      const text = String(raw || '').trim();
+      if (!text) return [];
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) return parsed.map(v => String(v).trim()).filter(Boolean);
+      } catch (_) {}
+      return text.split(',').map(v => v.replace(/^\[|\]$/g, '').replace(/^["']|["']$/g, '').trim()).filter(Boolean);
+    }
+
+    function escapeRegex(value) {
+      return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function translateLooseTerm(value) {
+      const source = String(value || '').replace(/_/g, ' ').trim();
+      const lower = source.toLowerCase();
+      if (!source) return '';
+      if (TERM_KO.has(lower)) return TERM_KO.get(lower);
+      for (const [needle, ko] of CAPTION_TERM_PAIRS) {
+        const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegex(needle)}([^a-z0-9]|$)`, 'i');
+        if (pattern.test(lower)) return ko;
+      }
+      return source;
+    }
+
+    function tagLabel(tag) {
+      const ko = translateLooseTerm(tag);
+      return ko || tag;
+    }
+
+    function translateCaptionSegment(segment) {
+      let out = String(segment || '').trim();
+      if (!out) return '';
+      if (/[가-힣]/.test(out)) return out;
+      out = out.replace(/[.。]+$/g, '').toLowerCase();
+      out = out.replace(/\b(a|an|the)\b/g, ' ');
+      out = out.replace(/\bin front of\b/g, '앞에');
+      out = out.replace(/\bin the foreground\b/g, '전경에');
+      out = out.replace(/\bin the background\b/g, '배경에');
+      out = out.replace(/\bin background\b/g, '배경에');
+      out = out.replace(/\bsuggesting\b/g, '암시하는');
+      out = out.replace(/\bat night\b/g, '밤에');
+      out = out.replace(/\boverlaid on\b/g, '위에 겹쳐진');
+      out = out.replace(/\bsurrounded by\b/g, '둘러싸인');
+      out = out.replace(/\bframed by\b/g, '둘러싸인');
+      out = out.replace(/\brendered in\b/g, '표현된');
+      out = out.replace(/\bbathed in\b/g, '물든');
+      out = out.replace(/\bindicating\b/g, '나타내는');
+      out = out.replace(/\bevoking\b/g, '느낌을 주는');
+      out = out.replace(/\bnestled in\b/g, '자리한');
+      out = out.replace(/\bperched on\b/g, '앉아 있는');
+      for (const [needle, ko] of CAPTION_TERM_PAIRS) {
+        out = out.replace(new RegExp(`\\b${escapeRegex(needle)}\\b`, 'gi'), ko);
+      }
+      out = out.replace(/\bwith\b/g, '함께');
+      out = out.replace(/\band\b/g, '및');
+      out = out.replace(/\bor\b/g, '또는');
+      out = out.replace(/\bof\b/g, '의');
+      out = out.replace(/\bin\b/g, '안에');
+      out = out.replace(/\bat\b/g, '에서');
+      out = out.replace(/\bon\b/g, '위에');
+      out = out.replace(/\bunder\b/g, '아래');
+      out = out.replace(/\bover\b/g, '위에');
+      out = out.replace(/\babove\b/g, '위에');
+      out = out.replace(/\bagainst\b/g, '배경으로');
+      out = out.replace(/\bbefore\b/g, '앞에');
+      out = out.replace(/\bby\b/g, '의해');
+      out = out.replace(/\bthrough\b/g, '통해');
+      out = out.replace(/\bbetween\b/g, '사이에');
+      out = out.replace(/\bnear\b/g, '근처');
+      out = out.replace(/\bshowing\b/g, '보여주는');
+      out = out.replace(/\bview\b/g, '풍경');
+      out = out.replace(/\s*,\s*/g, ', ');
+      out = out.replace(/\s+/g, ' ').trim();
+      return out || String(segment || '').trim();
+    }
+
+    function withSubjectParticle(text) {
+      if (!text) return text;
+      const last = text[text.length - 1];
+      const code = last.charCodeAt(0);
+      if (code >= 0xac00 && code <= 0xd7a3) {
+        return `${text}${((code - 0xac00) % 28) ? '이' : '가'}`;
+      }
+      return `${text}이/가`;
+    }
+
+    function translateCaption(caption) {
+      const source = String(caption || '').trim();
+      if (!source || source.toLowerCase() === 'unknown') return '캡션 없음';
+      if (/[가-힣]/.test(source)) return source;
+      const text = source.replace(/[.。]+$/g, '').trim();
+      let match = text.match(/^(.+?) with (.+?) in front of (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[3])} 앞에 ${translateCaptionSegment(match[2])}이/가 있는 ${translateCaptionSegment(match[1])}입니다.`;
+      match = text.match(/^Digital sketch of a building facade with windows and structural lines$/i);
+      if (match) return '창문과 구조선이 보이는 건물 외관의 디지털 스케치입니다.';
+      match = text.match(/^(.+?) stands? in (.+?) under (.+?) with (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[2])} 안에 ${withSubjectParticle(translateCaptionSegment(match[1]))} 서 있고, ${translateCaptionSegment(match[3])} 아래에 ${translateCaptionSegment(match[4])}이/가 보입니다.`;
+      match = text.match(/^(.+?) stands? in (.+?) with (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[2])} 안에 ${withSubjectParticle(translateCaptionSegment(match[1]))} 서 있고, ${translateCaptionSegment(match[3])}이/가 보입니다.`;
+      match = text.match(/^(.+?) stands? in (.+?) under (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[2])} 안에 ${withSubjectParticle(translateCaptionSegment(match[1]))} 서 있고, ${translateCaptionSegment(match[3])} 아래입니다.`;
+      match = text.match(/^(.+?) stands? before (.+?) under (.+)$/i);
+      if (match) return `${withSubjectParticle(translateCaptionSegment(match[1]))} ${translateCaptionSegment(match[2])} 앞에 서 있고, ${translateCaptionSegment(match[3])} 아래입니다.`;
+      match = text.match(/^(.+?) in (.+?) at night$/i);
+      if (match) return `밤의 ${translateCaptionSegment(match[2])} 안에 ${withSubjectParticle(translateCaptionSegment(match[1]))} 있습니다.`;
+      match = text.match(/^(.+?) overlaid on (.+)$/i);
+      if (match) return `${withSubjectParticle(translateCaptionSegment(match[1]))} ${translateCaptionSegment(match[2])} 위에 겹쳐져 있습니다.`;
+      match = text.match(/^(.+?) perched on (.+?) against (.+)$/i);
+      if (match) return `${withSubjectParticle(translateCaptionSegment(match[1]))} ${translateCaptionSegment(match[2])} 위에 앉아 있고, ${translateCaptionSegment(match[3])}을/를 배경으로 합니다.`;
+      match = text.match(/^(.+?) framed by (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[2])}에 둘러싸인 ${translateCaptionSegment(match[1])}입니다.`;
+      match = text.match(/^(.+?) of (.+?) with (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[3])}이/가 보이는 ${translateCaptionSegment(match[2])}의 ${translateCaptionSegment(match[1])}입니다.`;
+      match = text.match(/^(.+?) with (.+?) under (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[3])} 아래의 ${translateCaptionSegment(match[1])}이며, ${translateCaptionSegment(match[2])}이/가 보입니다.`;
+      match = text.match(/^(.+?) with (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[1])}이며, ${translateCaptionSegment(match[2])}이/가 보입니다.`;
+      match = text.match(/^(.+?) suggesting (.+)$/i);
+      if (match) return `${translateCaptionSegment(match[1])}이며, ${translateCaptionSegment(match[2])}을/를 암시합니다.`;
+      const translated = translateCaptionSegment(text);
+      return /[가-힣]/.test(translated) ? `${translated}입니다.` : `자동 번역 부족: ${source}`;
+    }
+
+    function captionBlock(row) {
+      const source = String(row.mc_caption || '').trim() || '캡션 없음';
+      const translated = String(row.caption_ko_display || '').trim() || translateCaption(source);
+      return `<div class="caption-box">
+        <div class="caption-line"><b>영어 원문</b>${esc(source)}</div>
+        <div class="caption-line ko"><b>한국어 보조 직역</b>${esc(translated)}</div>
+      </div>`;
+    }
+
+    function tagDisplay(row, tags) {
+      const stored = String(row.tags_ko_display || '').trim();
+      if (stored) {
+        return stored.split(/\s*·\s*/).filter(Boolean)
+          .map(item => `<span class="tag">${esc(item)}</span>`)
+          .join('');
+      }
+      return tags.map(tag => `<span class="tag">${esc(tagLabel(tag))}</span>`).join('');
+    }
+
+    function rowKey(row) {
+      return `${row.sample_id}:${row.item_id}`;
+    }
+
+    function issueSet(row) {
+      return new Set(String(row.issue_types || '').split(',').map(v => v.trim()).filter(Boolean));
+    }
+
+    function reviewed(row) {
+      return SCORE_VALUES.includes(String(row.caption_alignment || '').trim())
+        || SCORE_VALUES.includes(String(row.tag_alignment || '').trim());
+    }
+
+    function lowScore(row) {
+      return ['0', '1'].includes(String(row.caption_alignment || '').trim())
+        || ['0', '1'].includes(String(row.tag_alignment || '').trim());
+    }
+
+    function visibleRows() {
+      const mode = document.getElementById('filterMode').value;
+      if (mode === 'unreviewed') return rows.filter(row => !reviewed(row));
+      if (mode === 'issue') return rows.filter(row => String(row.issue_types || '').trim());
+      if (mode === 'low') return rows.filter(lowScore);
+      return rows;
+    }
+
+    function scoreBlock(row, field, label, help) {
+      const value = String(row[field] || '').trim();
+      const scoreClass = field === 'caption_alignment' ? 'caption-score' : field === 'tag_alignment' ? 'tag-score' : '';
+      return `<div class="rating-row ${scoreClass}">
+        <div class="rating-label" title="${esc(help)}">${esc(label)}</div>
+        <div class="rating-control">
+          <div class="rating">
+            <button class="pill r0 ${value === '0' ? 'selected' : ''}" type="button" data-action="score" data-field="${field}" data-key="${esc(rowKey(row))}" data-value="0">0 다름</button>
+            <button class="pill r1 ${value === '1' ? 'selected' : ''}" type="button" data-action="score" data-field="${field}" data-key="${esc(rowKey(row))}" data-value="1">1 일부</button>
+            <button class="pill r2 ${value === '2' ? 'selected' : ''}" type="button" data-action="score" data-field="${field}" data-key="${esc(rowKey(row))}" data-value="2">2 맞음</button>
+          </div>
+          <div class="save-state" data-field="${field}">값: ${esc(value || '-')}</div>
+        </div>
+      </div>`;
+    }
+
+    function card(row) {
+      const tags = parseTags(row.ai_tags);
+      const issues = issueSet(row);
+      const tagHtml = tags.length
+        ? tagDisplay(row, tags)
+        : `<span class="tag missing">태그 없음 / 분석 결과 결손 (${esc(row.analysis_issue || 'missing_tags')})</span>`;
+      const issueButtons = ISSUE_TYPES.map(([key, label]) =>
+        `<button class="pill issue ${issues.has(key) ? 'selected' : ''}" type="button" data-action="issue" data-key="${esc(rowKey(row))}" data-issue="${key}">${label}</button>`
+      ).join('');
+      const imageSrc = assetSrc(row._thumb_src);
+      return `<article class="card" data-row-key="${esc(rowKey(row))}">
+        <button class="thumb-button" type="button" data-action="zoom" data-src="${esc(imageSrc)}" data-caption="${esc(row.file_name || row.item_id)}" title="클릭해서 확대">
+          <img class="thumb" src="${esc(imageSrc)}" alt="${esc(row.file_name)}" loading="lazy" />
+        </button>
+        <div class="side-panel">
+          <div class="meta">
+            <span class="badge">${esc(row.sample_id)}</span>
+            <span class="badge">item ${esc(row.item_id)}</span>
+            <span class="badge">${esc(row.analysis_status || 'unknown')}</span>
+          </div>
+          <div class="side-name">${esc(row.file_name || '')}</div>
+        </div>
+        <div class="body main-panel">
+          <div class="section-title">AI 캡션</div>
+          ${captionBlock(row)}
+          ${scoreBlock(row, 'caption_alignment', '캡션 정확성', 'AI 캡션이 실제 이미지를 설명하는지 평가합니다.')}
+          <div class="section-title">AI 태그</div>
+          <div class="tags">${tagHtml}</div>
+          ${scoreBlock(row, 'tag_alignment', '태그 정확성', 'AI 태그들이 실제 이미지에 맞는지 평가합니다.')}
+        </div>
+        <div class="full-panel">
+          <details class="optional-panel">
+            <summary>이슈/메모 ${row.issue_types || row.reviewer_notes ? '· 입력됨' : ''}</summary>
+            <div class="issue-memo-grid">
+              <div>
+                <div class="section-title">이슈 유형</div>
+                <div class="issue-actions">${issueButtons}</div>
+                <div class="save-state" data-field="issue_types">이슈: ${esc(row.issue_types || '없음')}</div>
+              </div>
+              <div>
+                <div class="section-title">메모</div>
+                <textarea data-notes="${esc(rowKey(row))}" placeholder="선택 입력">${esc(row.reviewer_notes || '')}</textarea>
+                <div class="memo-actions">
+                  <button class="action" type="button" data-action="notes" data-key="${esc(rowKey(row))}">메모 저장</button>
+                  <span class="save-state" data-field="reviewer_notes">값: ${row.reviewer_notes ? '입력됨' : '-'}</span>
+                </div>
+              </div>
+            </div>
+          </details>
+          <details>
+            <summary>원본 데이터</summary>
+            <div class="raw-grid">
+              <div>경로: ${esc(row.relative_path || row.file_path || '')}</div>
+              <div>폴더: ${esc(row.folder_path || '')}</div>
+              <div>분석 이슈: ${esc(row.analysis_issue || '-')}</div>
+              <div>모델: ${esc(row.caption_model || '-')}</div>
+              <div>처리 상태: ${esc(row.processing_status || '-')} ${esc(row.processing_error || '')}</div>
+            </div>
+          </details>
+        </div>
+      </article>`;
+    }
+
+    function render() {
+      const app = document.getElementById('app');
+      const items = visibleRows();
+      if (!items.length) {
+        app.className = '';
+        app.innerHTML = '<div class="empty">표시할 항목이 없습니다.</div>';
+        return;
+      }
+      app.className = 'grid';
+      app.innerHTML = items.map(card).join('');
+      app.querySelectorAll('[data-action="score"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = rows.find(item => rowKey(item) === btn.dataset.key);
+          if (row) saveUpdate(row, { [btn.dataset.field]: btn.dataset.value });
+        });
+      });
+      app.querySelectorAll('[data-action="zoom"]').forEach(btn => {
+        btn.addEventListener('click', () => openImageModal(btn.dataset.src, btn.dataset.caption));
+      });
+      app.querySelectorAll('[data-action="issue"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = rows.find(item => rowKey(item) === btn.dataset.key);
+          if (!row) return;
+          const issues = issueSet(row);
+          if (issues.has(btn.dataset.issue)) issues.delete(btn.dataset.issue);
+          else issues.add(btn.dataset.issue);
+          saveUpdate(row, { issue_types: [...issues].sort().join(',') });
+        });
+      });
+      app.querySelectorAll('[data-action="notes"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = rows.find(item => rowKey(item) === btn.dataset.key);
+          const input = app.querySelector(`textarea[data-notes="${CSS.escape(btn.dataset.key)}"]`);
+          if (row && input) saveUpdate(row, { reviewer_notes: input.value });
+        });
+      });
+    }
+
+    function updateLocal(row, updates, stateKind = '', stateText = '') {
+      Object.assign(row, updates);
+      const cardEl = document.querySelector(`[data-row-key="${CSS.escape(rowKey(row))}"]`);
+      if (!cardEl) return;
+      Object.entries(updates).forEach(([field, value]) => {
+        cardEl.querySelectorAll(`.pill[data-field="${field}"]`).forEach(btn => {
+          btn.classList.toggle('selected', btn.dataset.value === value);
+        });
+        if (field === 'issue_types') {
+          const issues = issueSet(row);
+          cardEl.querySelectorAll('.pill.issue').forEach(btn => {
+            btn.classList.toggle('selected', issues.has(btn.dataset.issue));
+          });
+        }
+        const stateEl = cardEl.querySelector(`.save-state[data-field="${field}"]`);
+        if (stateEl) {
+          stateEl.textContent = stateText || (field === 'issue_types' ? `이슈: ${value || '없음'}` : `값: ${value || '-'}`);
+          stateEl.className = `save-state ${stateKind}`.trim();
+        }
+      });
+    }
+
+    async function saveUpdate(row, updates) {
+      const key = `${rowKey(row)}:${Object.keys(updates).sort().join(',')}`;
+      if (saving.has(key)) return;
+      saving.add(key);
+      const previous = {};
+      Object.keys(updates).forEach(field => previous[field] = row[field]);
+      updateLocal(row, updates, '', '저장 중...');
+      try {
+        const resp = await fetch(`${API_BASE}/api/metadata-review/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sample_id: row.sample_id,
+            item_id: row.item_id,
+            ...updates,
+            reviewer_id: 'manual_review',
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        updateLocal(row, updates, 'ok', '저장됨');
+        setStatus(`저장됨. 캡션 ${data.caption_reviewed_count}/${data.total_count}, 태그 ${data.tag_reviewed_count}/${data.total_count}`, 'ok');
+      } catch (err) {
+        updateLocal(row, previous, 'error', `저장 실패: ${err.message}`);
+        setStatus(`저장 실패: ${err.message}`, 'error');
+      } finally {
+        saving.delete(key);
+      }
+    }
+
+    async function loadRows() {
+      try {
+        const resp = await fetch(`${API_BASE}/api/metadata-review/rows`);
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        rows = data.rows;
+        setStatus(`서버 연결됨. 캡션 ${data.caption_reviewed_count}/${data.total_count}, 태그 ${data.tag_reviewed_count}/${data.total_count}. CSV: ${data.csv}`, 'ok');
+        render();
+      } catch (err) {
+        setStatus(`서버 미연결: python3 tools/serve_metadata_review.py 실행 필요 (${err.message})`, 'error');
+        document.getElementById('app').className = '';
+        document.getElementById('app').innerHTML = '<div class="empty">메타데이터 리뷰 서버에 연결할 수 없습니다.</div>';
+      }
+    }
+
+    document.getElementById('filterMode').addEventListener('change', render);
+    document.getElementById('reloadBtn').addEventListener('click', loadRows);
+    document.getElementById('imageModal').addEventListener('click', closeImageModal);
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') closeImageModal();
+    });
+    loadRows();
+  </script>
+</body>
+</html>

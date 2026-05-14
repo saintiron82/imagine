@@ -1,0 +1,1770 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Imagine Scoped Gold Review</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #171b23;
+      --panel-2: #202634;
+      --text: #e8edf5;
+      --muted: #94a3b8;
+      --line: #2d3545;
+      --good: #34d399;
+      --mid: #fbbf24;
+      --bad: #fb7185;
+      --accent: #7dd3fc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 20% 0%, #182033 0, transparent 34rem), var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      background: rgba(14, 17, 22, 0.96);
+      border-bottom: 1px solid var(--line);
+      padding: 18px 22px;
+    }
+    h1 { margin: 0 0 10px; font-size: 22px; letter-spacing: -0.02em; }
+    code { color: #bae6fd; }
+    .sub {
+      color: #dbeafe;
+      font-size: 15px;
+      line-height: 1.65;
+      background: rgba(125, 211, 252, 0.08);
+      border: 1px solid rgba(125, 211, 252, 0.24);
+      border-radius: 14px;
+      padding: 12px 14px;
+    }
+    .guide {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .guide-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(32, 38, 52, 0.9);
+      padding: 11px 12px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .guide-card strong {
+      display: block;
+      color: #f8fafc;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .guide-card em { color: var(--accent); font-style: normal; font-weight: 700; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; color: #dbeafe; font-size: 13px; }
+    .legend span {
+      border: 1px solid var(--line);
+      background: rgba(32, 38, 52, 0.82);
+      border-radius: 999px;
+      padding: 7px 10px;
+    }
+    .legend b { color: #f8fafc; }
+    .server-status {
+      margin-top: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(15, 23, 42, 0.6);
+      color: #dbeafe;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .server-status.ok { border-color: rgba(52, 211, 153, 0.35); color: #bbf7d0; }
+    .server-status.error { border-color: rgba(251, 113, 133, 0.42); color: #fecdd3; }
+    .repair-note {
+      margin-top: 12px;
+      border: 1px solid rgba(251, 113, 133, 0.36);
+      background: rgba(127, 29, 29, 0.2);
+      color: #fecdd3;
+      border-radius: 12px;
+      padding: 10px 11px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .repair-note strong { color: #fb7185; }
+    .role-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+      font-size: 13px;
+      color: #dbeafe;
+    }
+    .role-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(125, 211, 252, 0.22);
+      background: rgba(15, 23, 42, 0.52);
+      padding: 7px 10px;
+      line-height: 1.3;
+    }
+    .role-chip strong {
+      color: #f8fafc;
+      font-size: 13px;
+    }
+    .tip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border: 1px solid rgba(125, 211, 252, 0.35);
+      border-radius: 999px;
+      color: #bae6fd;
+      background: rgba(14, 165, 233, 0.1);
+      font-size: 11px;
+      font-weight: 900;
+      cursor: help;
+      flex: 0 0 auto;
+    }
+    .tip:hover::after,
+    .tip:focus::after {
+      content: attr(data-tip);
+      position: absolute;
+      z-index: 40;
+      top: calc(100% + 8px);
+      right: 0;
+      width: min(320px, 78vw);
+      padding: 9px 10px;
+      border-radius: 11px;
+      border: 1px solid rgba(125, 211, 252, 0.34);
+      background: #0f172a;
+      color: #e0f2fe;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.5;
+      text-align: left;
+      white-space: normal;
+    }
+    .bar { display: none; }
+    button, select {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    button { cursor: pointer; }
+    button.active { border-color: var(--accent); color: var(--accent); }
+    .summary { color: #dbeafe; font-size: 13px; }
+    main { padding: 20px; }
+    .query { margin: 0 0 28px; }
+    .query-title {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      margin: 0 0 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      background: rgba(23, 27, 35, 0.82);
+      border-radius: 14px;
+    }
+    .query-title strong { color: var(--accent); font-size: 13px; }
+    .query-title span { font-size: 15px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(32, 38, 52, 0.96), rgba(23, 27, 35, 0.96));
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .thumb {
+      width: 100%;
+      height: 260px;
+      background: #0b0d12;
+      object-fit: contain;
+      border-bottom: 1px solid var(--line);
+    }
+    .body { padding: 14px; }
+    .meta { display: grid; grid-template-columns: 86px 1fr; gap: 6px 10px; font-size: 12px; line-height: 1.45; }
+    .k { color: #aab8cf; font-weight: 700; }
+    .v { color: #dbeafe; overflow-wrap: anywhere; }
+    .field {
+      margin-top: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.46);
+      padding: 10px;
+    }
+    .field-title { color: var(--accent); font-size: 12px; font-weight: 800; margin-bottom: 6px; }
+    .caption { color: #f1f5f9; font-size: 14px; line-height: 1.6; }
+    .task {
+      margin-bottom: 12px;
+      border: 1px solid rgba(125, 211, 252, 0.28);
+      border-radius: 14px;
+      background: rgba(8, 47, 73, 0.24);
+      padding: 11px;
+    }
+    .task-title {
+      color: #bae6fd;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
+    }
+    .task-text {
+      color: #f8fafc;
+      font-size: 14px;
+      line-height: 1.65;
+      margin-bottom: 8px;
+    }
+    .task-row {
+      display: grid;
+      grid-template-columns: 82px 1fr;
+      gap: 7px;
+      color: #dbeafe;
+      font-size: 12px;
+      line-height: 1.5;
+      margin-top: 5px;
+    }
+    .task-row b { color: #7dd3fc; }
+    .task-row.scope-row {
+      color: #94a3b8;
+      font-size: 11px;
+      margin-top: 8px;
+      padding-top: 7px;
+      border-top: 1px solid rgba(148, 163, 184, 0.16);
+    }
+    .task-row.scope-row b { color: #94a3b8; }
+    details.raw {
+      margin-top: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.28);
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+    details.raw summary {
+      cursor: pointer;
+      padding: 9px 10px;
+      color: #aab8cf;
+      font-weight: 800;
+    }
+    details.raw .raw-body {
+      border-top: 1px solid rgba(148, 163, 184, 0.16);
+      padding: 10px;
+    }
+    .decision {
+      margin-top: 12px;
+      border: 1px solid rgba(125, 211, 252, 0.34);
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(14, 116, 144, 0.18), rgba(15, 23, 42, 0.72));
+      padding: 12px;
+    }
+    .decision-title {
+      color: #bae6fd;
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      margin-bottom: 9px;
+    }
+    .decision-row {
+      display: grid;
+      grid-template-columns: 86px 1fr;
+      gap: 8px;
+      color: #e0f2fe;
+      font-size: 13px;
+      line-height: 1.55;
+      margin-top: 6px;
+    }
+    .decision-row b { color: #7dd3fc; }
+    .decision-main {
+      color: #f8fafc;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .decision-summary {
+      color: #f8fafc;
+      font-size: 15px;
+      line-height: 1.7;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid rgba(125, 211, 252, 0.22);
+      border-radius: 12px;
+      padding: 10px 11px;
+    }
+    .decision-muted { color: #bfdbfe; }
+    .decision-warn { color: #fde68a; }
+    .caption-ko {
+      margin-top: 8px;
+      color: #fff7ed;
+      font-size: 14px;
+      line-height: 1.6;
+      background: rgba(251, 191, 36, 0.1);
+      border: 1px solid rgba(251, 191, 36, 0.22);
+      border-radius: 10px;
+      padding: 8px 9px;
+    }
+    .caption-ko strong { color: #fbbf24; }
+    .notes { color: #cbd5e1; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+    .rating-block {
+      margin-top: 9px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.38);
+      padding: 8px;
+    }
+    .rating-block.disabled {
+      border-style: dashed;
+      background: rgba(15, 23, 42, 0.22);
+    }
+    .rating-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
+    .rating-title {
+      color: #f8fafc;
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .rating { display: flex; gap: 6px; }
+    .pill {
+      flex: 1;
+      text-align: center;
+      border-radius: 9px;
+      padding: 8px 0;
+      border: 1px solid var(--line);
+      font-size: 14px;
+      font-weight: 700;
+      background: rgba(32, 38, 52, 0.8);
+      color: #e2e8f0;
+      cursor: pointer;
+    }
+    .pill:hover { border-color: var(--accent); color: var(--accent); }
+    .r0.selected { border-color: var(--bad); color: var(--bad); background: rgba(251, 113, 133, 0.1); }
+    .r1.selected { border-color: var(--mid); color: var(--mid); background: rgba(251, 191, 36, 0.1); }
+    .r2.selected { border-color: var(--good); color: var(--good); background: rgba(52, 211, 153, 0.1); }
+    .save-state { margin-top: 6px; min-height: 16px; color: #aab8cf; font-size: 12px; }
+    .save-state.ok { color: var(--good); }
+    .save-state.error { color: var(--bad); }
+    .empty {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(23, 27, 35, 0.82);
+      padding: 22px;
+      color: #dbeafe;
+    }
+    @media (max-width: 720px) {
+      main { padding: 12px; }
+      .grid { grid-template-columns: 1fr; }
+      .thumb { height: 260px; }
+      .summary { width: 100%; margin-left: 0; }
+      .guide { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Imagine Scoped Gold Review</h1>
+    <div class="sub">
+      이 화면은 서버가 읽는 CSV를 직접 검수합니다. 한 카드에서 두 가지를 분리해서 저장합니다:
+      <code>reviewer_relevance</code>는 검색 질문과 이미지의 정답성,
+      <code>caption_alignment</code>는 AI 설명/태그와 이미지의 정합성입니다.
+    </div>
+    <div class="guide">
+      <div class="guide-card"><strong>1. 시각 조건을 본다</strong><em>조건</em>이 점수 기준입니다. 범위는 이미 검색 제한으로 적용되어 점수 판단 대상이 아닙니다.</div>
+      <div class="guide-card"><strong>2. 이미지를 직접 본다</strong>AI 설명을 정답으로 믿지 말고, 실제 이미지가 질문 조건을 만족하는지 판단합니다.</div>
+      <div class="guide-card"><strong>3. AI 설명을 따로 본다</strong>영어 설명/태그가 실제 이미지와 맞는지는 별도 정합성 값으로 저장합니다.</div>
+    </div>
+    <div class="role-strip">
+      <span class="role-chip">
+        <strong>역할 A</strong> 시각 조건↔이미지
+        <span class="tip" tabindex="0" data-tip="자동 적용된 폴더 범위 안에서, 실제 이미지가 시각 조건을 만족하는지만 평가합니다. AI 설명은 참고만 하며 CSV의 reviewer_relevance 값으로 저장됩니다.">?</span>
+      </span>
+      <span class="role-chip">
+        <strong>역할 B</strong> AI 설명/태그↔이미지
+        <span class="tip" tabindex="0" data-tip="AI 영어 설명과 태그가 실제 이미지를 잘 설명하는지 별도로 평가합니다. 검색 질문과 맞는지는 역할 A에서만 판단하며 CSV의 caption_alignment 값으로 저장됩니다.">?</span>
+      </span>
+    </div>
+    <div class="legend">
+      <span><b>검색 0</b> 시각 조건과 다름</span>
+      <span><b>검색 1</b> 일부 조건만 맞음</span>
+      <span><b>검색 2</b> 시각 조건이 명확히 맞음</span>
+      <span><b>AI 0</b> 설명/태그가 이미지와 다름</span>
+      <span><b>AI 1</b> 일부만 맞음</span>
+      <span><b>AI 2</b> 설명/태그가 이미지와 잘 맞음</span>
+    </div>
+    <div class="server-status" id="serverStatus">리뷰 데이터 로딩 중...</div>
+    <div class="bar" id="filters" aria-hidden="true"></div>
+  </header>
+  <main id="app"><div class="empty">리뷰 데이터를 불러오는 중입니다.</div></main>
+  <script>
+    let rows = [];
+    let queries = [];
+    let activeQuery = 'all';
+    const REVIEW_API_BASE = window.location.origin.startsWith('http') ? window.location.origin : 'http://127.0.0.1:8765';
+    const savingKeys = new Set();
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+
+    function assetSrc(path) {
+      return String(path || '').split('/').map(part => {
+        if (part === '..' || part === '.' || part === '') return part;
+        return encodeURIComponent(part);
+      }).join('/');
+    }
+
+    function parseTags(raw) {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map(String) : [];
+      } catch {
+        return String(raw).replace(/[\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+      }
+    }
+
+    const koTerms = [
+      ['starry sky', '별이 보이는 하늘'], ['nighttime', '밤'], ['distant mountains', '먼 산'],
+      ['distant mountain', '먼 산'], ['vertical poles', '수직 기둥'], ['vertical pole', '수직 기둥'],
+      ['hong kong', '홍콩'], ['office', '사무실'], ['interior', '실내'], ['room', '방'],
+      ['sofa', '소파'], ['couch', '소파'], ['window', '창문'], ['windows', '창문'],
+      ['blinds', '블라인드'], ['curtain', '커튼'], ['curtains', '커튼'], ['desk', '책상'],
+      ['bookshelf', '책장'], ['bookshelves', '책장'], ['cabinet', '수납장'], ['chair', '의자'],
+      ['plant', '화분/식물'], ['kitchen', '주방'], ['classroom', '교실'], ['park', '공원'],
+      ['sky', '하늘'], ['night', '밤'], ['moon', '달'], ['dark', '어두운 분위기'],
+      ['sunset', '석양'], ['twilight', '해질녘'], ['forest', '숲'], ['trees', '나무'],
+      ['stars', '별'], ['star', '별'], ['clouds', '구름'], ['cloud', '구름'],
+      ['tree', '나무'], ['fog', '안개'], ['foggy', '안개'], ['mist', '안개'],
+      ['misty', '안개'], ['lake', '호수'], ['bridge', '다리'], ['path', '길'],
+      ['character', '캐릭터'], ['characters', '캐릭터'], ['sketch', '스케치'],
+      ['lineart', '선화'], ['line art', '선화'], ['transparent', '투명 레이어'], ['anime', '애니풍'],
+      ['background', '배경'], ['illustration', '일러스트'], ['fantasy', '판타지'],
+      ['modern', '현대적'], ['medieval', '중세풍'], ['red', '붉은색'],
+      ['purple', '보라색'], ['pink', '분홍색'], ['yellow', '노란색'], ['green', '초록색'],
+      ['wall', '벽'], ['door', '문'], ['books', '책'], ['train', '기차'],
+      ['fountain', '분수'], ['statue', '조각상'], ['armor', '갑옷'], ['sword', '검'],
+      ['chandelier', '샹들리에'], ['crystal', '크리스털'], ['ceiling', '천장'],
+      ['molding', '장식 몰딩'], ['ornate', '화려한 장식'], ['light fixture', '조명'],
+      ['streetlight', '가로등'], ['streetlights', '가로등'], ['street lamp', '가로등'],
+      ['street lamps', '가로등'], ['power line', '전선'], ['power lines', '전선'],
+      ['brick wall', '벽돌 벽'], ['building facade', '건물 외관'], ['facade', '외관'],
+      ['archway', '아치형 통로'], ['grand building', '대형 건물'],
+      ['water', '물'], ['sea', '바다'], ['ocean', '바다'], ['beach', '해변'],
+      ['river', '강'], ['mountains', '산'], ['mountain', '산'], ['city', '도시'], ['cityscape', '도시 풍경'],
+      ['street', '거리'], ['road', '도로'], ['fence', '울타리'], ['pillar', '기둥'],
+      ['pole', '기둥'], ['poles', '기둥'], ['outdoor', '야외'],
+      ['pastel', '파스텔 색감'], ['bubbles', '버블'], ['sparkles', '반짝임 효과'],
+      ['storm', '폭풍'], ['blue', '푸른색'], ['serene', '차분한 분위기'],
+      ['moody', '어두운 분위기'], ['landscape', '풍경'], ['scenery', '풍경'],
+      ['glow', '빛남'], ['digital art', '디지털 아트'], ['portrait', '인물화'],
+      ['bed', '침대'], ['balcony', '발코니'], ['school', '학교'], ['garden', '정원'],
+      ['golden hour', '골든아워'], ['warm lighting', '따뜻한 조명'],
+    ];
+
+    function escapeRegex(value) {
+      return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function hasEnglishTerm(source, needle) {
+      const pattern = String(needle).trim().split(/\s+/).map(escapeRegex).join('[\\s-]+');
+      return new RegExp(`(^|[^a-z0-9])${pattern}([^a-z0-9]|$)`, 'i').test(source);
+    }
+
+    function splitScopedQueryText(text) {
+      const source = String(text || '').trim();
+      const match = source.match(/^\s*(.+?)(?:중에서|중에|에서)\s*(.+)$/);
+      return {
+        scope: match ? match[1].trim() : '',
+        conditionText: match ? match[2].trim() : source,
+      };
+    }
+
+    function parseQueryTerms(row) {
+      const text = splitScopedQueryText(row.query_text).conditionText;
+      const match = text.match(/^\s*(.+?)(?:중에서|중에|에서)\s*(.+)$/);
+      const body = match ? match[2] : text;
+      return body
+        .replace(/\s*있는\s*이미지.*$/, '')
+        .split(/\s*(?:과|와|and|,|\/)\s*/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+
+    function parseQueryIntent(row) {
+      const text = String(row.query_text || '').trim();
+      const parsed = splitScopedQueryText(text);
+      const scope = row.query_scope || parsed.scope || '';
+      return {
+        scope,
+        terms: parseQueryTerms(row),
+        text,
+        conditionText: parsed.conditionText || text,
+      };
+    }
+
+    function joinKo(items) {
+      const cleaned = [...new Set(items.map(v => String(v || '').trim()).filter(Boolean))];
+      if (!cleaned.length) return '';
+      return cleaned.join(' · ');
+    }
+
+    function queryTaskBox(row) {
+      const intent = parseQueryIntent(row);
+      const scope = intent.scope || '';
+      const terms = intent.terms.length ? intent.terms : [intent.conditionText || '조건 정보 없음'];
+      return `
+        <div class="task">
+          <div class="task-title">시각 조건 · 점수 판단 기준</div>
+          <div class="task-text">${esc(intent.conditionText || row.query_text || '')}</div>
+          <div class="task-row"><b>조건</b><div>${esc(joinKo(terms))}</div></div>
+          ${scope ? `<div class="task-row scope-row"><b>검색 제한</b><div>${esc(scope)} · 자동 적용됨, 점수 판단 제외</div></div>` : ''}
+        </div>
+      `;
+    }
+
+    function queryTitleText(query) {
+      return splitScopedQueryText(query.query_text).conditionText || query.query_text || '';
+    }
+
+    const exactCaptionTranslations = new Map([
+      ['A full moon glows in a starry, colorful night sky.', '별이 가득한 다채로운 밤하늘에 보름달이 빛나고 있습니다.'],
+      ['Anime character sketch with sky background and Japanese text overlay.', '하늘 배경 위에 애니메이션 캐릭터 스케치와 일본어 텍스트 오버레이가 있습니다.'],
+      ['Anime character with starry background and text overlay', '별이 있는 배경과 텍스트 오버레이가 있는 애니메이션 캐릭터입니다.'],
+      ['Anime character with starry background and text overlay.', '별이 있는 배경과 텍스트 오버레이가 있는 애니메이션 캐릭터입니다.'],
+      ['Anime character with starry sky background and text overlay', '별이 있는 하늘 배경과 텍스트 오버레이가 있는 애니메이션 캐릭터입니다.'],
+      ['Anime-style illustration with pastel colors and sparkling effects', '파스텔 색감과 반짝이는 효과가 있는 애니메이션풍 일러스트입니다.'],
+      ['Anime-style characters in pastel colors with bubbles and sparkles.', '파스텔 색감의 애니메이션풍 캐릭터들이 버블과 반짝임 효과와 함께 보입니다.'],
+      ['Nighttime forest scene with starry sky and distant mountains, viewed through two vertical poles.', '별이 보이는 하늘과 먼 산이 있는 밤의 숲 장면이며, 두 개의 수직 기둥 사이로 바라본 구도입니다.'],
+      ['Anime character sketch overlay on forest background', '숲 배경 위에 애니메이션 캐릭터 스케치가 겹쳐져 있습니다.'],
+      ['Anime-style character sketch overlayed on forest background', '숲 배경 위에 애니메이션풍 캐릭터 스케치가 겹쳐져 있습니다.'],
+      ['Two figures emit blue lightning bolts against a black background.', '검은 배경 앞에서 두 인물이 푸른 번개를 내뿜고 있습니다.'],
+      ['A serene sky with fluffy clouds and a thatched roof corner.', '폭신한 구름이 있는 차분한 하늘과 초가지붕 모서리가 보입니다.'],
+      ['Cracked earth texture with scattered rocks and sparse green grass.', '갈라진 땅 질감 위에 흩어진 바위와 드문드문 난 초록 풀이 보입니다.'],
+      ['A four-pane window frame with a modern design.', '현대적인 디자인의 네 칸 창문 프레임입니다.'],
+      ['A magical night scene with a castle, festive lights, and a glowing moon.', '성과 축제 조명, 빛나는 달이 있는 마법적인 밤 장면입니다.'],
+      ['A crescent moon shines above glowing street lamps in a starry night sky.', '별이 있는 밤하늘에서 초승달이 빛나는 가로등 위에 떠 있습니다.'],
+      ['A translucent anime character stands against a bright blue sky with clouds.', '구름이 있는 밝은 푸른 하늘을 배경으로 반투명한 애니메이션 캐릭터가 서 있습니다.'],
+      ['A serene bridge overlooks a vast blue sky with fluffy clouds, suggesting a tranquil, sunny day.', '차분한 다리가 폭신한 구름이 있는 넓은 푸른 하늘을 내려다보며, 평온하고 맑은 낮 분위기를 줍니다.'],
+      ['A dark forest scene under a cloudy night sky.', '구름 낀 밤하늘 아래의 어두운 숲 장면입니다.'],
+      ['A traditional Japanese window with pink curtains, overlooking a misty autumn landscape.', '분홍 커튼이 달린 전통적인 일본식 창문 너머로 안개 낀 가을 풍경이 보입니다.'],
+      ['Five vertical pillars against a bright blue sky with clouds.', '구름이 있는 밝은 푸른 하늘을 배경으로 다섯 개의 수직 기둥이 보입니다.'],
+      ['A dark, stormy night sky filled with swirling clouds.', '소용돌이치는 구름으로 가득한 어둡고 폭풍우 치는 밤하늘입니다.'],
+      ['A sketch of a winged figure against a blue sky with clouds.', '구름이 있는 푸른 하늘을 배경으로 날개 달린 인물의 스케치가 보입니다.'],
+      ['A chain-link fence against a blue sky with clouds.', '구름이 있는 푸른 하늘을 배경으로 체인 링크 울타리가 보입니다.'],
+      ['A dark, stormy urban skyline viewed through a chain-link fence, evoking a sense of isolation and impending weather.', '체인 링크 울타리 너머로 어둡고 폭풍우가 몰려오는 도시 스카이라인이 보이며, 고립감과 악천후가 다가오는 느낌을 줍니다.'],
+      ['Night scene with brick wall, trees, power lines, and streetlight under cloudy sky.', '구름 낀 하늘 아래 벽돌 벽, 나무, 전선, 가로등이 보이는 밤 장면입니다.'],
+      ['Night scene with water, trees, and street lamps under a dark sky.', '어두운 하늘 아래 물가, 나무, 가로등이 보이는 밤 장면입니다.'],
+      ['A dark, moody night scene with trees, streetlamps, and a fence under a cloudy sky.', '구름 낀 하늘 아래 나무, 가로등, 울타리가 보이는 어둡고 분위기 있는 밤 장면입니다.'],
+      ['Night scene with archway, trees, and cloudy sky in dark tones.', '어두운 톤의 밤 장면이며 아치형 통로, 나무, 구름 낀 하늘이 보입니다.'],
+      ['Nighttime view of a grand building with trees and streetlights.', '나무와 가로등이 있는 대형 건물을 밤에 바라본 장면입니다.'],
+      ['Dark night scene with trees, street lamps, and building facade', '나무, 가로등, 건물 외관이 보이는 어두운 밤 장면입니다.'],
+      ['Dark, moody night scene with trees and a distant building under blue lighting.', '푸른 조명 아래 나무와 먼 건물이 보이는 어둡고 분위기 있는 밤 장면입니다.'],
+      ['Night scene with trees, street lamps, and a building under a cloudy sky.', '구름 낀 하늘 아래 나무, 가로등, 건물이 보이는 밤 장면입니다.'],
+      ['A moonlit urban alleyway under an overpass with buildings and railings.', '달빛이 비치는 도시 골목길이며, 고가도로 아래에 건물과 난간이 보입니다.'],
+    ]);
+
+    const captionPhraseTerms = [
+      ['35th squad dorm', '35번대 기숙사'],
+      ['abandoned hotel exterior', '버려진 호텔 외관'],
+      ['abstract architectural collage', '추상적인 건축 콜라주'],
+      ['abstract teal textured surface', '청록색 추상 질감 표면'],
+      ['adult figure', '어른 인물'],
+      ['aged concrete', '오래된 콘크리트'],
+      ['ambient lighting', '주변 조명'],
+      ['anime background', '애니메이션 배경'],
+      ['anime character sketch', '애니메이션 캐릭터 스케치'],
+      ['anime scene', '애니메이션 장면'],
+      ['anime-style character cutouts', '애니메이션풍 캐릭터 컷아웃'],
+      ['anime-style character sketch', '애니메이션풍 캐릭터 스케치'],
+      ['anime-style classroom', '애니메이션풍 교실'],
+      ['anime-style corridor scene', '애니메이션풍 복도 장면'],
+      ['anime-style illustration', '애니메이션풍 일러스트'],
+      ['anime-style scene', '애니메이션풍 장면'],
+      ['architectural details', '건축 세부 요소'],
+      ['architectural elements', '건축 요소'],
+      ['architectural sketch', '건축 스케치'],
+      ['architectural sketches', '건축 스케치'],
+      ['arched doorway', '아치형 출입구'],
+      ['arched windows', '아치형 창문'],
+      ['armchairs', '안락의자'],
+      ['background', '배경'],
+      ['bakery display', '빵집 진열대'],
+      ['bald man', '대머리 남성'],
+      ['bamboo fences', '대나무 울타리'],
+      ['bar interior', '바 내부'],
+      ['barracks', '막사'],
+      ['bedroom', '침실'],
+      ['blue curtains', '파란 커튼'],
+      ['blue sky', '푸른 하늘'],
+      ['animated', '애니메이션'],
+      ['appears', '나타나는'],
+      ['architecture', '건축'],
+      ['area', '공간'],
+      ['attached', '부착된'],
+      ['balloons', '풍선'],
+      ['banners', '현수막'],
+      ['bars', '창살'],
+      ['beams', '보'],
+      ['below', '아래'],
+      ['bench', '벤치'],
+      ['bins', '상자'],
+      ['black', '검은색'],
+      ['blueprint-style', '청사진 스타일'],
+      ['blurred', '흐릿한'],
+      ['boards', '게시판'],
+      ['boxes', '상자'],
+      ['bright', '밝은'],
+      ['brighter', '더 밝은'],
+      ['2d anime style', '2D 애니풍 스타일'],
+      ['amidst', '사이에'],
+      ['angled', '기울어진'],
+      ['arches', '아치'],
+      ['areas', '공간'],
+      ['awning', '차양'],
+      ['being', '받고 있는'],
+      ['between', '사이에'],
+      ['blurry', '흐릿한'],
+      ['block', '블록'],
+      ['bloodstains', '핏자국'],
+      ['bonsai', '분재'],
+      ['bottles', '병'],
+      ['broken', '깨진'],
+      ['bulletin', '게시판'],
+      ['building', '건물'],
+      ['buildings', '건물'],
+      ['canopy', '수관'],
+      ['central', '중앙'],
+      ['chairs', '의자'],
+      ['close-up', '클로즈업'],
+      ['coat rack', '옷걸이'],
+      ['colorful', '다채로운'],
+      ['corner', '구석'],
+      ['cottage', '별장'],
+      ['counter', '카운터'],
+      ['courtyard', '안뜰'],
+      ['covering', '가리고 있는'],
+      ['cracked', '갈라진'],
+      ['cobwebs', '거미줄'],
+      ['daylight', '낮빛'],
+      ['daytime', '낮'],
+      ['damaged', '손상된'],
+      ['decor', '장식'],
+      ['decorated', '장식된'],
+      ['detailed', '세밀한'],
+      ['details', '세부 요소'],
+      ['desks', '책상'],
+      ['dimly', '희미하게'],
+      ['dim', '희미한'],
+      ['different', '서로 다른'],
+      ['digital', '디지털'],
+      ['distant', '먼'],
+      ['dome', '돔'],
+      ['domes', '돔'],
+      ['doors', '문'],
+      ['drawers', '서랍'],
+      ['dress', '드레스'],
+      ['dresses', '드레스'],
+      ['during', '동안'],
+      ['dusk', '해질녘'],
+      ['ear', '귀'],
+      ['each', '각각'],
+      ['elegant', '우아한'],
+      ['elements', '요소'],
+      ['equipment', '장비'],
+      ['exterior', '외관'],
+      ['facades', '외관'],
+      ['face', '얼굴'],
+      ['facing', '마주 보는'],
+      ['fan', '선풍기'],
+      ['faint', '희미한'],
+      ['figure', '인물'],
+      ['figures', '인물'],
+      ['fireplace', '벽난로'],
+      ['floats', '떠 있는'],
+      ['flies', '날아가는'],
+      ['floating', '떠 있는'],
+      ['flowing', '흐르는'],
+      ['foliage', '잎사귀'],
+      ['for', '위한'],
+      ['floors', '바닥'],
+      ['foreground', '전경'],
+      ['four', '네 개의'],
+      ['furniture', '가구'],
+      ['girl', '소녀'],
+      ['glowing', '빛나는'],
+      ['golden', '금빛'],
+      ['gothic', '고딕 양식'],
+      ['grand', '웅장한'],
+      ['gardens', '정원'],
+      ['garland', '화환 장식'],
+      ['girls', '소녀들'],
+      ['glows', '빛나는'],
+      ['greenery', '초록 식생'],
+      ['ground', '지면'],
+      ['graveyard', '묘지'],
+      ['hair', '머리카락'],
+      ['hall', '홀'],
+      ['hangs', '매달린'],
+      ['hanging', '매달린'],
+      ['head', '머리'],
+      ['hooded', '후드를 쓴'],
+      ['jars', '병'],
+      ['japanese', '일본식'],
+      ['labeled', '라벨이 붙은'],
+      ['laboratory', '실험실'],
+      ['lakeside', '호숫가'],
+      ['large', '큰'],
+      ['layout', '배치'],
+      ['leaves', '잎'],
+      ['layered', '겹쳐진'],
+      ['light', '빛'],
+      ['lights', '조명'],
+      ['lines', '선'],
+      ['lit', '빛나는'],
+      ['living', '거실'],
+      ['lockers', '사물함'],
+      ['lone', '홀로 있는'],
+      ['looking', '바라보는'],
+      ['lounge', '라운지'],
+      ['lush', '울창한'],
+      ['lamp', '조명'],
+      ['markings', '표식'],
+      ['man\'s', '남성의'],
+      ['medical', '의료'],
+      ['metal', '금속'],
+      ['minimal', '최소한의'],
+      ['mirror', '거울'],
+      ['motion', '움직임'],
+      ['multiple', '여러 개의'],
+      ['notices', '공지문'],
+      ['objects', '물체'],
+      ['obscure', '가리는'],
+      ['opening', '열리는'],
+      ['orange', '주황색'],
+      ['orientations', '방향'],
+      ['outlined', '윤곽선으로 표시된'],
+      ['overlay', '오버레이'],
+      ['overlaid', '겹쳐진'],
+      ['overlaying', '겹쳐진'],
+      ['overlooking', '내려다보는'],
+      ['other', '다른'],
+      ['pale', '옅은'],
+      ['part', '일부'],
+      ['pastries', '페이스트리'],
+      ['pathway', '길'],
+      ['person', '인물'],
+      ['person\'s', '인물의'],
+      ['piano', '피아노'],
+      ['pillars', '기둥'],
+      ['pipes', '배관'],
+      ['plain', '단순한'],
+      ['plaster', '회반죽'],
+      ['plants', '식물'],
+      ['polished', '광택 있는'],
+      ['posters', '포스터'],
+      ['prominent', '두드러진'],
+      ['refrigerator', '냉장고'],
+      ['reflecting', '반사하는'],
+      ['residential', '주거용'],
+      ['retro-style', '레트로풍'],
+      ['ribbons', '리본'],
+      ['roof', '지붕'],
+      ['rooms', '방'],
+      ['row', '줄'],
+      ['rubble', '잔해'],
+      ['ruined', '폐허가 된'],
+      ['rural', '시골'],
+      ['scattered', '흩어진'],
+      ['scene', '장면'],
+      ['screens', '화면'],
+      ['seated', '앉아 있는'],
+      ['sections', '구역'],
+      ['seen', '보이는'],
+      ['shadow', '그림자'],
+      ['shelf', '선반'],
+      ['shelves', '선반'],
+      ['shines', '빛나는'],
+      ['short', '짧은'],
+      ['shoulders', '어깨'],
+      ['silhouette', '실루엣'],
+      ['silhouettes', '실루엣'],
+      ['six', '여섯 개의'],
+      ['sit', '앉아 있는'],
+      ['sits', '앉아 있는'],
+      ['skeleton', '해골'],
+      ['skies', '하늘'],
+      ['slab', '판'],
+      ['small', '작은'],
+      ['soft', '부드러운'],
+      ['sofas', '소파'],
+      ['space', '공간'],
+      ['spans', '가로지르는'],
+      ['spider', '거미'],
+      ['stage', '무대'],
+      ['stand', '서 있는'],
+      ['standing', '서 있는'],
+      ['stands', '서 있는'],
+      ['starry', '별이 보이는'],
+      ['steel', '강철'],
+      ['stone', '돌'],
+      ['storyboard', '스토리보드'],
+      ['streamers', '리본 장식'],
+      ['streetlamp', '가로등'],
+      ['streetlamps', '가로등'],
+      ['students', '학생'],
+      ['style', '스타일'],
+      ['suit', '정장'],
+      ['superimposed', '겹쳐진'],
+      ['surface', '표면'],
+      ['setting', '배경'],
+      ['tables', '테이블'],
+      ['table', '테이블'],
+      ['takeo\'s', '타케오의'],
+      ['teacher', '교사'],
+      ['textured', '질감 있는'],
+      ['three', '세 개의'],
+      ['translucent', '반투명한'],
+      ['triangular', '삼각형'],
+      ['trunk', '줄기'],
+      ['twisted', '뒤틀린'],
+      ['tufted', '버튼 장식'],
+      ['towers', '탑'],
+      ['tower', '탑'],
+      ['tv', '텔레비전'],
+      ['two', '두 개의'],
+      ['undergrowth', '덤불'],
+      ['vase', '꽃병'],
+      ['veil', '베일'],
+      ['view', '풍경'],
+      ['views', '풍경'],
+      ['village', '마을'],
+      ['visible', '보이는'],
+      ['vintage', '빈티지'],
+      ['walks', '걸어가는'],
+      ['walls', '벽'],
+      ['warm', '따뜻한'],
+      ['warmly', '따뜻하게'],
+      ['wedding', '결혼식'],
+      ['white', '흰색'],
+      ['wooden', '목재'],
+      ['bookshelf', '책장'],
+      ['bookshelves', '책장'],
+      ['brick building', '벽돌 건물'],
+      ['brick pillars', '벽돌 기둥'],
+      ['brick walls', '벽돌 벽'],
+      ['bright exit', '밝은 출구'],
+      ['bright room', '밝은 방'],
+      ['bright sky', '밝은 하늘'],
+      ['broken glass', '깨진 유리'],
+      ['broken windows', '깨진 창문'],
+      ['bulletin board', '게시판'],
+      ['cafe interior', '카페 내부'],
+      ['castle', '성'],
+      ['central decorative panel', '중앙 장식 패널'],
+      ['chain-link fence', '체인 링크 울타리'],
+      ['chalkboard', '칠판'],
+      ['character placements', '캐릭터 배치'],
+      ['city skyline', '도시 스카이라인'],
+      ['city view', '도시 전망'],
+      ['cityscape', '도시 풍경'],
+      ['classical architecture', '고전 건축물'],
+      ['classroom layout', '교실 배치도'],
+      ['cloud outlines', '구름 윤곽선'],
+      ['cloudy night sky', '구름 낀 밤하늘'],
+      ['cloudy sky', '구름 낀 하늘'],
+      ['coffee table', '커피 테이블'],
+      ['concrete', '콘크리트'],
+      ['concrete blocks', '콘크리트 블록'],
+      ['concrete fence', '콘크리트 울타리'],
+      ['concrete floor', '콘크리트 바닥'],
+      ['concrete ground', '콘크리트 지면'],
+      ['concrete pillars', '콘크리트 기둥'],
+      ['concrete room', '콘크리트 방'],
+      ['concrete wall', '콘크리트 벽'],
+      ['concrete walls', '콘크리트 벽'],
+      ['construction guides', '작화 가이드'],
+      ['corridor scene', '복도 장면'],
+      ['cozy cafe interior', '아늑한 카페 내부'],
+      ['cozy corner', '아늑한 구석'],
+      ['cozy kitchen', '아늑한 주방'],
+      ['cozy living room', '아늑한 거실'],
+      ['cozy room interior', '아늑한 방 내부'],
+      ['cracked concrete', '갈라진 콘크리트'],
+      ['cracked earth texture', '갈라진 땅 질감'],
+      ['cracked glass', '금 간 유리'],
+      ['cracked stone', '갈라진 돌'],
+      ['cultural festival', '문화제'],
+      ['dark arched doorway', '어두운 아치형 출입구'],
+      ['dark bar interior', '어두운 바 내부'],
+      ['dark blue building facade', '어두운 푸른 건물 외관'],
+      ['dark blue color palette', '어두운 푸른색 팔레트'],
+      ['dark blue textured surface', '어두운 푸른 질감 표면'],
+      ['dark building facade', '어두운 건물 외관'],
+      ['dark castle', '어두운 성'],
+      ['dark cave entrance', '어두운 동굴 입구'],
+      ['dark cityscape', '어두운 도시 풍경'],
+      ['dark forest scene', '어두운 숲 장면'],
+      ['dark foreground', '어두운 전경'],
+      ['dark ground', '어두운 지면'],
+      ['dark industrial alleyway', '어두운 산업 골목'],
+      ['dark industrial building', '어두운 산업 건물'],
+      ['dark industrial corridor', '어두운 산업 복도'],
+      ['dark industrial room', '어두운 산업 공간'],
+      ['dark interior', '어두운 실내'],
+      ['dark night scene', '어두운 밤 장면'],
+      ['dark night sky', '어두운 밤하늘'],
+      ['dark room', '어두운 방'],
+      ['dark sky', '어두운 하늘'],
+      ['dark void', '어두운 빈 공간'],
+      ['debris', '잔해'],
+      ['decorated classroom', '장식된 교실'],
+      ['decorated school hallway', '장식된 학교 복도'],
+      ['decorated wall', '장식된 벽'],
+      ['decorative doors', '장식 문'],
+      ['decorative elements', '장식 요소'],
+      ['dense foliage', '빽빽한 잎사귀'],
+      ['dense green forest', '울창한 초록 숲'],
+      ['dense greenery', '울창한 초록 식생'],
+      ['dense trees', '빽빽한 나무'],
+      ['detailed architecture', '세밀한 건축'],
+      ['detailed architectural sketch', '세밀한 건축 스케치'],
+      ['detailed anime-style interior', '세밀한 애니메이션풍 실내'],
+      ['detailed furniture layout', '세밀한 가구 배치'],
+      ['diagonal beams', '대각선 보'],
+      ['dim lighting', '희미한 조명'],
+      ['dimly lit bakery display', '희미하게 빛나는 빵집 진열대'],
+      ['dimly lit chocolate shop interior', '희미하게 빛나는 초콜릿 가게 내부'],
+      ['dimly lit outdoor scene', '희미하게 빛나는 야외 장면'],
+      ['dimly lit room', '희미하게 빛나는 방'],
+      ['dimly lit scene', '희미하게 빛나는 장면'],
+      ['dimly lit storage room', '희미하게 빛나는 창고'],
+      ['dining area', '식사 공간'],
+      ['distant building', '먼 건물'],
+      ['distant buildings', '먼 건물들'],
+      ['distant mountains', '먼 산'],
+      ['doorway', '출입구'],
+      ['draped fabric', '걸쳐진 천'],
+      ['dresser', '화장대'],
+      ['elevated walkways', '고가 보행로'],
+      ['elevator doors', '엘리베이터 문'],
+      ['empty anime classroom', '빈 애니메이션 교실'],
+      ['empty classroom', '빈 교실'],
+      ['empty concrete corridor', '빈 콘크리트 복도'],
+      ['empty concrete floor', '빈 콘크리트 바닥'],
+      ['empty concrete room', '빈 콘크리트 방'],
+      ['empty restaurant interior', '빈 식당 내부'],
+      ['empty school hallway', '빈 학교 복도'],
+      ['empty shelves', '빈 선반'],
+      ['empty theater', '빈 극장'],
+      ['exposed pipes', '노출 배관'],
+      ['expressive eyes', '표정이 강한 눈'],
+      ['faint annotations', '희미한 주석'],
+      ['faint architectural lines', '희미한 건축 선'],
+      ['faint character outlines', '희미한 캐릭터 윤곽'],
+      ['faint cloud outlines', '희미한 구름 윤곽'],
+      ['faint light sources', '희미한 광원'],
+      ['faint overlay', '희미한 오버레이'],
+      ['faint sketches', '희미한 스케치'],
+      ['fantasy castle', '판타지 성'],
+      ['floral curtains', '꽃무늬 커튼'],
+      ['flowering tree', '꽃이 핀 나무'],
+      ['fluffy clouds', '폭신한 구름'],
+      ['formal office interior', '격식 있는 사무실 내부'],
+      ['formal room', '격식 있는 방'],
+      ['fountain', '분수'],
+      ['framed photos', '액자 사진'],
+      ['furniture layout', '가구 배치'],
+      ['futuristic cityscape', '미래적인 도시 풍경'],
+      ['futuristic dome structure', '미래적인 돔 구조물'],
+      ['futuristic reception hall', '미래적인 리셉션 홀'],
+      ['futuristic research facility', '미래 연구 시설'],
+      ['futuristic structure', '미래적인 구조물'],
+      ['garden setting', '정원 배경'],
+      ['geometric glass ceiling', '기하학적 유리 천장'],
+      ['ghostly anime girl', '유령 같은 애니메이션 소녀'],
+      ['ghostly figure', '유령 같은 인물'],
+      ['ghostly figures', '유령 같은 인물들'],
+      ['glass ceiling', '유리 천장'],
+      ['glass partition', '유리 파티션'],
+      ['glass walls', '유리벽'],
+      ['glass windows', '유리창'],
+      ['glowing beam', '빛나는 빔'],
+      ['glowing blue city lights', '빛나는 푸른 도시 불빛'],
+      ['glowing blue seats', '빛나는 푸른 좌석'],
+      ['glowing elements', '빛나는 요소'],
+      ['glowing lantern', '빛나는 등불'],
+      ['glowing moon', '빛나는 달'],
+      ['glowing streetlights', '빛나는 가로등'],
+      ['glowing windows', '빛나는 창문'],
+      ['grand building facade', '대형 건물 외관'],
+      ['grand building', '대형 건물'],
+      ['grand castle', '대형 성'],
+      ['grand historic building', '웅장한 역사적 건물'],
+      ['grand magical academy building', '웅장한 마법 학원 건물'],
+      ['grand room', '웅장한 방'],
+      ['grand school building', '웅장한 학교 건물'],
+      ['grand staircase', '웅장한 계단'],
+      ['grand white mansion', '웅장한 흰 저택'],
+      ['grassy field', '풀밭'],
+      ['green forest', '초록 숲'],
+      ['green hills', '초록 언덕'],
+      ['green lawn', '초록 잔디밭'],
+      ['green roof', '초록 지붕'],
+      ['green shutters', '초록 덧창'],
+      ['green tree', '초록 나무'],
+      ['green-lit cityscape', '초록빛 도시 풍경'],
+      ['grid lines overlay', '격자선 오버레이'],
+      ['grid overlay', '격자 오버레이'],
+      ['grid patterns', '격자 패턴'],
+      ['hanging basket', '걸이 바구니'],
+      ['hanging cable', '매달린 케이블'],
+      ['hanging decorations', '매달린 장식'],
+      ['hanging light bulb', '매달린 전구'],
+      ['hanging lamps', '매달린 램프'],
+      ['hanging lights', '매달린 조명'],
+      ['hanging purple wisteria flowers', '매달린 보라색 등나무꽃'],
+      ['hedge shapes', '생울타리 형태'],
+      ['high-rises', '고층 건물'],
+      ['historic building', '역사적 건물'],
+      ['hotel room', '호텔 방'],
+      ['hospital room', '병실'],
+      ['illuminated buildings', '불이 켜진 건물'],
+      ['illuminated plants', '조명 받은 식물'],
+      ['illuminated school building', '조명이 켜진 학교 건물'],
+      ['illuminated skyscrapers', '불이 켜진 고층 건물'],
+      ['illuminated windows', '불이 켜진 창문'],
+      ['indistinct trees', '흐릿한 나무'],
+      ['industrial interior', '산업적 실내'],
+      ['indoor reception entrance', '실내 리셉션 입구'],
+      ['inset landscape view', '삽입된 풍경 화면'],
+      ['interior scene', '실내 장면'],
+      ['japanese apartment room', '일본식 아파트 방'],
+      ['japanese house', '일본식 집'],
+      ['japanese room', '일본식 방'],
+      ['kitchen interior', '주방 내부'],
+      ['lamp posts', '가로등 기둥'],
+      ['large building', '대형 건물'],
+      ['large cabinet', '대형 수납장'],
+      ['large glowing moon', '크게 빛나는 달'],
+      ['large textured wall', '큰 질감 벽'],
+      ['large vertical structure', '큰 수직 구조물'],
+      ['large window', '큰 창문'],
+      ['large windows', '큰 창문'],
+      ['leather furniture', '가죽 가구'],
+      ['leather sofas', '가죽 소파'],
+      ['line art', '선화'],
+      ['line drawing', '선화'],
+      ['love hotel room interior', '러브호텔 방 내부'],
+      ['lush garden', '울창한 정원'],
+      ['lush greenery', '울창한 초록 식생'],
+      ['lush green forest', '울창한 초록 숲'],
+      ['lush outdoor landscape', '울창한 야외 풍경'],
+      ['metal framework', '금속 골조'],
+      ['metal grates', '금속 격자'],
+      ['metal railing', '금속 난간'],
+      ['metal railings', '금속 난간'],
+      ['minimal lighting', '최소한의 조명'],
+      ['minimalist interior corner', '미니멀한 실내 구석'],
+      ['minimalist room corner', '미니멀한 방 구석'],
+      ['minimalist room', '미니멀한 방'],
+      ['misty autumn landscape', '안개 낀 가을 풍경'],
+      ['misty forest floor', '안개 낀 숲 바닥'],
+      ['misty garden', '안개 낀 정원'],
+      ['modern apartment buildings', '현대식 아파트 건물'],
+      ['modern architectural interior', '현대적인 건축 실내'],
+      ['modern architectural scene', '현대적인 건축 장면'],
+      ['modern bar interior', '현대적인 바 내부'],
+      ['modern building entrance', '현대식 건물 입구'],
+      ['modern building exterior', '현대식 건물 외관'],
+      ['modern building', '현대식 건물'],
+      ['modern city building', '현대식 도시 건물'],
+      ['modern city skyline', '현대 도시 스카이라인'],
+      ['modern concrete building', '현대식 콘크리트 건물'],
+      ['modern design', '현대적인 디자인'],
+      ['modern futuristic corridor', '현대적인 미래형 복도'],
+      ['modern high-rises', '현대식 고층 건물'],
+      ['modern house exterior', '현대식 주택 외관'],
+      ['modern interior', '현대적인 실내'],
+      ['modern lighting', '현대적인 조명'],
+      ['modern lounge', '현대적인 라운지'],
+      ['modern office interior', '현대적인 사무실 내부'],
+      ['modern office', '현대적인 사무실'],
+      ['modern observation room', '현대적인 전망실'],
+      ['modern room', '현대적인 방'],
+      ['modern school building', '현대식 학교 건물'],
+      ['modern skyscrapers', '현대식 고층 건물'],
+      ['modern structure', '현대식 구조물'],
+      ['modern urban walkway', '현대적인 도시 보행로'],
+      ['moonlit night sky', '달빛이 비치는 밤하늘'],
+      ['moonlit urban alleyway', '달빛이 비치는 도시 골목길'],
+      ['multi-story school building', '다층 학교 건물'],
+      ['night cityscape', '밤의 도시 풍경'],
+      ['night scene', '밤 장면'],
+      ['night sky', '밤하늘'],
+      ['night street scene', '밤 거리 장면'],
+      ['night view', '밤 풍경'],
+      ['nighttime city street', '밤의 도시 거리'],
+      ['nighttime cityscape', '밤의 도시 풍경'],
+      ['nighttime forest scene', '밤의 숲 장면'],
+      ['nighttime office interior', '밤의 사무실 내부'],
+      ['nighttime rooftop view', '밤의 옥상 풍경'],
+      ['nighttime scene', '밤 장면'],
+      ['nighttime tower', '밤의 탑'],
+      ['nighttime urban scene', '밤의 도시 장면'],
+      ['nighttime view', '밤 풍경'],
+      ['notice board', '알림판'],
+      ['obelisk', '오벨리스크'],
+      ['office and lounge areas', '사무실과 라운지 공간'],
+      ['office desk', '사무용 책상'],
+      ['office interior', '사무실 내부'],
+      ['open door', '열린 문'],
+      ['ornate metal railings', '화려한 금속 난간'],
+      ['ornate pink floral border', '화려한 분홍 꽃 테두리'],
+      ['overhead pipes', '천장 배관'],
+      ['overpass', '고가도로'],
+      ['painted concrete', '칠해진 콘크리트'],
+      ['paper airplane', '종이비행기'],
+      ['paper chains', '종이 체인 장식'],
+      ['parking lot', '주차장'],
+      ['part of a red chair', '빨간 의자의 일부'],
+      ['patterned wallpaper', '무늬 벽지'],
+      ['patterned walls', '무늬 벽'],
+      ['pink and orange clouds', '분홍색과 주황색 구름'],
+      ['pink and purple sky', '분홍색과 보라색 하늘'],
+      ['pink curtains', '분홍 커튼'],
+      ['prison cell block', '감옥 감방 구역'],
+      ['purple cracked concrete texture', '보라색 갈라진 콘크리트 질감'],
+      ['purple curtain', '보라색 커튼'],
+      ['purple flowers', '보라색 꽃'],
+      ['quiet residential street', '조용한 주택가 거리'],
+      ['railing', '난간'],
+      ['railings', '난간'],
+      ['red chair', '빨간 의자'],
+      ['red energy column', '붉은 에너지 기둥'],
+      ['red sofa', '빨간 소파'],
+      ['red tufted sofa', '빨간 버튼 장식 소파'],
+      ['red walls', '빨간 벽'],
+      ['restaurant interior', '식당 내부'],
+      ['rocky cave interior', '바위 동굴 내부'],
+      ['rocky cliff', '바위 절벽'],
+      ['rocky cliffside', '바위 절벽지대'],
+      ['rocky terrain', '바위 지형'],
+      ['rooftop equipment', '옥상 설비'],
+      ['rooftop fence', '옥상 울타리'],
+      ['rooftop helipad', '옥상 헬기 착륙장'],
+      ['rooftop scene', '옥상 장면'],
+      ['round bed', '둥근 침대'],
+      ['ruined architecture', '폐허가 된 건축물'],
+      ['ruined cityscape', '폐허가 된 도시 풍경'],
+      ['rural japanese village', '일본 시골 마을'],
+      ['scattered debris', '흩어진 잔해'],
+      ['scattered rocks', '흩어진 바위'],
+      ['scattered white clouds', '흩어진 흰 구름'],
+      ['school courtyard', '학교 안뜰'],
+      ['school hallway', '학교 복도'],
+      ['sectional sofa', '섹셔널 소파'],
+      ['shelving', '선반'],
+      ['shadowy background', '그늘진 배경'],
+      ['shadowy interior space', '그늘진 실내 공간'],
+      ['shoji screens', '장지문'],
+      ['shooting star', '별똥별'],
+      ['silhouette of a building', '건물 실루엣'],
+      ['silhouetted trees', '실루엣 처리된 나무'],
+      ['sliding door', '미닫이문'],
+      ['sliding doors', '미닫이문'],
+      ['small boat', '작은 배'],
+      ['small table', '작은 테이블'],
+      ['smiling girl', '웃고 있는 소녀'],
+      ['soft lighting', '부드러운 조명'],
+      ['soft pink and orange clouds', '부드러운 분홍색과 주황색 구름'],
+      ['soft tones', '부드러운 색조'],
+      ['solitary tree', '홀로 선 나무'],
+      ['spacious, modern interior', '넓고 현대적인 실내'],
+      ['sprawling city', '넓게 펼쳐진 도시'],
+      ['staircase', '계단'],
+      ['starry night sky', '별이 보이는 밤하늘'],
+      ['starry sky', '별이 보이는 하늘'],
+      ['stone archway', '돌 아치형 통로'],
+      ['stone bridge', '돌다리'],
+      ['stone columns', '석조 기둥'],
+      ['stone lantern', '석등'],
+      ['stone wall', '돌담'],
+      ['stone walls', '돌벽'],
+      ['stone-walled courtyard', '돌담으로 둘러싸인 안뜰'],
+      ['storage room', '창고'],
+      ['street scene', '거리 장면'],
+      ['streetlight', '가로등'],
+      ['streetlights', '가로등'],
+      ['structural beams', '구조 보'],
+      ['structural elements', '구조 요소'],
+      ['sunlit japanese room', '햇빛이 드는 일본식 방'],
+      ['sunny day', '맑은 낮'],
+      ['sunset forest scene', '석양의 숲 장면'],
+      ['sunset sky', '석양 하늘'],
+      ['sunset view', '석양 풍경'],
+      ['surrounding landscape', '주변 풍경'],
+      ['surrounding trees', '주변 나무'],
+      ['tall buildings', '높은 건물'],
+      ['tall trees', '키 큰 나무'],
+      ['tatami mat floor', '다다미 바닥'],
+      ['tatami mats', '다다미'],
+      ['thatched roof corner', '초가지붕 모서리'],
+      ['the sea and sky', '바다와 하늘'],
+      ['theater', '극장'],
+      ['tiled flooring', '타일 바닥'],
+      ['tiled wall', '타일 벽'],
+      ['traditional building', '전통 건물'],
+      ['traditional house', '전통 가옥'],
+      ['traditional houses', '전통 가옥'],
+      ['traditional japanese apartment room', '전통 일본식 아파트 방'],
+      ['traditional japanese architecture', '전통 일본 건축'],
+      ['traditional japanese garden scene', '전통 일본 정원 장면'],
+      ['traditional japanese house', '전통 일본식 집'],
+      ['traditional japanese room', '전통 일본식 방'],
+      ['traditional japanese-style building', '전통 일본식 건물'],
+      ['traditional robes', '전통 의상'],
+      ['traditional room', '전통 방'],
+      ['traditional-style house', '전통 양식 집'],
+      ['translucent anime character', '반투명한 애니메이션 캐릭터'],
+      ['translucent anime girl', '반투명한 애니메이션 소녀'],
+      ['translucent figure', '반투명한 인물'],
+      ['translucent figures', '반투명한 인물들'],
+      ['translucent ghostly figures', '반투명한 유령 같은 인물들'],
+      ['translucent screen', '반투명한 화면'],
+      ['trash bin', '쓰레기통'],
+      ['trash can', '쓰레기통'],
+      ['tree branch', '나뭇가지'],
+      ['tree roots', '나무 뿌리'],
+      ['two-story building', '2층 건물'],
+      ['underground sewer passage', '지하 하수도 통로'],
+      ['underground tunnel', '지하 터널'],
+      ['urban alleyway', '도시 골목길'],
+      ['urban scene', '도시 장면'],
+      ['urban skyline', '도시 스카이라인'],
+      ['vertical bars', '수직 창살'],
+      ['vertical column', '수직 기둥'],
+      ['vertical panels', '수직 패널'],
+      ['vertical window bars', '수직 창살'],
+      ['vertical window panes', '수직 창문 칸'],
+      ['vertical streaks', '수직 줄무늬'],
+      ['vintage equipment', '빈티지 장비'],
+      ['vintage furniture', '빈티지 가구'],
+      ['vintage-style furniture', '빈티지풍 가구'],
+      ['vintage-style kitchen interior', '빈티지풍 주방 내부'],
+      ['vintage-style room', '빈티지풍 방'],
+      ['wall paneling', '벽 패널'],
+      ['wall sconce', '벽등'],
+      ['wall-mounted lamp', '벽걸이 조명'],
+      ['warm ambient lighting', '따뜻한 주변 조명'],
+      ['warm lighting', '따뜻한 조명'],
+      ['warm tones', '따뜻한 색조'],
+      ['warm window light', '따뜻한 창문 빛'],
+      ['water channels', '물길'],
+      ['weathered concrete', '풍화된 콘크리트'],
+      ['weathered two-story building', '낡은 2층 건물'],
+      ['whiteboard', '화이트보드'],
+      ['winding paths', '구불구불한 길'],
+      ['window frame', '창틀'],
+      ['window panes', '창문 칸'],
+      ['window view', '창밖 풍경'],
+      ['windows showing daylight', '낮빛이 보이는 창문'],
+      ['windows showing daytime', '낮이 보이는 창문'],
+      ['windows showing a bright sky', '밝은 하늘이 보이는 창문'],
+      ['wireframe character', '와이어프레임 캐릭터'],
+      ['wireframe overlay', '와이어프레임 오버레이'],
+      ['wooden balcony', '목재 발코니'],
+      ['wooden cabinets', '목재 수납장'],
+      ['wooden desk', '목재 책상'],
+      ['wooden dock', '목재 선착장'],
+      ['wooden fence', '목재 울타리'],
+      ['wooden floor', '목재 바닥'],
+      ['wooden flooring', '목재 바닥'],
+      ['wooden floors', '목재 바닥'],
+      ['wooden furniture', '목재 가구'],
+      ['wooden panels', '목재 패널'],
+      ['wooden porch', '목재 툇마루'],
+      ['wooden railing', '목재 난간'],
+      ['wooden shelves', '목재 선반'],
+      ['wooden slatted panels', '목재 슬랫 패널'],
+      ['wooden slatted walls', '목재 슬랫 벽'],
+      ['wooden tables and chairs', '목재 테이블과 의자'],
+      ['wooden walls', '목재 벽'],
+      ['yellow sofa', '노란 소파'],
+    ];
+
+    const captionTranslationPairs = [...captionPhraseTerms, ...koTerms]
+      .sort((a, b) => b[0].length - a[0].length);
+
+    function translateCaptionSegment(segment) {
+      let out = String(segment || '').trim().toLowerCase();
+      out = out.replace(/[.。]+$/g, '');
+      out = out.replace(/\b(a|an|the)\b/g, ' ');
+      out = out.replace(/\bin front of\b/g, '앞에');
+      out = out.replace(/\bin the foreground\b/g, '전경에');
+      out = out.replace(/\bin the background\b/g, '배경에');
+      out = out.replace(/\bin background\b/g, '배경에');
+      for (const [needle, ko] of captionTranslationPairs) {
+        out = out.replace(new RegExp(`\\b${escapeRegex(needle.toLowerCase())}\\b`, 'g'), ko);
+      }
+      out = out.replace(/\bwith\b/g, '함께');
+      out = out.replace(/\band\b/g, '및');
+      out = out.replace(/\bof\b/g, '의');
+      out = out.replace(/\bin\b/g, '안에');
+      out = out.replace(/\bon\b/g, '위에');
+      out = out.replace(/\bfrom\b/g, '에서');
+      out = out.replace(/\bbefore\b/g, '앞에');
+      out = out.replace(/\bbetween\b/g, '사이에');
+      out = out.replace(/\bduring\b/g, '동안');
+      out = out.replace(/\bat\b/g, '에서');
+      out = out.replace(/\bunder\b/g, '아래');
+      out = out.replace(/\babove\b/g, '위');
+      out = out.replace(/\bover\b/g, '위');
+      out = out.replace(/\bthrough\b/g, '통해');
+      out = out.replace(/\bshowing\b/g, '보여주는');
+      out = out.replace(/\bviewed\b/g, '보이는');
+      out = out.replace(/\bagainst\b/g, '배경으로');
+      out = out.replace(/\bnear\b/g, '근처');
+      out = out.replace(/\bnext to\b/g, '옆');
+      out = out.replace(/\boutside\b/g, '밖');
+      out = out.replace(/\binside\b/g, '안');
+      out = out.replace(/\bsurrounded by\b/g, '둘러싸인');
+      out = out.replace(/\bleading to\b/g, '이어지는');
+      out = out.replace(/\bset in\b/g, '놓인');
+      out = out.replace(/\bseen through\b/g, '통해 보이는');
+      out = out.replace(/\s*,\s*/g, ', ');
+      out = out.replace(/\b[sd]\b/g, '');
+      out = out.replace(/\s+/g, ' ').trim();
+      out = out.replace(/\s+([,.)])/g, '$1');
+      return out || String(segment || '').trim();
+    }
+
+    function translateCaptionList(segment) {
+      const raw = String(segment || '').replace(/\.$/, '');
+      const parts = raw.split(/\s*,\s*|\s+and\s+/i)
+        .map(part => translateCaptionSegment(part))
+        .filter(Boolean);
+      return parts.length ? parts.join(', ') : translateCaptionSegment(raw);
+    }
+
+    function translateEnglishCaptionFallback(caption) {
+      const source = String(caption || '').trim();
+      const text = source.replace(/[.。]+$/g, '').trim();
+      let match;
+
+      match = text.match(/^A (.+?) under (.+?) with (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[1])}이며, ${translateCaptionSegment(match[2])} 아래에 ${translateCaptionList(match[3])} 등이 보입니다.`;
+      }
+
+      match = text.match(/^(.+?) with (.+?) under (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[3])} 아래의 ${translateCaptionSegment(match[1])}이며, ${translateCaptionList(match[2])} 등이 보입니다.`;
+      }
+
+      match = text.match(/^(.+?) with (.+?) over (.+)$/i) || text.match(/^(.+?) with (.+?) above (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[3])} 위의 ${translateCaptionSegment(match[1])}이며, ${translateCaptionList(match[2])} 등이 보입니다.`;
+      }
+
+      match = text.match(/^(.+?) with (.+?) viewed through (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[3])}을 통해 보이는 ${translateCaptionSegment(match[1])}이며, ${translateCaptionList(match[2])} 등이 보입니다.`;
+      }
+
+      match = text.match(/^(.+?) viewed through (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[2])}을 통해 보이는 ${translateCaptionSegment(match[1])}입니다.`;
+      }
+
+      match = text.match(/^(.+?) showing (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[1])}이며, ${translateCaptionSegment(match[2])}을 보여줍니다.`;
+      }
+
+      match = text.match(/^(.+?) surrounded by (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[2])}에 둘러싸인 ${translateCaptionSegment(match[1])}입니다.`;
+      }
+
+      match = text.match(/^(.+?) resembling (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[2])}처럼 보이는 ${translateCaptionSegment(match[1])}입니다.`;
+      }
+
+      match = text.match(/^(.+?) leading to (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[2])}으로 이어지는 ${translateCaptionSegment(match[1])}입니다.`;
+      }
+
+      match = text.match(/^(.+?) against (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[2])}을 배경으로 한 ${translateCaptionSegment(match[1])}입니다.`;
+      }
+
+      match = text.match(/^(.+?) with (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[1])}이며, ${translateCaptionList(match[2])} 등이 보입니다.`;
+      }
+
+      match = text.match(/^(.+?) under (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[2])} 아래의 ${translateCaptionSegment(match[1])}입니다.`;
+      }
+
+      match = text.match(/^(.+?) in (.+)$/i);
+      if (match) {
+        return `${translateCaptionSegment(match[2])} 안의 ${translateCaptionSegment(match[1])}입니다.`;
+      }
+
+      const translated = translateCaptionSegment(text);
+      if (/[가-힣]/.test(translated)) return `${translated}입니다.`;
+      return `자동 한국어 번역이 부족합니다. 영어 원문을 함께 확인하세요: ${source}`;
+    }
+
+    function directCaptionTranslation(row) {
+      const caption = String(row.mc_caption || '').trim();
+      const captionKo = String(row.caption_ko || '').trim();
+      if (captionKo) return captionKo;
+      if (!caption || caption.toLowerCase() === 'unknown') {
+        return 'AI 영어 원문이 없습니다. 이미지를 직접 확인하세요.';
+      }
+      if (exactCaptionTranslations.has(caption)) {
+        return exactCaptionTranslations.get(caption);
+      }
+      return translateEnglishCaptionFallback(caption);
+    }
+
+    function koreanCaption(row) {
+      const caption = String(row.mc_caption || '').trim();
+      const tags = parseTags(row.ai_tags);
+      const hasUsableCaption = caption && caption.toLowerCase() !== 'unknown';
+      const source = hasUsableCaption
+        ? caption.toLowerCase()
+        : `${tags.join(' ')} ${row.file_name || ''} ${row.relative_path || ''}`.toLowerCase();
+      const matched = [];
+      for (const [needle, ko] of koTerms) {
+        if (hasEnglishTerm(source, needle) && !matched.includes(ko)) matched.push(ko);
+      }
+      if (matched.length > 0) {
+        return `한글 보조 요약: ${matched.slice(0, 10).join(' · ')} 요소가 보이는 장면입니다.`;
+      }
+
+      const queryTerms = parseQueryTerms(row);
+      const fallbackParts = [];
+      if (hasUsableCaption) fallbackParts.push(`원문 설명: ${caption}`);
+      if (tags.length) fallbackParts.push(`태그: ${tags.slice(0, 8).join(', ')}`);
+      if (queryTerms.length) fallbackParts.push(`확인할 조건: ${queryTerms.join(' · ')}`);
+      fallbackParts.push(`파일명: ${row.file_name || row.item_id}`);
+      return `한글 보조 요약: 자동 설명 정보가 부족합니다. ${fallbackParts.join(' / ')}. 이미지를 직접 보고 0, 1, 2를 선택하세요.`;
+    }
+
+    function scopeStatus(row) {
+      const notes = String(row.review_notes || '');
+      const match = notes.match(/scope=([^;]+)/);
+      if (!match) return '경로/범위는 파일 경로를 직접 확인';
+      const value = match[1];
+      if (value.endsWith(':exact')) return '검색 범위가 경로에 명확히 포함됨';
+      if (value.endsWith(':substring')) return '검색 범위가 경로에 부분적으로 포함됨';
+      if (value.endsWith(':none')) return '검색 범위가 경로에서 확인되지 않음';
+      return value;
+    }
+
+    function translateLooseTerm(term) {
+      const src = String(term || '').replace(/_/g, ' ').toLowerCase();
+      for (const [needle, ko] of captionTranslationPairs) {
+        if (hasEnglishTerm(src, needle) || src === needle) return ko;
+      }
+      return String(term || '').trim();
+    }
+
+    function translatedTagList(row) {
+      const tags = parseTags(row.ai_tags);
+      if (!tags.length) return '태그 없음';
+      return tags.slice(0, 12).map(tag => `${translateLooseTerm(tag)} (${tag})`).join(' · ');
+    }
+
+    function hasBadCaption(row) {
+      const caption = String(row.mc_caption || '').trim();
+      return !caption || caption.toLowerCase() === 'unknown';
+    }
+
+    function hasBadTags(row) {
+      const tags = String(row.ai_tags || '').trim();
+      return !tags || tags === '[]';
+    }
+
+    function isRepairRequired(row) {
+      const status = String(row.metadata_status || '').trim();
+      if (status) return status === 'repair_required';
+      return hasBadCaption(row) && hasBadTags(row);
+    }
+
+    function isSamplingExcluded(row) {
+      return String(row.sample_status || '').trim() === 'excluded';
+    }
+
+    function isSearchLabelable(row) {
+      return !isSamplingExcluded(row);
+    }
+
+    function isCaptionLabelable(row) {
+      return !isSamplingExcluded(row) && !isRepairRequired(row);
+    }
+
+    function metadataIssueText(row) {
+      const issue = String(row.metadata_issue || '').trim();
+      const labels = {
+        parse_fallback_legacy: 'AI 설명/태그가 구버전 분석값이라 신뢰하지 않음',
+        caption_model_marked_but_empty: 'AI 설명/태그 저장값이 비어 있음',
+        missing_caption_and_tags: 'AI 설명과 태그가 모두 없음',
+        missing_caption: 'AI 설명 없음',
+        missing_tags: '태그 없음',
+      };
+      return labels[issue] || issue || 'AI 설명/태그 결손';
+    }
+
+    function sampleIssueText(row) {
+      const issue = String(row.sample_issue || '').trim();
+      const labels = {
+        duplicate_item_over_cap: '같은 파일이 표본 반복 허용치를 초과함',
+        duplicate_query_intent_over_cap: '같은 검색 조건 조합이 이미 표본에 포함됨',
+        non_background_query: '배경 전용 검수 범위가 아닌 검색문',
+      };
+      return labels[issue] || issue || '표본 제외';
+    }
+
+    function searchLabelableRows() {
+      return rows.filter(isSearchLabelable);
+    }
+
+    function captionLabelableRows() {
+      return rows.filter(isCaptionLabelable);
+    }
+
+    function reviewCounts() {
+      const searchRows = searchLabelableRows();
+      const captionRows = captionLabelableRows();
+      return {
+        searchRows,
+        captionRows,
+        searchReviewed: searchRows.filter(r => ['0','1','2'].includes(String(r.reviewer_relevance ?? '').trim())).length,
+        captionReviewed: captionRows.filter(r => ['0','1','2'].includes(String(r.caption_alignment ?? '').trim())).length,
+        repairCount: rows.filter(isRepairRequired).length,
+        sampleExcludedCount: rows.filter(r => !isRepairRequired(r) && isSamplingExcluded(r)).length,
+      };
+    }
+
+    function decisionBox(row) {
+      const caption = String(row.mc_caption || '').trim();
+      if (isRepairRequired(row)) {
+        return '';
+      }
+      if (isSamplingExcluded(row)) {
+        return `
+          <div class="repair-note">
+            <strong>라벨링 제외 · 표본 중복</strong><br />
+            ${esc(sampleIssueText(row))}. 이 행은 같은 파일이 여러 검색문에 과도하게 반복되어 측정 표본에서 제외합니다.
+          </div>
+        `;
+      }
+      return `
+        <div class="decision">
+          <div class="decision-title">AI 원문 직번역 + 태그 번역</div>
+          <div class="decision-row"><b>영어 원문</b><div class="decision-main">${esc(caption || '설명 없음')}</div></div>
+          <div class="decision-row"><b>한국어</b><div class="decision-main">${esc(directCaptionTranslation(row))}</div></div>
+          <div class="decision-row"><b>태그</b><div class="decision-main">${esc(translatedTagList(row))}</div></div>
+        </div>
+      `;
+    }
+
+    function setServerStatus(message, kind = '') {
+      const el = document.getElementById('serverStatus');
+      el.textContent = message;
+      el.className = `server-status ${kind}`.trim();
+    }
+
+    function rowKey(row) {
+      return `${row.query_id}:${row.item_id}`;
+    }
+
+    async function loadReviewRows() {
+      try {
+        const resp = await fetch(`${REVIEW_API_BASE}/api/review/rows`);
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        rows = data.rows;
+        queries = data.queries;
+        const counts = reviewCounts();
+        setServerStatus(`저장 서버 연결됨. 검색 정답성: ${counts.searchReviewed} / ${counts.searchRows.length}. AI 설명 정합성: ${counts.captionReviewed} / ${counts.captionRows.length}. AI 설명 제외: ${counts.repairCount}. 반복 제외: ${counts.sampleExcludedCount}. CSV: ${data.csv}`, 'ok');
+        render();
+      } catch (err) {
+        setServerStatus(`저장 서버 미연결: python3 tools/serve_search_label_review.py 실행 후 다시 여세요. (${err.message})`, 'error');
+        document.getElementById('app').innerHTML = '<div class="empty">리뷰 서버에 연결할 수 없습니다.</div>';
+      }
+    }
+
+    function updateCardSelection(row, field, value, stateText = '', stateKind = '') {
+      const cardEl = document.querySelector(`[data-row-key="${CSS.escape(rowKey(row))}"]`);
+      if (!cardEl) return;
+      cardEl.querySelectorAll(`.pill[data-field="${field}"]`).forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.value === value);
+      });
+      const stateEl = cardEl.querySelector(`.save-state[data-field="${field}"]`);
+      if (stateEl) {
+        stateEl.textContent = stateText;
+        stateEl.className = `save-state ${stateKind}`.trim();
+      }
+    }
+
+    function fieldLabel(field) {
+      return field === 'caption_alignment' ? 'AI 설명 정합성' : '검색 정답성';
+    }
+
+    async function saveReviewValue(row, field, value) {
+      const key = rowKey(row);
+      const savingKey = `${key}:${field}`;
+      if (savingKeys.has(savingKey)) return;
+      savingKeys.add(savingKey);
+      const previous = row[field];
+      row[field] = value;
+      updateCardSelection(row, field, value, '저장 중...', '');
+      renderFilters();
+      try {
+        const resp = await fetch(`${REVIEW_API_BASE}/api/review/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query_id: row.query_id,
+            item_id: row.item_id,
+            [field]: value,
+            reviewer_id: 'manual_review',
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        updateCardSelection(row, field, value, `저장됨: ${value}`, 'ok');
+        const counts = reviewCounts();
+        setServerStatus(`CSV 저장 완료. 검색 정답성: ${counts.searchReviewed} / ${counts.searchRows.length}. AI 설명 정합성: ${counts.captionReviewed} / ${counts.captionRows.length}`, 'ok');
+      } catch (err) {
+        row[field] = previous;
+        updateCardSelection(row, field, previous || '', `저장 실패: ${err.message}`, 'error');
+        setServerStatus(`${fieldLabel(field)} 저장 실패: ${err.message}`, 'error');
+      } finally {
+        savingKeys.delete(savingKey);
+      }
+    }
+
+    function renderFilters() {
+      const filters = document.getElementById('filters');
+      const counts = reviewCounts();
+      filters.innerHTML = `<span class="summary">검색 정답성: ${counts.searchReviewed} / ${counts.searchRows.length} · AI 설명 정합성: ${counts.captionReviewed} / ${counts.captionRows.length} · AI 설명 제외: ${counts.repairCount} · 반복 제외: ${counts.sampleExcludedCount}</span>`;
+    }
+
+    function captionRatingBlock(row, captionAlignment) {
+      if (!isCaptionLabelable(row)) {
+        return '';
+      }
+      return `
+        <div class="rating-block">
+          <div class="rating-head">
+            <div class="rating-title">역할 B · AI 설명/태그 정합성</div>
+            <span class="tip" tabindex="0" data-tip="AI 영어 설명과 태그가 이미지 자체를 잘 설명하는지 판단합니다. 질문과 맞는지는 역할 A에서 따로 평가합니다.">?</span>
+          </div>
+          <div class="rating" title="클릭하면 CSV의 caption_alignment 값으로 저장됩니다">
+            <button type="button" class="pill r0 ${captionAlignment === '0' ? 'selected' : ''}" data-action="rate" data-field="caption_alignment" data-key="${esc(rowKey(row))}" data-value="0">0 다름</button>
+            <button type="button" class="pill r1 ${captionAlignment === '1' ? 'selected' : ''}" data-action="rate" data-field="caption_alignment" data-key="${esc(rowKey(row))}" data-value="1">1 일부</button>
+            <button type="button" class="pill r2 ${captionAlignment === '2' ? 'selected' : ''}" data-action="rate" data-field="caption_alignment" data-key="${esc(rowKey(row))}" data-value="2">2 맞음</button>
+          </div>
+          <div class="save-state" data-field="caption_alignment">현재값: ${esc(captionAlignment || '미입력')}</div>
+        </div>
+      `;
+    }
+
+    function card(row) {
+      const rel = String(row.reviewer_relevance ?? '').trim();
+      const captionAlignment = String(row.caption_alignment ?? '').trim();
+      const tags = row.ai_tags || '';
+      return `<article class="card" data-row-key="${esc(rowKey(row))}">
+        <img class="thumb" src="${esc(assetSrc(row._thumb_src))}" alt="${esc(row.file_name)}" loading="lazy" />
+        <div class="body">
+          ${queryTaskBox(row)}
+          ${decisionBox(row)}
+          <div class="rating-block">
+            <div class="rating-head">
+              <div class="rating-title">역할 A · 시각 조건 정합성</div>
+              <span class="tip" tabindex="0" data-tip="폴더 범위는 이미 검색에서 적용됐습니다. 여기서는 이미지가 위 시각 조건을 만족하는지만 판단합니다.">?</span>
+            </div>
+            <div class="rating" title="클릭하면 CSV의 reviewer_relevance 값으로 저장됩니다">
+              <button type="button" class="pill r0 ${rel === '0' ? 'selected' : ''}" data-action="rate" data-field="reviewer_relevance" data-key="${esc(rowKey(row))}" data-value="0">0 다름</button>
+              <button type="button" class="pill r1 ${rel === '1' ? 'selected' : ''}" data-action="rate" data-field="reviewer_relevance" data-key="${esc(rowKey(row))}" data-value="1">1 일부</button>
+              <button type="button" class="pill r2 ${rel === '2' ? 'selected' : ''}" data-action="rate" data-field="reviewer_relevance" data-key="${esc(rowKey(row))}" data-value="2">2 맞음</button>
+            </div>
+            <div class="save-state" data-field="reviewer_relevance">현재값: ${esc(rel || '미입력')}</div>
+          </div>
+          ${captionRatingBlock(row, captionAlignment)}
+          <details class="raw">
+            <summary>원본 데이터 확인</summary>
+            <div class="raw-body">
+              <div class="meta">
+                <div class="k">CSV line</div><div class="v">${esc(row._csv_line)}</div>
+                <div class="k">item_id</div><div class="v">${esc(row.item_id)}</div>
+                <div class="k">rank</div><div class="v">${esc(row.best_rank)} · ${esc(row.engines)}</div>
+                <div class="k">source</div><div class="v">${esc(row.source_group || row.folder_path || '-')}</div>
+                <div class="k">visual</div><div class="v">${esc(row.visual_group || '-')}</div>
+                <div class="k">metadata</div><div class="v">${esc(row.metadata_status || 'ok')} ${row.metadata_issue ? '· ' + esc(metadataIssueText(row)) : ''}</div>
+                <div class="k">sample</div><div class="v">${esc(row.sample_status || 'active')} ${row.sample_issue ? '· ' + esc(sampleIssueText(row)) : ''}</div>
+                <div class="k">file</div><div class="v">${esc(row.file_name)}</div>
+                <div class="k">path</div><div class="v">${esc(row.relative_path || row.folder_path)}</div>
+              </div>
+              <div class="field">
+                <div class="field-title">원본 자동 힌트</div>
+                <div class="notes">${esc(row.review_notes || row.diversity_note || '')}<br />tags: ${esc(tags)}</div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </article>`;
+    }
+
+    function render() {
+      renderFilters();
+      const app = document.getElementById('app');
+      const visibleQueries = (activeQuery === 'all' ? queries : queries.filter(q => q.query_id === activeQuery))
+        .filter(q => rows.some(r => r.query_id === q.query_id && isSearchLabelable(r)));
+      if (!visibleQueries.length) {
+        app.innerHTML = '<div class="empty">표시할 리뷰 후보가 없습니다.</div>';
+        return;
+      }
+      app.innerHTML = visibleQueries.map(q => {
+        const subset = rows.filter(r => r.query_id === q.query_id && isSearchLabelable(r));
+        return `<section class="query">
+          <h2 class="query-title"><strong>${esc(q.query_id)}</strong><span>${esc(queryTitleText(q))}</span></h2>
+          <div class="grid">${subset.map(card).join('')}</div>
+        </section>`;
+      }).join('');
+      app.querySelectorAll('[data-action="rate"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = rows.find(item => rowKey(item) === btn.dataset.key);
+          if (row) saveReviewValue(row, btn.dataset.field, btn.dataset.value);
+        });
+      });
+    }
+
+    loadReviewRows();
+  </script>
+</body>
+</html>

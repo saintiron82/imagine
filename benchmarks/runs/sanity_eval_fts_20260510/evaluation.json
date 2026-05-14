@@ -1,0 +1,51 @@
+{
+  "schema_version": "search_evaluation_v1",
+  "k_values": [
+    5,
+    10,
+    50
+  ],
+  "label_query_count": 30,
+  "run_count": 1,
+  "runs": [
+    {
+      "run_id": "sanity_eval_fts_20260510",
+      "engine_id": "fts",
+      "query_count": 30,
+      "metrics": {
+        "MRR@10": 0.076667,
+        "MRR@5": 0.067778,
+        "MRR@50": 0.076667,
+        "P@10": 0.06,
+        "P@5": 0.06,
+        "P@50": 0.012,
+        "Recall@10": 0.107708,
+        "Recall@5": 0.053333,
+        "Recall@50": 0.107708,
+        "nDCG@10": 0.084495,
+        "nDCG@5": 0.060042,
+        "nDCG@50": 0.074783
+      },
+      "by_query_type": {
+        "scoped": {
+          "query_count": 30,
+          "metrics": {
+            "MRR@10": 0.076667,
+            "MRR@5": 0.067778,
+            "MRR@50": 0.076667,
+            "P@10": 0.06,
+            "P@5": 0.06,
+            "P@50": 0.012,
+            "Recall@10": 0.107708,
+            "Recall@5": 0.053333,
+            "Recall@50": 0.107708,
+            "nDCG@10": 0.084495,
+            "nDCG@5": 0.060042,
+            "nDCG@50": 0.074783
+          }
+        }
+      },
+      "avg_latency_ms": 2.833
+    }
+  ]
+}

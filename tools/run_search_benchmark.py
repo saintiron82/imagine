@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -34,6 +35,7 @@ from tools.evaluate_search_quality import (  # noqa: E402
     load_labels,
     load_queries,
     load_run,
+    read_jsonl,
     parse_k_values,
 )
 
@@ -49,6 +51,59 @@ SCORE_FIELDS = (
     "bm25_score",
     "fts_rank",
 )
+
+FTS_QUERY_STOPWORDS = {
+    "이미지",
+    "사진",
+    "파일",
+    "자료",
+    "폴더",
+    "프로젝트",
+    "배경",
+    "장면",
+    "조건",
+    "제외",
+    "있는",
+    "있음",
+    "보이는",
+    "보이고",
+    "보이며",
+    "보이지만",
+    "함께",
+    "같이",
+    "느낌",
+    "분위기",
+    "중심",
+    "중",
+    "중에",
+    "중에서",
+    "에서",
+    "그리고",
+    "또는",
+    "찾기",
+    "찾아줘",
+    "image",
+    "images",
+    "picture",
+    "pictures",
+    "photo",
+    "photos",
+    "file",
+    "files",
+    "with",
+    "and",
+    "or",
+    "in",
+    "from",
+}
+FTS_QUERY_SPLIT_RE = re.compile(r"[\s,;/]+")
+FTS_KO_PARTICLE_SUFFIX_RE = re.compile(
+    r"(?:중에서|중에|에서|에게서|에게|한테|으로|부터|까지|보다|처럼|만큼|대로|마다|"
+    r"이랑|이나|하고|과|와|의|은|는|이|가|을|를|도|만|나)$"
+)
+FTS_TOKEN_STRIP_CHARS = " \t\r\n\"'`“”‘’[](){}"
+FTS_PARTICLE_SUFFIX_EXCEPTIONS = {"마을"}
+SCOPED_QUERY_PREFIX_RE = re.compile(r"^\s*(?P<scope>.+?)(?:중에서|중에|에서)\s*(?P<body>.+)$")
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -96,8 +151,73 @@ def make_searcher():
     return SqliteVectorSearch(db=db)
 
 
+def _normalize_fts_keyword(raw: str) -> str:
+    token = raw.strip(FTS_TOKEN_STRIP_CHARS)
+    if not token:
+        return ""
+    if token.lower() in FTS_QUERY_STOPWORDS:
+        return ""
+    if token not in FTS_PARTICLE_SUFFIX_EXCEPTIONS:
+        token = FTS_KO_PARTICLE_SUFFIX_RE.sub("", token)
+    token = token.strip(FTS_TOKEN_STRIP_CHARS)
+    if len(token) <= 1 and token.isascii():
+        return ""
+    if token.lower() in FTS_QUERY_STOPWORDS:
+        return ""
+    return token
+
+
 def fts_keywords(query_text: str) -> list[str]:
-    return [word.strip() for word in query_text.replace(",", " ").split() if len(word.strip()) > 1]
+    """Extract meaningful benchmark FTS terms without generic UI/search words."""
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for raw in FTS_QUERY_SPLIT_RE.split(query_text):
+        keyword = _normalize_fts_keyword(raw)
+        if not keyword:
+            continue
+        key = keyword.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        keywords.append(keyword)
+    return keywords
+
+
+def benchmark_search_text(query_text: str, query_meta: dict[str, Any]) -> str:
+    """Return the semantic condition text used by benchmark engines.
+
+    QuerySet `scope` is already applied as a file-id filter. Keeping the scope
+    wording inside the search text double-counts folder names and lets FTS rank
+    files by path/folder tokens instead of the visual condition.
+    """
+    must_terms = [
+        str(term).strip()
+        for term in query_meta.get("must_terms", [])
+        if str(term).strip()
+    ]
+    soft_terms = [
+        str(term).strip()
+        for term in query_meta.get("soft_terms", [])
+        if str(term).strip()
+    ]
+    exclude_terms = [
+        str(term).strip()
+        for term in query_meta.get("exclude_terms", [])
+        if str(term).strip()
+    ]
+    if must_terms:
+        parts = [", ".join([*must_terms, *soft_terms])]
+        if exclude_terms:
+            parts.append("제외: " + ", ".join(exclude_terms))
+        return ". ".join(parts)
+
+    if not query_scope(query_meta):
+        return query_text
+
+    match = SCOPED_QUERY_PREFIX_RE.match(query_text)
+    if match:
+        return match.group("body").strip() or query_text
+    return query_text
 
 
 def search_engine(searcher: Any, engine_id: str, query_text: str, top_k: int) -> list[dict[str, Any]]:
@@ -110,6 +230,72 @@ def search_engine(searcher: Any, engine_id: str, query_text: str, top_k: int) ->
         return list(searcher.fts_search(keywords[:10], top_k=top_k)) if keywords else []
     if engine_id == "triaxis":
         return list(searcher.triaxis_search(query_text, top_k=top_k, threshold=0.0, use_codex=False))
+    raise ValueError(f"unsupported engine_id: {engine_id}")
+
+
+def query_metadata_by_id(queries_path: Path) -> dict[str, dict[str, Any]]:
+    """Load optional QuerySet fields that the core evaluator ignores."""
+    metadata: dict[str, dict[str, Any]] = {}
+    for row in read_jsonl(queries_path):
+        query_id = str(row.get("query_id") or "")
+        if query_id:
+            metadata[query_id] = row
+    return metadata
+
+
+def query_scope(query_meta: dict[str, Any]) -> str:
+    """Return the explicit folder scope encoded in a QuerySet row."""
+    for key in ("scope", "folder_scope", "folder"):
+        value = str(query_meta.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def resolve_scope_file_ids(searcher: Any, scope: str) -> tuple[set[Any] | None, dict[str, Any]]:
+    """Resolve an explicit QuerySet folder scope to file ids.
+
+    Scoped benchmark queries must not silently fall back to full-DB search.
+    If a QuerySet carries `scope`, every engine run uses this file-id set.
+    """
+    if not scope:
+        return None, {}
+    if not hasattr(searcher, "_apply_plan_filter_with_info"):
+        raise ValueError("searcher does not support explicit scope filtering")
+
+    file_ids, match_info = searcher._apply_plan_filter_with_info({"folder": scope})
+    return set(file_ids), dict(match_info or {})
+
+
+def scoped_search_engine(
+    searcher: Any,
+    engine_id: str,
+    query_text: str,
+    top_k: int,
+    *,
+    file_ids: set[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Run one engine, constraining candidate files when scope is provided."""
+    if file_ids is None:
+        return search_engine(searcher, engine_id, query_text, top_k)
+    if not file_ids:
+        return []
+
+    if engine_id == "vv":
+        return list(searcher._vv_search_within(query_text, file_ids, top_k=top_k, threshold=0.0))
+    if engine_id == "mv":
+        return list(searcher._mv_search_within(query_text, file_ids, top_k=top_k, threshold=0.0))
+    if engine_id == "fts":
+        keywords = fts_keywords(query_text)
+        return list(searcher.fts_search(keywords[:10], top_k=top_k, file_ids=file_ids)) if keywords else []
+    if engine_id == "triaxis":
+        return list(searcher.triaxis_search(
+            query_text,
+            top_k=top_k,
+            threshold=0.0,
+            use_codex=False,
+            file_ids=file_ids,
+        ))
     raise ValueError(f"unsupported engine_id: {engine_id}")
 
 
@@ -145,6 +331,8 @@ def build_run_rows(
     progress: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     queries = load_queries(queries_path)
+    query_meta = query_metadata_by_id(queries_path)
+    scope_cache: dict[str, tuple[set[Any] | None, dict[str, Any]]] = {}
     rows: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
 
@@ -156,20 +344,55 @@ def build_run_rows(
             t0 = time.perf_counter()
             error = None
             results: list[Any] = []
+            meta = query_meta.get(query.query_id, {})
+            scope = query_scope(meta)
+            search_text = benchmark_search_text(query.query_text, meta)
+            scope_file_ids: set[Any] | None = None
+            scope_info: dict[str, Any] = {}
             try:
-                results = search_engine(searcher, engine_id, query.query_text, top_k)
+                if scope:
+                    if query.query_id not in scope_cache:
+                        scope_cache[query.query_id] = resolve_scope_file_ids(searcher, scope)
+                    scope_file_ids, scope_info = scope_cache[query.query_id]
+                    if not scope_file_ids:
+                        results = []
+                    else:
+                        results = scoped_search_engine(
+                            searcher,
+                            engine_id,
+                            search_text,
+                            top_k,
+                            file_ids=scope_file_ids,
+                        )
+                else:
+                    results = scoped_search_engine(
+                        searcher,
+                        engine_id,
+                        search_text,
+                        top_k,
+                        file_ids=None,
+                    )
             except Exception as exc:
                 error = str(exc)
             latency_ms = round((time.perf_counter() - t0) * 1000)
 
-            events.append({
+            event = {
                 "run_id": run_id,
                 "engine_id": engine_id,
                 "query_id": query.query_id,
                 "latency_ms": latency_ms,
                 "result_count": len(results),
                 "error": error,
-            })
+            }
+            if scope:
+                event.update({
+                    "scope": scope,
+                    "search_text": search_text,
+                    "scope_file_count": len(scope_file_ids or []),
+                    "scope_match_mode": scope_info.get("match_mode"),
+                    "scope_applied_folder": scope_info.get("applied_folder"),
+                })
+            events.append(event)
 
             if error:
                 continue
@@ -191,6 +414,9 @@ def build_run_rows(
                     "latency_ms": latency_ms if rank == 1 else None,
                     "error": None,
                     "cost_usd": None,
+                    "scope": scope or None,
+                    "search_text": search_text if scope else None,
+                    "scope_file_count": len(scope_file_ids or []) if scope else None,
                 })
                 rank += 1
                 if rank > top_k:

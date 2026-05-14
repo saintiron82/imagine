@@ -1,0 +1,52 @@
+{
+  "schema_version": "search_benchmark_run_v1",
+  "created_at": "2026-05-07T00:16:32+09:00",
+  "completed_at": "2026-05-07T00:16:49+09:00",
+  "run_id": "bg_q0001_condition_only_20260507",
+  "git": {
+    "commit": "c47c43ab9409d7fc8fbfe9a0b3b642e9a2056335",
+    "dirty": true
+  },
+  "inputs": {
+    "queries": "/tmp/bg_q0001_queryset.jsonl",
+    "labels": null,
+    "baseline": null
+  },
+  "config": {
+    "engines": [
+      "vv",
+      "mv",
+      "fts",
+      "triaxis"
+    ],
+    "top_k": 50,
+    "k_values": [
+      5,
+      10,
+      50
+    ],
+    "metrics": [
+      "nDCG@10",
+      "P@10",
+      "Recall@10",
+      "MRR@10"
+    ],
+    "min_delta": -0.01,
+    "min_query_ratio": 1.0,
+    "max_latency_ratio": null
+  },
+  "counts": {
+    "run_result_rows": 150,
+    "query_events": 4,
+    "errors": 0,
+    "empty_results": 1
+  },
+  "files": {
+    "run_results": "run_results.jsonl",
+    "query_events": "query_events.jsonl",
+    "evaluation_json": null,
+    "evaluation_md": null,
+    "compare_json": null,
+    "compare_md": null
+  }
+}

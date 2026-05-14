@@ -1,0 +1,17 @@
+{
+  "name": "blind_random_v1",
+  "created_at": "2026-05-07T00:00:00+09:00",
+  "query_count": 40,
+  "query_type": "blind_random",
+  "locale": "ko-KR",
+  "seed": 20260507,
+  "scope_ratio": 0.0,
+  "scope_candidate_count": 140,
+  "scoped_query_count": 0,
+  "difficulty_counts": {
+    "easy": 17,
+    "hard": 19,
+    "medium": 4
+  },
+  "purpose": "blind random search evaluation independent of image/caption/tag content"
+}
