@@ -1076,10 +1076,10 @@ function App() {
         <EnqueueFolderModal
           folderPath={enqueueFolderTarget.path}
           folderName={enqueueFolderTarget.name}
-          onConfirm={async (path, name, includeSub) => {
+          onConfirm={async (path, name, includeSub, analysisProfile) => {
             try {
               const { scanFolder } = await import('./api/admin');
-              const result = await scanFolder(path, 0);
+              const result = await scanFolder(path, 0, { name, analysisProfile });
               setQueueReloadSignal(prev => prev + 1);
               return result;
             } catch (e) {

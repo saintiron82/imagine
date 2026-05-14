@@ -513,6 +513,8 @@ class PhaseRunner:
             ctx["folder_path"] = item.folder_path
         if item.folder_tags:
             ctx["folder_tags"] = item.folder_tags
+        if item.analysis_profile:
+            ctx["analysis_profile"] = item.analysis_profile
         if item.mc_raw and isinstance(item.mc_raw, dict):
             ctx.update(item.mc_raw)
         return ctx if ctx else None

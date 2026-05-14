@@ -8,9 +8,10 @@ export async function listAnalysisJobs(includeCompleted = false) {
   return apiClient.get(`/api/v1/analysis-jobs?include_completed=${includeCompleted}`);
 }
 
-export async function createAnalysisJob(name, sourcePath, filePaths) {
+export async function createAnalysisJob(name, sourcePath, filePaths, analysisProfile = null) {
   return apiClient.post('/api/v1/analysis-jobs', {
     name, source_path: sourcePath, file_paths: filePaths,
+    ...(analysisProfile ? { analysis_profile: analysisProfile } : {}),
   });
 }
 

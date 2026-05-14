@@ -34,6 +34,16 @@ STAGE1_PROMPT = STAGE1_USER
 # ── Stage 2: Structured Analysis ─────────────────────────────────────────
 STAGE2_SYSTEM = "You are a strict JSON generator. Output valid JSON only matching the provided schema. No explanation, no markdown fences."
 
+SPATIAL_OBJECT_INSTRUCTIONS = """Object-location extraction:
+- Populate "objects" for the concrete visible elements that justify the caption/tags.
+- Use a 3x3 image grid only: top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right.
+- Use multiple locations when an element spans more than one grid cell.
+- Set primary_location to the most representative cell from locations.
+- Use extent small/medium/large/wide/full and confidence high/medium/low.
+- Prefer concrete visible elements: moon, character, tree, window, sword, text overlay, sky, wall, water.
+- Do not invent invisible objects. If no reliable object can be localized, return "objects": [].
+"""
+
 STAGE2_PROMPTS = {
     "character": """Analyze this character image with provided file context.
 
@@ -148,13 +158,25 @@ INSTRUCTIONS:
 
 # ── Stage 2: Concise variants — type-specific focus + compact output ────────
 
-_CONCISE_OUTPUT_FMT = """\nReturn ONLY this JSON (no markdown fences):
-{
+_CONCISE_OUTPUT_FMT = f"""\nReturn ONLY this JSON (no markdown fences):
+{{
   "caption": "one sentence, max 20 words, describe what is visible",
   "tags": ["5-8 concrete tags of objects/attributes visible in the image"],
+  "objects": [
+    {{
+      "name": "visible object/tag name",
+      "ko_name": "Korean object name if known",
+      "locations": ["one or more of: top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right"],
+      "primary_location": "one value from locations",
+      "extent": "small|medium|large|wide|full",
+      "confidence": "high|medium|low"
+    }}
+  ],
   "art_style": "one word",
   "color_palette": "max 3 dominant colors"
-}"""
+}}
+
+{SPATIAL_OBJECT_INSTRUCTIONS}"""
 
 STAGE2_PROMPTS_CONCISE = {
     "character": f"""Analyze this character image. Focus on: pose, outfit, weapon/equipment, expression, body type.{_CONCISE_OUTPUT_FMT}""",
@@ -184,7 +206,48 @@ STAGE2_PROMPTS_CONCISE = {
 STAGE2_USER_CONCISE = STAGE2_PROMPTS_CONCISE["other"]
 
 
-def build_stage1_prompt(domain: "DomainProfile" = None) -> str:
+def _normalize_analysis_profile(profile: dict = None) -> dict:
+    if not isinstance(profile, dict):
+        return {}
+    expected = profile.get("expected_types") or []
+    if isinstance(expected, str):
+        expected = [expected]
+    expected = [str(t).strip() for t in expected if str(t).strip()]
+    primary = str(profile.get("primary_type") or "").strip()
+    if primary and primary not in expected:
+        expected = [primary] + expected
+    return {
+        "domain_id": str(profile.get("domain_id") or "").strip(),
+        "expected_types": expected,
+        "primary_type": primary,
+        "source": str(profile.get("source") or "").strip(),
+    }
+
+
+def _build_analysis_profile_text(profile: dict = None) -> str:
+    normalized = _normalize_analysis_profile(profile)
+    expected = normalized.get("expected_types") or []
+    primary = normalized.get("primary_type") or (expected[0] if expected else "")
+    if not expected and not primary:
+        return ""
+
+    lines = [
+        "Analysis job profile:",
+        f"- Expected types: {', '.join(expected)}" if expected else "",
+        f"- primary expected type: {primary}" if primary else "",
+        "- Use this as a soft prior for ambiguous cases. Do not override clear visual evidence.",
+    ]
+    if primary == "background":
+        lines.append("- For background-like images, prioritize environment, lighting, composition, and spatial layout.")
+    elif primary == "effect":
+        lines.append("- For effect-like images, prioritize visible particles, glow, motion, color, and intensity.")
+    return "\n".join(line for line in lines if line)
+
+
+def build_stage1_prompt(
+    domain: "DomainProfile" = None,
+    analysis_profile: dict = None,
+) -> str:
     """
     Build Stage 1 classification prompt, optionally scoped to a domain.
 
@@ -206,13 +269,17 @@ def build_stage1_prompt(domain: "DomainProfile" = None) -> str:
             "texture, effect, logo, photo, illustration, other"
         )
 
-    return (
+    prompt = (
         "Classify this image into exactly ONE type.\n\n"
         "{\n"
         f'  "image_type": "ONE OF: {types_str}",\n'
         '  "confidence": "ONE OF: high, medium, low"\n'
         "}"
     )
+    profile_text = _build_analysis_profile_text(analysis_profile)
+    if profile_text:
+        prompt = f"{prompt}\n\n{profile_text}"
+    return prompt
 
 
 def get_stage2_prompt(
@@ -220,6 +287,7 @@ def get_stage2_prompt(
     context: dict = None,
     domain: "DomainProfile" = None,
     concise: bool = False,
+    analysis_profile: dict = None,
 ) -> str:
     """
     Build the full Stage 2 prompt with embedded schema.
@@ -234,9 +302,15 @@ def get_stage2_prompt(
     Returns:
         Stage 2 prompt string with schema, domain hints, and context
     """
+    if analysis_profile is None and isinstance(context, dict):
+        analysis_profile = context.get("analysis_profile")
+    profile_text = _build_analysis_profile_text(analysis_profile)
+
     # v4.2: Concise prompt — type-specific focus + compact output format
     if concise:
         prompt = STAGE2_PROMPTS_CONCISE.get(image_type, STAGE2_PROMPTS_CONCISE["other"])
+        if profile_text:
+            prompt = f"{prompt}\n\n{profile_text}"
         if context:
             context_text = _build_context_text(context)
             prompt = f"{prompt}\n\n{context_text}"
@@ -256,6 +330,9 @@ def get_stage2_prompt(
             template = f"{template}\n\nDOMAIN-SPECIFIC: {extra_instruction}"
 
     prompt = template.replace("{schema}", json.dumps(schema, indent=2))
+    prompt = f"{prompt}\n\n{SPATIAL_OBJECT_INSTRUCTIONS}"
+    if profile_text:
+        prompt = f"{prompt}\n\n{profile_text}"
 
     # v3.1: Inject file metadata context
     if context:

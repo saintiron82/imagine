@@ -754,7 +754,10 @@ class VisionAnalyzer(BaseVisionAnalyzer):
             # Fallback for non-Qwen models: use _generate_caption with the prompt
             return self._generate_caption(image, context={"prompt_override": user_prompt})
 
-    def classify(self, image: Image.Image, keep_alive: str = None, domain=None) -> Dict[str, Any]:
+    def classify(
+        self, image: Image.Image, keep_alive: str = None, domain=None,
+        analysis_profile: dict = None
+    ) -> Dict[str, Any]:
         """
         Stage 1: Classify image type.
 
@@ -770,7 +773,7 @@ class VisionAnalyzer(BaseVisionAnalyzer):
         from .schemas import STAGE1_SCHEMA
         from .repair import parse_structured_output
 
-        prompt = build_stage1_prompt(domain) if domain else STAGE1_USER
+        prompt = build_stage1_prompt(domain, analysis_profile=analysis_profile) if domain or analysis_profile else STAGE1_USER
         try:
             t0 = time.perf_counter()
             raw = self._generate_response(image, prompt, STAGE1_SYSTEM)
@@ -784,7 +787,7 @@ class VisionAnalyzer(BaseVisionAnalyzer):
 
     def analyze_structured(
         self, image: Image.Image, image_type: str, keep_alive: str = None,
-        context: dict = None, domain=None
+        context: dict = None, domain=None, analysis_profile: dict = None
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -806,7 +809,10 @@ class VisionAnalyzer(BaseVisionAnalyzer):
         try:
             t0 = time.perf_counter()
             _use_concise = "Qwen3.5" in self.model_id or "qwen3.5" in self.model_id.lower()
-            prompt = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
+            prompt = get_stage2_prompt(
+                image_type, context=context, domain=domain,
+                concise=_use_concise, analysis_profile=analysis_profile,
+            )
             raw = self._generate_response(image, prompt, STAGE2_SYSTEM)
             elapsed = time.perf_counter() - t0
             result = parse_structured_output(raw, get_schema(image_type), image_type=image_type)
@@ -834,12 +840,18 @@ class VisionAnalyzer(BaseVisionAnalyzer):
             Merged dict with image_type + all structured fields
         """
         t_total = time.perf_counter()
+        analysis_profile = context.get("analysis_profile") if isinstance(context, dict) else None
 
-        classification = self.classify(image, keep_alive, domain=domain)
+        classification = self.classify(
+            image, keep_alive, domain=domain, analysis_profile=analysis_profile
+        )
         image_type = classification.get("image_type", "other")
         logger.info(f"Stage 1 → {image_type} (confidence: {classification.get('confidence', '?')})")
 
-        analysis = self.analyze_structured(image, image_type, keep_alive, context=context, domain=domain)
+        analysis = self.analyze_structured(
+            image, image_type, keep_alive, context=context, domain=domain,
+            analysis_profile=analysis_profile,
+        )
 
         total_elapsed = time.perf_counter() - t_total
         logger.info(f"2-Stage total: {total_elapsed:.1f}s ({image_type})")
@@ -921,19 +933,43 @@ class VisionAnalyzer(BaseVisionAnalyzer):
 
         return decoded
 
-    def classify_batch(self, images: List[Image.Image], domain=None) -> List[Dict[str, Any]]:
+    def classify_batch(
+        self, images: List[Image.Image], domain=None, analysis_profile: dict = None
+    ) -> List[Dict[str, Any]]:
         """Stage 1 batch: classify multiple images at once."""
         from .prompts import STAGE1_USER, STAGE1_SYSTEM, build_stage1_prompt
         from .schemas import STAGE1_SCHEMA
         from .repair import parse_structured_output
 
-        prompt = build_stage1_prompt(domain) if domain else STAGE1_USER
+        profiles = analysis_profile if isinstance(analysis_profile, list) else None
+        if profiles is not None:
+            profile_list = [
+                profiles[i] if i < len(profiles) else None
+                for i in range(len(images))
+            ]
+            prompts = [
+                build_stage1_prompt(domain, analysis_profile=profile)
+                if domain or profile else STAGE1_USER
+                for profile in profile_list
+            ]
+        else:
+            prompts = (
+                build_stage1_prompt(domain, analysis_profile=analysis_profile)
+                if domain or analysis_profile else STAGE1_USER
+            )
         t0 = time.perf_counter()
         try:
-            raw_list = self._generate_response_batch(images, prompt, STAGE1_SYSTEM)
+            raw_list = self._generate_response_batch(images, prompts, STAGE1_SYSTEM)
         except Exception as e:
             logger.warning(f"Stage 1 batch failed ({e}), falling back to sequential")
-            return [self.classify(img, domain=domain) for img in images]
+            return [
+                self.classify(
+                    img,
+                    domain=domain,
+                    analysis_profile=profiles[i] if profiles is not None else analysis_profile,
+                )
+                for i, img in enumerate(images)
+            ]
 
         results = []
         for raw in raw_list:
@@ -1003,7 +1039,15 @@ class VisionAnalyzer(BaseVisionAnalyzer):
         classifications = []
         for sb_start in range(0, n, vlm_batch):
             sb_images = images[sb_start:sb_start + vlm_batch]
-            classifications.extend(self.classify_batch(sb_images, domain=domain))
+            sb_contexts = contexts[sb_start:sb_start + vlm_batch]
+            profiles = [
+                ctx.get("analysis_profile") if isinstance(ctx, dict) else None
+                for ctx in sb_contexts
+            ]
+            profile_arg = profiles if any(profiles) else None
+            classifications.extend(
+                self.classify_batch(sb_images, domain=domain, analysis_profile=profile_arg)
+            )
 
         # ── Group by image_type for Stage 2 ──
         type_groups = {}  # image_type → [(original_idx, image, context)]

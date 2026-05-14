@@ -163,7 +163,8 @@ class VLLMAdapter(BaseVisionAnalyzer):
         self,
         image: Image.Image,
         keep_alive: str = None,
-        domain=None
+        domain=None,
+        analysis_profile: dict = None
     ) -> Dict[str, Any]:
         """
         Stage 1: Classify image type.
@@ -185,7 +186,7 @@ class VLLMAdapter(BaseVisionAnalyzer):
         try:
             # Prepare prompt
             img_base64 = self._image_to_base64(image)
-            stage1_prompt = build_stage1_prompt(domain) if domain else STAGE1_PROMPT
+            stage1_prompt = build_stage1_prompt(domain, analysis_profile=analysis_profile) if domain or analysis_profile else STAGE1_PROMPT
             prompt_text = f"{stage1_prompt}\n\nOutput JSON only:"
 
             # vLLM inference
@@ -230,7 +231,8 @@ class VLLMAdapter(BaseVisionAnalyzer):
         image_type: str,
         keep_alive: str = None,
         context: dict = None,
-        domain=None
+        domain=None,
+        analysis_profile: dict = None
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -248,7 +250,10 @@ class VLLMAdapter(BaseVisionAnalyzer):
         try:
             # Get type-specific prompt and schema
             _use_concise = "qwen3.5" in self.model_name.lower() if self.model_name else False
-            prompt_text = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
+            prompt_text = get_stage2_prompt(
+                image_type, context=context, domain=domain,
+                concise=_use_concise, analysis_profile=analysis_profile,
+            )
             schema = get_schema(image_type)
 
             # Prepare image
@@ -311,14 +316,21 @@ class VLLMAdapter(BaseVisionAnalyzer):
         Returns:
             Combined result from both stages
         """
+        analysis_profile = context.get("analysis_profile") if isinstance(context, dict) else None
+
         # Stage 1: Classification
-        stage1_result = self.classify(image, keep_alive, domain=domain)
+        stage1_result = self.classify(
+            image, keep_alive, domain=domain, analysis_profile=analysis_profile
+        )
         image_type = stage1_result.get("image_type", "unknown")
 
         logger.info(f"Stage 1: {image_type} (confidence: {stage1_result.get('confidence', 0.0):.2f})")
 
         # Stage 2: Structured analysis
-        stage2_result = self.analyze_structured(image, image_type, keep_alive, context=context, domain=domain)
+        stage2_result = self.analyze_structured(
+            image, image_type, keep_alive, context=context, domain=domain,
+            analysis_profile=analysis_profile,
+        )
 
         # Merge results
         result = {**stage2_result}

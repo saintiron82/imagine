@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
     avg_mv_speed REAL,
     total_elapsed_s REAL,                       -- wall time (started → completed)
     worker_count INTEGER,                       -- distinct workers used
-    worker_stats_json TEXT                      -- per-worker breakdown (JSON)
+    worker_stats_json TEXT,                     -- per-worker breakdown (JSON)
+    analysis_profile_json TEXT                  -- list-level analysis prior (JSON)
     -- Example: [{"worker_id":3,"name":"Mac-M5","mc":1500,"vv":2904,"mv":0,"mc_speed":7.8,"vv_speed":81.0},
     --           {"worker_id":5,"name":"RTX-4090","mc":1404,"vv":0,"mv":2904,"mc_speed":12.0,"mv_speed":119.0}]
 );

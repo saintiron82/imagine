@@ -179,6 +179,7 @@ class AnalysisJobManager:
             "worker_count": "INTEGER",
             "started_at": "TEXT",
             "worker_stats_json": "TEXT",
+            "analysis_profile_json": "TEXT",
         }
         for col, typedef in columns.items():
             try:
@@ -230,7 +231,7 @@ class AnalysisJobManager:
     # ── Analysis Job CRUD ────────────────────────────────────
 
     def create_job(self, name: str, source_path: str, file_paths: List[str],
-                   created_by: int = None) -> Dict[str, Any]:
+                   created_by: int = None, analysis_profile: dict = None) -> Dict[str, Any]:
         """Create a new analysis job with file tasks.
 
         Args:
@@ -238,15 +239,21 @@ class AnalysisJobManager:
             source_path: Root folder path (webdav:// or local)
             file_paths: List of file paths to analyze
             created_by: User ID who created this job
+            analysis_profile: Optional list-level analysis prior.
         """
         cursor = self.db.conn.cursor()
         now = _now()
+        profile_json = None
+        if analysis_profile:
+            import json as _json
+            profile_json = _json.dumps(analysis_profile, ensure_ascii=False)
 
         # Create job
         cursor.execute(
-            """INSERT INTO analysis_jobs (name, source_path, total_files, created_by, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (name, source_path, len(file_paths), created_by, now),
+            """INSERT INTO analysis_jobs
+               (name, source_path, total_files, created_by, created_at, analysis_profile_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (name, source_path, len(file_paths), created_by, now, profile_json),
         )
         job_id = cursor.lastrowid
 
@@ -584,7 +591,8 @@ class AnalysisJobManager:
 
             # Find claimable tasks (only from active jobs)
             cursor.execute(f"""
-                SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id
+                SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id,
+                       aj.analysis_profile_json
                 FROM file_tasks ft
                 JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
                 WHERE aj.status = 'active'
@@ -614,8 +622,10 @@ class AnalysisJobManager:
 
             if cursor.rowcount != len(task_ids):
                 cursor.execute(f"""
-                    SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id
+                    SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id,
+                           aj.analysis_profile_json
                     FROM file_tasks ft
+                    JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
                     WHERE ft.id IN ({placeholders})
                       AND ft.{status_col} = 'assigned'
                       AND ft.{assigned_col} = ?
@@ -635,10 +645,20 @@ class AnalysisJobManager:
             self.db.conn.rollback()
             raise
 
-        return [
-            {"task_id": r[0], "file_id": r[1], "file_path": r[2], "job_id": r[3]}
-            for r in rows
-        ]
+        import json as _json
+        tasks = []
+        for r in rows:
+            profile = None
+            if len(r) > 4 and r[4]:
+                try:
+                    profile = _json.loads(r[4])
+                except Exception:
+                    profile = None
+            task = {"task_id": r[0], "file_id": r[1], "file_path": r[2], "job_id": r[3]}
+            if profile:
+                task["analysis_profile"] = profile
+            tasks.append(task)
+        return tasks
 
     def start_task_phase(self, task_id: int, phase: str):
         """Record actual processing start time (not claim time)."""

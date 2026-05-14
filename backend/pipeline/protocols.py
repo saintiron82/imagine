@@ -41,6 +41,7 @@ class PhaseItem:
     # Inputs for phases
     thumb_path: Optional[str] = None         # thumbnail path for VLM / VV
     mc_raw: Optional[dict] = None            # existing MC data (skip vision if present)
+    analysis_profile: Optional[dict] = None  # list-level analysis prior
 
     # Phase skip flags
     skip_vision: bool = False

@@ -15,6 +15,7 @@ MINIMUM_GUARANTEED_FIELDS = {
     "image_type": "other",
     "caption": "",
     "tags": [],
+    "objects": [],
     "art_style": "other",
     "color_palette": "neutral",
 }

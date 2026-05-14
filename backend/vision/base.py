@@ -47,17 +47,27 @@ class BaseVisionAnalyzer(ABC):
     # -- v3 P0: 2-Stage Pipeline ------------------------------------
 
     @abstractmethod
-    def classify(self, image: Image.Image, keep_alive: str = None) -> Dict[str, Any]:
+    def classify(
+        self, image: Image.Image, keep_alive: str = None,
+        domain=None, analysis_profile: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Stage 1: Classify image type. Returns {image_type, confidence}."""
         ...
 
     @abstractmethod
-    def analyze_structured(self, image: Image.Image, image_type: str, keep_alive: str = None) -> Dict[str, Any]:
+    def analyze_structured(
+        self, image: Image.Image, image_type: str, keep_alive: str = None,
+        context: Optional[Dict[str, Any]] = None, domain=None,
+        analysis_profile: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Stage 2: Type-specific structured analysis."""
         ...
 
     @abstractmethod
-    def classify_and_analyze(self, image: Image.Image, keep_alive: str = None) -> Dict[str, Any]:
+    def classify_and_analyze(
+        self, image: Image.Image, keep_alive: str = None,
+        context: Optional[Dict[str, Any]] = None, domain=None,
+    ) -> Dict[str, Any]:
         """Full 2-Stage pipeline: classify -> analyze_structured."""
         ...
 

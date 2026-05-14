@@ -8,6 +8,33 @@
 import { useState, useEffect, useRef } from 'react';
 import { FolderInput, X, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { useLocale } from '../i18n';
+import { getActiveDomainConfig } from '../services/bridge';
+
+const TYPE_LABELS_KO = {
+  character: '캐릭터',
+  background: '배경/BG',
+  illustration: '일러스트',
+  item: '소품',
+  effect: '이펙트',
+  logo: '로고',
+  ui_element: 'UI',
+  icon: '아이콘',
+  texture: '텍스처',
+  photo: '사진',
+  other: '기타',
+};
+
+function getRecommendedTypes(folderPath, imageTypes) {
+  const text = String(folderPath || '').toLowerCase();
+  const candidates = [];
+  if (/(^|[/\\#_\-\s])bg($|[/\\#_\-\s])|배경|background/.test(text)) {
+    candidates.push('background');
+  }
+  if (/effect|fx|이펙트|효과/.test(text)) {
+    candidates.push('effect');
+  }
+  return candidates.filter(t => imageTypes.includes(t));
+}
 
 export default function EnqueueFolderModal({ folderPath, folderName, onConfirm, onClose }) {
   const { t } = useLocale();
@@ -15,11 +42,22 @@ export default function EnqueueFolderModal({ folderPath, folderName, onConfirm, 
   const [includeSubfolders, setIncludeSubfolders] = useState(true);
   const [status, setStatus] = useState('idle'); // 'idle' | 'scanning' | 'done' | 'error'
   const [result, setResult] = useState(null); // { jobs_created, discovered, skipped, error }
+  const [domainConfig, setDomainConfig] = useState(null);
+  const [selectedTypes, setSelectedTypes] = useState([]);
+  const [primaryType, setPrimaryType] = useState('');
   const inputRef = useRef(null);
 
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.select(), 50);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    getActiveDomainConfig()
+      .then(config => { if (alive) setDomainConfig(config || null); })
+      .catch(() => { if (alive) setDomainConfig(null); });
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
@@ -35,11 +73,17 @@ export default function EnqueueFolderModal({ folderPath, folderName, onConfirm, 
     if (status === 'scanning') return;
 
     const name = requestName.trim() || folderName;
+    const analysisProfile = selectedTypes.length > 0 ? {
+      domain_id: domainConfig?.active_domain || null,
+      expected_types: selectedTypes,
+      primary_type: primaryType || selectedTypes[0],
+      source: 'user',
+    } : null;
     setStatus('scanning');
     setResult(null);
 
     try {
-      const res = await onConfirm(folderPath, name, includeSubfolders);
+      const res = await onConfirm(folderPath, name, includeSubfolders, analysisProfile);
       setResult(res || {});
       setStatus(res?.success === false ? 'error' : 'done');
     } catch (err) {
@@ -51,12 +95,31 @@ export default function EnqueueFolderModal({ folderPath, folderName, onConfirm, 
   const isScanning = status === 'scanning';
   const isDone = status === 'done';
   const isError = status === 'error';
+  const imageTypes = domainConfig?.domain?.image_types || [];
+  const recommendedTypes = getRecommendedTypes(folderPath, imageTypes);
+
+  const handleToggleType = (type) => {
+    if (isScanning || isDone) return;
+    setSelectedTypes(prev => {
+      const next = prev.includes(type)
+        ? prev.filter(t => t !== type)
+        : [...prev, type];
+      setPrimaryType(current => next.includes(current) ? current : (next[0] || ''));
+      return next;
+    });
+  };
+
+  const handlePrimary = (e, type) => {
+    e.stopPropagation();
+    if (!selectedTypes.includes(type) || isScanning || isDone) return;
+    setPrimaryType(type);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       onClick={isScanning ? undefined : onClose}>
       <div
-        className="bg-gray-800 border border-gray-600 rounded-lg shadow-2xl w-96 overflow-hidden"
+        className="bg-gray-800 border border-gray-600 rounded-lg shadow-2xl w-[34rem] max-w-[calc(100vw-2rem)] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -107,6 +170,85 @@ export default function EnqueueFolderModal({ folderPath, folderName, onConfirm, 
             />
             <span className="text-sm text-gray-300">{t('queue.include_subfolders')}</span>
           </label>
+
+          {/* Analysis profile */}
+          <div className="rounded-lg border border-gray-700 bg-gray-900/40 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-medium text-gray-200">
+                  {t('queue.analysis_profile_title') || '작업 리스트 예상 구성'}
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  {t('queue.analysis_profile_domain') || '전역 도메인'}: {domainConfig?.domain?.name_ko || domainConfig?.domain?.name || domainConfig?.active_domain || '자동 판단'}
+                </div>
+              </div>
+              {selectedTypes.length === 0 && (
+                <span className="text-[11px] rounded-full border border-gray-600 px-2 py-0.5 text-gray-400">
+                  {t('queue.analysis_profile_auto') || '자동 판단'}
+                </span>
+              )}
+            </div>
+
+            {recommendedTypes.length > 0 && (
+              <div className="text-[11px] text-amber-300/80">
+                {t('queue.analysis_profile_recommended') || '추천'}: {recommendedTypes.join(', ')}
+              </div>
+            )}
+
+            {imageTypes.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {imageTypes.map(type => {
+                  const selected = selectedTypes.includes(type);
+                  const primary = selected && (primaryType || selectedTypes[0]) === type;
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => handleToggleType(type)}
+                      disabled={isScanning || isDone}
+                      className={`flex items-center gap-1 rounded-full border px-2 py-1 text-xs transition-colors disabled:opacity-50 ${
+                        selected
+                          ? primary
+                            ? 'border-emerald-400 bg-emerald-500/15 text-emerald-200'
+                            : 'border-blue-400 bg-blue-500/15 text-blue-200'
+                          : recommendedTypes.includes(type)
+                            ? 'border-amber-500/50 bg-amber-500/10 text-amber-200'
+                            : 'border-gray-600 bg-gray-800 text-gray-300 hover:border-gray-400'
+                      }`}
+                    >
+                      <span>{TYPE_LABELS_KO[type] || type}</span>
+                      <span className="text-[10px] text-current/60">{type}</span>
+                      {selected && (
+                        <span
+                          onClick={(e) => handlePrimary(e, type)}
+                          title="주 타입 지정"
+                          className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] ${
+                            primary ? 'bg-emerald-400 text-gray-950' : 'bg-gray-700 text-gray-300'
+                          }`}
+                        >
+                          주
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-[11px] text-gray-500">
+                {t('queue.analysis_profile_no_domain') || '활성 도메인의 이미지 타입을 불러오면 선택할 수 있습니다.'}
+              </div>
+            )}
+
+            {selectedTypes.length > 0 && (
+              <div className="text-[11px] text-gray-400">
+                {t('queue.analysis_profile_summary') || '예상 구성'}:{' '}
+                {selectedTypes.map(type => {
+                  const primary = (primaryType || selectedTypes[0]) === type;
+                  return `${type} ${primary ? '주' : '보조'}`;
+                }).join(' / ')}
+              </div>
+            )}
+          </div>
 
           {/* Scanning progress */}
           {isScanning && (

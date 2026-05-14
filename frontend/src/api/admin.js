@@ -66,11 +66,14 @@ export async function browseFolders(path = '/') {
   return apiClient.get(`/api/v1/discover/browse?path=${encodeURIComponent(path)}`);
 }
 
-export async function scanFolder(folderPath, priority = 0) {
-  return apiClient.post('/api/v1/discover/scan', { folder_path: folderPath, priority });
+export async function scanFolder(folderPath, priority = 0, options = {}) {
+  const payload = { folder_path: folderPath, priority };
+  if (options?.name) payload.name = options.name;
+  if (options?.analysisProfile) payload.analysis_profile = options.analysisProfile;
+  return apiClient.post('/api/v1/discover/scan', payload);
 }
 
-export async function registerPaths(filePaths) {
+export async function registerPaths(filePaths, analysisProfile = null) {
   const paths = Array.isArray(filePaths) ? filePaths.filter(Boolean) : [];
   if (paths.length === 0) return { success: false, jobs_created: 0, total_files: 0 };
 
@@ -84,6 +87,7 @@ export async function registerPaths(filePaths) {
     name,
     source_path: sourcePath,
     file_paths: paths,
+    ...(analysisProfile ? { analysis_profile: analysisProfile } : {}),
   });
   return {
     success: result?.success !== false,

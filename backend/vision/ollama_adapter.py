@@ -294,7 +294,10 @@ Format your response as JSON:
             raise RuntimeError(f"Ollama API error: {response.status_code}")
         return response.json().get("message", {}).get("content", "")
 
-    def classify(self, image: Image.Image, keep_alive: str = None, domain=None) -> Dict[str, Any]:
+    def classify(
+        self, image: Image.Image, keep_alive: str = None, domain=None,
+        analysis_profile: dict = None
+    ) -> Dict[str, Any]:
         """
         Stage 1: Classify image type.
 
@@ -312,7 +315,7 @@ Format your response as JSON:
             logger.error("Ollama server is not running!")
             return {"image_type": "other", "confidence": "low"}
 
-        prompt = build_stage1_prompt(domain) if domain else STAGE1_PROMPT
+        prompt = build_stage1_prompt(domain, analysis_profile=analysis_profile) if domain or analysis_profile else STAGE1_PROMPT
         img_b64 = self._encode_image(image)
 
         for attempt in range(self._max_retries + 1):
@@ -332,7 +335,7 @@ Format your response as JSON:
 
     def analyze_structured(
         self, image: Image.Image, image_type: str, keep_alive: str = None,
-        context: dict = None, domain=None
+        context: dict = None, domain=None, analysis_profile: dict = None
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -354,7 +357,10 @@ Format your response as JSON:
         # v3.1: Inject context into Stage 2 prompt
         # v4.1: Concise prompt for Qwen3.5 models (fewer tokens, faster generation)
         _use_concise = "qwen3.5" in self.model.lower()
-        prompt = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
+        prompt = get_stage2_prompt(
+            image_type, context=context, domain=domain,
+            concise=_use_concise, analysis_profile=analysis_profile,
+        )
         schema = get_schema(image_type)
         img_b64 = self._encode_image(image)
 
@@ -390,12 +396,18 @@ Format your response as JSON:
             Merged dict with image_type + all structured fields
         """
         t_total = time.perf_counter()
+        analysis_profile = context.get("analysis_profile") if isinstance(context, dict) else None
 
-        classification = self.classify(image, keep_alive, domain=domain)
+        classification = self.classify(
+            image, keep_alive, domain=domain, analysis_profile=analysis_profile
+        )
         image_type = classification.get("image_type", "other")
         logger.info(f"Stage 1 → {image_type} (confidence: {classification.get('confidence', '?')})")
 
-        analysis = self.analyze_structured(image, image_type, keep_alive, context=context, domain=domain)
+        analysis = self.analyze_structured(
+            image, image_type, keep_alive, context=context, domain=domain,
+            analysis_profile=analysis_profile,
+        )
 
         total_elapsed = time.perf_counter() - t_total
         logger.info(f"2-Stage total: {total_elapsed:.1f}s ({image_type})")

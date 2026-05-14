@@ -10,6 +10,15 @@ STAGE1_SCHEMA = {
     "confidence": "string",
 }
 
+SPATIAL_OBJECTS_FIELD = (
+    "array of visible tag-level objects. Each item must be an object with: "
+    "name (English object/tag name), ko_name (Korean object name if known), "
+    "locations (array using one or more of: top-left, top, top-right, left, center, right, "
+    "bottom-left, bottom, bottom-right), primary_location (one value from locations), "
+    "extent (small, medium, large, wide, full), confidence (high, medium, low). "
+    "Use multiple locations for wide or spanning objects such as sky, ground, forest, walls."
+)
+
 STAGE2_SCHEMAS = {
     "character": {
         "character_type": "string",
@@ -109,8 +118,11 @@ _GENERIC_TYPES = {"logo", "photo", "illustration", "other"}
 def get_schema(image_type: str) -> dict:
     """Return the Stage 2 schema for the given image_type."""
     if image_type in _GENERIC_TYPES:
-        return dict(STAGE2_SCHEMAS["generic"])
-    return dict(STAGE2_SCHEMAS.get(image_type, STAGE2_SCHEMAS["generic"]))
+        schema = dict(STAGE2_SCHEMAS["generic"])
+    else:
+        schema = dict(STAGE2_SCHEMAS.get(image_type, STAGE2_SCHEMAS["generic"]))
+    schema.setdefault("objects", SPATIAL_OBJECTS_FIELD)
+    return schema
 
 
 def inject_hints_to_schema(

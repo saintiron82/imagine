@@ -344,6 +344,7 @@ class WorkerDaemon:
                     "job_id": t["task_id"], "file_id": t["file_id"],
                     "file_path": t["file_path"], "task_id": t["task_id"],
                     "analysis_job_id": t.get("job_id"),
+                    "analysis_profile": t.get("analysis_profile"),
                 } for t in tasks]
 
                 # Unload previous model if mode changed
@@ -587,6 +588,7 @@ class WorkerDaemon:
                                 "file_path": t["file_path"],
                                 "task_id": t["task_id"],  # new system ID
                                 "analysis_job_id": t.get("job_id"),
+                                "analysis_profile": t.get("analysis_profile"),
                             })
                         logger.info(f"{self._log_prefix} Claimed {len(jobs)} {phase} tasks (new API)")
                         return jobs
@@ -1339,6 +1341,7 @@ class WorkerDaemon:
                 file_path=ctx.job["file_path"],
                 thumb_path=ctx.thumb_path,
                 mc_raw=ctx.job.get("mc_raw"),
+                analysis_profile=ctx.job.get("analysis_profile"),
                 skip_vision=has_vision,
             )
             # If server already provided vision data (gap-fill), populate mc_raw

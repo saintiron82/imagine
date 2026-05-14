@@ -171,7 +171,8 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
     # ── 2-Stage Pipeline ──────────────────────────────────────────
 
     def classify(
-        self, image: Image.Image, keep_alive: str = None, domain=None
+        self, image: Image.Image, keep_alive: str = None, domain=None,
+        analysis_profile: dict = None
     ) -> Dict[str, Any]:
         """
         Stage 1: Classify image type.
@@ -188,7 +189,7 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         from .schemas import STAGE1_SCHEMA
         from .repair import parse_structured_output
 
-        prompt = build_stage1_prompt(domain) if domain else STAGE1_USER
+        prompt = build_stage1_prompt(domain, analysis_profile=analysis_profile) if domain or analysis_profile else STAGE1_USER
         try:
             t0 = time.perf_counter()
             raw = self._generate_response(image, prompt, STAGE1_SYSTEM)
@@ -209,6 +210,7 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         keep_alive: str = None,
         context: dict = None,
         domain=None,
+        analysis_profile: dict = None,
     ) -> Dict[str, Any]:
         """
         Stage 2: Type-specific structured analysis.
@@ -237,7 +239,10 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
                     _use_concise = self._force_concise
                 else:
                     _use_concise = "qwen3.5" in self.model_id.lower()
-                prompt = get_stage2_prompt(image_type, context=context, domain=domain, concise=_use_concise)
+                prompt = get_stage2_prompt(
+                    image_type, context=context, domain=domain,
+                    concise=_use_concise, analysis_profile=analysis_profile,
+                )
             sys_prompt = self._custom_system_prompt or STAGE2_SYSTEM
             raw = self._generate_response(image, prompt, sys_prompt)
             elapsed = time.perf_counter() - t0
@@ -268,8 +273,11 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
             Merged dict with image_type + all structured fields
         """
         t_total = time.perf_counter()
+        analysis_profile = context.get("analysis_profile") if isinstance(context, dict) else None
 
-        classification = self.classify(image, keep_alive, domain=domain)
+        classification = self.classify(
+            image, keep_alive, domain=domain, analysis_profile=analysis_profile
+        )
         image_type = classification.get("image_type", "other")
         logger.info(
             f"[MLX] Stage 1 → {image_type} "
@@ -277,7 +285,8 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         )
 
         analysis = self.analyze_structured(
-            image, image_type, keep_alive, context=context, domain=domain
+            image, image_type, keep_alive, context=context, domain=domain,
+            analysis_profile=analysis_profile,
         )
 
         total_elapsed = time.perf_counter() - t_total

@@ -90,12 +90,14 @@ class CreateJobRequest(BaseModel):
     name: str
     source_path: str
     file_paths: list[str] = []  # optional — if empty, server scans folder
+    analysis_profile: Optional[dict] = None
 
 
 class ScanJobRequest(BaseModel):
     folder_path: str
     name: Optional[str] = None
     priority: int = 0
+    analysis_profile: Optional[dict] = None
 
 
 class ClaimRequest(BaseModel):
@@ -141,6 +143,7 @@ def create_analysis_job(
         source_path=req.source_path,
         file_paths=req.file_paths,
         created_by=user.get("id"),
+        analysis_profile=req.analysis_profile,
     )
     _auto_start_worker()
     return {"success": True, **result}
@@ -234,6 +237,7 @@ def scan_and_create_job(
         source_path=folder_path,
         file_paths=file_paths,
         created_by=user.get("id"),
+        analysis_profile=req.analysis_profile,
     )
     _auto_start_worker()
     return {"success": True, "jobs_created": 1, **result}
