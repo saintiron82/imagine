@@ -65,6 +65,10 @@ website/.firebase/
 # Calibration results (local)
 calibration_results/
 
+# Benchmark/review server local backups
+benchmarks/reviews/**/*.bak.*
+benchmarks/reviews/**/*backup*
+
 # Misc
 nul
 config.yaml
