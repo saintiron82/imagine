@@ -9,6 +9,7 @@ import yaml
 import shutil
 import sys
 import io
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -16,10 +17,10 @@ from datetime import datetime
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# 설정
-TEST_DIR = Path(r"C:\Users\saint\ImageParser\test_assets")
-CONFIG_FILE = Path(r"C:\Users\saint\ImageParser\config.yaml")
-BACKUP_CONFIG = Path(r"C:\Users\saint\ImageParser\config.yaml.backup")
+PROJECT_ROOT = Path(__file__).resolve().parent
+TEST_DIR = Path(os.environ["IMAGINE_BENCH_ASSETS_DIR"]).expanduser() if os.environ.get("IMAGINE_BENCH_ASSETS_DIR") else None
+CONFIG_FILE = PROJECT_ROOT / "config.yaml"
+BACKUP_CONFIG = PROJECT_ROOT / "config.yaml.backup"
 TIERS = ["standard", "pro", "ultra"]
 BATCH_SIZES = [1, 5, 10, 20]
 
@@ -53,6 +54,8 @@ def set_tier(tier_name: str):
 
 def get_test_files(count: int):
     """테스트 파일 경로 리스트 반환"""
+    if TEST_DIR is None:
+        return []
     all_files = list(TEST_DIR.glob("*.png")) + list(TEST_DIR.glob("*.psd"))
     return [str(f) for f in all_files[:count]]
 
@@ -87,7 +90,7 @@ def run_test(tier: str, batch_size: int):
             capture_output=True,
             text=True,
             timeout=600,  # 10분 타임아웃
-            cwd=r"C:\Users\saint\ImageParser"
+            cwd=str(PROJECT_ROOT)
         )
 
         elapsed = time.time() - start_time
@@ -126,6 +129,10 @@ def main():
     print(f"Batch sizes: {', '.join(map(str, BATCH_SIZES))}")
     print(f"\nEstimated time: ~20분")
     print()
+
+    if TEST_DIR is None or not TEST_DIR.exists():
+        print("Set IMAGINE_BENCH_ASSETS_DIR to a real asset folder before running this benchmark.")
+        return
 
     # Config 백업
     backup_config()

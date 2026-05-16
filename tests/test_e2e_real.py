@@ -1,29 +1,32 @@
-"""
-E2E Integration Test with Real Assets.
-Processes real PSD files from test_assets/ and verifies the full pipeline.
-"""
+"""E2E Integration Test with externally supplied real assets."""
 
-import shutil
+import os
 from pathlib import Path
-from backend.pipeline.ingest_engine import process_file
-from backend.parser.schema import AssetMeta
 
-TEST_ASSETS_DIR = Path("test_assets")
+import pytest
+
 OUTPUT_DIR = Path("output")
 
 def test_e2e_real_psd():
     print("🚀 Starting E2E Test with Real PSDs...")
-    
-    # Clean output directory
-    if OUTPUT_DIR.exists():
-        shutil.rmtree(OUTPUT_DIR)
-    OUTPUT_DIR.mkdir()
-    
+
+    assets_dir_raw = os.environ.get("IMAGINE_E2E_ASSETS_DIR")
+    if not assets_dir_raw:
+        pytest.skip("Set IMAGINE_E2E_ASSETS_DIR to run real-asset E2E tests")
+
+    test_assets_dir = Path(assets_dir_raw).expanduser()
+    if not test_assets_dir.exists():
+        pytest.skip(f"Real-asset directory does not exist: {test_assets_dir}")
+
     # Get all PSD files
-    psd_files = list(TEST_ASSETS_DIR.glob("*.psd"))
+    psd_files = list(test_assets_dir.glob("*.psd"))
     if not psd_files:
-        print("❌ No PSD files found in test_assets/")
-        exit(1)
+        pytest.skip(f"No PSD files found in {test_assets_dir}")
+
+    from backend.pipeline.ingest_engine import process_file
+    from backend.parser.schema import AssetMeta
+
+    OUTPUT_DIR.mkdir(exist_ok=True)
         
     print(f"Found {len(psd_files)} PSDs: {[f.name for f in psd_files]}")
     

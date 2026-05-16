@@ -5,12 +5,19 @@
 import subprocess
 import time
 import json
+import os
+import sys
 from pathlib import Path
+
+if __name__ != "__main__":
+    import pytest
+
+    pytest.skip("legacy benchmark script; run directly with explicit assets", allow_module_level=True)
 
 # 테스트 설정
 TIERS = ["standard", "pro", "ultra"]
 BATCH_SIZES = [1, 5, 10, 20]
-TEST_DIR = Path(r"C:\Users\saint\ImageParser\test_assets")
+TEST_DIR = Path(os.environ["IMAGINE_BENCH_ASSETS_DIR"]).expanduser() if os.environ.get("IMAGINE_BENCH_ASSETS_DIR") else None
 
 # 결과 저장
 results = {}
@@ -20,11 +27,18 @@ print("배치 처리 성능 벤치마크")
 print("=" * 60)
 
 # 테스트 파일 확인
+if TEST_DIR is None or not TEST_DIR.exists():
+    print("IMAGINE_BENCH_ASSETS_DIR를 실제 자산 폴더로 지정한 뒤 실행하세요.")
+    sys.exit(0)
+
 test_files = list(TEST_DIR.glob("**/*.psd")) + list(TEST_DIR.glob("**/*.png"))
 print(f"\n사용 가능한 테스트 파일: {len(test_files)}개")
 
 if len(test_files) < 20:
     print(f"⚠️  테스트 파일이 부족합니다 (최소 20개 필요, 현재 {len(test_files)}개)")
+    if not test_files:
+        print("복사할 원본 파일이 없어 종료합니다.")
+        sys.exit(0)
     # 파일 복사로 20개 만들기
     print("테스트용 파일 복사 중...")
     original_files = test_files.copy()

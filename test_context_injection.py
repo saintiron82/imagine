@@ -8,13 +8,22 @@ Verifies:
 """
 
 import sys
+from tempfile import TemporaryDirectory
 from pathlib import Path
 
-# Add project root to path
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 
-from backend.parser.psd_parser import PSDParser
-from backend.parser.image_parser import ImageParser
+
+def _real_assets_dir() -> Path | None:
+    import os
+
+    raw = os.environ.get("IMAGINE_E2E_ASSETS_DIR")
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.exists() else None
 
 def test_psd_semantic_tags():
     """Test semantic_tags extraction from PSD files."""
@@ -22,18 +31,23 @@ def test_psd_semantic_tags():
     print("Test 1: PSD semantic_tags (raw layer names)")
     print("=" * 60)
 
+    test_dir = _real_assets_dir()
+    if test_dir is None:
+        pytest.skip("Set IMAGINE_E2E_ASSETS_DIR to run PSD context tests")
+
+    from backend.parser.psd_parser import PSDParser
+
     parser = PSDParser()
 
     # Find a PSD file
     test_psd = None
-    for psd_path in Path("test_assets").rglob("*.psd"):
+    for psd_path in test_dir.rglob("*.psd"):
         if psd_path.exists():
             test_psd = psd_path
             break
 
     if not test_psd:
-        print("[FAIL] No PSD files found in test_assets/")
-        return False
+        pytest.skip(f"No PSD files found in {test_dir}")
 
     print(f"Testing: {test_psd.name}")
 
@@ -73,29 +87,22 @@ def test_image_semantic_tags():
     print("Test 2: Image semantic_tags (from filename)")
     print("=" * 60)
 
+    try:
+        from backend.parser.image_parser import ImageParser
+    except ModuleNotFoundError as exc:
+        pytest.skip(f"Image parser dependency unavailable: {exc.name}")
+
     parser = ImageParser()
 
-    # Find an image file
-    test_img = None
-    for img_path in Path("test_assets").rglob("*.png"):
-        if img_path.exists():
-            test_img = img_path
-            break
+    with TemporaryDirectory(prefix="imagine_context_image_") as tmp:
+        from PIL import Image
 
-    if not test_img:
-        # Try JPG
-        for img_path in Path("test_assets").rglob("*.jpg"):
-            if img_path.exists():
-                test_img = img_path
-                break
+        test_img = Path(tmp) / "context-test-image.png"
+        Image.new("RGB", (64, 64), color=(20, 40, 60)).save(test_img)
 
-    if not test_img:
-        print("[FAIL] No image files found in test_assets/")
-        return False
+        print(f"Testing: {test_img.name}")
 
-    print(f"Testing: {test_img.name}")
-
-    result = parser.parse(test_img)
+        result = parser.parse(test_img)
 
     if not result.success:
         print(f"[FAIL] Parse failed: {result.errors}")
@@ -138,25 +145,30 @@ def test_folder_path_fallback():
     # This test requires running ingest_engine.py in --file mode
     # For now, we'll just test the parser directly
 
+    test_dir = _real_assets_dir()
+    if test_dir is None:
+        pytest.skip("Set IMAGINE_E2E_ASSETS_DIR to run PSD folder-path tests")
+
+    from backend.parser.psd_parser import PSDParser
+
     parser = PSDParser()
 
     # Find a PSD file with a parent folder
     test_psd = None
-    for psd_path in Path("test_assets").rglob("*.psd"):
-        if psd_path.exists() and psd_path.parent.name != "test_assets":
+    for psd_path in test_dir.rglob("*.psd"):
+        if psd_path.exists() and psd_path.parent != test_dir:
             test_psd = psd_path
             break
 
     if not test_psd:
         # Just use any PSD
-        for psd_path in Path("test_assets").rglob("*.psd"):
+        for psd_path in test_dir.rglob("*.psd"):
             if psd_path.exists():
                 test_psd = psd_path
                 break
 
     if not test_psd:
-        print("[FAIL] No PSD files found")
-        return False
+        pytest.skip(f"No PSD files found in {test_dir}")
 
     print(f"Testing: {test_psd}")
 

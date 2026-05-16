@@ -295,7 +295,7 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 2:
         print("Usage: python auto_batch_calibrator.py <tier> [test_files...]")
-        print("Example: python auto_batch_calibrator.py standard test_assets/*.psd")
+        print("Example: python auto_batch_calibrator.py standard /path/to/assets/*.psd")
         sys.exit(1)
 
     tier = sys.argv[1]
@@ -303,7 +303,13 @@ if __name__ == "__main__":
 
     # Auto-discover test files if not provided
     if not test_files:
-        test_dir = Path("test_assets")
+        import os
+
+        assets_dir = os.environ.get("IMAGINE_BENCH_ASSETS_DIR")
+        if not assets_dir:
+            print("Set IMAGINE_BENCH_ASSETS_DIR or pass files explicitly.")
+            sys.exit(1)
+        test_dir = Path(assets_dir).expanduser()
         test_files = [str(f) for f in test_dir.glob("*.psd")] + \
                     [str(f) for f in test_dir.glob("*.png")]
         test_files = test_files[:64]  # Max 64 for calibration

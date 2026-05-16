@@ -4,6 +4,7 @@ Test AUTO Batch Mode
 Quick test of automatic batch size calibration.
 """
 import logging
+import os
 from pathlib import Path
 from backend.utils.auto_batch_calibrator import AutoBatchCalibrator
 
@@ -19,7 +20,14 @@ def main():
     print("="*70)
 
     # Get test files
-    test_dir = Path("test_assets")
+    assets_dir = os.environ.get("IMAGINE_BENCH_ASSETS_DIR")
+    if not assets_dir:
+        print("Set IMAGINE_BENCH_ASSETS_DIR to run auto-batch calibration.")
+        return
+    test_dir = Path(assets_dir).expanduser()
+    if not test_dir.exists():
+        print(f"Asset directory does not exist: {test_dir}")
+        return
     test_files = [str(f) for f in test_dir.glob("*.psd")] + \
                 [str(f) for f in test_dir.glob("*.png")]
 

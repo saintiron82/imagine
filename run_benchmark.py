@@ -4,12 +4,14 @@ import time
 import json
 import yaml
 import shutil
+import os
 from pathlib import Path
 from datetime import datetime
 
-TEST_DIR = Path(r"C:\Users\saint\ImageParser\test_assets")
-CONFIG_FILE = Path(r"C:\Users\saint\ImageParser\config.yaml")
-BACKUP_CONFIG = Path(r"C:\Users\saint\ImageParser\config.yaml.backup")
+PROJECT_ROOT = Path(__file__).resolve().parent
+TEST_DIR = Path(os.environ["IMAGINE_BENCH_ASSETS_DIR"]).expanduser() if os.environ.get("IMAGINE_BENCH_ASSETS_DIR") else None
+CONFIG_FILE = PROJECT_ROOT / "config.yaml"
+BACKUP_CONFIG = PROJECT_ROOT / "config.yaml.backup"
 TIERS = ["standard", "pro", "ultra"]
 BATCH_SIZES = [1, 5, 10, 20]
 
@@ -35,6 +37,8 @@ def set_tier(tier_name):
     print(f"[OK] Tier set to: {tier_name}")
 
 def get_test_files(count):
+    if TEST_DIR is None:
+        return []
     all_files = list(TEST_DIR.glob("*.png")) + list(TEST_DIR.glob("*.psd"))
     return [str(f) for f in all_files[:count]]
 
@@ -65,7 +69,7 @@ def run_test(tier, batch_size):
             capture_output=True,
             text=True,
             timeout=600,
-            cwd=r"C:\Users\saint\ImageParser",
+            cwd=str(PROJECT_ROOT),
             encoding='utf-8',
             errors='replace'
         )
@@ -100,6 +104,10 @@ def main():
     print(f"Tiers: {', '.join(TIERS)}")
     print(f"Batch sizes: {', '.join(map(str, BATCH_SIZES))}")
     print(f"Estimated time: ~20 minutes\n")
+
+    if TEST_DIR is None or not TEST_DIR.exists():
+        print("Set IMAGINE_BENCH_ASSETS_DIR to a real asset folder before running this benchmark.")
+        return
 
     backup_config()
 
