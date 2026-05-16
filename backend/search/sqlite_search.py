@@ -193,6 +193,12 @@ def _extract_scope_hint_candidates(query: str) -> List[str]:
 class SqliteVectorSearch:
     """SQLite vector search with SigLIP 2 embeddings."""
 
+    _FTS_KO_PARTICLES = re.compile(
+        r"(?:중에서|중에|에서|에게서|에게|한테|으로|부터|까지|보다|처럼|만큼|대로|마다|"
+        r"이랑|이나|하고|과|와|에|의|은|는|이|가|을|를|도|만|나)$"
+    )
+    _FTS_KO_STOPWORDS = {"이미지", "사진", "파일", "자료", "있는", "있다", "있고", "있음"}
+
     def __init__(self, db: Optional[SQLiteDB] = None):
         """
         Initialize vector search.
@@ -972,6 +978,12 @@ class SqliteVectorSearch:
                 word = word.strip().replace('"', '""')
                 if not word:
                     continue
+                if word in self._FTS_KO_STOPWORDS:
+                    continue
+                if not word.isascii():
+                    stripped = self._FTS_KO_PARTICLES.sub("", word)
+                    if stripped and stripped not in self._FTS_KO_STOPWORDS:
+                        word = stripped.replace('"', '""')
                 if word.isascii() and word.isalpha() and len(word) >= 3:
                     wildcard_tokens.add(word.lower())
                 else:
@@ -2280,8 +2292,40 @@ class SqliteVectorSearch:
         finally:
             cursor.close()
 
-    @staticmethod
-    def _parse_json_fields(result: Dict) -> None:
+    def _load_spatial_objects(self, file_id: Any) -> list[dict]:
+        """Load normalized object-location evidence for a file."""
+        if not file_id:
+            return []
+        try:
+            rows = self.db.conn.execute(
+                """SELECT name, ko_name, primary_location, locations,
+                          extent, confidence, spatial_text
+                   FROM file_objects
+                   WHERE file_id = ?
+                   ORDER BY id""",
+                (file_id,),
+            ).fetchall()
+        except Exception:
+            return []
+
+        objects: list[dict] = []
+        for row in rows:
+            try:
+                locations = json.loads(row["locations"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                locations = []
+            objects.append({
+                "name": row["name"],
+                "ko_name": row["ko_name"],
+                "primary_location": row["primary_location"],
+                "locations": locations,
+                "extent": row["extent"],
+                "confidence": row["confidence"],
+                "spatial_text": row["spatial_text"],
+            })
+        return objects
+
+    def _parse_json_fields(self, result: Dict) -> None:
         """Parse JSON string fields in a result dict."""
         if result.get("ai_tags"):
             try:
@@ -2303,6 +2347,7 @@ class SqliteVectorSearch:
                 result["folder_tags"] = json.loads(result["folder_tags"])
             except (json.JSONDecodeError, TypeError):
                 result["folder_tags"] = []
+        result["spatial_objects"] = self._load_spatial_objects(result.get("id"))
 
     def triaxis_image_search(
         self,

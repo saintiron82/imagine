@@ -176,6 +176,7 @@ def format_result(result: dict, skip_fs: bool = False) -> dict:
         "layer_count": metadata.get("layer_count", 0),
         "mc_caption": result.get("mc_caption", ""),
         "ai_tags": result.get("ai_tags", []),
+        "spatial_objects": result.get("spatial_objects", []),
         "user_note": result.get("user_note", ""),
         "user_tags": result.get("user_tags", []),
         "user_category": result.get("user_category", ""),

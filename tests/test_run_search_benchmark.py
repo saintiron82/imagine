@@ -150,6 +150,7 @@ def test_fts_keywords_drop_generic_korean_search_words():
 def test_fts_keywords_normalize_scope_and_condition_particles():
     assert fts_keywords("로네느의집에서 그림과 방 있는 이미지") == ["로네느의집", "그림", "방"]
     assert fts_keywords("#07에서 캐릭터과 방 있는 이미지") == ["#07", "캐릭터", "방"]
+    assert fts_keywords("오른쪽에 달이 있다") == ["오른쪽", "달"]
 
 
 def test_fts_keywords_preserve_english_terms_but_drop_generic_image_words():

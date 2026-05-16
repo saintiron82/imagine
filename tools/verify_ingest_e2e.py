@@ -20,6 +20,7 @@ PhaseRunner + storage 화이트리스트 수정이 진짜 작동하는지 venv �
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 import time
@@ -56,7 +57,7 @@ def _verify(conn, file_id: int) -> dict:
 
     out = {
         "file_id": row[0], "file_path": row[1], "file_name": row[2],
-        "format": row[3], "checks": {}, "fts": {},
+        "format": row[3], "checks": {}, "fts": {}, "objects": {},
     }
     for i, col in enumerate(_REQUIRED_COLS, start=4):
         val = row[i]
@@ -73,6 +74,21 @@ def _verify(conn, file_id: int) -> dict:
         for i, col in enumerate(_FTS_COLS):
             v = fts_row[i] or ""
             out["fts"][col] = {"filled": bool(v.strip()), "len": len(v)}
+
+    try:
+        structured_raw = row[4 + _REQUIRED_COLS.index("structured_meta")]
+        structured = json.loads(structured_raw or "{}")
+        objects = structured.get("objects")
+        out["objects"]["structured_meta_count"] = len(objects) if isinstance(objects, list) else 0
+    except Exception:
+        out["objects"]["structured_meta_count"] = 0
+
+    try:
+        out["objects"]["file_objects_count"] = cur.execute(
+            "SELECT COUNT(*) FROM file_objects WHERE file_id = ?", (file_id,)
+        ).fetchone()[0]
+    except sqlite3.OperationalError:
+        out["objects"]["file_objects_count"] = None
 
     return out
 
@@ -158,6 +174,14 @@ def main():
             print(f"  {mark} {col:20s} {'len=' + str(info['len']) if info['filled'] else '(empty)'}")
             if not info["filled"]:
                 fail += 1
+
+    print("\nSpatial objects:")
+    structured_count = result["objects"].get("structured_meta_count", 0)
+    file_objects_count = result["objects"].get("file_objects_count")
+    print(f"  {'✓' if structured_count else '✗'} structured_meta.objects count={structured_count}")
+    print(f"  {'✓' if file_objects_count else '✗'} file_objects count={file_objects_count}")
+    if not structured_count or not file_objects_count:
+        fail += 1
 
     print()
     if fail == 0:

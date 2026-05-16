@@ -772,6 +772,12 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
         r'|에|의|를|을|이|가|은|는|과|와|도|로|서|께|랑'
         r'|있는거|있는것|있는|없는|하는|했던|인거|인것|그려진거|보이는|보이는거)$'
     )
+    _KO_STOPWORDS = {"있다", "있고", "있음", "찾아줘", "찾기"}
+
+    @staticmethod
+    def _is_meaningful_ko_token(token: str) -> bool:
+        """Korean one-syllable nouns like 달/밤/성 are valid FTS literals."""
+        return bool(token) and any('\uac00' <= ch <= '\ud7af' for ch in token)
 
     def _extract_ko_keywords(self, query: str) -> list:
         """Extract meaningful keywords from Korean text by stripping particles."""
@@ -783,9 +789,11 @@ Supported filter keys: "format" (PSD/PNG/JPG), "dominant_color_hint" (color name
                 continue
             # Strip trailing Korean particles
             cleaned = self._KO_PARTICLES.sub('', tok)
-            if cleaned and len(cleaned) >= 2:
+            if tok in self._KO_STOPWORDS or cleaned in self._KO_STOPWORDS:
+                continue
+            if cleaned and (len(cleaned) >= 2 or self._is_meaningful_ko_token(cleaned)):
                 keywords.append(cleaned)
-            elif tok and len(tok) >= 2:
+            elif tok and (len(tok) >= 2 or self._is_meaningful_ko_token(tok)):
                 keywords.append(tok)
         return keywords
 

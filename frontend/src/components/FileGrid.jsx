@@ -216,7 +216,18 @@ const MetadataModal = ({ metadata, onClose }) => {
         return true;
     };
 
+    const getSpatialObjects = () => {
+        if (Array.isArray(metadata.spatial_objects) && metadata.spatial_objects.length > 0) {
+            return metadata.spatial_objects;
+        }
+        const structured = typeof metadata.structured_meta === 'string'
+            ? (() => { try { return JSON.parse(metadata.structured_meta); } catch { return {}; } })()
+            : metadata.structured_meta;
+        return Array.isArray(structured?.objects) ? structured.objects : [];
+    };
+
     const tags = getTags();
+    const spatialObjects = getSpatialObjects();
 
     return (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 animate-fadeIn" onClick={onClose}>
@@ -391,6 +402,23 @@ const MetadataModal = ({ metadata, onClose }) => {
                                                     {tag}
                                                 </span>
                                             ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {spatialObjects.length > 0 && (
+                                    <div className="mb-3">
+                                        <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">SPATIAL OBJECTS</div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {spatialObjects.slice(0, 12).map((obj, i) => {
+                                                const label = [obj.ko_name || obj.name, obj.primary_location]
+                                                    .filter(Boolean).join(' · ');
+                                                return (
+                                                    <span key={i} className="bg-emerald-800/30 text-emerald-200 border border-emerald-600/30 px-2 py-0.5 rounded text-xs">
+                                                        {label}
+                                                    </span>
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 )}

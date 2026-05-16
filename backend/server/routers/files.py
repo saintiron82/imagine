@@ -76,6 +76,8 @@ class FileResponse_(BaseModel):
     relative_path: Optional[str] = None
     mode_tier: Optional[str] = None
     parsed_at: Optional[str] = None
+    structured_meta: Optional[dict] = None
+    spatial_objects: Optional[list] = None
 
 
 def _row_to_file_response(row) -> dict:
@@ -88,7 +90,44 @@ def _row_to_file_response(row) -> dict:
                 d[key] = json.loads(d[key])
             except (json.JSONDecodeError, TypeError):
                 d[key] = []
+    if isinstance(d.get("structured_meta"), str):
+        try:
+            d["structured_meta"] = json.loads(d["structured_meta"])
+        except (json.JSONDecodeError, TypeError):
+            d["structured_meta"] = {}
     return d
+
+
+def _load_spatial_objects(db: SQLiteDB, file_id: int) -> list[dict]:
+    """Load normalized object-location evidence for detail views."""
+    try:
+        rows = db.conn.execute(
+            """SELECT name, ko_name, primary_location, locations,
+                      extent, confidence, spatial_text
+               FROM file_objects
+               WHERE file_id = ?
+               ORDER BY id""",
+            (file_id,),
+        ).fetchall()
+    except Exception:
+        return []
+
+    objects = []
+    for row in rows:
+        try:
+            locations = json.loads(row["locations"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            locations = []
+        objects.append({
+            "name": row["name"],
+            "ko_name": row["ko_name"],
+            "primary_location": row["primary_location"],
+            "locations": locations,
+            "extent": row["extent"],
+            "confidence": row["confidence"],
+            "spatial_text": row["spatial_text"],
+        })
+    return objects
 
 
 # ── Endpoints ────────────────────────────────────────────────
@@ -165,7 +204,8 @@ def get_file(
                   thumbnail_url, storage_root, relative_path,
                   folder_path, folder_depth, folder_tags,
                   mode_tier, embedding_model, caption_model,
-                  created_at, modified_at, parsed_at, content_hash
+                  created_at, modified_at, parsed_at, content_hash,
+                  structured_meta
            FROM files WHERE id = ?""",
         (file_id,)
     )
@@ -173,7 +213,9 @@ def get_file(
     if row is None:
         raise HTTPException(status_code=404, detail="File not found")
 
-    return {"success": True, "file": _row_to_file_response(row)}
+    file_data = _row_to_file_response(row)
+    file_data["spatial_objects"] = _load_spatial_objects(db, file_id)
+    return {"success": True, "file": file_data}
 
 
 @router.patch("/{file_id}/user-meta")

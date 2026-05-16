@@ -64,6 +64,8 @@ FTS_QUERY_STOPWORDS = {
     "조건",
     "제외",
     "있는",
+    "있다",
+    "있고",
     "있음",
     "보이는",
     "보이고",
@@ -99,7 +101,7 @@ FTS_QUERY_STOPWORDS = {
 FTS_QUERY_SPLIT_RE = re.compile(r"[\s,;/]+")
 FTS_KO_PARTICLE_SUFFIX_RE = re.compile(
     r"(?:중에서|중에|에서|에게서|에게|한테|으로|부터|까지|보다|처럼|만큼|대로|마다|"
-    r"이랑|이나|하고|과|와|의|은|는|이|가|을|를|도|만|나)$"
+    r"이랑|이나|하고|과|와|에|의|은|는|이|가|을|를|도|만|나)$"
 )
 FTS_TOKEN_STRIP_CHARS = " \t\r\n\"'`“”‘’[](){}"
 FTS_PARTICLE_SUFFIX_EXCEPTIONS = {"마을"}
