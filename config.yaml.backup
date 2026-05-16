@@ -75,6 +75,10 @@ search:
     bm25_weights:
       meta_strong: 3
       meta_weak: 1.5
+      caption: 2.5
+      ai_tags: 2
+      classification: 1.5
+      spatial: 2.2
   rrf:
     k: 60
     preset: balanced

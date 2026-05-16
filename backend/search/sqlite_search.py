@@ -1005,7 +1005,7 @@ class SqliteVectorSearch:
                 exclude_expr = " OR ".join(ex_parts)
                 match_expr = f"({match_expr}) NOT ({exclude_expr})"
 
-        # v3 P07: Load BM25 weights from config (5 columns)
+        # v4: Load BM25 weights from config (6 columns)
         from backend.utils.config import get_config as _cfg
         cfg = _cfg()
         w_strong = cfg.get("search.fts.bm25_weights.meta_strong", 3.0)
@@ -1013,6 +1013,7 @@ class SqliteVectorSearch:
         w_caption = cfg.get("search.fts.bm25_weights.caption", 2.5)
         w_ai_tags = cfg.get("search.fts.bm25_weights.ai_tags", 2.0)
         w_classification = cfg.get("search.fts.bm25_weights.classification", 1.5)
+        w_spatial = cfg.get("search.fts.bm25_weights.spatial", 2.2)
 
         cursor = self.db.conn.cursor()
 
@@ -1057,7 +1058,7 @@ class SqliteVectorSearch:
                     f.character_type,
                     f.item_type,
                     f.ui_type,
-                    bm25(files_fts, ?, ?, ?, ?, ?) AS fts_rank
+                    bm25(files_fts, ?, ?, ?, ?, ?, ?) AS fts_rank
                 FROM files_fts fts
                 JOIN files f ON f.id = fts.rowid
                 WHERE files_fts MATCH ?
@@ -1065,7 +1066,7 @@ class SqliteVectorSearch:
                   {scope_clause}
                 ORDER BY fts_rank
                 LIMIT ?
-            """, (w_strong, w_weak, w_caption, w_ai_tags, w_classification,
+            """, (w_strong, w_weak, w_caption, w_ai_tags, w_classification, w_spatial,
                   match_expr, *scope_binds, top_k))
 
             results = []

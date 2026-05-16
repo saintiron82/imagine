@@ -1,7 +1,7 @@
 """
-v3 P07 FTS rebuild — 5-column schema with VLM output (caption/ai_tags/classification).
+FTS rebuild — v4 schema with VLM output and spatial object evidence.
 
-Drops the existing 2-column FTS table and rebuilds with 5 columns,
+Drops the existing FTS table and rebuilds with 6 columns,
 backfilling from the files table. Idempotent — safe to re-run.
 
 Usage:
@@ -19,6 +19,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.db.sqlite_client import SQLiteDB  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,17 +40,39 @@ CREATE VIRTUAL TABLE files_fts USING fts5(
     meta_weak,
     caption,
     ai_tags,
-    classification
+    classification,
+    spatial
 );
 
 CREATE TRIGGER files_fts_insert AFTER INSERT ON files BEGIN
-    INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification)
-    VALUES (new.id, '', '', '', '', '');
+    INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification, spatial)
+    VALUES (new.id, '', '', '', '', '', '');
 END;
 
 CREATE TRIGGER files_fts_delete AFTER DELETE ON files BEGIN
     DELETE FROM files_fts WHERE rowid = old.id;
 END;
+"""
+
+_FILE_OBJECTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS file_objects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    ko_name TEXT,
+    primary_location TEXT NOT NULL,
+    locations TEXT NOT NULL,
+    extent TEXT,
+    confidence TEXT,
+    source TEXT NOT NULL DEFAULT 'vlm',
+    spatial_text TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_file_objects_file_id ON file_objects(file_id);
+CREATE INDEX IF NOT EXISTS idx_file_objects_name ON file_objects(name);
+CREATE INDEX IF NOT EXISTS idx_file_objects_location ON file_objects(primary_location);
+CREATE INDEX IF NOT EXISTS idx_file_objects_name_location ON file_objects(name, primary_location);
 """
 
 
@@ -73,6 +97,27 @@ def _build_classification(image_type, scene_type, art_style,
     parts = [image_type, scene_type, art_style,
              character_type, item_type, time_of_day, weather]
     return " ".join(str(p) for p in parts if p)
+
+
+def _replace_file_objects(cur, file_id, objects):
+    cur.execute("DELETE FROM file_objects WHERE file_id = ?", (file_id,))
+    for obj in objects or []:
+        cur.execute(
+            """INSERT INTO file_objects
+               (file_id, name, ko_name, primary_location, locations, extent, confidence, source, spatial_text)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                file_id,
+                obj.get("name") or "",
+                obj.get("ko_name") or "",
+                obj.get("primary_location") or "",
+                json.dumps(obj.get("locations") or [], ensure_ascii=False),
+                obj.get("extent") or "",
+                obj.get("confidence") or "low",
+                "vlm",
+                SQLiteDB._build_fts_spatial([obj]),
+            ),
+        )
 
 
 def _build_meta_strong(file_name, ocr_text, meta):
@@ -134,7 +179,8 @@ def main():
     cur = conn.cursor()
 
     # Schema rebuild
-    logger.info("Dropping & recreating files_fts (5 columns)...")
+    logger.info("Dropping & recreating files_fts (6 columns)...")
+    cur.executescript(_FILE_OBJECTS_SCHEMA)
     cur.executescript(_FTS_SCHEMA)
     conn.commit()
 
@@ -144,7 +190,7 @@ def main():
         "SELECT id, file_path, file_name, mc_caption, ai_tags, "
         "metadata, ocr_text, folder_path, relative_path, "
         "image_type, scene_type, art_style, folder_tags, "
-        "character_type, item_type, time_of_day, weather "
+        "character_type, item_type, time_of_day, weather, structured_meta "
         "FROM files"
     ).fetchall()
 
@@ -153,7 +199,7 @@ def main():
         (fid, file_path, file_name, mc_caption, ai_tags_raw,
          metadata_str, ocr_text, folder_path, relative_path,
          image_type, scene_type, art_style, folder_tags_raw,
-         character_type, item_type, time_of_day, weather) = r
+         character_type, item_type, time_of_day, weather, structured_meta) = r
 
         try:
             meta = json.loads(metadata_str) if metadata_str else {}
@@ -171,11 +217,14 @@ def main():
             image_type, scene_type, art_style,
             character_type, item_type, time_of_day, weather,
         )
+        spatial_objects = SQLiteDB._normalize_spatial_objects_from_meta(structured_meta)
+        spatial_col = SQLiteDB._build_fts_spatial(spatial_objects)
+        _replace_file_objects(cur, fid, spatial_objects)
 
         cur.execute(
-            "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (fid, meta_strong, meta_weak, caption_col, ai_tags_col, classification_col),
+            "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification, spatial) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (fid, meta_strong, meta_weak, caption_col, ai_tags_col, classification_col, spatial_col),
         )
         inserted += 1
 
@@ -186,10 +235,10 @@ def main():
     try:
         cur.execute(
             "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, ?)",
-            ("fts_index_version", "3"),
+            ("fts_index_version", "4"),
         )
         conn.commit()
-        logger.info("system_meta.fts_index_version = 3")
+        logger.info("system_meta.fts_index_version = 4")
     except sqlite3.OperationalError:
         logger.warning("system_meta table missing — skipping version stamp")
 
@@ -198,7 +247,12 @@ def main():
     n_caption = cur.execute("SELECT COUNT(*) FROM files_fts WHERE caption != ''").fetchone()[0]
     n_tags = cur.execute("SELECT COUNT(*) FROM files_fts WHERE ai_tags != ''").fetchone()[0]
     n_class = cur.execute("SELECT COUNT(*) FROM files_fts WHERE classification != ''").fetchone()[0]
-    logger.info(f"Verify: fts_rows={n_fts}, caption={n_caption}, ai_tags={n_tags}, classification={n_class}")
+    n_spatial = cur.execute("SELECT COUNT(*) FROM files_fts WHERE spatial != ''").fetchone()[0]
+    n_objects = cur.execute("SELECT COUNT(*) FROM file_objects").fetchone()[0]
+    logger.info(
+        f"Verify: fts_rows={n_fts}, caption={n_caption}, ai_tags={n_tags}, "
+        f"classification={n_class}, spatial={n_spatial}, file_objects={n_objects}"
+    )
 
     conn.close()
 

@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS job_queue (
     -- Per-worker tracking (for multi-worker throughput)
     worker_session_id INTEGER REFERENCES worker_sessions(id) ON DELETE SET NULL,
 
+    -- Folder-level work tracking
+    work_request_id INTEGER REFERENCES work_requests(id) ON DELETE SET NULL,
+    work_subtask_id INTEGER REFERENCES work_subtasks(id) ON DELETE SET NULL,
+
     -- File readiness gate (2-stage pipeline: preparation → processing)
     -- 1 = file is locally available for processing (default for local files)
     -- 0 = file needs preparation (e.g., WebDAV download pending)
@@ -146,7 +150,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
 CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);
-CREATE INDEX IF NOT EXISTS idx_worker_tokens_hash ON worker_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
 CREATE INDEX IF NOT EXISTS idx_job_queue_assigned ON job_queue(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority DESC, created_at ASC);

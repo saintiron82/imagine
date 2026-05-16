@@ -14,7 +14,7 @@ PhaseRunner + storage 화이트리스트 수정이 진짜 작동하는지 venv �
     - ai_style 채워짐
     - caption_model 채워짐
     - processing_status 'vision_done' 또는 'parse_fallback'
-    - files_fts.caption / ai_tags / classification 채워짐
+    - files_fts.caption / ai_tags / classification / spatial 채워짐
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ _REQUIRED_COLS = (
     "caption_model",
     "processing_status",
 )
-_FTS_COLS = ("caption", "ai_tags", "classification")
+_FTS_COLS = ("caption", "ai_tags", "classification", "spatial")
 
 
 def _snapshot_max_id(conn) -> int:

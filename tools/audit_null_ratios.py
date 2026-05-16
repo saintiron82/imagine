@@ -12,7 +12,7 @@ Reports:
     modified_at, folder_path, caption_model, dominant_color, ai_style,
     processing_status, width)
   - format breakdown
-  - files_fts row count + caption/ai_tags/classification non-empty counts
+  - files_fts row count + caption/ai_tags/classification/spatial non-empty counts
   - parse_fallback_legacy remaining (split local vs webdav)
   - active analysis_jobs (so the orchestrator can see the registered
     re-ingest job's progress at a glance)
@@ -98,7 +98,7 @@ def collect(db_path: Path) -> Dict[str, Any]:
         if _table_exists(conn, "files_fts"):
             fts_total = conn.execute("SELECT COUNT(*) FROM files_fts").fetchone()[0]
             snapshot["fts"]["rows"] = fts_total
-            for col in ("caption", "ai_tags", "classification"):
+            for col in ("caption", "ai_tags", "classification", "spatial"):
                 try:
                     cnt = conn.execute(
                         f"SELECT COUNT(*) FROM files_fts WHERE {col} != ''"

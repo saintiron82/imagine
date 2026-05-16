@@ -114,6 +114,22 @@ CREATE TABLE IF NOT EXISTS layers (
     UNIQUE(file_id, layer_path)
 );
 
+-- Normalized object-location evidence from structured_meta.objects
+CREATE TABLE IF NOT EXISTS file_objects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    ko_name TEXT,
+    primary_location TEXT NOT NULL,
+    locations TEXT NOT NULL,
+    extent TEXT,
+    confidence TEXT,
+    source TEXT NOT NULL DEFAULT 'vlm',
+    spatial_text TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+
 -- Virtual table for file embeddings (sqlite-vec)
 -- Dimension is set dynamically from active tier config
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_files USING vec0(
@@ -154,8 +170,12 @@ CREATE INDEX IF NOT EXISTS idx_relative_path ON files(relative_path);
 CREATE INDEX IF NOT EXISTS idx_perceptual_hash ON files(perceptual_hash);
 CREATE INDEX IF NOT EXISTS idx_dup_group_id ON files(dup_group_id);
 CREATE INDEX IF NOT EXISTS idx_content_hash ON files(content_hash);
+CREATE INDEX IF NOT EXISTS idx_file_objects_file_id ON file_objects(file_id);
+CREATE INDEX IF NOT EXISTS idx_file_objects_name ON file_objects(name);
+CREATE INDEX IF NOT EXISTS idx_file_objects_location ON file_objects(primary_location);
+CREATE INDEX IF NOT EXISTS idx_file_objects_name_location ON file_objects(name, primary_location);
 
--- Full-text search (FTS5) — 2-column BM25-weighted architecture
+-- Full-text search (FTS5) — BM25-weighted architecture
 --
 -- meta_strong (BM25 weight: 3.0) — Direct identification facts:
 --   file_name, layer_names, used_fonts, user_tags, ocr_text
@@ -163,7 +183,7 @@ CREATE INDEX IF NOT EXISTS idx_content_hash ON files(content_hash);
 -- meta_weak (BM25 weight: 1.5) — Contextual information:
 --   file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
 --
--- NOTE: caption column (mc_caption, ai_tags) will be added when AI caption feature is implemented
+-- caption/ai_tags/classification/spatial are populated by Python builders.
 --
 -- Design: Candidate First
 --   1. FTS MATCH → candidate doc_id list (top 2000 if >10k results)
@@ -171,21 +191,18 @@ CREATE INDEX IF NOT EXISTS idx_content_hash ON files(content_hash);
 --   3. RRF merge → de-dup → return
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
     meta_strong,      -- BM25 3.0: file_name, layer_names, used_fonts, user_tags, ocr_text
-    meta_weak         -- BM25 1.5: file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
+    meta_weak,        -- BM25 1.5: file_path, text_content, user_note, folder_tags, image_type, scene_type, art_style
+    caption,          -- BM25 2.5: mc_caption full text
+    ai_tags,          -- BM25 2.0: VLM tags
+    classification,   -- BM25 1.5: VLM category fields
+    spatial           -- BM25 2.2: object-location text from structured_meta.objects
 );
 
--- Triggers: 2-column FTS
--- meta_strong, meta_weak are built by Python (complex JSON walking)
+-- Triggers: FTS columns are built by Python (complex JSON walking)
 -- SQL triggers insert empty strings; Python updates immediately after
 CREATE TRIGGER IF NOT EXISTS files_fts_insert AFTER INSERT ON files BEGIN
-    INSERT INTO files_fts(rowid, meta_strong, meta_weak)
-    VALUES (new.id, '', '');
-END;
-
-CREATE TRIGGER IF NOT EXISTS files_fts_update AFTER UPDATE ON files BEGIN
-    DELETE FROM files_fts WHERE rowid = old.id;
-    INSERT INTO files_fts(rowid, meta_strong, meta_weak)
-    VALUES (new.id, '', '');
+    INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification, spatial)
+    VALUES (new.id, '', '', '', '', '', '');
 END;
 
 CREATE TRIGGER IF NOT EXISTS files_fts_delete AFTER DELETE ON files BEGIN

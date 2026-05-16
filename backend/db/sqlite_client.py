@@ -50,7 +50,7 @@ def _retry_on_locked(func):
 class SQLiteDB:
     """SQLite database client with sqlite-vec support."""
     CURRENT_DATA_BUILD_LEVEL = 2
-    CURRENT_FTS_INDEX_VERSION = 3
+    CURRENT_FTS_INDEX_VERSION = 4
 
     _META_KEY_DATA_BUILD_LEVEL = "data_build_level"
     _META_KEY_FTS_INDEX_VERSION = "fts_index_version"
@@ -169,6 +169,10 @@ class SQLiteDB:
                 updated_at TEXT DEFAULT (datetime('now'))
             )
         """)
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(system_meta)").fetchall()}
+        if "updated_at" not in cols:
+            self.conn.execute("ALTER TABLE system_meta ADD COLUMN updated_at TEXT")
+            self.conn.execute("UPDATE system_meta SET updated_at = datetime('now') WHERE updated_at IS NULL")
         self.conn.commit()
 
 
@@ -255,7 +259,7 @@ class SQLiteDB:
             raise
 
 
-    # ── FTS5 columns: 2-column BM25-weighted architecture ──
+    # ── FTS5 columns: BM25-weighted architecture ──
     #
     # meta_strong (BM25 3.0): Direct identification facts
     #   file_name, layer_names, used_fonts, user_tags, ocr_text
@@ -264,12 +268,59 @@ class SQLiteDB:
     #   file_path, text_content, user_note, folder_tags,
     #   image_type, scene_type, art_style
     #
-    # v3 P07: 5-column FTS — caption, ai_tags, classification added.
+    # v3 P07: caption, ai_tags, classification added.
+    # v4: spatial added from structured_meta.objects.
     # caption: mc_caption full text (BM25 2.5 — strong VLM signal)
     # ai_tags: VLM-generated tags joined (BM25 2.0)
     # classification: image_type/scene_type/art_style/character_type/item_type/
     #                 time_of_day/weather joined (BM25 1.5 — categorical)
-    _FTS_COLUMNS = ['meta_strong', 'meta_weak', 'caption', 'ai_tags', 'classification']
+    # spatial: normalized object-location text from structured_meta.objects
+    #          (for queries like "moon on the right" / "오른쪽 달")
+    _FTS_COLUMNS = ['meta_strong', 'meta_weak', 'caption', 'ai_tags', 'classification', 'spatial']
+    _SPATIAL_LOCATIONS = {
+        "top-left", "top", "top-right",
+        "left", "center", "right",
+        "bottom-left", "bottom", "bottom-right",
+    }
+    _SPATIAL_LOCATION_ALIASES = {
+        "upper-left": "top-left",
+        "upper left": "top-left",
+        "top left": "top-left",
+        "upper": "top",
+        "upper-center": "top",
+        "upper center": "top",
+        "upper-right": "top-right",
+        "upper right": "top-right",
+        "top right": "top-right",
+        "middle-left": "left",
+        "middle left": "left",
+        "middle": "center",
+        "centre": "center",
+        "middle-center": "center",
+        "middle center": "center",
+        "middle-right": "right",
+        "middle right": "right",
+        "lower-left": "bottom-left",
+        "lower left": "bottom-left",
+        "bottom left": "bottom-left",
+        "lower": "bottom",
+        "lower-center": "bottom",
+        "lower center": "bottom",
+        "lower-right": "bottom-right",
+        "lower right": "bottom-right",
+        "bottom right": "bottom-right",
+    }
+    _SPATIAL_LOCATION_KO = {
+        "top-left": ["좌상단", "왼쪽 위"],
+        "top": ["상단", "위"],
+        "top-right": ["우상단", "오른쪽 위"],
+        "left": ["왼쪽", "좌측"],
+        "center": ["중앙", "가운데"],
+        "right": ["오른쪽", "우측"],
+        "bottom-left": ["좌하단", "왼쪽 아래"],
+        "bottom": ["하단", "아래"],
+        "bottom-right": ["우하단", "오른쪽 아래"],
+    }
 
     def _ensure_fts(self):
         """Ensure FTS5 table exists with correct schema and is populated."""
@@ -280,7 +331,7 @@ class SQLiteDB:
             # Check if table exists and has the right columns
             cursor = self.conn.execute("PRAGMA table_info(files_fts)")
             existing_cols = [row[1] for row in cursor.fetchall()]
-            if not existing_cols or set(existing_cols) != set(self._FTS_COLUMNS):
+            if not existing_cols or existing_cols != self._FTS_COLUMNS:
                 logger.info(f"FTS5 schema mismatch — rebuilding")
                 needs_rebuild = True
             else:
@@ -324,7 +375,8 @@ class SQLiteDB:
 
     def _rebuild_fts(self):
         """Drop and recreate FTS5 table, backfilling from files table."""
-        logger.info("Rebuilding FTS5 table (v3 P07: 5 columns with VLM output)...")
+        logger.info("Rebuilding FTS5 table (v4: VLM + spatial object output)...")
+        self._ensure_file_objects_table()
 
         # Drop old FTS + triggers, then create fresh
         self.conn.executescript("""
@@ -338,14 +390,15 @@ class SQLiteDB:
                 meta_weak,
                 caption,
                 ai_tags,
-                classification
+                classification,
+                spatial
             );
 
             -- Triggers: all columns need Python builders (complex JSON walking).
             -- Empty inserts get patched by _refresh_fts_row after INSERT/UPDATE.
             CREATE TRIGGER IF NOT EXISTS files_fts_insert AFTER INSERT ON files BEGIN
-                INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification)
-                VALUES (new.id, '', '', '', '', '');
+                INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification, spatial)
+                VALUES (new.id, '', '', '', '', '', '');
             END;
 
             -- UPDATE trigger removed: FTS is managed by Python (_refresh_fts_row)
@@ -357,13 +410,13 @@ class SQLiteDB:
             END;
         """)
 
-        # Backfill: v3 P07 5-column FTS
+        # Backfill: v4 FTS including normalized spatial object evidence
         cursor = self.conn.execute(
             "SELECT id, file_path, file_name, mc_caption, ai_tags, "
             "metadata, ocr_text, user_note, user_tags, "
             "folder_path, relative_path, "
             "image_type, scene_type, art_style, folder_tags, "
-            "character_type, item_type, time_of_day, weather FROM files"
+            "character_type, item_type, time_of_day, weather, structured_meta FROM files"
         )
 
         rows_inserted = 0
@@ -380,11 +433,14 @@ class SQLiteDB:
             caption_col = self._build_fts_caption(row)
             ai_tags_col = self._build_fts_ai_tags(row)
             classification_col = self._build_fts_classification(row)
+            spatial_objects = self._normalize_spatial_objects_from_meta(row[19])
+            spatial_col = self._build_fts_spatial(spatial_objects)
+            self._replace_file_objects(self.conn, file_id, spatial_objects)
 
             self.conn.execute(
-                "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (file_id, meta_strong, meta_weak, caption_col, ai_tags_col, classification_col)
+                "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification, spatial) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (file_id, meta_strong, meta_weak, caption_col, ai_tags_col, classification_col, spatial_col)
             )
             rows_inserted += 1
 
@@ -604,13 +660,13 @@ class SQLiteDB:
 
     @staticmethod
     def _build_fts_caption(row) -> str:
-        """v3 P07: full mc_caption text. BM25 weight 2.5 (strong VLM signal)."""
+        """Full mc_caption text. BM25 weight 2.5 (strong VLM signal)."""
         cap = SQLiteDB._row_value(row, "mc_caption", 3)
         return str(cap) if cap else ''
 
     @staticmethod
     def _build_fts_ai_tags(row) -> str:
-        """v3 P07: VLM-generated tags joined. BM25 weight 2.0."""
+        """VLM-generated tags joined. BM25 weight 2.0."""
         raw = SQLiteDB._row_value(row, "ai_tags", 4)
         if not raw:
             return ''
@@ -624,7 +680,7 @@ class SQLiteDB:
 
     @staticmethod
     def _build_fts_classification(row) -> str:
-        """v3 P07: VLM classification fields joined. BM25 weight 1.5 (categorical)."""
+        """VLM classification fields joined. BM25 weight 1.5 (categorical)."""
         keys = (
             ("image_type", 11), ("scene_type", 12), ("art_style", 13),
             ("character_type", 15), ("item_type", 16),
@@ -637,6 +693,161 @@ class SQLiteDB:
                 parts.append(str(val))
         return ' '.join(parts)
 
+    @classmethod
+    def _normalize_spatial_location(cls, value: Any) -> Optional[str]:
+        """Normalize VLM location text into the fixed 3x3 grid contract."""
+        if value is None:
+            return None
+        text = str(value).strip().lower().replace("_", "-")
+        text = re.sub(r"\s+", " ", text)
+        if text in cls._SPATIAL_LOCATIONS:
+            return text
+        return cls._SPATIAL_LOCATION_ALIASES.get(text)
+
+    @classmethod
+    def _normalize_spatial_objects_from_meta(cls, structured_meta: Any) -> list[dict]:
+        """Extract valid object-location evidence from structured_meta.objects."""
+        if not structured_meta:
+            return []
+        if isinstance(structured_meta, str):
+            try:
+                structured_meta = json.loads(structured_meta)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if not isinstance(structured_meta, dict):
+            return []
+
+        raw_objects = structured_meta.get("objects")
+        if not isinstance(raw_objects, list):
+            return []
+
+        normalized: list[dict] = []
+        for raw in raw_objects:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name") or "").strip().lower()
+            ko_name = str(raw.get("ko_name") or "").strip()
+            if not name and not ko_name:
+                continue
+
+            raw_locations = raw.get("locations")
+            if isinstance(raw_locations, str):
+                raw_locations = [raw_locations]
+            if not isinstance(raw_locations, list):
+                raw_locations = []
+
+            locations = []
+            seen = set()
+            for loc in raw_locations:
+                normalized_loc = cls._normalize_spatial_location(loc)
+                if normalized_loc and normalized_loc not in seen:
+                    seen.add(normalized_loc)
+                    locations.append(normalized_loc)
+
+            primary_location = cls._normalize_spatial_location(raw.get("primary_location"))
+            if primary_location:
+                if primary_location in seen:
+                    locations = [loc for loc in locations if loc != primary_location]
+                else:
+                    seen.add(primary_location)
+                locations.insert(0, primary_location)
+            if not primary_location and locations:
+                primary_location = locations[0]
+            if not locations or not primary_location:
+                continue
+
+            extent = str(raw.get("extent") or "").strip().lower()
+            if extent not in {"small", "medium", "large", "wide", "full"}:
+                extent = ""
+
+            confidence = str(raw.get("confidence") or "").strip().lower()
+            if confidence not in {"high", "medium", "low"}:
+                confidence = "low"
+
+            normalized.append({
+                "name": name,
+                "ko_name": ko_name,
+                "locations": locations,
+                "primary_location": primary_location,
+                "extent": extent,
+                "confidence": confidence,
+            })
+        return normalized
+
+    @classmethod
+    def _build_fts_spatial(cls, objects: list[dict]) -> str:
+        """Build searchable object-location text for FTS/BM25."""
+        parts: list[str] = []
+        for obj in objects or []:
+            names = [obj.get("name") or "", obj.get("ko_name") or ""]
+            names = [str(name).strip() for name in names if str(name or "").strip()]
+            locations = list(obj.get("locations") or [])
+            primary = obj.get("primary_location") or ""
+            if primary and primary not in locations:
+                locations.insert(0, primary)
+
+            for name in names:
+                parts.append(name)
+                for loc in locations:
+                    parts.append(loc)
+                    parts.append(f"{name} {loc}")
+                    for ko_loc in cls._SPATIAL_LOCATION_KO.get(loc, []):
+                        parts.append(ko_loc)
+                        parts.append(f"{name} {ko_loc}")
+
+            if obj.get("extent"):
+                parts.append(str(obj["extent"]))
+            if obj.get("confidence"):
+                parts.append(str(obj["confidence"]))
+
+        return " ".join(parts)
+
+    def _ensure_file_objects_table(self):
+        """Create the normalized spatial object evidence table."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS file_objects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                ko_name TEXT,
+                primary_location TEXT NOT NULL,
+                locations TEXT NOT NULL,
+                extent TEXT,
+                confidence TEXT,
+                source TEXT NOT NULL DEFAULT 'vlm',
+                spatial_text TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_file_objects_file_id ON file_objects(file_id);
+            CREATE INDEX IF NOT EXISTS idx_file_objects_name ON file_objects(name);
+            CREATE INDEX IF NOT EXISTS idx_file_objects_location ON file_objects(primary_location);
+            CREATE INDEX IF NOT EXISTS idx_file_objects_name_location ON file_objects(name, primary_location);
+        """)
+        self.conn.commit()
+
+    def _replace_file_objects(self, cursor, file_id: int, objects: list[dict]) -> None:
+        """Replace normalized spatial object evidence for one file."""
+        cursor.execute("DELETE FROM file_objects WHERE file_id = ?", (file_id,))
+        for obj in objects or []:
+            spatial_text = self._build_fts_spatial([obj])
+            cursor.execute(
+                """INSERT INTO file_objects
+                   (file_id, name, ko_name, primary_location, locations, extent, confidence, source, spatial_text)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    file_id,
+                    obj.get("name") or "",
+                    obj.get("ko_name") or "",
+                    obj.get("primary_location") or "",
+                    json.dumps(obj.get("locations") or [], ensure_ascii=False),
+                    obj.get("extent") or "",
+                    obj.get("confidence") or "low",
+                    "vlm",
+                    spatial_text,
+                ),
+            )
+
     # ── Phase-specific storage methods (v3.3) ─────────────────────────
 
     def _refresh_fts_row(self, cursor, file_id: int):
@@ -647,7 +858,7 @@ class SQLiteDB:
                 "metadata, ocr_text, user_note, user_tags, "
                 "folder_path, relative_path, "
                 "image_type, scene_type, art_style, folder_tags, "
-                "character_type, item_type, time_of_day, weather "
+                "character_type, item_type, time_of_day, weather, structured_meta "
                 "FROM files WHERE id = ?",
                 (file_id,)
             ).fetchone()
@@ -664,13 +875,16 @@ class SQLiteDB:
                 caption_col = self._build_fts_caption(file_data)
                 ai_tags_col = self._build_fts_ai_tags(file_data)
                 classification_col = self._build_fts_classification(file_data)
+                spatial_objects = self._normalize_spatial_objects_from_meta(file_data[19])
+                spatial_col = self._build_fts_spatial(spatial_objects)
+                self._replace_file_objects(cursor, file_id, spatial_objects)
 
                 cursor.execute(
                     "UPDATE files_fts SET meta_strong = ?, meta_weak = ?, "
-                    "caption = ?, ai_tags = ?, classification = ? "
+                    "caption = ?, ai_tags = ?, classification = ?, spatial = ? "
                     "WHERE rowid = ?",
                     (meta_strong, meta_weak, caption_col, ai_tags_col,
-                     classification_col, file_id)
+                     classification_col, spatial_col, file_id)
                 )
         except Exception as e:
             logger.warning(f"⚠️ FTS refresh failed for file_id={file_id}: {e}")
@@ -1139,8 +1353,8 @@ class SQLiteDB:
         """
         Delete all file data while preserving auth tables and thumbnails.
 
-        Clears: files, layers, vec_files, vec_text, vec_structure, files_fts, job_queue
-        Preserves: users, invite_codes, worker_tokens, worker_sessions, system_meta (reset values)
+        Clears: files, file_objects, layers, vec_files, vec_text, vec_structure, files_fts, job_queue
+        Preserves: users, invite_codes, worker_sessions, system_meta (reset values)
         """
         cursor = self.conn.cursor()
         try:
@@ -1154,8 +1368,10 @@ class SQLiteDB:
             if self._table_exists('job_queue'):
                 job_count = cursor.execute("SELECT COUNT(*) FROM job_queue").fetchone()[0]
 
-            # Delete order: FTS → vectors → layers → files → jobs
+            # Delete order: FTS → object evidence → vectors → layers → files → jobs
             cursor.execute("DELETE FROM files_fts")
+            if self._table_exists('file_objects'):
+                cursor.execute("DELETE FROM file_objects")
             cursor.execute("DELETE FROM vec_files")
             cursor.execute("DELETE FROM vec_text")
             if self._table_exists('vec_structure'):
@@ -1385,8 +1601,6 @@ class SQLiteDB:
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to insert embedding (sqlite-vec may not be loaded): {e}")
 
-            # Triaxis: Post-trigger FTS fix (2 columns: meta_strong, meta_weak)
-            # SQL triggers set these to ''; Python updates with actual data
             # Insert/update Structure vector (DINOv2)
             if structure_embedding is not None:
                 try:
@@ -1399,27 +1613,9 @@ class SQLiteDB:
                 except Exception as e:
                      logger.warning(f"⚠️ Failed to insert structure embedding: {e}")
 
-            # Triaxis: Post-trigger FTS fix (2 columns: meta_strong, meta_weak)
-            # SQL triggers set these to ''; Python updates with actual data
+            # SQL triggers insert empty FTS rows; Python updates all derived FTS columns.
             try:
-                # Get file data for FTS building
-                file_data = cursor.execute(
-                    "SELECT id, file_path, file_name, mc_caption, ai_tags, "
-                    "metadata, ocr_text, user_note, user_tags, "
-                    "folder_path, relative_path, "
-                    "image_type, scene_type, art_style, folder_tags "
-                    "FROM files WHERE id = ?",
-                    (file_id,)
-                ).fetchone()
-
-                if file_data:
-                    meta_strong = self._build_fts_meta_strong(file_data, metadata_json)
-                    meta_weak = self._build_fts_meta_weak(file_data, metadata_json)
-
-                    cursor.execute(
-                        "UPDATE files_fts SET meta_strong = ?, meta_weak = ? WHERE rowid = ?",
-                        (meta_strong, meta_weak, file_id)
-                    )
+                self._refresh_fts_row(cursor, file_id)
             except Exception as e:
                 logger.warning(f"⚠️ FTS post-trigger update failed: {e}")
 
