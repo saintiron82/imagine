@@ -61,14 +61,21 @@ _RELATIONS = {
 }
 
 
-def parse_structured_output(raw: str, schema: dict, image_type: str = "other") -> dict:
+def parse_structured_output(
+    raw: str,
+    schema: dict,
+    image_type: str = "other",
+    include_diagnostics: bool = False,
+) -> dict:
     """3-tier defensive JSON parsing. Always returns a usable dict."""
 
     # Tier 1: direct parse
     try:
         parsed = json.loads(raw.strip())
         if isinstance(parsed, dict) and _validate_fields(parsed):
-            return _sanitize_result(parsed)
+            return _with_diagnostics(
+                _sanitize_result(parsed), "direct", False, include_diagnostics
+            )
     except json.JSONDecodeError:
         pass
 
@@ -77,7 +84,9 @@ def parse_structured_output(raw: str, schema: dict, image_type: str = "other") -
         repaired = _repair_common_errors(raw)
         parsed = json.loads(repaired)
         if isinstance(parsed, dict) and _validate_fields(parsed):
-            return _sanitize_result(parsed)
+            return _with_diagnostics(
+                _sanitize_result(parsed), "repaired", True, include_diagnostics
+            )
     except (json.JSONDecodeError, ValueError):
         pass
 
@@ -91,7 +100,22 @@ def parse_structured_output(raw: str, schema: dict, image_type: str = "other") -
         clean_text = re.sub(r'\s+', ' ', clean_text).strip()
         extracted["caption"] = clean_text[:500]
 
-    return _sanitize_result({**MINIMUM_GUARANTEED_FIELDS, **extracted})
+    return _with_diagnostics(
+        _sanitize_result({**MINIMUM_GUARANTEED_FIELDS, **extracted}),
+        "fallback",
+        True,
+        include_diagnostics,
+    )
+
+
+def _with_diagnostics(result: dict, status: str, repaired: bool, include: bool) -> dict:
+    if include:
+        result = dict(result)
+        result["_parse_diagnostics"] = {
+            "status": status,
+            "repaired": repaired,
+        }
+    return result
 
 
 def _repair_common_errors(raw: str) -> str:

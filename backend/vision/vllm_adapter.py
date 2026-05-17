@@ -278,12 +278,24 @@ class VLLMAdapter(BaseVisionAnalyzer):
             raw_text = outputs[0].outputs[0].text.strip()
             logger.debug(f"Stage 2 raw output: {raw_text}")
 
-            result = parse_structured_output(raw_text, schema)
+            result = parse_structured_output(
+                raw_text,
+                schema,
+                image_type=image_type,
+                include_diagnostics=True,
+            )
 
             # Add metadata
             result["mc_tier"] = self.tier_name
             result["mc_backend"] = "vllm"
             result["mc_model"] = self.model_name
+            result["_vlm_raw"] = raw_text
+            result["_vlm_provenance"] = {
+                "stage": "stage2",
+                "model": self.model_name,
+                "adapter": self.__class__.__name__,
+                "prompt_version": "spatial_v2",
+            }
 
             return result
 
@@ -427,10 +439,22 @@ class VLLMAdapter(BaseVisionAnalyzer):
             schema = get_schema(img_type)
             for idx, output in zip(indices, outputs):
                 raw_text = output.outputs[0].text.strip()
-                result = parse_structured_output(raw_text, schema)
+                result = parse_structured_output(
+                    raw_text,
+                    schema,
+                    image_type=img_type,
+                    include_diagnostics=True,
+                )
                 result["mc_tier"] = self.tier_name
                 result["mc_backend"] = "vllm"
                 result["mc_model"] = self.model_name
+                result["_vlm_raw"] = raw_text
+                result["_vlm_provenance"] = {
+                    "stage": "stage2",
+                    "model": self.model_name,
+                    "adapter": self.__class__.__name__,
+                    "prompt_version": "spatial_v2",
+                }
                 results[idx] = result
 
         logger.info(f"✓ Batch processing completed ({len(results)} results)")

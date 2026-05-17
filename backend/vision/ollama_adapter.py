@@ -369,8 +369,20 @@ Format your response as JSON:
                 t0 = time.perf_counter()
                 raw = self._call_ollama(prompt, img_b64, keep_alive)
                 elapsed = time.perf_counter() - t0
-                result = parse_structured_output(raw, schema, image_type=image_type)
+                result = parse_structured_output(
+                    raw,
+                    schema,
+                    image_type=image_type,
+                    include_diagnostics=True,
+                )
                 result["image_type"] = image_type
+                result["_vlm_raw"] = raw
+                result["_vlm_provenance"] = {
+                    "stage": "stage2",
+                    "model": self.model,
+                    "adapter": self.__class__.__name__,
+                    "prompt_version": "spatial_v2",
+                }
                 logger.info(f"Stage 2 completed in {elapsed:.1f}s ({image_type})")
                 return result
             except Exception as e:

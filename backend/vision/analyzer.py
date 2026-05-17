@@ -815,8 +815,20 @@ class VisionAnalyzer(BaseVisionAnalyzer):
             )
             raw = self._generate_response(image, prompt, STAGE2_SYSTEM)
             elapsed = time.perf_counter() - t0
-            result = parse_structured_output(raw, get_schema(image_type), image_type=image_type)
+            result = parse_structured_output(
+                raw,
+                get_schema(image_type),
+                image_type=image_type,
+                include_diagnostics=True,
+            )
             result["image_type"] = image_type
+            result["_vlm_raw"] = raw
+            result["_vlm_provenance"] = {
+                "stage": "stage2",
+                "model": self.model_id,
+                "adapter": self.__class__.__name__,
+                "prompt_version": "spatial_v2",
+            }
             logger.info(f"Stage 2 completed in {elapsed:.1f}s ({image_type})")
             return result
         except Exception as e:
@@ -1012,8 +1024,20 @@ class VisionAnalyzer(BaseVisionAnalyzer):
         schema = get_schema(image_type)
         results = []
         for raw in raw_list:
-            result = parse_structured_output(raw, schema, image_type=image_type)
+            result = parse_structured_output(
+                raw,
+                schema,
+                image_type=image_type,
+                include_diagnostics=True,
+            )
             result["image_type"] = image_type
+            result["_vlm_raw"] = raw
+            result["_vlm_provenance"] = {
+                "stage": "stage2",
+                "model": self.model_id,
+                "adapter": self.__class__.__name__,
+                "prompt_version": "spatial_v2",
+            }
             results.append(result)
         return results
 
