@@ -193,6 +193,14 @@ _CONCISE_OUTPUT_FMT = f"""\nReturn ONLY this JSON (no markdown fences):
       "confidence": "high|medium|low"
     }}
   ],
+  "spatial_schema_version": 2,
+  "extraction_quality": {{
+    "objects_status": "ok|empty|failed|partial",
+    "relations_status": "ok|empty|failed|partial",
+    "depth_status": "ok|empty|failed|partial",
+    "confidence": "high|medium|low",
+    "notes": "short reason when empty or partial"
+  }},
   "art_style": "one word",
   "color_palette": "max 3 dominant colors"
 }}

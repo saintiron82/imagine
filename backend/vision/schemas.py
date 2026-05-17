@@ -35,6 +35,14 @@ SPATIAL_RELATIONS_FIELD = (
     "Only include relations that are directly visible."
 )
 
+SPATIAL_SCHEMA_VERSION_FIELD = "integer. Current value must be 2."
+
+EXTRACTION_QUALITY_FIELD = (
+    "object with objects_status, relations_status, depth_status "
+    "(each one of: ok, empty, failed, partial), confidence "
+    "(high, medium, low), and notes (short string)."
+)
+
 STAGE2_SCHEMAS = {
     "character": {
         "character_type": "string",
@@ -140,6 +148,8 @@ def get_schema(image_type: str) -> dict:
     schema.setdefault("objects", SPATIAL_OBJECTS_FIELD)
     schema.setdefault("depth_layers", SPATIAL_DEPTH_LAYERS_FIELD)
     schema.setdefault("relations", SPATIAL_RELATIONS_FIELD)
+    schema.setdefault("spatial_schema_version", SPATIAL_SCHEMA_VERSION_FIELD)
+    schema.setdefault("extraction_quality", EXTRACTION_QUALITY_FIELD)
     return schema
 
 

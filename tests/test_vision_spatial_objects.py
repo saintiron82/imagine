@@ -42,6 +42,18 @@ def test_stage2_schema_includes_spatial_objects():
     assert "behind" in schema["relations"]
 
 
+def test_stage2_schema_declares_spatial_processing_contract():
+    schemas = load_vision_modules()["schemas"]
+
+    schema = schemas.get_schema("background")
+
+    assert "spatial_schema_version" in schema
+    assert "extraction_quality" in schema
+    assert "objects_status" in schema["extraction_quality"]
+    assert "relations_status" in schema["extraction_quality"]
+    assert "depth_status" in schema["extraction_quality"]
+
+
 def test_stage2_prompts_request_object_locations_in_full_and_concise_modes():
     prompts = load_vision_modules()["prompts"]
 
