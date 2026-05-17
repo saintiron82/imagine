@@ -67,7 +67,7 @@ def test_flat_spatial_object_tokens_are_normalized_from_legacy_fallback():
 
     assert objects == [
         {
-            "name": "forks",
+            "name": "fork",
             "ko_name": "포크",
             "locations": ["top-left", "top", "center"],
             "primary_location": "top-left",

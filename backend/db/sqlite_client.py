@@ -358,6 +358,20 @@ class SQLiteDB:
         "midground": ["중경", "중간"],
         "background": ["배경", "뒤쪽"],
     }
+    _OBJECT_SYNONYMS = {
+        "shelves": "shelf",
+        "cupboard": "cabinet",
+        "bottles": "bottle",
+    }
+    _OBJECT_KO_NAMES = {
+        "shelf": "선반",
+        "cabinet": "수납장",
+        "bottle": "병",
+        "cup": "컵",
+        "table": "테이블",
+        "moon": "달",
+        "cloud": "구름",
+    }
 
     def _ensure_fts(self):
         """Ensure FTS5 table exists with correct schema and is populated."""
@@ -762,6 +776,22 @@ class SQLiteDB:
         return confidence if confidence in {"high", "medium", "low"} else "low"
 
     @classmethod
+    def _canonical_object_name(cls, value: Any) -> str:
+        name = str(value or "").strip().lower()
+        if name in cls._OBJECT_SYNONYMS:
+            return cls._OBJECT_SYNONYMS[name]
+        if name.endswith("s") and len(name) > 3:
+            return name[:-1]
+        return name
+
+    @classmethod
+    def _canonical_ko_name(cls, canonical_name: str, ko_name: Any) -> str:
+        known = cls._OBJECT_KO_NAMES.get(canonical_name)
+        if known:
+            return known
+        return str(ko_name or "").strip()
+
+    @classmethod
     def _coerce_flat_spatial_objects(cls, raw_objects: list[Any]) -> list[dict]:
         """Recover the old fallback-parser shape: ["name", "moon", "locations", ...]."""
         object_fields = {"name", "ko_name", "locations", "primary_location", "extent", "confidence"}
@@ -826,8 +856,8 @@ class SQLiteDB:
         for raw in raw_objects:
             if not isinstance(raw, dict):
                 continue
-            name = str(raw.get("name") or "").strip().lower()
-            ko_name = str(raw.get("ko_name") or "").strip()
+            name = cls._canonical_object_name(raw.get("name"))
+            ko_name = cls._canonical_ko_name(name, raw.get("ko_name"))
             if not name and not ko_name:
                 continue
 
@@ -896,8 +926,8 @@ class SQLiteDB:
         for raw in raw_relations:
             if not isinstance(raw, dict):
                 continue
-            subject = str(raw.get("subject") or "").strip().lower()
-            obj = str(raw.get("object") or "").strip().lower()
+            subject = cls._canonical_object_name(raw.get("subject"))
+            obj = cls._canonical_object_name(raw.get("object"))
             relation = cls._normalize_spatial_relation(raw.get("relation"))
             if not subject or not obj or not relation:
                 continue
@@ -934,8 +964,8 @@ class SQLiteDB:
         for raw in raw_layers:
             if not isinstance(raw, dict):
                 continue
-            name = str(raw.get("name") or raw.get("object") or "").strip().lower()
-            ko_name = str(raw.get("ko_name") or "").strip()
+            name = cls._canonical_object_name(raw.get("name") or raw.get("object"))
+            ko_name = cls._canonical_ko_name(name, raw.get("ko_name"))
             layer = str(raw.get("layer") or "").strip().lower().replace("_", "-")
             if layer not in cls._DEPTH_LAYERS or not (name or ko_name):
                 continue
