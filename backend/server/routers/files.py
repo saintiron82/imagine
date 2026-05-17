@@ -78,6 +78,8 @@ class FileResponse_(BaseModel):
     parsed_at: Optional[str] = None
     structured_meta: Optional[dict] = None
     spatial_objects: Optional[list] = None
+    spatial_relations: Optional[list] = None
+    depth_layers: Optional[list] = None
 
 
 def _row_to_file_response(row) -> dict:
@@ -128,6 +130,59 @@ def _load_spatial_objects(db: SQLiteDB, file_id: int) -> list[dict]:
             "spatial_text": row["spatial_text"],
         })
     return objects
+
+
+def _load_spatial_relations(db: SQLiteDB, file_id: int) -> list[dict]:
+    """Load normalized object-to-object spatial relations for detail views."""
+    try:
+        rows = db.conn.execute(
+            """SELECT subject, relation, object, subject_location,
+                      object_location, confidence, spatial_text
+               FROM file_spatial_relations
+               WHERE file_id = ?
+               ORDER BY id""",
+            (file_id,),
+        ).fetchall()
+    except Exception:
+        return []
+
+    return [
+        {
+            "subject": row["subject"],
+            "relation": row["relation"],
+            "object": row["object"],
+            "subject_location": row["subject_location"],
+            "object_location": row["object_location"],
+            "confidence": row["confidence"],
+            "spatial_text": row["spatial_text"],
+        }
+        for row in rows
+    ]
+
+
+def _load_depth_layers(db: SQLiteDB, file_id: int) -> list[dict]:
+    """Load normalized depth-layer evidence for detail views."""
+    try:
+        rows = db.conn.execute(
+            """SELECT name, ko_name, layer, confidence, spatial_text
+               FROM file_depth_layers
+               WHERE file_id = ?
+               ORDER BY id""",
+            (file_id,),
+        ).fetchall()
+    except Exception:
+        return []
+
+    return [
+        {
+            "name": row["name"],
+            "ko_name": row["ko_name"],
+            "layer": row["layer"],
+            "confidence": row["confidence"],
+            "spatial_text": row["spatial_text"],
+        }
+        for row in rows
+    ]
 
 
 # ── Endpoints ────────────────────────────────────────────────
@@ -215,6 +270,8 @@ def get_file(
 
     file_data = _row_to_file_response(row)
     file_data["spatial_objects"] = _load_spatial_objects(db, file_id)
+    file_data["spatial_relations"] = _load_spatial_relations(db, file_id)
+    file_data["depth_layers"] = _load_depth_layers(db, file_id)
     return {"success": True, "file": file_data}
 
 

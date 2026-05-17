@@ -19,6 +19,22 @@ SPATIAL_OBJECTS_FIELD = (
     "Use multiple locations for wide or spanning objects such as sky, ground, forest, walls."
 )
 
+SPATIAL_DEPTH_LAYERS_FIELD = (
+    "array of visible depth-layer evidence. Each item must be an object with: "
+    "name (English object/tag name), ko_name (Korean object name if known), "
+    "layer (foreground, midground, background), confidence (high, medium, low). "
+    "Use only for visible objects whose depth layer is reasonably clear."
+)
+
+SPATIAL_RELATIONS_FIELD = (
+    "array of maximum 5 visible object-to-object spatial relations. Each item must be an object with: "
+    "subject (English object/tag name), relation (one of: on, under, left_of, right_of, above, below, "
+    "in_front_of, behind, inside, around, attached_to, near, overlapping), "
+    "object (English object/tag name), subject_location (optional 3x3 grid cell), "
+    "object_location (optional 3x3 grid cell), confidence (high, medium, low). "
+    "Only include relations that are directly visible."
+)
+
 STAGE2_SCHEMAS = {
     "character": {
         "character_type": "string",
@@ -122,6 +138,8 @@ def get_schema(image_type: str) -> dict:
     else:
         schema = dict(STAGE2_SCHEMAS.get(image_type, STAGE2_SCHEMAS["generic"]))
     schema.setdefault("objects", SPATIAL_OBJECTS_FIELD)
+    schema.setdefault("depth_layers", SPATIAL_DEPTH_LAYERS_FIELD)
+    schema.setdefault("relations", SPATIAL_RELATIONS_FIELD)
     return schema
 
 

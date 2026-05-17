@@ -2325,6 +2325,61 @@ class SqliteVectorSearch:
             })
         return objects
 
+    def _load_spatial_relations(self, file_id: Any) -> list[dict]:
+        """Load normalized object-to-object spatial relations for a file."""
+        if not file_id:
+            return []
+        try:
+            rows = self.db.conn.execute(
+                """SELECT subject, relation, object, subject_location,
+                          object_location, confidence, spatial_text
+                   FROM file_spatial_relations
+                   WHERE file_id = ?
+                   ORDER BY id""",
+                (file_id,),
+            ).fetchall()
+        except Exception:
+            return []
+
+        return [
+            {
+                "subject": row["subject"],
+                "relation": row["relation"],
+                "object": row["object"],
+                "subject_location": row["subject_location"],
+                "object_location": row["object_location"],
+                "confidence": row["confidence"],
+                "spatial_text": row["spatial_text"],
+            }
+            for row in rows
+        ]
+
+    def _load_depth_layers(self, file_id: Any) -> list[dict]:
+        """Load normalized foreground/midground/background evidence for a file."""
+        if not file_id:
+            return []
+        try:
+            rows = self.db.conn.execute(
+                """SELECT name, ko_name, layer, confidence, spatial_text
+                   FROM file_depth_layers
+                   WHERE file_id = ?
+                   ORDER BY id""",
+                (file_id,),
+            ).fetchall()
+        except Exception:
+            return []
+
+        return [
+            {
+                "name": row["name"],
+                "ko_name": row["ko_name"],
+                "layer": row["layer"],
+                "confidence": row["confidence"],
+                "spatial_text": row["spatial_text"],
+            }
+            for row in rows
+        ]
+
     def _parse_json_fields(self, result: Dict) -> None:
         """Parse JSON string fields in a result dict."""
         if result.get("ai_tags"):
@@ -2348,6 +2403,8 @@ class SqliteVectorSearch:
             except (json.JSONDecodeError, TypeError):
                 result["folder_tags"] = []
         result["spatial_objects"] = self._load_spatial_objects(result.get("id"))
+        result["spatial_relations"] = self._load_spatial_relations(result.get("id"))
+        result["depth_layers"] = self._load_depth_layers(result.get("id"))
 
     def triaxis_image_search(
         self,
@@ -2751,7 +2808,7 @@ class SqliteVectorSearch:
                 raise ValueError("Metadata mode requires filters")
             return self.metadata_query(filters, top_k)
         elif mode == "fts":
-            return self.fts_search([query], top_k)
+            return self.fts_search([query], top_k, file_ids=file_ids)
         elif mode == "triaxis":
             return self.triaxis_search(query, filters, top_k, threshold, return_diagnostic=return_diagnostic, use_codex=use_codex, file_ids=file_ids, progress_callback=progress_callback)
         elif mode == "plan":

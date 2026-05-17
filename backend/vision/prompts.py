@@ -41,6 +41,9 @@ SPATIAL_OBJECT_INSTRUCTIONS = """Object-location extraction:
 - Set primary_location to the most representative cell from locations.
 - Use extent small/medium/large/wide/full and confidence high/medium/low.
 - Prefer concrete visible elements: moon, character, tree, window, sword, text overlay, sky, wall, water.
+- Populate "depth_layers" for clear foreground, midground, background evidence.
+- Populate "relations" with maximum 5 visible object-to-object spatial relations.
+- Use relation values only from: on, under, left_of, right_of, above, below, in_front_of, behind, inside, around, attached_to, near, overlapping.
 - Do not invent invisible objects. If no reliable object can be localized, return "objects": [].
 """
 
@@ -169,6 +172,24 @@ _CONCISE_OUTPUT_FMT = f"""\nReturn ONLY this JSON (no markdown fences):
       "locations": ["one or more of: top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right"],
       "primary_location": "one value from locations",
       "extent": "small|medium|large|wide|full",
+      "confidence": "high|medium|low"
+    }}
+  ],
+  "depth_layers": [
+    {{
+      "name": "visible object/tag name",
+      "ko_name": "Korean object name if known",
+      "layer": "foreground|midground|background",
+      "confidence": "high|medium|low"
+    }}
+  ],
+  "relations": [
+    {{
+      "subject": "visible object/tag name",
+      "relation": "on|under|left_of|right_of|above|below|in_front_of|behind|inside|around|attached_to|near|overlapping",
+      "object": "visible object/tag name",
+      "subject_location": "optional 3x3 grid cell",
+      "object_location": "optional 3x3 grid cell",
       "confidence": "high|medium|low"
     }}
   ],

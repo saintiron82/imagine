@@ -274,8 +274,9 @@ class SQLiteDB:
     # ai_tags: VLM-generated tags joined (BM25 2.0)
     # classification: image_type/scene_type/art_style/character_type/item_type/
     #                 time_of_day/weather joined (BM25 1.5 — categorical)
-    # spatial: normalized object-location text from structured_meta.objects
-    #          (for queries like "moon on the right" / "오른쪽 달")
+    # spatial: normalized object-location/relation/depth text from
+    #          structured_meta spatial evidence (for queries like
+    #          "moon on the right", "cup on table", "foreground table")
     _FTS_COLUMNS = ['meta_strong', 'meta_weak', 'caption', 'ai_tags', 'classification', 'spatial']
     _SPATIAL_LOCATIONS = {
         "top-left", "top", "top-right",
@@ -320,6 +321,42 @@ class SQLiteDB:
         "bottom-left": ["좌하단", "왼쪽 아래"],
         "bottom": ["하단", "아래"],
         "bottom-right": ["우하단", "오른쪽 아래"],
+    }
+    _SPATIAL_RELATIONS = {
+        "on", "under", "left_of", "right_of", "above", "below",
+        "in_front_of", "behind", "inside", "around", "attached_to",
+        "near", "overlapping",
+    }
+    _SPATIAL_RELATION_ALIASES = {
+        "left-of": "left_of",
+        "left of": "left_of",
+        "right-of": "right_of",
+        "right of": "right_of",
+        "in-front-of": "in_front_of",
+        "in front of": "in_front_of",
+        "attached-to": "attached_to",
+        "attached to": "attached_to",
+    }
+    _SPATIAL_RELATION_KO = {
+        "on": ["위", "위에"],
+        "under": ["아래", "아래에"],
+        "left_of": ["왼쪽", "왼쪽에"],
+        "right_of": ["오른쪽", "오른쪽에"],
+        "above": ["위쪽", "상단"],
+        "below": ["아래쪽", "하단"],
+        "in_front_of": ["앞", "앞쪽", "전면"],
+        "behind": ["뒤", "뒤쪽", "후면"],
+        "inside": ["안", "내부"],
+        "around": ["주변", "둘레"],
+        "attached_to": ["붙은", "연결"],
+        "near": ["근처", "가까이"],
+        "overlapping": ["겹친", "겹침"],
+    }
+    _DEPTH_LAYERS = {"foreground", "midground", "background"}
+    _DEPTH_LAYER_KO = {
+        "foreground": ["전경", "앞쪽"],
+        "midground": ["중경", "중간"],
+        "background": ["배경", "뒤쪽"],
     }
 
     def _ensure_fts(self):
@@ -434,8 +471,12 @@ class SQLiteDB:
             ai_tags_col = self._build_fts_ai_tags(row)
             classification_col = self._build_fts_classification(row)
             spatial_objects = self._normalize_spatial_objects_from_meta(row[19])
-            spatial_col = self._build_fts_spatial(spatial_objects)
+            spatial_relations = self._normalize_spatial_relations_from_meta(row[19])
+            depth_layers = self._normalize_depth_layers_from_meta(row[19])
+            spatial_col = self._build_fts_spatial(spatial_objects, spatial_relations, depth_layers)
             self._replace_file_objects(self.conn, file_id, spatial_objects)
+            self._replace_spatial_relations(self.conn, file_id, spatial_relations)
+            self._replace_depth_layers(self.conn, file_id, depth_layers)
 
             self.conn.execute(
                 "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification, spatial) "
@@ -705,6 +746,64 @@ class SQLiteDB:
         return cls._SPATIAL_LOCATION_ALIASES.get(text)
 
     @classmethod
+    def _normalize_spatial_relation(cls, value: Any) -> Optional[str]:
+        """Normalize VLM relation text into the small supported relation vocabulary."""
+        if value is None:
+            return None
+        text = str(value).strip().lower().replace("-", "_")
+        text = re.sub(r"\s+", "_", text)
+        if text in cls._SPATIAL_RELATIONS:
+            return text
+        return cls._SPATIAL_RELATION_ALIASES.get(str(value).strip().lower())
+
+    @staticmethod
+    def _normalize_spatial_confidence(value: Any) -> str:
+        confidence = str(value or "").strip().lower()
+        return confidence if confidence in {"high", "medium", "low"} else "low"
+
+    @classmethod
+    def _coerce_flat_spatial_objects(cls, raw_objects: list[Any]) -> list[dict]:
+        """Recover the old fallback-parser shape: ["name", "moon", "locations", ...]."""
+        object_fields = {"name", "ko_name", "locations", "primary_location", "extent", "confidence"}
+        tokens = [str(token).strip() for token in raw_objects if str(token).strip()]
+        objects: list[dict] = []
+        current: dict[str, Any] = {}
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if token == "name":
+                if current:
+                    objects.append(current)
+                current = {}
+                if i + 1 < len(tokens) and tokens[i + 1] not in object_fields:
+                    current["name"] = tokens[i + 1]
+                    i += 2
+                    continue
+            elif token == "ko_name":
+                if i + 1 < len(tokens) and tokens[i + 1] not in object_fields:
+                    current["ko_name"] = tokens[i + 1]
+                    i += 2
+                    continue
+            elif token == "locations":
+                locations = []
+                i += 1
+                while i < len(tokens) and tokens[i] not in object_fields:
+                    locations.append(tokens[i])
+                    i += 1
+                current["locations"] = locations
+                continue
+            elif token in {"primary_location", "extent", "confidence"}:
+                if i + 1 < len(tokens) and tokens[i + 1] not in object_fields:
+                    current[token] = tokens[i + 1]
+                    i += 2
+                    continue
+            i += 1
+
+        if current:
+            objects.append(current)
+        return objects
+
+    @classmethod
     def _normalize_spatial_objects_from_meta(cls, structured_meta: Any) -> list[dict]:
         """Extract valid object-location evidence from structured_meta.objects."""
         if not structured_meta:
@@ -720,6 +819,8 @@ class SQLiteDB:
         raw_objects = structured_meta.get("objects")
         if not isinstance(raw_objects, list):
             return []
+        if raw_objects and all(not isinstance(raw, dict) for raw in raw_objects):
+            raw_objects = cls._coerce_flat_spatial_objects(raw_objects)
 
         normalized: list[dict] = []
         for raw in raw_objects:
@@ -775,12 +876,92 @@ class SQLiteDB:
         return normalized
 
     @classmethod
-    def _build_fts_spatial(cls, objects: list[dict]) -> str:
+    def _normalize_spatial_relations_from_meta(cls, structured_meta: Any) -> list[dict]:
+        """Extract visible object-to-object spatial relations from structured_meta.relations."""
+        if not structured_meta:
+            return []
+        if isinstance(structured_meta, str):
+            try:
+                structured_meta = json.loads(structured_meta)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if not isinstance(structured_meta, dict):
+            return []
+
+        raw_relations = structured_meta.get("relations")
+        if not isinstance(raw_relations, list):
+            return []
+
+        normalized: list[dict] = []
+        for raw in raw_relations:
+            if not isinstance(raw, dict):
+                continue
+            subject = str(raw.get("subject") or "").strip().lower()
+            obj = str(raw.get("object") or "").strip().lower()
+            relation = cls._normalize_spatial_relation(raw.get("relation"))
+            if not subject or not obj or not relation:
+                continue
+            normalized.append({
+                "subject": subject,
+                "relation": relation,
+                "object": obj,
+                "subject_location": cls._normalize_spatial_location(raw.get("subject_location")) or "",
+                "object_location": cls._normalize_spatial_location(raw.get("object_location")) or "",
+                "confidence": cls._normalize_spatial_confidence(raw.get("confidence")),
+            })
+            if len(normalized) >= 5:
+                break
+        return normalized
+
+    @classmethod
+    def _normalize_depth_layers_from_meta(cls, structured_meta: Any) -> list[dict]:
+        """Extract visible foreground/midground/background evidence."""
+        if not structured_meta:
+            return []
+        if isinstance(structured_meta, str):
+            try:
+                structured_meta = json.loads(structured_meta)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if not isinstance(structured_meta, dict):
+            return []
+
+        raw_layers = structured_meta.get("depth_layers")
+        if not isinstance(raw_layers, list):
+            return []
+
+        normalized: list[dict] = []
+        for raw in raw_layers:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name") or raw.get("object") or "").strip().lower()
+            ko_name = str(raw.get("ko_name") or "").strip()
+            layer = str(raw.get("layer") or "").strip().lower().replace("_", "-")
+            if layer not in cls._DEPTH_LAYERS or not (name or ko_name):
+                continue
+            normalized.append({
+                "name": name,
+                "ko_name": ko_name,
+                "layer": layer,
+                "confidence": cls._normalize_spatial_confidence(raw.get("confidence")),
+            })
+        return normalized
+
+    @classmethod
+    def _build_fts_spatial(
+        cls,
+        objects: list[dict],
+        relations: Optional[list[dict]] = None,
+        depth_layers: Optional[list[dict]] = None,
+    ) -> str:
         """Build searchable object-location text for FTS/BM25."""
         parts: list[str] = []
+        ko_by_name: dict[str, str] = {}
         for obj in objects or []:
             names = [obj.get("name") or "", obj.get("ko_name") or ""]
             names = [str(name).strip() for name in names if str(name or "").strip()]
+            if obj.get("name") and obj.get("ko_name"):
+                ko_by_name[str(obj["name"]).strip().lower()] = str(obj["ko_name"]).strip()
             locations = list(obj.get("locations") or [])
             primary = obj.get("primary_location") or ""
             if primary and primary not in locations:
@@ -800,10 +981,65 @@ class SQLiteDB:
             if obj.get("confidence"):
                 parts.append(str(obj["confidence"]))
 
+        for layer in depth_layers or []:
+            if layer.get("name") and layer.get("ko_name"):
+                ko_by_name[str(layer["name"]).strip().lower()] = str(layer["ko_name"]).strip()
+
+        for rel in relations or []:
+            subject = str(rel.get("subject") or "").strip()
+            obj = str(rel.get("object") or "").strip()
+            relation = str(rel.get("relation") or "").strip()
+            if not subject or not obj or not relation:
+                continue
+            subject_names = [subject]
+            object_names = [obj]
+            subject_ko = ko_by_name.get(subject.lower())
+            object_ko = ko_by_name.get(obj.lower())
+            if subject_ko:
+                subject_names.append(subject_ko)
+            if object_ko:
+                object_names.append(object_ko)
+            parts.extend(subject_names + object_names + [relation])
+            for subject_name in subject_names:
+                for object_name in object_names:
+                    parts.append(f"{subject_name} {relation} {object_name}")
+                    parts.append(f"{subject_name} {object_name} {relation}")
+            for ko_rel in cls._SPATIAL_RELATION_KO.get(relation, []):
+                parts.append(ko_rel)
+                for subject_name in subject_names:
+                    for object_name in object_names:
+                        parts.append(f"{subject_name} {ko_rel} {object_name}")
+                        parts.append(f"{subject_name} {object_name} {ko_rel}")
+            for loc_key in ("subject_location", "object_location"):
+                loc = rel.get(loc_key) or ""
+                if loc:
+                    parts.append(loc)
+                    for ko_loc in cls._SPATIAL_LOCATION_KO.get(loc, []):
+                        parts.append(ko_loc)
+            if rel.get("confidence"):
+                parts.append(str(rel["confidence"]))
+
+        for layer in depth_layers or []:
+            names = [layer.get("name") or "", layer.get("ko_name") or ""]
+            names = [str(name).strip() for name in names if str(name or "").strip()]
+            depth = str(layer.get("layer") or "").strip()
+            if not names or not depth:
+                continue
+            parts.append(depth)
+            for ko_layer in cls._DEPTH_LAYER_KO.get(depth, []):
+                parts.append(ko_layer)
+            for name in names:
+                parts.append(name)
+                parts.append(f"{name} {depth}")
+                for ko_layer in cls._DEPTH_LAYER_KO.get(depth, []):
+                    parts.append(f"{name} {ko_layer}")
+            if layer.get("confidence"):
+                parts.append(str(layer["confidence"]))
+
         return " ".join(parts)
 
     def _ensure_file_objects_table(self):
-        """Create the normalized spatial object evidence table."""
+        """Create normalized spatial evidence tables."""
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS file_objects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -823,6 +1059,41 @@ class SQLiteDB:
             CREATE INDEX IF NOT EXISTS idx_file_objects_name ON file_objects(name);
             CREATE INDEX IF NOT EXISTS idx_file_objects_location ON file_objects(primary_location);
             CREATE INDEX IF NOT EXISTS idx_file_objects_name_location ON file_objects(name, primary_location);
+
+            CREATE TABLE IF NOT EXISTS file_spatial_relations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                subject TEXT NOT NULL,
+                relation TEXT NOT NULL,
+                object TEXT NOT NULL,
+                subject_location TEXT,
+                object_location TEXT,
+                confidence TEXT,
+                source TEXT NOT NULL DEFAULT 'vlm',
+                spatial_text TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_file_spatial_relations_file_id ON file_spatial_relations(file_id);
+            CREATE INDEX IF NOT EXISTS idx_file_spatial_relations_subject ON file_spatial_relations(subject);
+            CREATE INDEX IF NOT EXISTS idx_file_spatial_relations_object ON file_spatial_relations(object);
+            CREATE INDEX IF NOT EXISTS idx_file_spatial_relations_relation ON file_spatial_relations(relation);
+
+            CREATE TABLE IF NOT EXISTS file_depth_layers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                ko_name TEXT,
+                layer TEXT NOT NULL,
+                confidence TEXT,
+                source TEXT NOT NULL DEFAULT 'vlm',
+                spatial_text TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_file_depth_layers_file_id ON file_depth_layers(file_id);
+            CREATE INDEX IF NOT EXISTS idx_file_depth_layers_name ON file_depth_layers(name);
+            CREATE INDEX IF NOT EXISTS idx_file_depth_layers_layer ON file_depth_layers(layer);
         """)
         self.conn.commit()
 
@@ -843,6 +1114,49 @@ class SQLiteDB:
                     json.dumps(obj.get("locations") or [], ensure_ascii=False),
                     obj.get("extent") or "",
                     obj.get("confidence") or "low",
+                    "vlm",
+                    spatial_text,
+                ),
+            )
+
+    def _replace_spatial_relations(self, cursor, file_id: int, relations: list[dict]) -> None:
+        """Replace normalized object-to-object spatial relations for one file."""
+        cursor.execute("DELETE FROM file_spatial_relations WHERE file_id = ?", (file_id,))
+        for rel in relations or []:
+            spatial_text = self._build_fts_spatial([], [rel], [])
+            cursor.execute(
+                """INSERT INTO file_spatial_relations
+                   (file_id, subject, relation, object, subject_location, object_location,
+                    confidence, source, spatial_text)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    file_id,
+                    rel.get("subject") or "",
+                    rel.get("relation") or "",
+                    rel.get("object") or "",
+                    rel.get("subject_location") or "",
+                    rel.get("object_location") or "",
+                    rel.get("confidence") or "low",
+                    "vlm",
+                    spatial_text,
+                ),
+            )
+
+    def _replace_depth_layers(self, cursor, file_id: int, depth_layers: list[dict]) -> None:
+        """Replace normalized depth-layer evidence for one file."""
+        cursor.execute("DELETE FROM file_depth_layers WHERE file_id = ?", (file_id,))
+        for layer in depth_layers or []:
+            spatial_text = self._build_fts_spatial([], [], [layer])
+            cursor.execute(
+                """INSERT INTO file_depth_layers
+                   (file_id, name, ko_name, layer, confidence, source, spatial_text)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    file_id,
+                    layer.get("name") or "",
+                    layer.get("ko_name") or "",
+                    layer.get("layer") or "",
+                    layer.get("confidence") or "low",
                     "vlm",
                     spatial_text,
                 ),
@@ -876,8 +1190,12 @@ class SQLiteDB:
                 ai_tags_col = self._build_fts_ai_tags(file_data)
                 classification_col = self._build_fts_classification(file_data)
                 spatial_objects = self._normalize_spatial_objects_from_meta(file_data[19])
-                spatial_col = self._build_fts_spatial(spatial_objects)
+                spatial_relations = self._normalize_spatial_relations_from_meta(file_data[19])
+                depth_layers = self._normalize_depth_layers_from_meta(file_data[19])
+                spatial_col = self._build_fts_spatial(spatial_objects, spatial_relations, depth_layers)
                 self._replace_file_objects(cursor, file_id, spatial_objects)
+                self._replace_spatial_relations(cursor, file_id, spatial_relations)
+                self._replace_depth_layers(cursor, file_id, depth_layers)
 
                 cursor.execute(
                     "UPDATE files_fts SET meta_strong = ?, meta_weak = ?, "
@@ -1353,7 +1671,7 @@ class SQLiteDB:
         """
         Delete all file data while preserving auth tables and thumbnails.
 
-        Clears: files, file_objects, layers, vec_files, vec_text, vec_structure, files_fts, job_queue
+        Clears: files, spatial evidence, layers, vec_files, vec_text, vec_structure, files_fts, job_queue
         Preserves: users, invite_codes, worker_sessions, system_meta (reset values)
         """
         cursor = self.conn.cursor()
@@ -1372,6 +1690,10 @@ class SQLiteDB:
             cursor.execute("DELETE FROM files_fts")
             if self._table_exists('file_objects'):
                 cursor.execute("DELETE FROM file_objects")
+            if self._table_exists('file_spatial_relations'):
+                cursor.execute("DELETE FROM file_spatial_relations")
+            if self._table_exists('file_depth_layers'):
+                cursor.execute("DELETE FROM file_depth_layers")
             cursor.execute("DELETE FROM vec_files")
             cursor.execute("DELETE FROM vec_text")
             if self._table_exists('vec_structure'):

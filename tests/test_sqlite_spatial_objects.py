@@ -49,6 +49,128 @@ def test_spatial_objects_are_normalized_from_structured_meta():
     ]
 
 
+def test_flat_spatial_object_tokens_are_normalized_from_legacy_fallback():
+    structured_meta = {
+        "objects": [
+            "name",
+            "forks",
+            "ko_name",
+            "포크",
+            "locations",
+            "top-left",
+            "top",
+            "center",
+        ]
+    }
+
+    objects = SQLiteDB._normalize_spatial_objects_from_meta(json.dumps(structured_meta))
+
+    assert objects == [
+        {
+            "name": "forks",
+            "ko_name": "포크",
+            "locations": ["top-left", "top", "center"],
+            "primary_location": "top-left",
+            "extent": "",
+            "confidence": "low",
+        }
+    ]
+
+
+def test_spatial_relations_and_depth_layers_are_normalized_from_structured_meta():
+    structured_meta = {
+        "relations": [
+            {
+                "subject": "Cup",
+                "relation": "on",
+                "object": "Table",
+                "subject_location": "center",
+                "object_location": "bottom",
+                "confidence": "high",
+            },
+            {
+                "subject": "door",
+                "relation": "behind",
+                "object": "character",
+                "confidence": "certain",
+            },
+        ],
+        "depth_layers": [
+            {"name": "Table", "ko_name": "테이블", "layer": "foreground", "confidence": "medium"},
+            {"object": "window", "layer": "far", "confidence": "high"},
+        ],
+    }
+
+    relations = SQLiteDB._normalize_spatial_relations_from_meta(json.dumps(structured_meta))
+    depth_layers = SQLiteDB._normalize_depth_layers_from_meta(json.dumps(structured_meta))
+
+    assert relations == [
+        {
+            "subject": "cup",
+            "relation": "on",
+            "object": "table",
+            "subject_location": "center",
+            "object_location": "bottom",
+            "confidence": "high",
+        },
+        {
+            "subject": "door",
+            "relation": "behind",
+            "object": "character",
+            "subject_location": "",
+            "object_location": "",
+            "confidence": "low",
+        },
+    ]
+    assert depth_layers == [
+        {
+            "name": "table",
+            "ko_name": "테이블",
+            "layer": "foreground",
+            "confidence": "medium",
+        }
+    ]
+
+
+def test_spatial_fts_text_contains_relations_and_depth_layers():
+    objects = [
+        {
+            "name": "cup",
+            "ko_name": "컵",
+            "locations": ["center"],
+            "primary_location": "center",
+            "extent": "small",
+            "confidence": "high",
+        }
+    ]
+    relations = [
+        {
+            "subject": "cup",
+            "relation": "on",
+            "object": "table",
+            "subject_location": "center",
+            "object_location": "bottom",
+            "confidence": "high",
+        }
+    ]
+    depth_layers = [
+        {
+            "name": "table",
+            "ko_name": "테이블",
+            "layer": "foreground",
+            "confidence": "medium",
+        }
+    ]
+
+    spatial_text = SQLiteDB._build_fts_spatial(objects, relations, depth_layers)
+
+    assert "cup on table" in spatial_text
+    assert "cup table 위" in spatial_text
+    assert "컵 테이블 위" in spatial_text
+    assert "table foreground" in spatial_text
+    assert "테이블 전경" in spatial_text
+
+
 def test_spatial_fts_text_contains_object_location_pairs_in_english_and_korean():
     objects = [
         {

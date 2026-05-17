@@ -73,6 +73,41 @@ CREATE INDEX IF NOT EXISTS idx_file_objects_file_id ON file_objects(file_id);
 CREATE INDEX IF NOT EXISTS idx_file_objects_name ON file_objects(name);
 CREATE INDEX IF NOT EXISTS idx_file_objects_location ON file_objects(primary_location);
 CREATE INDEX IF NOT EXISTS idx_file_objects_name_location ON file_objects(name, primary_location);
+
+CREATE TABLE IF NOT EXISTS file_spatial_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    subject TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    object TEXT NOT NULL,
+    subject_location TEXT,
+    object_location TEXT,
+    confidence TEXT,
+    source TEXT NOT NULL DEFAULT 'vlm',
+    spatial_text TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_file_spatial_relations_file_id ON file_spatial_relations(file_id);
+CREATE INDEX IF NOT EXISTS idx_file_spatial_relations_subject ON file_spatial_relations(subject);
+CREATE INDEX IF NOT EXISTS idx_file_spatial_relations_object ON file_spatial_relations(object);
+CREATE INDEX IF NOT EXISTS idx_file_spatial_relations_relation ON file_spatial_relations(relation);
+
+CREATE TABLE IF NOT EXISTS file_depth_layers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    ko_name TEXT,
+    layer TEXT NOT NULL,
+    confidence TEXT,
+    source TEXT NOT NULL DEFAULT 'vlm',
+    spatial_text TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_file_depth_layers_file_id ON file_depth_layers(file_id);
+CREATE INDEX IF NOT EXISTS idx_file_depth_layers_name ON file_depth_layers(name);
+CREATE INDEX IF NOT EXISTS idx_file_depth_layers_layer ON file_depth_layers(layer);
 """
 
 
@@ -116,6 +151,47 @@ def _replace_file_objects(cur, file_id, objects):
                 obj.get("confidence") or "low",
                 "vlm",
                 SQLiteDB._build_fts_spatial([obj]),
+            ),
+        )
+
+
+def _replace_spatial_relations(cur, file_id, relations):
+    cur.execute("DELETE FROM file_spatial_relations WHERE file_id = ?", (file_id,))
+    for rel in relations or []:
+        cur.execute(
+            """INSERT INTO file_spatial_relations
+               (file_id, subject, relation, object, subject_location, object_location,
+                confidence, source, spatial_text)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                file_id,
+                rel.get("subject") or "",
+                rel.get("relation") or "",
+                rel.get("object") or "",
+                rel.get("subject_location") or "",
+                rel.get("object_location") or "",
+                rel.get("confidence") or "low",
+                "vlm",
+                SQLiteDB._build_fts_spatial([], [rel], []),
+            ),
+        )
+
+
+def _replace_depth_layers(cur, file_id, depth_layers):
+    cur.execute("DELETE FROM file_depth_layers WHERE file_id = ?", (file_id,))
+    for layer in depth_layers or []:
+        cur.execute(
+            """INSERT INTO file_depth_layers
+               (file_id, name, ko_name, layer, confidence, source, spatial_text)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                file_id,
+                layer.get("name") or "",
+                layer.get("ko_name") or "",
+                layer.get("layer") or "",
+                layer.get("confidence") or "low",
+                "vlm",
+                SQLiteDB._build_fts_spatial([], [], [layer]),
             ),
         )
 
@@ -218,8 +294,12 @@ def main():
             character_type, item_type, time_of_day, weather,
         )
         spatial_objects = SQLiteDB._normalize_spatial_objects_from_meta(structured_meta)
-        spatial_col = SQLiteDB._build_fts_spatial(spatial_objects)
+        spatial_relations = SQLiteDB._normalize_spatial_relations_from_meta(structured_meta)
+        depth_layers = SQLiteDB._normalize_depth_layers_from_meta(structured_meta)
+        spatial_col = SQLiteDB._build_fts_spatial(spatial_objects, spatial_relations, depth_layers)
         _replace_file_objects(cur, fid, spatial_objects)
+        _replace_spatial_relations(cur, fid, spatial_relations)
+        _replace_depth_layers(cur, fid, depth_layers)
 
         cur.execute(
             "INSERT INTO files_fts(rowid, meta_strong, meta_weak, caption, ai_tags, classification, spatial) "
