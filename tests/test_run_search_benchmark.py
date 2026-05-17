@@ -7,6 +7,7 @@ from tools.run_search_benchmark import (
     fts_keywords,
     run_search_benchmark,
 )
+from tools.evaluate_search_quality import load_queries
 
 
 def write_jsonl(path: Path, rows: list[dict]):
@@ -155,6 +156,30 @@ def test_fts_keywords_normalize_scope_and_condition_particles():
 
 def test_fts_keywords_preserve_english_terms_but_drop_generic_image_words():
     assert fts_keywords("night forest image with fog") == ["night", "forest", "fog"]
+
+
+def test_load_queries_accepts_spatial_processing_query_types(tmp_path: Path):
+    queries_path = tmp_path / "spatial_queries.jsonl"
+    write_jsonl(queries_path, [
+        {
+            "query_id": "spatial_relation_001",
+            "query_text": "컵이 테이블 위에 있는 이미지",
+            "query_type": "spatial_relation",
+            "locale": "ko-KR",
+            "created_at": "2026-05-17T00:00:00+09:00",
+        },
+        {
+            "query_id": "spatial_depth_001",
+            "query_text": "전경에 테이블이 있는 이미지",
+            "query_type": "spatial_depth",
+            "locale": "ko-KR",
+            "created_at": "2026-05-17T00:00:00+09:00",
+        },
+    ])
+
+    queries = load_queries(queries_path)
+
+    assert set(queries) == {"spatial_relation_001", "spatial_depth_001"}
 
 
 def test_run_search_benchmark_writes_evaluation_and_compare(tmp_path: Path):

@@ -18,7 +18,16 @@ from typing import Any, Iterable
 
 
 DEFAULT_K = (5, 10, 50)
-VALID_QUERY_TYPES = {"exact", "semantic", "scoped", "complex", "ambiguous", "blind_random"}
+VALID_QUERY_TYPES = {
+    "exact",
+    "semantic",
+    "scoped",
+    "complex",
+    "ambiguous",
+    "blind_random",
+    "spatial_relation",
+    "spatial_depth",
+}
 VALID_LABEL_SOURCES = {"weak", "human", "adjudicated"}
 
 

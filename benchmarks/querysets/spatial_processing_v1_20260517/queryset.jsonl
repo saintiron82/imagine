@@ -1,0 +1,2 @@
+{"query_id": "spatial_relation_001", "query_text": "컵이 테이블 위에 있는 이미지", "query_type": "spatial_relation", "locale": "ko-KR", "created_at": "2026-05-17T00:00:00+09:00", "intent": "spatial_relation", "must_terms": ["컵", "테이블", "위"], "soft_terms": ["on"], "exclude_terms": []}
+{"query_id": "spatial_depth_001", "query_text": "전경에 테이블이 있는 이미지", "query_type": "spatial_depth", "locale": "ko-KR", "created_at": "2026-05-17T00:00:00+09:00", "intent": "spatial_depth", "must_terms": ["전경", "테이블"], "soft_terms": ["foreground"], "exclude_terms": []}
