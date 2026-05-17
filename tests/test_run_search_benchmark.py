@@ -34,6 +34,9 @@ class FakeSearcher:
     def triaxis_search(self, query, top_k, threshold, use_codex):
         return [{"id": "a", "final_score": 1.0}, {"id": "a", "final_score": 0.9}, {"id": "b", "final_score": 0.8}]
 
+    def _spatial_evidence_search(self, intent, top_k, file_ids=None):
+        return [{"id": "s", "spatial_score": 1.2}]
+
 
 class ScopedFakeSearcher:
     def __init__(self):
@@ -61,6 +64,10 @@ class ScopedFakeSearcher:
     def triaxis_search(self, query, top_k, threshold, use_codex, file_ids=None):
         self.calls.append(("triaxis", query, top_k, threshold, use_codex, set(file_ids or [])))
         return [{"id": "in2", "final_score": 1.0}]
+
+    def _spatial_evidence_search(self, intent, top_k, file_ids=None):
+        self.calls.append(("spatial", intent, top_k, set(file_ids or [])))
+        return [{"id": "in1", "spatial_score": 1.1}]
 
 
 def make_inputs(tmp_path: Path):
@@ -116,20 +123,47 @@ def test_build_run_rows_applies_queryset_scope_to_all_engines(tmp_path: Path):
 
     rows, events = build_run_rows(
         queries_path=queries_path,
-        engines=["vv", "mv", "fts", "triaxis"],
+        engines=["vv", "mv", "fts", "spatial", "triaxis"],
         top_k=5,
         run_id="scoped",
         searcher=searcher,
     )
 
-    assert [event["scope"] for event in events] == ["작품/#08/bg"] * 4
-    assert [event["scope_file_count"] for event in events] == [2, 2, 2, 2]
+    assert [event["scope"] for event in events] == ["작품/#08/bg"] * 5
+    assert [event["scope_file_count"] for event in events] == [2, 2, 2, 2, 2]
     assert {row["item_id"] for row in rows} == {"in1", "in2"}
     assert all(row["scope"] == "작품/#08/bg" for row in rows)
     assert ("vv", "달과 밤하늘 있는 배경", {"in1", "in2"}, 5, 0.0) in searcher.calls
     assert ("mv", "달과 밤하늘 있는 배경", {"in1", "in2"}, 5, 0.0) in searcher.calls
     assert any(call[0] == "fts" and call[1] == ["달", "밤하늘"] and call[3] == {"in1", "in2"} for call in searcher.calls)
+    assert any(call[0] == "spatial" and call[3] == {"in1", "in2"} for call in searcher.calls)
     assert any(call[0] == "triaxis" and call[1] == "달과 밤하늘 있는 배경" and call[5] == {"in1", "in2"} for call in searcher.calls)
+
+
+def test_spatial_engine_uses_normalized_spatial_evidence(tmp_path: Path):
+    queries_path = tmp_path / "queries.jsonl"
+    write_jsonl(queries_path, [
+        {
+            "query_id": "spatial_relation_001",
+            "query_text": "컵이 테이블 위에 있는 이미지",
+            "query_type": "spatial_relation",
+            "locale": "ko-KR",
+            "created_at": "2026-05-17T00:00:00+09:00",
+        }
+    ])
+
+    rows, events = build_run_rows(
+        queries_path=queries_path,
+        engines=["spatial"],
+        top_k=1,
+        run_id="spatial",
+        searcher=FakeSearcher(),
+    )
+
+    assert rows[0]["engine_id"] == "spatial"
+    assert rows[0]["item_id"] == "s"
+    assert rows[0]["score"] == 1.2
+    assert events[0]["engine_id"] == "spatial"
 
 
 def test_benchmark_search_text_uses_must_terms_not_scope_text():

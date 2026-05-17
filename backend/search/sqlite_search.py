@@ -65,6 +65,173 @@ _SCOPE_HINT_BLOCKLIST = {
     "files",
 }
 
+_SPATIAL_KO_LOCATION_ALIASES = {
+    "좌상단": "top-left",
+    "왼쪽위": "top-left",
+    "왼쪽 위": "top-left",
+    "상단": "top",
+    "위쪽": "top",
+    "우상단": "top-right",
+    "오른쪽위": "top-right",
+    "오른쪽 위": "top-right",
+    "왼쪽": "left",
+    "좌측": "left",
+    "중앙": "center",
+    "가운데": "center",
+    "오른쪽": "right",
+    "우측": "right",
+    "좌하단": "bottom-left",
+    "왼쪽아래": "bottom-left",
+    "왼쪽 아래": "bottom-left",
+    "하단": "bottom",
+    "아래쪽": "bottom",
+    "우하단": "bottom-right",
+    "오른쪽아래": "bottom-right",
+    "오른쪽 아래": "bottom-right",
+}
+_SPATIAL_RELATION_ALIASES = {
+    "on": "on",
+    "over": "on",
+    "above": "above",
+    "under": "under",
+    "below": "below",
+    "behind": "behind",
+    "inside": "inside",
+    "around": "around",
+    "near": "near",
+    "left-of": "left_of",
+    "left_of": "left_of",
+    "right-of": "right_of",
+    "right_of": "right_of",
+    "in-front-of": "in_front_of",
+    "in_front_of": "in_front_of",
+    "attached-to": "attached_to",
+    "attached_to": "attached_to",
+    "위": "on",
+    "위에": "on",
+    "아래": "under",
+    "아래에": "under",
+    "왼쪽에": "left_of",
+    "오른쪽에": "right_of",
+    "앞": "in_front_of",
+    "앞쪽": "in_front_of",
+    "전면": "in_front_of",
+    "뒤": "behind",
+    "뒤쪽": "behind",
+    "후면": "behind",
+    "안": "inside",
+    "내부": "inside",
+    "주변": "around",
+    "근처": "near",
+    "가까이": "near",
+    "붙은": "attached_to",
+    "연결": "attached_to",
+}
+_SPATIAL_DEPTH_ALIASES = {
+    "foreground": "foreground",
+    "front": "foreground",
+    "전경": "foreground",
+    "앞쪽": "foreground",
+    "midground": "midground",
+    "middle": "midground",
+    "중경": "midground",
+    "중간": "midground",
+    "뒤쪽": "background",
+}
+_SPATIAL_STOPWORDS = {
+    "이미지", "사진", "그림", "파일", "자료", "찾기", "찾아줘", "보이는",
+    "있는", "있다", "있", "그리고", "with", "and", "the", "a", "an", "of", "in",
+    "to", "is", "are",
+}
+_SPATIAL_TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣_-]+")
+_SPATIAL_KO_PARTICLES_RE = re.compile(
+    r"(?:에게서|에게|한테|으로|부터|까지|보다|처럼|만큼|대로|마다|"
+    r"이랑|이나|하고|과|와|에|의|은|는|이|가|을|를|도|만|나)$"
+)
+
+
+def _ordered_unique(values: List[str]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            out.append(text)
+    return out
+
+
+def _extract_spatial_intent(query: str, keywords: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Extract rule-based spatial intent for relation/location/depth searches."""
+    text = str(query or "").strip()
+    joined = " ".join([text] + [str(k) for k in (keywords or []) if k])
+    lowered = joined.lower()
+    compact_ko = re.sub(r"\s+", "", joined)
+
+    locations: List[str] = []
+    for raw, canonical in SQLiteDB._SPATIAL_LOCATION_ALIASES.items():
+        if raw in lowered:
+            locations.append(canonical)
+    for canonical in SQLiteDB._SPATIAL_LOCATIONS:
+        if canonical in lowered:
+            locations.append(canonical)
+    for raw, canonical in _SPATIAL_KO_LOCATION_ALIASES.items():
+        if raw in joined or raw.replace(" ", "") in compact_ko:
+            locations.append(canonical)
+
+    relations: List[str] = []
+    for raw, canonical in SQLiteDB._SPATIAL_RELATION_ALIASES.items():
+        if raw in lowered:
+            relations.append(canonical)
+    for canonical in SQLiteDB._SPATIAL_RELATIONS:
+        if canonical in lowered:
+            relations.append(canonical)
+    for raw, canonical in _SPATIAL_RELATION_ALIASES.items():
+        if raw in lowered or raw in joined:
+            relations.append(canonical)
+
+    depth_layers: List[str] = []
+    for raw, canonical in _SPATIAL_DEPTH_ALIASES.items():
+        if raw in lowered or raw in joined:
+            depth_layers.append(canonical)
+
+    marker_terms = {
+        *locations,
+        *relations,
+        *depth_layers,
+        *SQLiteDB._SPATIAL_LOCATIONS,
+        *SQLiteDB._SPATIAL_RELATIONS,
+        *SQLiteDB._DEPTH_LAYERS,
+        *_SPATIAL_KO_LOCATION_ALIASES.keys(),
+        *_SPATIAL_RELATION_ALIASES.keys(),
+        *_SPATIAL_DEPTH_ALIASES.keys(),
+    }
+    terms: List[str] = []
+    for token in _SPATIAL_TOKEN_RE.findall(joined):
+        normalized = token.strip("_- ")
+        if any("\uac00" <= c <= "\ud7af" for c in normalized):
+            normalized = _SPATIAL_KO_PARTICLES_RE.sub("", normalized) or normalized
+        cleaned = normalized.lower()
+        if not cleaned or cleaned in _SPATIAL_STOPWORDS:
+            continue
+        if cleaned in {str(t).lower() for t in marker_terms}:
+            continue
+        terms.append(normalized)
+
+    locations = _ordered_unique(locations)
+    relations = _ordered_unique(relations)
+    depth_layers = _ordered_unique(depth_layers)
+    terms = _ordered_unique(terms)
+
+    return {
+        "active": bool(locations or relations or depth_layers),
+        "terms": terms,
+        "locations": locations,
+        "relations": relations,
+        "depth_layers": depth_layers,
+    }
+
 
 def _split_scope_segments(value: str) -> List[str]:
     """Split a folder/path string into normalized path segments."""
@@ -1591,6 +1758,193 @@ class SqliteVectorSearch:
                      f"(top sim={all_scores[0][1]:.3f})" if all_scores else "")
         return results
 
+    @staticmethod
+    def _spatial_term_hits(text: str, terms: List[str]) -> int:
+        hay = str(text or "").lower()
+        return sum(1 for term in terms if str(term or "").lower() in hay)
+
+    @staticmethod
+    def _spatial_confidence_bonus(confidence: str) -> float:
+        return {
+            "high": 0.20,
+            "medium": 0.10,
+            "low": 0.0,
+        }.get(str(confidence or "").lower(), 0.0)
+
+    def _spatial_evidence_search(
+        self,
+        intent: Dict[str, Any],
+        top_k: int = 20,
+        file_ids: Optional[set] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search normalized spatial evidence tables as a first-class axis."""
+        if not intent or not intent.get("active"):
+            return []
+
+        terms = [str(t).lower() for t in intent.get("terms", []) if str(t).strip()]
+        locations = set(intent.get("locations", []) or [])
+        relations = set(intent.get("relations", []) or [])
+        depth_layers = set(intent.get("depth_layers", []) or [])
+        allowed_ids = set(file_ids or []) if file_ids else None
+        matches_by_file: Dict[int, Dict[str, Any]] = {}
+
+        def allowed(file_id: Any) -> bool:
+            return allowed_ids is None or file_id in allowed_ids
+
+        def add_match(file_id: int, score: float, match: Dict[str, Any]) -> None:
+            if not allowed(file_id):
+                return
+            bucket = matches_by_file.setdefault(
+                int(file_id),
+                {"score": 0.0, "matches": []},
+            )
+            bucket["score"] = max(float(bucket["score"]), float(score))
+            bucket["matches"].append(match)
+
+        cursor = self.db.conn.cursor()
+        try:
+            if relations:
+                rows = cursor.execute(
+                    """SELECT file_id, subject, relation, object,
+                              subject_location, object_location, confidence, spatial_text
+                       FROM file_spatial_relations"""
+                ).fetchall()
+                for row in rows:
+                    relation = row["relation"]
+                    spatial_text = row["spatial_text"] or ""
+                    hay = " ".join(
+                        str(row[key] or "")
+                        for key in (
+                            "subject", "relation", "object",
+                            "subject_location", "object_location", "spatial_text",
+                        )
+                    )
+                    term_hits = self._spatial_term_hits(hay, terms)
+                    min_hits = min(len(terms), 2) if terms else 0
+                    if relation not in relations and not any(rel in spatial_text for rel in relations):
+                        continue
+                    if term_hits < min_hits:
+                        continue
+                    loc_hits = sum(
+                        1 for loc in locations
+                        if loc in {row["subject_location"], row["object_location"]}
+                        or loc in spatial_text
+                    )
+                    score = (
+                        0.75
+                        + 0.18 * term_hits
+                        + 0.20 * loc_hits
+                        + self._spatial_confidence_bonus(row["confidence"])
+                    )
+                    add_match(row["file_id"], score, {
+                        "table": "file_spatial_relations",
+                        "subject": row["subject"],
+                        "relation": relation,
+                        "object": row["object"],
+                        "confidence": row["confidence"],
+                    })
+
+            if locations or (terms and not relations and not depth_layers):
+                rows = cursor.execute(
+                    """SELECT file_id, name, ko_name, primary_location,
+                              locations, extent, confidence, spatial_text
+                       FROM file_objects"""
+                ).fetchall()
+                for row in rows:
+                    spatial_text = row["spatial_text"] or ""
+                    row_locations = set()
+                    try:
+                        row_locations.update(json.loads(row["locations"] or "[]"))
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                    if row["primary_location"]:
+                        row_locations.add(row["primary_location"])
+                    hay = " ".join(
+                        str(value or "")
+                        for value in (
+                            row["name"], row["ko_name"], row["primary_location"],
+                            row["locations"], row["extent"], spatial_text,
+                        )
+                    )
+                    term_hits = self._spatial_term_hits(hay, terms)
+                    loc_hits = sum(
+                        1 for loc in locations
+                        if loc in row_locations or loc in spatial_text
+                    )
+                    if terms and term_hits == 0:
+                        continue
+                    if locations and loc_hits == 0:
+                        continue
+                    score = (
+                        0.45
+                        + 0.18 * term_hits
+                        + 0.30 * loc_hits
+                        + self._spatial_confidence_bonus(row["confidence"])
+                    )
+                    add_match(row["file_id"], score, {
+                        "table": "file_objects",
+                        "name": row["name"],
+                        "ko_name": row["ko_name"],
+                        "primary_location": row["primary_location"],
+                        "confidence": row["confidence"],
+                    })
+
+            if depth_layers:
+                rows = cursor.execute(
+                    """SELECT file_id, name, ko_name, layer, confidence, spatial_text
+                       FROM file_depth_layers"""
+                ).fetchall()
+                for row in rows:
+                    spatial_text = row["spatial_text"] or ""
+                    hay = " ".join(
+                        str(value or "")
+                        for value in (
+                            row["name"], row["ko_name"], row["layer"], spatial_text,
+                        )
+                    )
+                    term_hits = self._spatial_term_hits(hay, terms)
+                    if row["layer"] not in depth_layers and not any(layer in spatial_text for layer in depth_layers):
+                        continue
+                    if terms and term_hits == 0:
+                        continue
+                    score = (
+                        0.65
+                        + 0.20 * term_hits
+                        + self._spatial_confidence_bonus(row["confidence"])
+                    )
+                    add_match(row["file_id"], score, {
+                        "table": "file_depth_layers",
+                        "name": row["name"],
+                        "ko_name": row["ko_name"],
+                        "layer": row["layer"],
+                        "confidence": row["confidence"],
+                    })
+
+            if not matches_by_file:
+                return []
+
+            ranked = sorted(
+                matches_by_file.items(),
+                key=lambda item: item[1]["score"],
+                reverse=True,
+            )[:top_k]
+            results: List[Dict[str, Any]] = []
+            for file_id, payload in ranked:
+                row = cursor.execute("SELECT f.* FROM files f WHERE f.id = ?", (file_id,)).fetchone()
+                if not row:
+                    continue
+                result = dict(row)
+                self._parse_json_fields(result)
+                result["spatial_score"] = float(payload["score"])
+                result["spatial_matches"] = payload["matches"]
+                results.append(result)
+            return results
+        except Exception as e:
+            logger.warning(f"Spatial evidence search unavailable: {e}")
+            return []
+        finally:
+            cursor.close()
+
     def triaxis_search(
         self,
         query: str,
@@ -1790,6 +2144,9 @@ class SqliteVectorSearch:
                 fts_keywords = [vector_query] if vector_query else [query]
 
         query_type = legacy.get("query_type", "balanced")
+        spatial_intent = _extract_spatial_intent(query, fts_keywords)
+        if spatial_intent.get("active"):
+            query_type = "spatial"
 
         diag["decomposition"] = {
             "decomposed": unified.get("decomposed", False),
@@ -1798,6 +2155,7 @@ class SqliteVectorSearch:
             "find_keywords": find.get("keywords", []),
             "exclude": exclude,
             "query_type": query_type,
+            "spatial_intent": spatial_intent,
         }
 
         # Merge LLM-suggested filters with user filters (user takes precedence)
@@ -1912,6 +2270,31 @@ class SqliteVectorSearch:
             ],
         }
 
+        _progress("spatial")
+        spatial_results = []
+        t0 = time.perf_counter()
+        if spatial_intent.get("active"):
+            spatial_results = self._spatial_evidence_search(
+                spatial_intent,
+                top_k=candidate_k,
+                file_ids=scope_file_ids,
+            )
+        diag["spatial_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        diag["spatial_results"] = {
+            "active": bool(spatial_intent.get("active")),
+            "intent": spatial_intent,
+            "count": len(spatial_results),
+            "top5": [
+                {
+                    "file": r.get("file_name", r.get("file_path", "")),
+                    "spatial_score": round(r.get("spatial_score", 0), 4),
+                    "rank": i + 1,
+                    "matches": r.get("spatial_matches", [])[:2],
+                }
+                for i, r in enumerate(spatial_results[:5])
+            ],
+        }
+
         # Step 3b: Folder pre-filter (legacy — only when scope_file_ids not used)
         # scope_file_ids already handles this at the search level
         if folder_filter and not scope_file_ids:
@@ -1946,6 +2329,9 @@ class SqliteVectorSearch:
         fts_rank_map = {
             r["file_path"]: i + 1 for i, r in enumerate(fts_results)
         }
+        spatial_rank_map = {
+            r["file_path"]: i + 1 for i, r in enumerate(spatial_results)
+        }
 
         # Collect all non-empty result lists for RRF
         rrf_weights = None
@@ -1956,6 +2342,8 @@ class SqliteVectorSearch:
             all_result_lists.append(("text_vec", text_vec_results))
         if fts_results:
             all_result_lists.append(("fts", fts_results))
+        if spatial_results:
+            all_result_lists.append(("spatial", spatial_results))
 
         if len(all_result_lists) >= 2:
             from backend.search.rrf import get_weights
@@ -1976,7 +2364,7 @@ class SqliteVectorSearch:
                     r["vector_score"] = None
                     r["text_vec_score"] = r.get("text_similarity", 0)
                     r["text_score"] = None
-            else:  # fts
+            elif axis_name == "fts":
                 fts_ranks = [r.get("fts_rank", 0) for r in single_results]
                 best = min(fts_ranks)   # most negative = best match
                 worst = max(fts_ranks)  # closest to 0 = worst match
@@ -1986,6 +2374,12 @@ class SqliteVectorSearch:
                     r["text_vec_score"] = None
                     raw = r.get("fts_rank", 0)
                     r["text_score"] = (worst - raw) / span if span else 1.0
+            else:  # spatial
+                for r in single_results:
+                    r["vector_score"] = None
+                    r["text_vec_score"] = None
+                    r["text_score"] = None
+                    r["spatial_score"] = r.get("spatial_score", 0)
             merged = single_results
         else:
             merged = []
@@ -2007,9 +2401,11 @@ class SqliteVectorSearch:
                     "vector_rank": vector_rank_map.get(r.get("file_path")),
                     "text_vec_rank": text_vec_rank_map.get(r.get("file_path")),
                     "fts_rank": fts_rank_map.get(r.get("file_path")),
+                    "spatial_rank": spatial_rank_map.get(r.get("file_path")),
                     "vector_score": round(r["vector_score"], 4) if r.get("vector_score") is not None else None,
                     "text_vec_score": round(r["text_vec_score"], 4) if r.get("text_vec_score") is not None else None,
                     "text_score": round(r["text_score"], 4) if r.get("text_score") is not None else None,
+                    "spatial_score": round(r["spatial_score"], 4) if r.get("spatial_score") is not None else None,
                 }
                 for i, r in enumerate(merged[:5])
             ],
@@ -2167,6 +2563,7 @@ class SqliteVectorSearch:
                 "text_vec_score": round(r["text_vec_score"], 4) if r.get("text_vec_score") is not None else None,
                 "text_score": round(r["text_score"], 4) if r.get("text_score") is not None else None,
                 "structure_score": round(r["structure_score"], 4) if r.get("structure_score") is not None else None,
+                "spatial_score": round(r["spatial_score"], 4) if r.get("spatial_score") is not None else None,
                 "quality_score": round(r["quality_score"], 4) if r.get("quality_score") is not None else None,
             }
             for r in merged[:5]
@@ -2177,7 +2574,7 @@ class SqliteVectorSearch:
 
         logger.info(
             f"Triaxis search '{query}': vector={len(vector_results)}, "
-            f"fts={len(fts_results)}, merged={len(merged)}, "
+            f"fts={len(fts_results)}, spatial={len(spatial_results)}, merged={len(merged)}, "
             f"decomposed={unified.get('decomposed', False)}"
         )
 

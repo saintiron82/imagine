@@ -119,11 +119,11 @@ def rrf_merge_multi(
 
     Generalizes rrf_merge to handle V + T + F (+X) axes.
     Preserves per-axis scores: vector_score, text_vec_score, text_score,
-    structure_score.
+    structure_score, spatial_score.
 
     Args:
         result_lists: List of (axis_name, results) tuples.
-                      axis_name: "visual", "text_vec", "fts", or "structure"
+                      axis_name: "visual", "text_vec", "fts", "structure", or "spatial"
         k: RRF constant (default 60)
         weights: Per-axis weight dict. If None, uniform weighting (1.0 per axis).
     """
@@ -148,6 +148,8 @@ def rrf_merge_multi(
                 axis_scores[fp]["fts_rank"] = result.get("fts_rank", 0)
             elif axis_name == "structure":
                 axis_scores[fp]["structure"] = result.get("structural_similarity", 0)
+            elif axis_name == "spatial":
+                axis_scores[fp]["spatial"] = result.get("spatial_score", 0)
 
             if fp not in result_map:
                 result_map[fp] = result
@@ -173,6 +175,7 @@ def rrf_merge_multi(
         result["text_vec_score"] = axis_scores.get(fp, {}).get("text_vec")
         result["text_score"] = normalized_fts.get(fp)
         result["structure_score"] = axis_scores.get(fp, {}).get("structure")
+        result["spatial_score"] = axis_scores.get(fp, {}).get("spatial", result.get("spatial_score"))
         merged.append(result)
 
     return merged
@@ -287,12 +290,14 @@ def quality_rerank(
     x_low, x_high = _axis_range("structure_score")
     s_low, s_high = _axis_range("text_vec_score")
     m_low, m_high = _axis_range("text_score")
+    p_low, p_high = _axis_range("spatial_score")
 
     axis_w = {
-        "visual": 0.30,
-        "structure": 0.15,
-        "text_vec": 0.35,
-        "fts": 0.20,
+        "visual": 0.24,
+        "structure": 0.12,
+        "text_vec": 0.29,
+        "fts": 0.17,
+        "spatial": 0.18,
     }
     if axis_weights:
         axis_w.update({k: float(v) for k, v in axis_weights.items() if k in axis_w})
@@ -317,6 +322,7 @@ def quality_rerank(
         x_norm = safe_norm(r.get("structure_score"), x_low, x_high)
         s_norm = safe_norm(r.get("text_vec_score"), s_low, s_high)
         m_norm = safe_norm(r.get("text_score"), m_low, m_high)
+        p_norm = safe_norm(r.get("spatial_score"), p_low, p_high)
 
         # Per-axis contribution. Missing axes contribute 0 to the numerator
         # and the FULL axis weight to the denominator — so a result that only
@@ -340,6 +346,9 @@ def quality_rerank(
             axes_present += 1
         if m_norm is not None:
             axis_num += axis_w["fts"] * m_norm
+            axes_present += 1
+        if p_norm is not None:
+            axis_num += axis_w["spatial"] * p_norm
             axes_present += 1
 
         axis_total_weight = sum(axis_w.values())
@@ -381,6 +390,11 @@ def quality_rerank(
         ]
         if isinstance(tags, list):
             hay_parts.extend(str(t) for t in tags)
+        spatial_matches = r.get("spatial_matches") or []
+        if isinstance(spatial_matches, list):
+            for match in spatial_matches:
+                if isinstance(match, dict):
+                    hay_parts.extend(str(v) for v in match.values() if v is not None)
         hay = " ".join(hay_parts).lower()
         token_hits = sum(1 for t in q_tokens if t in hay)
         token_score = (token_hits / max(1, len(q_tokens))) if q_tokens else 0.0

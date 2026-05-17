@@ -41,13 +41,14 @@ from tools.evaluate_search_quality import (  # noqa: E402
 
 
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "benchmarks" / "runs"
-VALID_ENGINES = ("vv", "mv", "fts", "triaxis")
+VALID_ENGINES = ("vv", "mv", "fts", "spatial", "triaxis")
 SCORE_FIELDS = (
     "final_score",
     "combined_score",
     "score",
     "similarity",
     "rrf_score",
+    "spatial_score",
     "bm25_score",
     "fts_rank",
 )
@@ -230,6 +231,11 @@ def search_engine(searcher: Any, engine_id: str, query_text: str, top_k: int) ->
     if engine_id == "fts":
         keywords = fts_keywords(query_text)
         return list(searcher.fts_search(keywords[:10], top_k=top_k)) if keywords else []
+    if engine_id == "spatial":
+        from backend.search.sqlite_search import _extract_spatial_intent
+        keywords = fts_keywords(query_text)
+        intent = _extract_spatial_intent(query_text, keywords[:10])
+        return list(searcher._spatial_evidence_search(intent, top_k=top_k))
     if engine_id == "triaxis":
         return list(searcher.triaxis_search(query_text, top_k=top_k, threshold=0.0, use_codex=False))
     raise ValueError(f"unsupported engine_id: {engine_id}")
@@ -290,6 +296,11 @@ def scoped_search_engine(
     if engine_id == "fts":
         keywords = fts_keywords(query_text)
         return list(searcher.fts_search(keywords[:10], top_k=top_k, file_ids=file_ids)) if keywords else []
+    if engine_id == "spatial":
+        from backend.search.sqlite_search import _extract_spatial_intent
+        keywords = fts_keywords(query_text)
+        intent = _extract_spatial_intent(query_text, keywords[:10])
+        return list(searcher._spatial_evidence_search(intent, top_k=top_k, file_ids=file_ids))
     if engine_id == "triaxis":
         return list(searcher.triaxis_search(
             query_text,
