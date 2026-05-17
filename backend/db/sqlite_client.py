@@ -1097,6 +1097,57 @@ class SQLiteDB:
         """)
         self.conn.commit()
 
+    def _ensure_vlm_raw_outputs_table(self):
+        """Create raw VLM output preservation table."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS vlm_raw_outputs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                stage TEXT NOT NULL,
+                adapter TEXT,
+                model TEXT,
+                prompt_version TEXT,
+                raw_text TEXT NOT NULL,
+                parse_status TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_vlm_raw_outputs_file_id ON vlm_raw_outputs(file_id);
+            CREATE INDEX IF NOT EXISTS idx_vlm_raw_outputs_stage ON vlm_raw_outputs(stage);
+        """)
+        self.conn.commit()
+
+    def _replace_vlm_raw_output(
+        self,
+        cursor,
+        file_id: int,
+        stage: str,
+        adapter: str,
+        model: str,
+        prompt_version: str,
+        raw_text: str,
+        parse_status: str,
+    ) -> None:
+        """Keep only the latest raw output per file and processing stage."""
+        cursor.execute(
+            "DELETE FROM vlm_raw_outputs WHERE file_id = ? AND stage = ?",
+            (file_id, stage),
+        )
+        cursor.execute(
+            """INSERT INTO vlm_raw_outputs
+               (file_id, stage, adapter, model, prompt_version, raw_text, parse_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                file_id,
+                stage,
+                adapter,
+                model,
+                prompt_version,
+                raw_text,
+                parse_status,
+            ),
+        )
+
     def _replace_file_objects(self, cursor, file_id: int, objects: list[dict]) -> None:
         """Replace normalized spatial object evidence for one file."""
         cursor.execute("DELETE FROM file_objects WHERE file_id = ?", (file_id,))
@@ -1338,9 +1389,33 @@ class SQLiteDB:
         perceptual_hash, dup_group_id, caption_model
         """
         file_path = unicodedata.normalize('NFC', file_path)
+        fields = dict(fields)
         cursor = self.conn.cursor()
 
         try:
+            raw_text = None
+            provenance = {}
+            diagnostics = {}
+            structured = fields.get("structured_meta")
+            structured_dict = None
+            if isinstance(structured, str):
+                try:
+                    structured_dict = json.loads(structured)
+                except (json.JSONDecodeError, TypeError):
+                    structured_dict = None
+            elif isinstance(structured, dict):
+                structured_dict = dict(structured)
+
+            if isinstance(structured_dict, dict):
+                raw_text = structured_dict.pop("_vlm_raw", None)
+                provenance = structured_dict.pop("_vlm_provenance", {}) or {}
+                diagnostics = structured_dict.pop("_parse_diagnostics", {}) or {}
+                fields["structured_meta"] = json.dumps(
+                    structured_dict, ensure_ascii=False
+                )
+                if raw_text:
+                    self._ensure_vlm_raw_outputs_table()
+
             # Build dynamic UPDATE
             allowed_cols = {
                 'mc_caption', 'ai_tags', 'ocr_text', 'dominant_color', 'ai_style',
@@ -1379,7 +1454,19 @@ class SQLiteDB:
                 "SELECT id FROM files WHERE file_path = ?", (file_path,)
             ).fetchone()
             if row:
-                self._refresh_fts_row(cursor, row[0])
+                file_id = row[0]
+                if raw_text:
+                    self._replace_vlm_raw_output(
+                        cursor,
+                        file_id=file_id,
+                        stage=provenance.get("stage") or "stage2",
+                        adapter=provenance.get("adapter") or "",
+                        model=provenance.get("model") or "",
+                        prompt_version=provenance.get("prompt_version") or "",
+                        raw_text=str(raw_text),
+                        parse_status=diagnostics.get("status") or "",
+                    )
+                self._refresh_fts_row(cursor, file_id)
 
             if commit:
                 self.conn.commit()

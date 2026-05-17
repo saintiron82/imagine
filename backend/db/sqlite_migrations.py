@@ -696,6 +696,14 @@ def migrate_file_objects(db):
         logger.warning(f"file_objects migration failed (non-fatal): {e}")
 
 
+def migrate_vlm_raw_outputs(db):
+    """Ensure raw VLM output preservation storage exists."""
+    try:
+        db._ensure_vlm_raw_outputs_table()
+    except Exception as e:
+        logger.warning(f"vlm_raw_outputs migration failed (non-fatal): {e}")
+
+
 def migrate_job_queue_unique_file_id(db):
     """Add partial unique index on job_queue(file_id) for active jobs."""
     try:
@@ -877,6 +885,7 @@ def run_migrations(db, *, existing_db: bool = True):
             ("backfill_storage_root", lambda: migrate_backfill_storage_root(db)),
             ("system_meta", lambda: db._ensure_system_meta()),
             ("file_objects", lambda: migrate_file_objects(db)),
+            ("vlm_raw_outputs", lambda: migrate_vlm_raw_outputs(db)),
             ("fts", lambda: db._ensure_fts()),
             ("auth_tables", lambda: migrate_auth_tables(db)),
             ("drop_worker_tokens", lambda: migrate_drop_worker_tokens(db)),
@@ -930,6 +939,7 @@ def run_migrations(db, *, existing_db: bool = True):
         # Fresh install path: empty DB, schema just initialized
         db._ensure_system_meta()
         migrate_file_objects(db)
+        migrate_vlm_raw_outputs(db)
         migrate_auth_tables(db)
         migrate_worker_sessions(db)
         migrate_parse_ahead_columns(db)
