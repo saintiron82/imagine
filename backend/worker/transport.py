@@ -206,34 +206,20 @@ class LocalTransport(WorkerTransport):
         return None
 
     def save_vision(self, file_id: int, fields: dict) -> bool:
-        """Write MC vision fields directly to files table."""
-        import json as _json
-        safe_fields = [
-            "mc_caption", "ai_tags", "image_type", "art_style",
-            "color_palette", "scene_type", "time_of_day", "weather",
-            "character_type", "item_type", "ui_type", "structured_meta",
-        ]
-        updates, values = [], []
-        for f in safe_fields:
-            if f in fields:
-                val = fields[f]
-                if isinstance(val, (list, dict)):
-                    val = _json.dumps(val, ensure_ascii=False)
-                updates.append(f"{f} = ?")
-                values.append(val)
-
-        if not updates:
-            return True  # Nothing to persist; no transaction opened
-
+        """Write MC vision fields through the shared spatial storage contract."""
+        if not fields:
+            return True
         try:
-            values.append(file_id)
             cursor = self.db.conn.cursor()
             cursor.execute(
-                f"UPDATE files SET {', '.join(updates)} WHERE id = ?",
-                values,
+                "SELECT file_path FROM files WHERE id = ?",
+                (file_id,),
             )
-            self.db.conn.commit()
-            return True
+            row = cursor.fetchone()
+            if not row:
+                logger.warning(f"LocalTransport save_vision: file not found: {file_id}")
+                return False
+            return bool(self.db.update_vision_fields(row[0], fields))
         except Exception as e:
             try:
                 self.db.conn.rollback()

@@ -64,6 +64,60 @@ logger = logging.getLogger("ImagineWorker")
 _shutdown = False
 
 
+_VISION_RESULT_FIELD_KEYS = (
+    "mc_caption",
+    "ai_tags",
+    "ocr_text",
+    "dominant_color",
+    "ai_style",
+    "image_type",
+    "art_style",
+    "color_palette",
+    "scene_type",
+    "time_of_day",
+    "weather",
+    "character_type",
+    "item_type",
+    "ui_type",
+    "structured_meta",
+    "perceptual_hash",
+    "dup_group_id",
+    "caption_model",
+    "processing_status",
+    "processing_error",
+)
+
+
+def _vision_result_to_fields(vision_result: Any) -> Dict[str, Any]:
+    """Convert VLM output into DB vision fields without losing structured data."""
+    if not vision_result:
+        return {}
+
+    if isinstance(vision_result, dict):
+        source = dict(vision_result)
+    else:
+        source = {
+            key: getattr(vision_result, key)
+            for key in ("caption", "tags", *_VISION_RESULT_FIELD_KEYS)
+            if hasattr(vision_result, key)
+        }
+
+    fields: Dict[str, Any] = {}
+    if source.get("caption") is not None:
+        fields["mc_caption"] = source["caption"]
+    if source.get("tags") is not None:
+        fields["ai_tags"] = source["tags"]
+
+    for key in _VISION_RESULT_FIELD_KEYS:
+        if source.get(key) is not None:
+            fields[key] = source[key]
+
+    if "structured_meta" not in fields and source:
+        fields["structured_meta"] = dict(source)
+
+    return fields
+
+
 def _signal_handler(signum, frame):
     global _shutdown
     logger.info("Shutdown signal received, finishing current jobs...")
@@ -1006,28 +1060,7 @@ class WorkerDaemon:
             finally:
                 thumb_img.close()
 
-            fields = {}
-            if vision_result:
-                # VLM returns 'caption' → map to 'mc_caption', 'tags' → 'ai_tags'
-                # (same mapping as ingest_engine.py local pipeline)
-                if isinstance(vision_result, dict):
-                    if "caption" in vision_result:
-                        fields["mc_caption"] = vision_result["caption"]
-                    if "tags" in vision_result:
-                        fields["ai_tags"] = vision_result["tags"]
-
-                # Copy remaining vision fields directly
-                for key in [
-                    "mc_caption", "ai_tags", "ocr_text", "dominant_color",
-                    "ai_style", "image_type", "art_style", "color_palette",
-                    "scene_type", "time_of_day", "weather", "character_type",
-                    "item_type", "ui_type", "structured_meta",
-                ]:
-                    val = vision_result.get(key) if isinstance(vision_result, dict) else getattr(vision_result, key, None)
-                    if val is not None:
-                        fields[key] = val
-
-            return fields
+            return _vision_result_to_fields(vision_result)
 
         except Exception as e:
             logger.warning(f"Vision failed for {file_path.name}: {e}", exc_info=True)
@@ -1485,19 +1518,7 @@ class WorkerDaemon:
         for i, item in enumerate(phase_items):
             ctx = active[i]
             if item.vision_result and not ctx.vision_fields:
-                # PhaseRunner's vision_result has raw keys (caption, tags)
-                # Convert to DB column names for metadata
-                fields = {}
-                vr = item.vision_result
-                if isinstance(vr, dict):
-                    if "caption" in vr:
-                        fields["mc_caption"] = vr["caption"]
-                    if "tags" in vr:
-                        fields["ai_tags"] = vr["tags"]
-                    for key in ("image_type", "art_style", "scene_type", "ocr_text",
-                                "dominant_color", "character_type", "item_type", "ui_type"):
-                        if vr.get(key) is not None:
-                            fields[key] = vr[key]
+                fields = _vision_result_to_fields(item.vision_result)
                 if fields:
                     ctx.metadata.update(fields)
                     ctx.vision_fields = fields

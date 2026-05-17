@@ -70,6 +70,44 @@ def _require_file_phase_assignment(db: SQLiteDB, user: dict, file_id: int, phase
         raise HTTPException(status_code=403, detail="File phase is not assigned to current user's worker")
 
 
+_VISION_SAVE_FIELDS = {
+    "mc_caption",
+    "ai_tags",
+    "ocr_text",
+    "dominant_color",
+    "ai_style",
+    "image_type",
+    "art_style",
+    "color_palette",
+    "scene_type",
+    "time_of_day",
+    "weather",
+    "character_type",
+    "item_type",
+    "ui_type",
+    "structured_meta",
+    "perceptual_hash",
+    "dup_group_id",
+    "caption_model",
+    "processing_status",
+    "processing_error",
+}
+
+
+def _save_vision_fields_for_file(db: SQLiteDB, file_id: int, body: dict) -> bool:
+    fields = {key: body[key] for key in _VISION_SAVE_FIELDS if key in body}
+    if not fields:
+        return True
+
+    cursor = db.conn.cursor()
+    cursor.execute("SELECT file_path FROM files WHERE id = ?", (file_id,))
+    row = cursor.fetchone()
+    if not row:
+        return False
+
+    return bool(db.update_vision_fields(row[0], fields))
+
+
 def _auto_start_worker():
     """Start embedded worker if not already running (called on new job creation)."""
     try:
@@ -577,32 +615,11 @@ async def save_vision_fields(
     user: dict = Depends(get_current_user),
     db: SQLiteDB = Depends(get_db_safe),
 ):
-    """Save MC vision fields directly to files table."""
+    """Save MC vision fields through the shared spatial storage contract."""
     _require_file_phase_assignment(db, user, file_id, "mc")
     body = await request.json()
-    cursor = db.conn.cursor()
-    # Update vision fields
-    fields = ["mc_caption", "ai_tags", "image_type", "art_style", "color_palette",
-              "scene_type", "time_of_day", "weather", "character_type", "item_type",
-              "ui_type", "structured_meta"]
-    updates = []
-    values = []
-    for f in fields:
-        if f in body:
-            import json as _json
-            val = body[f]
-            if isinstance(val, (list, dict)):
-                val = _json.dumps(val, ensure_ascii=False)
-            updates.append(f"{f} = ?")
-            values.append(val)
-
-    if updates:
-        values.append(file_id)
-        cursor.execute(
-            f"UPDATE files SET {', '.join(updates)} WHERE id = ?",
-            values,
-        )
-        db.conn.commit()
+    if not _save_vision_fields_for_file(db, file_id, body):
+        raise HTTPException(status_code=404, detail="File not found")
 
     return {"success": True}
 
