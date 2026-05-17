@@ -2392,6 +2392,20 @@ class SqliteVectorSearch:
                 result["metadata"] = json.loads(result["metadata"])
             except (json.JSONDecodeError, TypeError):
                 result["metadata"] = {}
+        if result.get("structured_meta"):
+            if isinstance(result["structured_meta"], dict):
+                structured_meta = result["structured_meta"]
+            else:
+                try:
+                    structured_meta = json.loads(result["structured_meta"])
+                except (json.JSONDecodeError, TypeError):
+                    structured_meta = {}
+            result["structured_meta"] = structured_meta
+            result["spatial_processing_quality"] = structured_meta.get(
+                "spatial_processing_quality", {}
+            )
+        else:
+            result["spatial_processing_quality"] = {}
         if result.get("user_tags") and isinstance(result["user_tags"], str):
             try:
                 result["user_tags"] = json.loads(result["user_tags"])

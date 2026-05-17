@@ -948,6 +948,49 @@ class SQLiteDB:
         return normalized
 
     @classmethod
+    def _build_spatial_processing_quality(
+        cls, structured_meta: Any, parse_status: str = ""
+    ) -> dict:
+        """Classify spatial extraction health for targeted repair/backfill."""
+        if isinstance(structured_meta, str):
+            try:
+                structured_meta = json.loads(structured_meta)
+            except (json.JSONDecodeError, TypeError):
+                return {
+                    "objects_status": "failed",
+                    "relations_status": "failed",
+                    "depth_status": "failed",
+                    "parse_status": parse_status or "invalid_json",
+                    "confidence": "low",
+                    "notes": "structured_meta_json_error",
+                }
+        if not isinstance(structured_meta, dict):
+            structured_meta = {}
+
+        raw_objects = structured_meta.get("objects")
+        objects = cls._normalize_spatial_objects_from_meta(structured_meta)
+        relations = cls._normalize_spatial_relations_from_meta(structured_meta)
+        depth_layers = cls._normalize_depth_layers_from_meta(structured_meta)
+
+        if parse_status == "fallback" and raw_objects:
+            objects_status = "partial"
+        elif raw_objects and not objects:
+            objects_status = "partial"
+        elif objects:
+            objects_status = "ok"
+        else:
+            objects_status = "empty"
+
+        return {
+            "objects_status": objects_status,
+            "relations_status": "ok" if relations else "empty",
+            "depth_status": "ok" if depth_layers else "empty",
+            "parse_status": parse_status or "",
+            "confidence": "medium" if objects else "low",
+            "notes": "",
+        }
+
+    @classmethod
     def _build_fts_spatial(
         cls,
         objects: list[dict],
@@ -1410,6 +1453,15 @@ class SQLiteDB:
                 raw_text = structured_dict.pop("_vlm_raw", None)
                 provenance = structured_dict.pop("_vlm_provenance", {}) or {}
                 diagnostics = structured_dict.pop("_parse_diagnostics", {}) or {}
+                structured_dict["spatial_processing_quality"] = (
+                    self._build_spatial_processing_quality(
+                        structured_dict,
+                        parse_status=diagnostics.get("status") or "",
+                    )
+                )
+                structured_dict["spatial_schema_version"] = (
+                    structured_dict.get("spatial_schema_version") or 2
+                )
                 fields["structured_meta"] = json.dumps(
                     structured_dict, ensure_ascii=False
                 )

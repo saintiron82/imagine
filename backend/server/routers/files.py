@@ -80,6 +80,7 @@ class FileResponse_(BaseModel):
     spatial_objects: Optional[list] = None
     spatial_relations: Optional[list] = None
     depth_layers: Optional[list] = None
+    spatial_processing_quality: Optional[dict] = None
 
 
 def _row_to_file_response(row) -> dict:
@@ -272,6 +273,9 @@ def get_file(
     file_data["spatial_objects"] = _load_spatial_objects(db, file_id)
     file_data["spatial_relations"] = _load_spatial_relations(db, file_id)
     file_data["depth_layers"] = _load_depth_layers(db, file_id)
+    file_data["spatial_processing_quality"] = (
+        file_data.get("structured_meta") or {}
+    ).get("spatial_processing_quality", {})
     return {"success": True, "file": file_data}
 
 

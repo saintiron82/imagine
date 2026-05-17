@@ -179,6 +179,7 @@ def format_result(result: dict, skip_fs: bool = False) -> dict:
         "spatial_objects": result.get("spatial_objects", []),
         "spatial_relations": result.get("spatial_relations", []),
         "depth_layers": result.get("depth_layers", []),
+        "spatial_processing_quality": result.get("spatial_processing_quality", {}),
         "user_note": result.get("user_note", ""),
         "user_tags": result.get("user_tags", []),
         "user_category": result.get("user_category", ""),

@@ -9,6 +9,7 @@ def test_format_result_surfaces_spatial_relations_and_depth_layers():
         "spatial_objects": [{"name": "cup"}],
         "spatial_relations": [{"subject": "cup", "relation": "on", "object": "table"}],
         "depth_layers": [{"name": "table", "layer": "foreground"}],
+        "spatial_processing_quality": {"objects_status": "ok"},
     }
 
     formatted = format_result(result, skip_fs=True)
@@ -18,3 +19,4 @@ def test_format_result_surfaces_spatial_relations_and_depth_layers():
         {"subject": "cup", "relation": "on", "object": "table"}
     ]
     assert formatted["depth_layers"] == [{"name": "table", "layer": "foreground"}]
+    assert formatted["spatial_processing_quality"] == {"objects_status": "ok"}

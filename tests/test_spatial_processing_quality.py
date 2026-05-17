@@ -77,6 +77,8 @@ def test_update_vision_fields_moves_vlm_raw_out_of_structured_meta():
     assert "_vlm_raw" not in structured_meta
     assert "_vlm_provenance" not in structured_meta
     assert "_parse_diagnostics" not in structured_meta
+    assert structured_meta["spatial_schema_version"] == 2
+    assert structured_meta["spatial_processing_quality"]["parse_status"] == "direct"
 
     row = conn.execute(
         "SELECT stage, adapter, model, prompt_version, raw_text, parse_status "
@@ -90,3 +92,27 @@ def test_update_vision_fields_moves_vlm_raw_out_of_structured_meta():
         "raw_text": '{"caption":"x"}',
         "parse_status": "direct",
     }
+
+
+def test_spatial_quality_distinguishes_empty_from_partial_and_ok():
+    ok = SQLiteDB._build_spatial_processing_quality(
+        structured_meta={
+            "objects": [{"name": "moon", "locations": ["right"]}],
+            "relations": [],
+            "depth_layers": [],
+        },
+        parse_status="direct",
+    )
+    empty = SQLiteDB._build_spatial_processing_quality(
+        structured_meta={"objects": [], "relations": [], "depth_layers": []},
+        parse_status="direct",
+    )
+    partial = SQLiteDB._build_spatial_processing_quality(
+        structured_meta={"objects": ["name", "forks", "locations", "left"]},
+        parse_status="fallback",
+    )
+
+    assert ok["objects_status"] == "ok"
+    assert empty["objects_status"] == "empty"
+    assert partial["objects_status"] == "partial"
+    assert partial["parse_status"] == "fallback"
