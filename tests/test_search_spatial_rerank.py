@@ -196,6 +196,41 @@ def test_triaxis_search_merges_spatial_axis_ahead_of_caption_only(monkeypatch):
     assert diag["spatial_results"]["count"] == 1
 
 
+def test_triaxis_search_adds_metadata_quality_shadow_signal(monkeypatch):
+    searcher = _make_spatial_searcher()
+    monkeypatch.setenv("SEARCH_DIAGNOSTIC", "0")
+    monkeypatch.setattr(searcher, "encode_text", lambda query: np.array([1.0], dtype=np.float32))
+    monkeypatch.setattr(searcher, "vector_search_by_embedding", lambda *args, **kwargs: [])
+    monkeypatch.setattr(searcher, "_batch_similarity", lambda *args, **kwargs: {})
+    monkeypatch.setattr(searcher, "_batch_fts_score", lambda *args, **kwargs: {})
+
+    def fake_fts_search(self, keywords, top_k, exclude_keywords=None, file_ids=None):
+        row = dict(self.db.conn.execute("SELECT * FROM files WHERE id = 2").fetchone())
+        self._parse_json_fields(row)
+        row["fts_rank"] = -1.0
+        row["text_score"] = 1.0
+        return [row]
+
+    def fake_annotate(results):
+        for row in results:
+            row["metadata_reliability_score"] = 0.25
+            row["metadata_quality_source"] = "test_profile"
+
+    searcher.fts_search = types.MethodType(fake_fts_search, searcher)
+    monkeypatch.setattr("backend.search.sqlite_search.annotate_metadata_quality", fake_annotate)
+
+    results, diag = searcher.triaxis_search(
+        "cup on table",
+        top_k=2,
+        return_diagnostic=True,
+        use_codex=False,
+    )
+
+    assert results[0]["metadata_quality_source"] == "test_profile"
+    assert results[0]["metadata_reliability_score"] == 0.25
+    assert diag["rerank"]["metadata_quality_weight"] == 0.0
+
+
 def test_reranker_and_rrf_preserve_spatial_score_as_first_class_axis():
     spatial_hit = {
         "id": 1,

@@ -99,6 +99,9 @@ search:
         m: 0.15
         s: 0.35
         v: 0.5
+  rerank:
+    enabled: true
+    metadata_quality_weight: 0.0
   threshold:
     text_vec: 0.15
     visual: 0.05

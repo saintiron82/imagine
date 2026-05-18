@@ -257,6 +257,7 @@ def quality_rerank(
     user_filters: Optional[Dict[str, Any]] = None,
     axis_weights: Optional[Dict[str, float]] = None,
     pool_size: Optional[int] = None,
+    metadata_quality_weight: float = 0.0,
 ) -> List[Dict[str, Any]]:
     """
     Quality-focused rerank over top candidate pool.
@@ -429,18 +430,25 @@ def quality_rerank(
                     break
 
         intent_boost = (token_score * 0.55) + (filter_score * 0.25) + (path_score * 0.20)
+        metadata_quality_adjustment = 0.0
+        metadata_quality = r.get("metadata_reliability_score")
+        if metadata_quality is not None and metadata_quality_weight:
+            metadata_quality_clamped = max(0.0, min(1.0, float(metadata_quality)))
+            metadata_quality_adjustment = (metadata_quality_clamped - 0.5) * 2.0 * float(metadata_quality_weight)
 
         quality_score = (
             (0.62 * axis_blend) +
             (0.23 * rrf_prior) +
             (0.10 * meta_completeness) +
             (0.05 * intent_boost) +
-            multi_axis_bonus
+            multi_axis_bonus +
+            metadata_quality_adjustment
         )
 
         r["quality_score"] = quality_score
         r["axes_present"] = axes_present
         r["multi_axis_bonus"] = round(multi_axis_bonus, 4)
+        r["metadata_quality_adjustment"] = round(metadata_quality_adjustment, 4)
         rescored.append((r, quality_score, idx))
 
     rescored.sort(key=lambda x: (x[1], x[0].get("rrf_score", 0.0), -x[2]), reverse=True)

@@ -35,6 +35,7 @@ from backend.search.scoring import (
     apply_user_filters,
     apply_negative_filter,
 )
+from backend.search.metadata_quality import annotate_metadata_quality
 
 logger = logging.getLogger(__name__)
 
@@ -2453,8 +2454,10 @@ class SqliteVectorSearch:
         t0 = time.perf_counter()
         rerank_enabled = bool(_search_cfg.get("search.rerank.enabled", True))
         rerank_pool = int(_search_cfg.get("search.rerank.pool_size", max(top_k * 3, 80)))
+        metadata_quality_weight = float(_search_cfg.get("search.rerank.metadata_quality_weight", 0.0))
         rerank_pool = max(top_k, rerank_pool)
         rerank_used = False
+        annotate_metadata_quality(merged)
         if rerank_enabled and len(merged) > 1:
             rerank_n = min(len(merged), rerank_pool)
             # Ensure rerank has dense axis scores in its candidate pool
@@ -2474,6 +2477,7 @@ class SqliteVectorSearch:
                 user_filters=user_filters,
                 axis_weights=rrf_weights,
                 pool_size=rerank_n,
+                metadata_quality_weight=metadata_quality_weight,
             )
             rerank_used = True
 
@@ -2482,6 +2486,7 @@ class SqliteVectorSearch:
             "enabled": rerank_enabled,
             "used": rerank_used,
             "pool_size": min(len(merged), rerank_pool),
+            "metadata_quality_weight": metadata_quality_weight,
         }
 
         # If the decomposer did not emit an explicit scope, treat `X에서 ...`
@@ -2963,6 +2968,8 @@ class SqliteVectorSearch:
         if user_filters:
             merged = apply_user_filters(merged, user_filters, strict=True)
 
+        annotate_metadata_quality(merged)
+
         # Enrich missing axis scores (VV/X use image embeddings)
         if image_mode == "and" and len(image_embeddings) > 0:
             v_emb_for_enrich = np.mean(image_embeddings, axis=0).astype(np.float32)
@@ -2987,6 +2994,7 @@ class SqliteVectorSearch:
         # Quality rerank on filtered candidate pool
         rerank_enabled = bool(_search_cfg.get("search.rerank.enabled", True))
         rerank_pool = int(_search_cfg.get("search.rerank.pool_size", max(top_k * 3, 80)))
+        metadata_quality_weight = float(_search_cfg.get("search.rerank.metadata_quality_weight", 0.0))
         rerank_pool = max(top_k, rerank_pool)
         if rerank_enabled and len(merged) > 1:
             rerank_n = min(len(merged), rerank_pool)
@@ -3007,6 +3015,7 @@ class SqliteVectorSearch:
                 user_filters=user_filters,
                 axis_weights=rrf_weights,
                 pool_size=rerank_n,
+                metadata_quality_weight=metadata_quality_weight,
             )
 
         merged = merged[:top_k]
