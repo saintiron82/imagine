@@ -834,7 +834,18 @@ ipcMain.handle('worker-start', async (_, opts) => {
 ipcMain.handle('worker-stop', async () => {
     try {
         if (workerProc) {
+            // 1. Graceful: send stop command via stdin
             sendWorkerCmd({ cmd: 'stop' });
+            // 2. Force kill after 5s if still alive
+            const proc = workerProc;
+            setTimeout(() => {
+                try {
+                    if (proc && !proc.killed) {
+                        writeLog('WARN', '[Worker]', 'Graceful stop timed out — force killing');
+                        killProcessTree(proc);
+                    }
+                } catch { /* already dead */ }
+            }, 5000);
         }
         return { success: true };
     } catch (e) {
