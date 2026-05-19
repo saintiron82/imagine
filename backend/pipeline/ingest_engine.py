@@ -150,14 +150,13 @@ class ParsedFile:
     meta: "AssetMeta" = None
     parser: "BaseParser" = None
     thumb_path: Path = None
-    thumb_image_rgb: "Image.Image" = None  # Pre-loaded for Phase 2/3
     mc_raw: dict = None
     error: str = None
     # Per-phase smart skip flags (set after Phase 1 by DB check)
     skip_vision: bool = False
     skip_embed_vv: bool = False
     skip_embed_mv: bool = False
-    # DB file ID (set by phase_store_metadata, used by phase_store_vectors)
+    # DB file ID (set by phase_store_metadata, used by PhaseRunner items)
     db_file_id: int = None
     # Vector storage tracking (set by phase3a/3b incremental storage)
     stored_vv: bool = False
@@ -695,106 +694,6 @@ def _resolve_thumb_path(meta) -> Optional[Path]:
     return thumb_path
 
 
-def _load_and_composite_thumbnail(thumb_path: Path) -> Optional["Image.Image"]:
-    """Load thumbnail and composite RGBA to RGB."""
-    from PIL import Image
-    thumb_img = Image.open(thumb_path)
-    if thumb_img.mode == 'RGBA':
-        from backend.utils.config import get_config
-        cfg = get_config()
-        bg_color = cfg.get('thumbnail.index_composite_bg', '#FFFFFF')
-        bg_rgb = tuple(int(bg_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-        background = Image.new('RGB', thumb_img.size, bg_rgb)
-        background.paste(thumb_img, mask=thumb_img.split()[-1])
-        thumb_img.close()
-        return background
-    rgb = thumb_img.convert("RGB")
-    thumb_img.close()
-    return rgb
-
-
-def _load_visual_source_image(pf: ParsedFile) -> Optional["Image.Image"]:
-    """
-    Load an RGB image for vision/vector phases.
-
-    Priority:
-    1) Thumbnail file
-    2) Original asset decode fallback (PSD/image)
-    """
-    if pf.thumb_path and pf.thumb_path.exists():
-        return _load_and_composite_thumbnail(pf.thumb_path)
-
-    try:
-        from PIL import Image
-        from backend.utils.config import get_config
-
-        cfg = get_config()
-        bg_color = cfg.get('thumbnail.index_composite_bg', '#FFFFFF')
-        bg_rgb = tuple(int(bg_color.lstrip('#')[i:i + 2], 16) for i in (0, 2, 4))
-
-        ext = pf.file_path.suffix.lower()
-        if ext == '.psd':
-            from psd_tools import PSDImage
-            psd = PSDImage.open(pf.file_path)
-            try:
-                composite = psd.composite()
-            except Exception as e:
-                if "aggdraw" in str(e).lower():
-                    logger.warning(
-                        f"  [FALLBACK] PSD composite requires aggdraw, using embedded preview: {pf.file_path.name}"
-                    )
-                    if hasattr(psd, "topil"):
-                        composite = psd.topil()
-                    else:
-                        logger.warning(
-                            f"  [FALLBACK] PSDImage.topil() unavailable: {pf.file_path.name}"
-                        )
-                        composite = None
-                else:
-                    raise
-            if composite is None:
-                try:
-                    import numpy as np
-                    arr = psd.numpy()
-                    if arr is not None and getattr(arr, "size", 0) > 0:
-                        if arr.dtype != np.uint8:
-                            arr = np.clip(arr, 0, 255).astype(np.uint8)
-                        if arr.ndim == 3 and arr.shape[2] in (3, 4):
-                            composite = Image.fromarray(arr[:, :, :3], mode='RGB')
-                            logger.warning(
-                                f"  [FALLBACK] Using PSD numpy rasterization: {pf.file_path.name}"
-                            )
-                except Exception as e:
-                    logger.warning(f"  [FALLBACK] PSD numpy rasterization failed: {pf.file_path.name}: {e}")
-            if composite is None:
-                return None
-            if composite.mode == 'RGBA':
-                background = Image.new('RGB', composite.size, bg_rgb)
-                background.paste(composite, mask=composite.split()[-1])
-                img = background
-            else:
-                img = composite.convert('RGB')
-        else:
-            with Image.open(pf.file_path) as raw:
-                if raw.mode == 'RGBA':
-                    background = Image.new('RGB', raw.size, bg_rgb)
-                    background.paste(raw, mask=raw.split()[-1])
-                    img = background
-                else:
-                    img = raw.convert('RGB')
-
-        # Keep memory pressure bounded to tier thumbnail max-edge.
-        max_edge = BaseParser.get_thumbnail_max_edge()
-        if max(img.size) > max_edge:
-            img.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
-
-        logger.info(f"  [FALLBACK] Using original decode for {pf.file_path.name}")
-        return img
-    except Exception as e:
-        logger.warning(f"  [FALLBACK] Original decode failed for {pf.file_path.name}: {e}")
-        return None
-
-
 def _build_mc_raw(meta) -> dict:
     """Build MC.raw context dict for VLM Stage 2."""
     return {
@@ -840,136 +739,6 @@ def _normalize_paths(meta, file_path: Path):
     meta.relative_path = parts[-1]
 
 
-def _apply_vision_result(meta, vision_result: dict):
-    """Apply VLM result fields to AssetMeta."""
-    meta.mc_caption = vision_result.get('caption', '')
-    meta.ai_tags = vision_result.get('tags', [])
-    meta.ocr_text = vision_result.get('ocr', '') or vision_result.get('text_content', '')
-    meta.dominant_color = vision_result.get('color', '') or vision_result.get('color_palette', '')
-    meta.ai_style = vision_result.get('style', '') or vision_result.get('art_style', '')
-    # Structured fields
-    meta.image_type = vision_result.get('image_type')
-    meta.art_style = vision_result.get('art_style')
-    meta.color_palette = vision_result.get('color_palette')
-    meta.scene_type = vision_result.get('scene_type')
-    meta.time_of_day = vision_result.get('time_of_day')
-    meta.weather = vision_result.get('weather')
-    meta.character_type = vision_result.get('character_type')
-    meta.item_type = vision_result.get('item_type')
-    meta.ui_type = vision_result.get('ui_type')
-    meta.structured_meta = _json.dumps(vision_result, ensure_ascii=False)
-
-
-def _build_synthetic_vision_result(pf: ParsedFile) -> dict:
-    """
-    Build deterministic fallback vision result when model inference is unavailable.
-    Keeps pipeline forward-progress without blocking.
-    """
-    stem = pf.file_path.stem.replace("_", " ").replace("-", " ").strip()
-    folder_hint = (pf.meta.folder_path or "").replace("/", " ").strip()
-    base_caption = f"{stem} {folder_hint}".strip() or pf.file_path.name
-
-    tags = []
-    if pf.meta and pf.meta.semantic_tags:
-        tags.extend([t for t in str(pf.meta.semantic_tags).split() if len(t) > 1][:8])
-    if folder_hint:
-        tags.extend([t for t in folder_hint.split() if len(t) > 1][:4])
-    if not tags:
-        tags = ["asset", "fallback"]
-
-    # Deduplicate, preserve order
-    seen = set()
-    uniq_tags = []
-    for t in tags:
-        k = t.lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        uniq_tags.append(t)
-
-    return {
-        "caption": base_caption,
-        "tags": uniq_tags[:12],
-        "ocr": "",
-        "color": "",
-        "style": "",
-        "image_type": "other",
-        "art_style": None,
-        "color_palette": None,
-        "scene_type": None,
-        "time_of_day": None,
-        "weather": None,
-        "character_type": None,
-        "item_type": None,
-        "ui_type": None,
-    }
-
-
-def _call_with_timeout(func, timeout_s: float):
-    """
-    Execute callable with a hard timeout on Unix main thread.
-
-    Falls back to plain execution on unsupported environments.
-    """
-    if not timeout_s or timeout_s <= 0:
-        return func()
-
-    try:
-        import signal
-        import threading
-        if sys.platform.startswith("win") or threading.current_thread() is not threading.main_thread():
-            return func()
-    except Exception:
-        return func()
-
-    class _TimedOut(Exception):
-        pass
-
-    def _handler(_signum, _frame):
-        raise _TimedOut()
-
-    prev = signal.getsignal(signal.SIGALRM)
-    signal.signal(signal.SIGALRM, _handler)
-    signal.setitimer(signal.ITIMER_REAL, float(timeout_s))
-    try:
-        return func()
-    except _TimedOut as e:
-        raise TimeoutError(f"Vision inference timed out after {timeout_s:.1f}s") from e
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0.0)
-        signal.signal(signal.SIGALRM, prev)
-
-
-def _load_vlm_model_with_policy(analyzer, preload_timeout_s: float):
-    """
-    Load VLM model with platform-aware timeout policy.
-
-    On macOS MPS, hard signal timeouts can interrupt heavy tensor materialization
-    and produce false timeout failures despite healthy progress. In that path,
-    preload timeout is treated as a warning threshold only.
-    """
-    device = getattr(analyzer, "device", None)
-    is_macos_mps = (sys.platform == "darwin" and device == "mps")
-
-    if not is_macos_mps:
-        _call_with_timeout(lambda: analyzer._load_model(), preload_timeout_s)
-        return
-
-    if preload_timeout_s and preload_timeout_s > 0:
-        logger.info(
-            "[VLM preload] macOS+MPS detected; hard preload timeout is disabled "
-            f"(warning threshold={preload_timeout_s:.1f}s)."
-        )
-    t0 = time.perf_counter()
-    analyzer._load_model()
-    elapsed = time.perf_counter() - t0
-    if preload_timeout_s and preload_timeout_s > 0 and elapsed > preload_timeout_s:
-        logger.warning(
-            f"[WARN:VLM] Model preload took {elapsed:.1f}s "
-            f"(threshold {preload_timeout_s:.1f}s) on macOS+MPS."
-        )
-
-
 def _prewarm_vlm_imports() -> None:
     """
     Pre-import Qwen3.5 transformer classes on the main thread.
@@ -996,61 +765,6 @@ def _prewarm_vlm_imports() -> None:
         logger.info(f"[VLM prewarm] Import complete in {time.perf_counter() - t0:.1f}s")
     except Exception as e:
         logger.warning(f"[VLM prewarm] skipped: {e}")
-
-
-def _run_vlm_inference_with_policy(analyzer, infer_fn, timeout_s: float):
-    """
-    Run VLM inference with platform-aware timeout policy.
-
-    On macOS+MPS, hard SIGALRM timeouts can fail to interrupt long-running
-    kernel sections predictably. In that path, timeout is treated as a warning
-    threshold while generation-side limits still bound output length.
-    """
-    device = getattr(analyzer, "device", None)
-    is_macos_mps = (sys.platform == "darwin" and device == "mps")
-
-    if not is_macos_mps:
-        return _call_with_timeout(infer_fn, timeout_s)
-
-    if timeout_s and timeout_s > 0:
-        logger.info(
-            "[VLM inference] macOS+MPS detected; hard inference timeout is disabled "
-            f"(warning threshold={timeout_s:.1f}s)."
-        )
-
-    t0 = time.perf_counter()
-    out = infer_fn()
-    elapsed = time.perf_counter() - t0
-    if timeout_s and timeout_s > 0 and elapsed > timeout_s:
-        logger.warning(
-            f"[WARN:VLM] Inference took {elapsed:.1f}s "
-            f"(threshold {timeout_s:.1f}s) on macOS+MPS."
-        )
-    return out
-
-
-def _derive_structure_from_vv(vv_vec, target_dim: int = 768):
-    """
-    Deterministic fallback: derive a structure vector from VV when DINOv2 is unavailable.
-    """
-    import numpy as np
-
-    if vv_vec is None:
-        return None
-    arr = np.asarray(vv_vec, dtype=np.float32).reshape(-1)
-    if arr.size == 0:
-        return None
-
-    if arr.size >= target_dim:
-        out = arr[:target_dim].copy()
-    else:
-        out = np.zeros(target_dim, dtype=np.float32)
-        out[:arr.size] = arr
-
-    norm = np.linalg.norm(out)
-    if norm > 0:
-        out = out / norm
-    return out.astype(np.float32)
 
 
 def _check_thumbnail_size(thumb_path: Path, min_edge: int) -> bool:
@@ -1199,20 +913,6 @@ def phase1_parse_all(
     return results
 
 
-def _compute_dhash(pf: ParsedFile):
-    """Compute perceptual dHash from loaded thumbnail."""
-    if pf.thumb_image_rgb is None:
-        return
-    try:
-        from backend.utils.dhash import dhash64
-        hash_val = dhash64(pf.thumb_image_rgb)
-        if hash_val >= 2**63:
-            hash_val -= 2**64
-        pf.meta.perceptual_hash = hash_val
-    except Exception as e:
-        logger.warning(f"dHash failed for {pf.file_path.name}: {e}")
-
-
 def phase_store_metadata(parsed_files: List[ParsedFile]) -> int:
     """Phase 1 storage: INSERT basic metadata + save JSON files."""
     _ensure_sqlite_db()
@@ -1255,77 +955,6 @@ def phase_store_metadata(parsed_files: List[ParsedFile]) -> int:
 
     logger.info(f"  Phase 1 stored: {stored} metadata records")
     return stored
-
-
-def phase_store_vision(parsed_files: List[ParsedFile]) -> int:
-    """Phase 2 storage: UPDATE VLM-generated fields only."""
-    global _global_sqlite_db
-
-    stored = 0
-    for pf in parsed_files:
-        if pf.error is not None or pf.skip_vision:
-            continue
-        try:
-            fields = {
-                'mc_caption': pf.meta.mc_caption,
-                'ai_tags': pf.meta.ai_tags,
-                'ocr_text': pf.meta.ocr_text,
-                'dominant_color': pf.meta.dominant_color,
-                'ai_style': pf.meta.ai_style,
-                'image_type': pf.meta.image_type,
-                'art_style': pf.meta.art_style,
-                'color_palette': pf.meta.color_palette,
-                'scene_type': pf.meta.scene_type,
-                'time_of_day': pf.meta.time_of_day,
-                'weather': pf.meta.weather,
-                'character_type': pf.meta.character_type,
-                'item_type': pf.meta.item_type,
-                'ui_type': pf.meta.ui_type,
-                'structured_meta': pf.meta.structured_meta,
-                'perceptual_hash': pf.meta.perceptual_hash,
-            }
-            _global_sqlite_db.update_vision_fields(_nfc(pf.file_path), fields)
-            # Re-save JSON with updated VLM fields
-            pf.parser._save_json(pf.meta, pf.file_path)
-            stored += 1
-        except Exception as e:
-            logger.error(f"  [FAIL:vision] {pf.file_path.name}: {e}")
-
-    logger.info(f"  Phase 2 stored: {stored} vision records")
-    return stored
-
-
-def phase_store_vectors(parsed_files: List[ParsedFile], embeddings: List[tuple]) -> Tuple[int, int]:
-    """Phase 3 storage: INSERT VV + MV vectors."""
-    import numpy as np
-    global _global_sqlite_db
-
-    stored, errors = 0, 0
-    for i, pf in enumerate(parsed_files):
-        if pf.error is not None:
-            continue
-
-        vv_vec, mv_vec, _mv_text = embeddings[i]
-        file_id = pf.db_file_id
-        if file_id is None:
-            logger.warning(f"  [SKIP:vec] {pf.file_path.name}: no db_file_id")
-            continue
-
-        try:
-            vv = vv_vec if (vv_vec is not None and np.any(vv_vec) and not pf.skip_embed_vv) else None
-            mv = mv_vec if (mv_vec is not None and np.any(mv_vec) and not pf.skip_embed_mv) else None
-
-            if vv is not None or mv is not None:
-                _global_sqlite_db.upsert_vectors(file_id, vv_vec=vv, mv_vec=mv)
-
-            stored += 1
-            logger.info(f"  [OK] {pf.file_path.name}")
-        except Exception as e:
-            errors += 1
-            logger.error(f"  [FAIL:vec] {pf.file_path.name}: {e}")
-
-    logger.info(f"  Phase 3 stored: {stored} vector records, {errors} errors")
-    return stored, errors
 
 
 def _check_phase_skip(parsed_files: List[ParsedFile]):
@@ -1447,49 +1076,6 @@ def _lighten_parsed_files(parsed_files: List[ParsedFile]):
     # 2-pass GC needed for circular reference collection
     gc.collect()
     gc.collect()
-
-
-def _force_memory_reclaim(monitor, label: str):
-    """GC + MPS/CUDA cache clear with verification (up to 3 retries)."""
-    import gc
-    try:
-        import torch
-        has_mps = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-        has_cuda = torch.cuda.is_available()
-    except ImportError:
-        has_mps = False
-        has_cuda = False
-
-    before = monitor.snapshot()
-
-    for attempt in range(3):
-        gc.collect()
-        gc.collect()
-        if has_mps:
-            try:
-                torch.mps.synchronize()  # Complete async ops BEFORE freeing
-            except Exception:
-                pass
-            torch.mps.empty_cache()
-        elif has_cuda:
-            torch.cuda.empty_cache()
-
-        after = monitor.snapshot()
-        dropped = before.rss_gb - after.rss_gb
-
-        if dropped > 0 or after.pressure_ratio < 0.65:
-            logger.info(f"[MEM:{label}] Reclaimed {dropped:.1f}GB (attempt {attempt + 1})")
-            break
-
-        time.sleep(0.5)  # MPS async deallocation delay
-    else:
-        after = monitor.snapshot()
-        logger.warning(
-            f"[MEM:{label}] Memory not fully reclaimed after 3 attempts "
-            f"(RSS: {before.rss_gb:.1f}→{after.rss_gb:.1f}GB)"
-        )
-
-    monitor.log_status(label)
 
 
 def process_batch_phased(
@@ -2006,106 +1592,6 @@ def run_discovery(
                 db.close()
             except Exception:
                 pass
-
-
-def run_from_container(
-    container,
-    skip_processed: bool = True,
-    current_tier: Optional[str] = None,
-):
-    """
-    Legacy batch-based container consumer. Use run_from_pool() for new code.
-
-    Process files from a FileContainer (source-agnostic).
-    Supplier fills the container; this function takes batches and runs
-    the standard pipeline on each. After each batch, remaps DB paths
-    and cleans up temp files.
-
-    Works with any supplier: LocalSupplier, WebDAVSupplier, etc.
-    """
-    from backend.pipeline.file_container import BatchInfo
-
-    db = None
-    if skip_processed:
-        try:
-            from backend.db.sqlite_client import SQLiteDB
-            db = SQLiteDB()
-            _ensure_fts_rebuild_if_needed(db)
-        except Exception as e:
-            logger.warning(f"Cannot open DB for smart skip: {e}")
-
-    total_stored = 0
-    total_errors = 0
-    batch_num = 0
-
-    try:
-        while True:
-            batch = container.take_batch(timeout=60.0)
-            if batch is None:
-                break
-
-            if container.has_error:
-                logger.error(f"[CONTAINER] Supplier error: {container.error_message}")
-                break
-
-            batch_num += 1
-            count = len(batch.file_infos)
-            logger.info(f"[CONTAINER] Processing batch {batch_num} ({count} files)")
-
-            # Run pipeline on this batch (same as _run_common_batch)
-            to_process = []
-            skipped = 0
-
-            for fp, folder, depth, tags in batch.file_infos:
-                if skip_processed and db is not None:
-                    # For WebDAV files, check by the canonical path (webdav://...)
-                    check_path = fp
-                    if batch.path_remap:
-                        canonical = batch.path_remap.get(str(fp))
-                        if canonical:
-                            check_path = Path(canonical)
-
-                    if current_tier:
-                        skip = should_skip_file_enhanced(check_path, db, current_tier)
-                    else:
-                        skip = should_skip_file(check_path, db)
-                    if skip:
-                        skipped += 1
-                        continue
-
-                to_process.append((fp, folder, depth, tags))
-
-            if skipped > 0:
-                logger.info(f"[CONTAINER] Batch {batch_num}: {skipped} skipped (already processed)")
-
-            if to_process:
-                stored, parse_err, store_err = process_batch_phased(
-                    to_process,
-                    allow_phase_skip=skip_processed,
-                )
-                total_stored += stored
-                total_errors += parse_err + store_err
-
-                # Remap DB file_path from temp local to canonical path
-                if batch.path_remap and db is not None:
-                    _remap_db_paths(batch.path_remap, batch.source_id, db)
-
-            # Cleanup temp files immediately
-            container.cleanup_batch(batch)
-
-    finally:
-        if db is not None:
-            try:
-                _log_rebuild_status(db)
-                db.close()
-            except Exception:
-                pass
-
-    logger.info(
-        f"[CONTAINER] Complete: {total_stored} stored, "
-        f"{total_errors} errors across {batch_num} batches"
-    )
-    return total_stored, total_errors
 
 
 def run_from_pool(
