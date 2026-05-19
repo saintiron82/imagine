@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search, X, Loader2, SlidersHorizontal, Star, Info, Settings, FolderOpen, ExternalLink, Archive, Sparkles } from 'lucide-react';
-// SettingsModal removed — settings now in dedicated Settings tab
 import ImageSearchInput from './ImageSearchInput';
 import SearchHistorySidebar from './SearchHistorySidebar';
 import { useLocale } from '../i18n';
@@ -1640,7 +1639,6 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 </div>
             )}
 
-            {/* SettingsModal removed — now in Settings tab */}
             </div>{/* end Main content */}
         </div>
     );
