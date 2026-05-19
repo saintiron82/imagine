@@ -63,6 +63,8 @@ def cmd_search_daemon(args):
 def cmd_pipeline(args):
     """Pipeline — file processing (parse, vision, embed)."""
     argv = ['ingest_engine.py']
+    if getattr(args, 'webdav', None):
+        argv.extend(['--webdav', args.webdav])
     if args.file:
         argv.extend(['--file', args.file])
     if args.files:
@@ -117,6 +119,36 @@ def cmd_queue(args):
     sys.argv = argv
     from backend.api_queue import main as queue_main
     queue_main()
+
+
+def cmd_archive(args):
+    """Archive browse operations."""
+    import json
+    from backend import api_archive
+
+    if args.cmd == 'folders':
+        result = api_archive.get_folders()
+    elif args.cmd == 'files':
+        params = json.loads(args.data) if args.data else {}
+        result = api_archive.get_files(params)
+    elif args.cmd == 'image-types':
+        result = api_archive.get_image_types()
+    else:
+        result = {"success": False, "error": f"Unknown command: {args.cmd}"}
+
+    print(json.dumps(result, ensure_ascii=False))
+
+
+def cmd_remote_sync_cli(args):
+    """WebDAV remote sync CLI."""
+    argv = ['sync_cli.py']
+    for opt in ('test', 'list', 'folders', 'list_dir', 'thumbnail', 'browse'):
+        value = getattr(args, opt, None)
+        if value:
+            argv.extend([f"--{opt.replace('_', '-')}", value])
+    sys.argv = argv
+    from backend.remote.sync_cli import main as sync_cli_main
+    sync_cli_main()
 
 
 def cmd_thumbnail(args):
@@ -205,12 +237,17 @@ def main():
     sub.add_parser('search-daemon', help='Search daemon')
 
     # Pipeline
-    p = sub.add_parser('pipeline', help='File processing pipeline')
-    p.add_argument('--file', help='Single file path')
-    p.add_argument('--files', help='JSON array of file paths')
-    p.add_argument('--discover', help='Directory to discover')
-    p.add_argument('--watch', help='Directory to watch')
-    p.add_argument('--no-skip', action='store_true', help='Disable smart skip')
+    def add_pipeline_parser(name, help_text):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument('--webdav', help='WebDAV source config JSON')
+        p.add_argument('--file', help='Single file path')
+        p.add_argument('--files', help='JSON array of file paths')
+        p.add_argument('--discover', help='Directory to discover')
+        p.add_argument('--watch', help='Directory to watch')
+        p.add_argument('--no-skip', action='store_true', help='Disable smart skip')
+
+    add_pipeline_parser('pipeline', 'File processing pipeline')
+    add_pipeline_parser('pipeline.ingest_engine', 'File processing pipeline module alias')
 
     # Server
     p = sub.add_parser('server', help='FastAPI server')
@@ -227,6 +264,20 @@ def main():
     p = sub.add_parser('queue', help='Job queue operations')
     p.add_argument('cmd', help='Queue command')
     p.add_argument('data', nargs='?', help='JSON data')
+
+    # Archive
+    p = sub.add_parser('archive', help='Archive browse operations')
+    p.add_argument('cmd', choices=['folders', 'files', 'image-types'])
+    p.add_argument('data', nargs='?', help='JSON params')
+
+    # Remote WebDAV sync
+    p = sub.add_parser('remote.sync_cli', help='WebDAV remote sync CLI')
+    p.add_argument('--test')
+    p.add_argument('--list')
+    p.add_argument('--folders')
+    p.add_argument('--list-dir')
+    p.add_argument('--thumbnail')
+    p.add_argument('--browse')
 
     # Thumbnail
     p = sub.add_parser('thumbnail', help='Thumbnail generation')
@@ -268,11 +319,14 @@ def main():
         'worker-ipc': cmd_worker_ipc,
         'search-daemon': cmd_search_daemon,
         'pipeline': cmd_pipeline,
+        'pipeline.ingest_engine': cmd_pipeline,
         'server': cmd_server,
         'stats': cmd_stats,
         'incomplete-stats': cmd_incomplete_stats,
         'folder-stats': cmd_folder_stats,
         'queue': cmd_queue,
+        'archive': cmd_archive,
+        'remote.sync_cli': cmd_remote_sync_cli,
         'thumbnail': cmd_thumbnail,
         'installer': cmd_installer,
         'metadata-update': cmd_metadata_update,
