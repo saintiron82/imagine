@@ -1854,7 +1854,7 @@ def main():
 
     try:
         if args.webdav:
-            # WebDAV remote processing via FileContainer
+            # WebDAV remote processing via BufferPool
             import json as _json_cli
             try:
                 source_config = _json_cli.loads(args.webdav)
@@ -1866,7 +1866,7 @@ def main():
 
             pool = BufferPool(capacity=10)
             pool.register_supplier()
-            supplier = WebDAVSupplier(source_config, batch_size=5)
+            supplier = WebDAVSupplier(source_config)
             supplier.start_pool(pool)
 
             run_from_pool(

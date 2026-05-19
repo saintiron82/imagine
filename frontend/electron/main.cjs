@@ -2325,7 +2325,7 @@ function _decryptWebdavPassword(source) {
     }
 }
 
-// WebDAV Process: Run pipeline on remote files via FileContainer (fetch-and-process)
+// WebDAV Process: Run pipeline on remote files via BufferPool (fetch-and-process)
 // Accepts either sourceId (string) or { sourceId, folderPath } (object with webdav:// path)
 ipcMain.on('process-webdav-source', (event, arg) => {
     let sourceId, remotePath;
@@ -2364,7 +2364,7 @@ ipcMain.on('process-webdav-source', (event, arg) => {
         verify_ssl: source.verify_ssl !== false,
     });
 
-    // Use ingest_engine --webdav (FileContainer + WebDAVSupplier)
+    // Use ingest_engine --webdav (BufferPool + WebDAVSupplier)
     const proc = spawnBackend('pipeline.ingest_engine', ['--webdav', webdavConfig], {
         env: { ...process.env, PYTHONPATH: projectRoot, PYTHONIOENCODING: 'utf-8', IMAGINE_USER_SETTINGS_PATH: userSettingsPath },
         stdio: ['pipe', 'pipe', 'pipe'],
