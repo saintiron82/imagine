@@ -383,37 +383,16 @@ def cmd_browse(config: dict):
             # Content hash
             meta['content_hash'] = _compute_content_hash(local_path)
 
-            # DB upsert + create high-priority job for V/VV/MV processing
+            # Browse only caches metadata/thumbnails. Analysis is scheduled
+            # through the analysis_jobs/file_tasks API.
             meta['file_path'] = canonical
             meta['storage_root'] = f"webdav://{source_id}"
             if db is not None:
                 try:
-                    fid = db.upsert_metadata(canonical, meta)
-                    # Only create processing job if thumbnail exists
-                    # (V/VV/MV all require the thumbnail image)
-                    if thumb_path:
-                        parsed_md = json.dumps({
-                            "metadata": meta,
-                            "thumb_path": str(thumb_path),
-                            "mc_raw": None,
-                        }, ensure_ascii=False, default=str)
-                        phase_completed = json.dumps({
-                            "parse": True, "vision": False, "embed": False,
-                        })
-                        db.conn.execute(
-                            """INSERT INTO job_queue
-                               (file_id, file_path, status, priority,
-                                parse_status, parsed_metadata, phase_completed)
-                               VALUES (?, ?, 'pending', 100, 'parsed', ?, ?)
-                               ON CONFLICT DO NOTHING""",
-                            (fid, canonical, parsed_md, phase_completed)
-                        )
-                    else:
-                        print(f"[WebDAV Browse] skipping job for {f['name']}: no thumbnail",
-                              file=sys.stderr, flush=True)
+                    db.upsert_metadata(canonical, meta)
                     db.conn.commit()
                 except Exception as e:
-                    print(f"[WebDAV Browse] DB upsert/job error: {e}", file=sys.stderr, flush=True)
+                    print(f"[WebDAV Browse] DB upsert error: {e}", file=sys.stderr, flush=True)
 
             processed += 1
             _emit({"event": "processed", "path": canonical, "name": f['name'],

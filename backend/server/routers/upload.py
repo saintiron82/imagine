@@ -6,7 +6,7 @@ Thumbnails are stored on both server and client (dual storage).
 import logging
 import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -19,6 +19,42 @@ from backend.server.config import get_storage_config
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/upload", tags=["upload"])
+
+_FILE_TASK_PHASES = ("download", "parse", "mc", "vv", "mv")
+
+
+def _require_file_task_assignment(
+    db: SQLiteDB,
+    user: dict,
+    file_id: int,
+    phases: Sequence[str] = _FILE_TASK_PHASES,
+) -> None:
+    """Require an assigned analysis task for the current worker user."""
+    invalid = [phase for phase in phases if phase not in _FILE_TASK_PHASES]
+    if invalid:
+        raise HTTPException(status_code=500, detail=f"Invalid file task phase: {invalid[0]}")
+
+    assignment_checks = " OR ".join(
+        f"(ft.{phase}_assigned_to = ws.id AND ft.{phase}_status = 'assigned')"
+        for phase in phases
+    )
+    cursor = db.conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT 1
+        FROM file_tasks ft
+        JOIN worker_sessions ws ON ws.user_id = ?
+        WHERE ft.file_id = ?
+          AND ({assignment_checks})
+        LIMIT 1
+        """,
+        (user.get("id"), file_id),
+    )
+    if cursor.fetchone() is None:
+        raise HTTPException(
+            status_code=403,
+            detail="No active task assignment for this file",
+        )
 
 
 def _get_upload_dir() -> Path:
@@ -144,17 +180,7 @@ def download_file(
     """Download original image for processing (worker must have an assigned job)."""
     cursor = db.conn.cursor()
 
-    # Check if user has an assigned job for this file
-    cursor.execute(
-        """SELECT jq.id FROM job_queue jq
-           WHERE jq.file_id = ? AND jq.assigned_to = ? AND jq.status IN ('assigned', 'processing')""",
-        (file_id, user["id"])
-    )
-    if cursor.fetchone() is None:
-        raise HTTPException(
-            status_code=403,
-            detail="No active job assignment for this file",
-        )
+    _require_file_task_assignment(db, user, file_id)
 
     cursor.execute("SELECT file_path, thumbnail_url FROM files WHERE id = ?", (file_id,))
     row = cursor.fetchone()
@@ -205,18 +231,7 @@ def download_thumbnail(
     """
     cursor = db.conn.cursor()
 
-    # Verify user has an assigned job for this file
-    cursor.execute(
-        """SELECT jq.id FROM job_queue jq
-           WHERE jq.file_id = ? AND jq.assigned_to = ?
-             AND jq.status IN ('assigned', 'processing')""",
-        (file_id, user["id"])
-    )
-    if cursor.fetchone() is None:
-        raise HTTPException(
-            status_code=403,
-            detail="No active job assignment for this file",
-        )
+    _require_file_task_assignment(db, user, file_id, phases=("mc", "vv", "mv"))
 
     cursor.execute("SELECT thumbnail_url FROM files WHERE id = ?", (file_id,))
     row = cursor.fetchone()

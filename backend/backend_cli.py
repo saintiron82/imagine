@@ -111,16 +111,6 @@ def cmd_folder_stats(args):
     folder_main()
 
 
-def cmd_queue(args):
-    """Job queue operations."""
-    argv = ['api_queue.py', args.cmd]
-    if args.data:
-        argv.append(args.data)
-    sys.argv = argv
-    from backend.api_queue import main as queue_main
-    queue_main()
-
-
 def cmd_archive(args):
     """Archive browse operations."""
     import json
@@ -260,11 +250,6 @@ def main():
     p = sub.add_parser('folder-stats', help='Folder stats')
     p.add_argument('folder', help='Folder path')
 
-    # Queue
-    p = sub.add_parser('queue', help='Job queue operations')
-    p.add_argument('cmd', help='Queue command')
-    p.add_argument('data', nargs='?', help='JSON data')
-
     # Archive
     p = sub.add_parser('archive', help='Archive browse operations')
     p.add_argument('cmd', choices=['folders', 'files', 'image-types'])
@@ -324,7 +309,6 @@ def main():
         'stats': cmd_stats,
         'incomplete-stats': cmd_incomplete_stats,
         'folder-stats': cmd_folder_stats,
-        'queue': cmd_queue,
         'archive': cmd_archive,
         'remote.sync_cli': cmd_remote_sync_cli,
         'thumbnail': cmd_thumbnail,
