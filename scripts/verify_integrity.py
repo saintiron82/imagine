@@ -51,7 +51,7 @@ def level0_verify(db) -> dict:
     0-1. 3-axis completeness: MC/VV/MV all present
     0-2. Data quality: empty captions, empty tags, missing image_type
     0-3. Counter sync: files vs vec_files vs vec_text vs files_fts
-    0-4. Job queue state: incomplete jobs, failed jobs, error distribution
+    0-4. Analysis job state: active jobs, failed task errors
     0-5. Duplicates: file_path duplicates, content_hash duplicates
     """
     cursor = db.conn.cursor()
@@ -130,19 +130,23 @@ def level0_verify(db) -> dict:
 
     fts_synced = (fts_count == total_files) if fts_count >= 0 else None
 
-    # --- 0-4: Job queue state ---
+    # --- 0-4: Analysis job state ---
     job_stats = {}
     failed_errors = {}
     try:
         cursor.execute("""
-            SELECT status, COUNT(*) FROM job_queue
+            SELECT status, COUNT(*) FROM analysis_jobs
             GROUP BY status
         """)
         job_stats = dict(cursor.fetchall())
 
         cursor.execute("""
-            SELECT COALESCE(error_code, 'unknown'), COUNT(*) FROM job_queue
-            WHERE status = 'failed'
+            SELECT COALESCE(error_code, 'unknown'), COUNT(*) FROM file_tasks
+            WHERE download_status = 'failed'
+               OR parse_status = 'failed'
+               OR mc_status = 'failed'
+               OR vv_status = 'failed'
+               OR mv_status = 'failed'
             GROUP BY error_code
         """)
         failed_errors = dict(cursor.fetchall())
@@ -214,8 +218,8 @@ def print_level0(r: dict):
     print(f"  FTS count:       {fts_label} vs files {r['total_files']:,}{fts_ok}")
 
     if r["job_stats"]:
-        print(f"\n  Job Queue")
-        print(f"  ─────────")
+        print(f"\n  Analysis Jobs")
+        print(f"  ─────────────")
         for status, count in sorted(r["job_stats"].items()):
             print(f"  {status:12}: {count:,}")
         if r["failed_errors"]:

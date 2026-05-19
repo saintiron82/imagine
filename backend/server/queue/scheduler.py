@@ -10,7 +10,7 @@ Implements Algorithm E' (Pressure-based scheduling):
 - Dynamic batch sizing (target time × measured speed)
 
 Ported from legacy manager.py._pick_best_phase() + _decide_worker_mode().
-No legacy dependency (job_queue, manager.py).
+No retired queue-manager dependency.
 """
 
 import json

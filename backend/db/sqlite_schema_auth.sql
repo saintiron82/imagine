@@ -1,4 +1,4 @@
--- Imagine SQLite Auth & Job Queue Schema Extension
+-- Imagine SQLite Auth & Worker Schema Extension
 -- Added for client-server architecture (v4.0)
 -- Applied via auto-migration in sqlite_client.py
 
@@ -85,62 +85,6 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
 );
 
 -- ═══════════════════════════════════════════════════════════════
--- Job Queue (distributed processing)
--- ═══════════════════════════════════════════════════════════════
-
-CREATE TABLE IF NOT EXISTS job_queue (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
-    file_path TEXT NOT NULL,
-    status TEXT DEFAULT 'pending'
-        CHECK (status IN ('pending', 'assigned', 'processing', 'completed', 'failed', 'cancelled')),
-    assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    assigned_at TEXT,
-    started_at TEXT,
-    completed_at TEXT,
-    mc_completed_at TEXT,          -- MC(Vision) completion timestamp (throughput measurement)
-    vv_completed_at TEXT,          -- VV(SigLIP2) completion timestamp
-    mv_completed_at TEXT,          -- MV(Qwen3-Embedding) completion timestamp
-
-    -- Phase-level tracking (JSON)
-    phase_completed TEXT DEFAULT '{"parse":false,"vision":false,"embed":false}',
-
-    -- Error handling
-    error_message TEXT,
-    error_code TEXT DEFAULT NULL,      -- structured error code (THUMB_MISSING, VLM_FAILED, etc.)
-    retry_count INTEGER DEFAULT 0,
-    max_retries INTEGER DEFAULT 3,
-
-    -- Priority (higher = first)
-    priority INTEGER DEFAULT 0,
-
-    -- Per-worker tracking (for multi-worker throughput)
-    worker_session_id INTEGER REFERENCES worker_sessions(id) ON DELETE SET NULL,
-
-    -- Folder-level work tracking
-    work_request_id INTEGER REFERENCES work_requests(id) ON DELETE SET NULL,
-    work_subtask_id INTEGER REFERENCES work_subtasks(id) ON DELETE SET NULL,
-
-    -- File readiness gate (2-stage pipeline: preparation → processing)
-    -- 1 = file is locally available for processing (default for local files)
-    -- 0 = file needs preparation (e.g., WebDAV download pending)
-    file_ready INTEGER NOT NULL DEFAULT 1,
-
-    -- Parse-ahead (server-side pre-parsing for worker optimization)
-    parse_status TEXT DEFAULT NULL
-        CHECK (parse_status IN (NULL, 'pending', 'parsing', 'parsed', 'failed', 'backfill')),
-    parsed_metadata TEXT DEFAULT NULL,   -- Phase P result JSON (metadata + thumb_path + mc_raw)
-    parsed_at TEXT DEFAULT NULL,
-
-    -- Timestamps
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-
-    -- Soft delete for history (NULL = active in queue, NOT NULL = archived)
-    archived_at TEXT DEFAULT NULL
-);
-
--- ═══════════════════════════════════════════════════════════════
 -- Indexes
 -- ═══════════════════════════════════════════════════════════════
 
@@ -150,23 +94,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
 CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);
-CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
-CREATE INDEX IF NOT EXISTS idx_job_queue_assigned ON job_queue(assigned_to, status);
-CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_worker_sessions_user ON worker_sessions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_worker_sessions_status ON worker_sessions(status);
-CREATE INDEX IF NOT EXISTS idx_job_queue_file_ready
-    ON job_queue(file_ready, status, priority DESC, created_at ASC);
-CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status
-    ON job_queue(parse_status, priority DESC, created_at ASC);
-CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed
-    ON job_queue(mc_completed_at);
-CREATE INDEX IF NOT EXISTS idx_job_queue_archived
-    ON job_queue(archived_at);
-
--- Prevent duplicate active jobs for the same file
-CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_file_id_active
-    ON job_queue(file_id) WHERE status IN ('pending', 'assigned', 'processing');
 
 -- ═══════════════════════════════════════════════════════════════
 -- Members (Firebase Auth based group membership)
@@ -189,46 +118,6 @@ CREATE TABLE IF NOT EXISTS members (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_members_firebase_uid ON members(firebase_uid);
 CREATE INDEX IF NOT EXISTS idx_members_email ON members(email);
-
--- ═══════════════════════════════════════════════════════════════
--- Work Requests (folder-level work tracking)
--- ═══════════════════════════════════════════════════════════════
-
-CREATE TABLE IF NOT EXISTS work_requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    source_path TEXT,
-    status TEXT NOT NULL DEFAULT 'queued'
-        CHECK (status IN ('queued', 'processing', 'completed', 'paused', 'cancelled')),
-    sort_order INTEGER NOT NULL DEFAULT 0,
-
-    -- Denormalized counters
-    total_files INTEGER NOT NULL DEFAULT 0,
-    completed_count INTEGER NOT NULL DEFAULT 0,
-    failed_count INTEGER NOT NULL DEFAULT 0,
-
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    started_at TEXT,
-    completed_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS work_subtasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    work_request_id INTEGER NOT NULL REFERENCES work_requests(id) ON DELETE CASCADE,
-    folder_path TEXT NOT NULL,
-    folder_name TEXT NOT NULL,
-
-    -- Counters
-    total_files INTEGER NOT NULL DEFAULT 0,
-    completed_count INTEGER NOT NULL DEFAULT 0,
-    failed_count INTEGER NOT NULL DEFAULT 0,
-
-    UNIQUE(work_request_id, folder_path)
-);
-
-CREATE INDEX IF NOT EXISTS idx_work_subtasks_wr ON work_subtasks(work_request_id);
-CREATE INDEX IF NOT EXISTS idx_job_queue_work_request ON job_queue(work_request_id);
 
 -- ═══════════════════════════════════════════════════════════════
 -- Search Logs

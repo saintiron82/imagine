@@ -5,7 +5,7 @@ Polls file_tasks for files where download is complete (or n/a for local)
 and parse is pending. Parses each file, generates thumbnail, upserts
 metadata to files table, and marks parse_status='done'.
 
-No legacy code dependency (job_queue, manager.py, ParseAheadPool).
+No retired queue-manager dependency.
 """
 
 import json

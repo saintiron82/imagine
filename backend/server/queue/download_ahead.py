@@ -129,9 +129,9 @@ class DownloadAheadPool(BaseAheadPool):
             f"DownloadAheadPool: temp_dir={self._temp_dir}, "
             f"max_files={self._max_files}, workers={self._download_workers}"
         )
-        # Reset file_ready for incomplete WebDAV jobs whose temp files
-        # no longer exist (e.g. server restart cleared temp dir)
-        self._reset_stale_file_ready()
+        # Reset incomplete WebDAV tasks whose temp files no longer exist
+        # (e.g. server restart cleared temp dir).
+        self._reset_stale_downloads()
 
         self._executor = ThreadPoolExecutor(
             max_workers=self._download_workers,
@@ -171,7 +171,7 @@ class DownloadAheadPool(BaseAheadPool):
         except Exception as e:
             logger.warning(f"DownloadAhead: old temp cleanup failed: {e}")
 
-    def _reset_stale_file_ready(self):
+    def _reset_stale_downloads(self):
         """Reset download_status='done' → 'pending' for tasks where temp file is gone.
 
         On server restart, temp files are deleted. Tasks that were marked 'done'
@@ -461,8 +461,8 @@ class DownloadAheadPool(BaseAheadPool):
         """Main loop: find pending WebDAV jobs, download originals.
 
         Runs independently — downloads at its own pace, bounded by
-        max_files buffer. ParseAheadPool will parse downloaded files
-        as they become ready (file_ready=1).
+        max_files buffer. FileTaskParsePool parses downloaded files
+        as their download_status becomes done.
         """
         poll_interval = self._get_config_value(
             "server.parse_ahead.poll_interval_s", 2

@@ -1840,7 +1840,7 @@ class SQLiteDB:
         """
         Delete all file data while preserving auth tables and thumbnails.
 
-        Clears: files, spatial evidence, layers, vec_files, vec_text, vec_structure, files_fts, job_queue
+        Clears: files, spatial evidence, layers, vectors, FTS, analysis_jobs/file_tasks
         Preserves: users, invite_codes, worker_sessions, system_meta (reset values)
         """
         cursor = self.conn.cursor()
@@ -1852,10 +1852,14 @@ class SQLiteDB:
                 + cursor.execute("SELECT COUNT(*) FROM vec_text").fetchone()[0]
             )
             job_count = 0
-            if self._table_exists('job_queue'):
-                job_count = cursor.execute("SELECT COUNT(*) FROM job_queue").fetchone()[0]
+            if self._table_exists('analysis_jobs'):
+                job_count = cursor.execute("SELECT COUNT(*) FROM analysis_jobs").fetchone()[0]
 
-            # Delete order: FTS → object evidence → vectors → layers → files → jobs
+            # Delete order: tasks/jobs → FTS → object evidence → vectors → layers → files
+            if self._table_exists('file_tasks'):
+                cursor.execute("DELETE FROM file_tasks")
+            if self._table_exists('analysis_jobs'):
+                cursor.execute("DELETE FROM analysis_jobs")
             cursor.execute("DELETE FROM files_fts")
             if self._table_exists('file_objects'):
                 cursor.execute("DELETE FROM file_objects")
@@ -1869,14 +1873,6 @@ class SQLiteDB:
                 cursor.execute("DELETE FROM vec_structure")
             cursor.execute("DELETE FROM layers")
             cursor.execute("DELETE FROM files")
-            if self._table_exists('job_queue'):
-                cursor.execute("DELETE FROM job_queue")
-            if self._table_exists('job_completions'):
-                cursor.execute("DELETE FROM job_completions")
-            if self._table_exists('work_subtasks'):
-                cursor.execute("DELETE FROM work_subtasks")
-            if self._table_exists('work_requests'):
-                cursor.execute("DELETE FROM work_requests")
 
             # Reset system meta
             self._set_system_meta(self._META_KEY_DATA_BUILD_LEVEL, "0", commit=False)

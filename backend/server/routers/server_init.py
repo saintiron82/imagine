@@ -52,6 +52,11 @@ def _require_init_allowed(request: Request) -> None:
     )
 
 
+def _delete_table_if_exists(db: SQLiteDB, cursor, table_name: str) -> None:
+    if db._table_exists(table_name):
+        cursor.execute(f"DELETE FROM {table_name}")
+
+
 @router.post("/init", response_model=TokenResponse)
 def init_server(req: ServerInitRequest, request: Request, db: SQLiteDB = Depends(get_db_safe)):
     """Initialize server with group name, server password, and admin account.
@@ -65,17 +70,17 @@ def init_server(req: ServerInitRequest, request: Request, db: SQLiteDB = Depends
         if cursor.fetchone():
             raise HTTPException(status_code=409, detail="Server already initialized")
 
-        # Full reset: new group starts with clean slate
+        # Full reset: new group starts with clean slate.
         # Data tables (FK order: children first)
+        _delete_table_if_exists(db, cursor, "file_tasks")
+        _delete_table_if_exists(db, cursor, "analysis_jobs")
         cursor.execute("DELETE FROM vec_files")
         cursor.execute("DELETE FROM vec_text")
         cursor.execute("DELETE FROM files_fts")
-        cursor.execute("DELETE FROM job_queue")
         cursor.execute("DELETE FROM layers")
         cursor.execute("DELETE FROM files")
         # Auth tables
         cursor.execute("DELETE FROM worker_sessions")
-        cursor.execute("DELETE FROM worker_tokens")
         cursor.execute("DELETE FROM invite_uses")
         cursor.execute("DELETE FROM invite_codes")
         cursor.execute("DELETE FROM refresh_tokens")
@@ -170,14 +175,14 @@ def firebase_init_server(req: FirebaseServerInitRequest, request: Request, db: S
             raise HTTPException(status_code=409, detail="Server already initialized")
 
         # Full reset: new group starts with clean slate
+        _delete_table_if_exists(db, cursor, "file_tasks")
+        _delete_table_if_exists(db, cursor, "analysis_jobs")
         cursor.execute("DELETE FROM vec_files")
         cursor.execute("DELETE FROM vec_text")
         cursor.execute("DELETE FROM files_fts")
-        cursor.execute("DELETE FROM job_queue")
         cursor.execute("DELETE FROM layers")
         cursor.execute("DELETE FROM files")
         cursor.execute("DELETE FROM worker_sessions")
-        cursor.execute("DELETE FROM worker_tokens")
         if db._table_exists('invite_uses'):
             cursor.execute("DELETE FROM invite_uses")
         cursor.execute("DELETE FROM invite_codes")
@@ -269,7 +274,6 @@ def reset_group(req: ResetGroupRequest, db: SQLiteDB = Depends(get_db_safe)):
 
         # Clear auth tables
         cursor.execute("DELETE FROM worker_sessions")
-        cursor.execute("DELETE FROM worker_tokens")
         if db._table_exists('invite_uses'):
             cursor.execute("DELETE FROM invite_uses")
         cursor.execute("DELETE FROM invite_codes")

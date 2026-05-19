@@ -572,7 +572,7 @@
   "domain_select.selected": "Selected!",
   "action.reset_db": "Reset DB",
   "reset_db.title": "Reset Database",
-  "reset_db.warning": "This will permanently delete all file data, vectors, and job queue. Thumbnails and user accounts will be preserved.",
+  "reset_db.warning": "This will permanently delete all file data, vectors, and analysis jobs. Thumbnails and user accounts will be preserved.",
   "reset_db.password_label": "Enter admin password to confirm",
   "reset_db.password_placeholder": "Admin password",
   "reset_db.confirm": "Reset",

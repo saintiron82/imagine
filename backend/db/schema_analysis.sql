@@ -1,4 +1,4 @@
--- Analysis Job System v1 — replaces job_queue + work_requests + work_subtasks
+-- Analysis Job System v1 — canonical analysis/task schema
 -- See docs/specs/analysis_job_system_v1.md
 
 -- ── Analysis Jobs (user-created analysis requests) ──────────────

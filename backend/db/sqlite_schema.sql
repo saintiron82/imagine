@@ -221,16 +221,3 @@ END;
 CREATE TRIGGER IF NOT EXISTS vec_structure_cascade_delete AFTER DELETE ON files BEGIN
     DELETE FROM vec_structure WHERE file_id = old.id;
 END;
-
--- Lightweight completion log for throughput calculation.
--- Completed jobs are immediately deleted from job_queue;
--- this table preserves just enough data to compute files/min throughput.
--- Records older than 1 hour are pruned during get_stats() calls.
-CREATE TABLE IF NOT EXISTS job_completions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_id INTEGER,
-    completed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    worker_session_id INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_job_completions_at ON job_completions(completed_at);

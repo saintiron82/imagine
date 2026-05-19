@@ -3,7 +3,7 @@
 Worker Scheduling Simulator v2: Modeless (Job-Driven)
 
 Old (v1): Server assigns mode → worker processes that mode only → mode mismatch possible
-New (v2): Worker claims job → looks at job's phase_completed → processes needed phase
+New (v2): Worker claims a task → checks phase status → processes needed phase
 
 No "mode" concept. Workers just process whatever job they get.
 

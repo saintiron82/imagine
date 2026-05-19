@@ -1,5 +1,5 @@
 """
-Analysis Job API — replaces legacy work_requests + job_queue endpoints.
+Analysis Job API — canonical analysis/task endpoints.
 
 All progress counts are query-based (no event counters).
 """

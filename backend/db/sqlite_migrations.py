@@ -184,17 +184,17 @@ def migrate_backfill_storage_root(db):
 
 
 def migrate_auth_tables(db):
-    """Create auth & job queue tables for client-server mode if missing."""
+    """Create auth and worker tables for client-server mode if missing."""
     if db._table_exists('users'):
         return  # Already migrated
 
-    logger.info("Migrating: creating auth & job queue tables...")
+    logger.info("Migrating: creating auth and worker tables...")
     auth_schema_path = Path(__file__).parent / "sqlite_schema_auth.sql"
     if auth_schema_path.exists():
         with open(auth_schema_path, encoding='utf-8') as f:
             db.conn.executescript(f.read())
         db.conn.commit()
-        logger.info("Auth & job queue tables created")
+        logger.info("Auth and worker tables created")
     else:
         logger.warning(f"Auth schema file not found: {auth_schema_path}")
 
@@ -208,6 +208,23 @@ def migrate_drop_worker_tokens(db):
     db.conn.execute("DROP TABLE IF EXISTS worker_tokens")
     db.conn.commit()
     logger.info("worker_tokens table dropped")
+
+
+def migrate_drop_legacy_queue_tables(db):
+    """Drop retired queue/work tables after the analysis task system takes over."""
+    legacy_tables = ("job_queue", "work_subtasks", "work_requests", "job_completions")
+    if not any(db._table_exists(table) for table in legacy_tables):
+        return
+
+    logger.info("Migrating: dropping retired queue/work tables...")
+    try:
+        db.conn.execute("PRAGMA foreign_keys = OFF")
+        for table in legacy_tables:
+            db.conn.execute(f"DROP TABLE IF EXISTS {table}")
+        db.conn.commit()
+        logger.info("Retired queue/work tables dropped")
+    finally:
+        db.conn.execute("PRAGMA foreign_keys = ON")
 
 
 def migrate_worker_sessions(db):
@@ -242,25 +259,6 @@ def migrate_worker_sessions(db):
     logger.info("worker_sessions table created")
 
 
-def migrate_parse_ahead_columns(db):
-    """Add parse_status / parsed_metadata / parsed_at to job_queue (v10.3 Parse-ahead Pool)."""
-    if not db._table_exists('job_queue'):
-        return
-    try:
-        db.conn.execute("SELECT parse_status FROM job_queue LIMIT 1")
-    except Exception:
-        logger.info("Migrating: adding parse-ahead columns to job_queue...")
-        db.conn.execute("ALTER TABLE job_queue ADD COLUMN parse_status TEXT DEFAULT NULL")
-        db.conn.execute("ALTER TABLE job_queue ADD COLUMN parsed_metadata TEXT DEFAULT NULL")
-        db.conn.execute("ALTER TABLE job_queue ADD COLUMN parsed_at TEXT DEFAULT NULL")
-        db.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_job_queue_parse_status "
-            "ON job_queue(parse_status, priority DESC, created_at ASC)"
-        )
-        db.conn.commit()
-        logger.info("parse-ahead columns added to job_queue")
-
-
 def migrate_worker_session_overrides(db):
     """Add per-worker override columns to worker_sessions (v10.6 real-time control)."""
     if not db._table_exists('worker_sessions'):
@@ -275,19 +273,6 @@ def migrate_worker_session_overrides(db):
         logger.info("per-worker override columns added to worker_sessions")
 
 
-def migrate_worker_session_tracking(db):
-    """Add worker_session_id to job_queue for per-worker throughput tracking."""
-    if not db._table_exists('job_queue'):
-        return
-    try:
-        db.conn.execute("SELECT worker_session_id FROM job_queue LIMIT 1")
-    except Exception:
-        logger.info("Migrating: adding worker_session_id to job_queue...")
-        db.conn.execute("ALTER TABLE job_queue ADD COLUMN worker_session_id INTEGER")
-        db.conn.commit()
-        logger.info("worker_session_id column added to job_queue")
-
-
 def migrate_worker_resources_json(db):
     """Add resources_json column to worker_sessions for resource metrics."""
     if not db._table_exists('worker_sessions'):
@@ -299,51 +284,6 @@ def migrate_worker_resources_json(db):
         db.conn.execute("ALTER TABLE worker_sessions ADD COLUMN resources_json TEXT DEFAULT NULL")
         db.conn.commit()
         logger.info("resources_json column added to worker_sessions")
-
-
-def migrate_mc_completed_at(db):
-    """Add mc_completed_at column to job_queue for MC throughput measurement."""
-    if not db._table_exists('job_queue'):
-        return
-    try:
-        db.conn.execute("SELECT mc_completed_at FROM job_queue LIMIT 1")
-    except Exception:
-        logger.info("Migrating: adding mc_completed_at column to job_queue...")
-        db.conn.execute("ALTER TABLE job_queue ADD COLUMN mc_completed_at TEXT")
-        db.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_job_queue_mc_completed "
-            "ON job_queue(mc_completed_at)"
-        )
-        db.conn.commit()
-        logger.info("mc_completed_at column + index added to job_queue")
-
-
-def migrate_backfill_parse_status(db):
-    """Extend parse_status CHECK constraint to allow 'backfill' value.
-
-    SQLite CHECK constraints cannot be altered with ALTER TABLE,
-    so we use PRAGMA writable_schema to modify the schema SQL directly.
-    """
-    if not db._table_exists('job_queue'):
-        return
-    row = db.conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='job_queue'"
-    ).fetchone()
-    if not row or "'backfill'" in row[0]:
-        return  # Already includes 'backfill' or table missing
-
-    logger.info("Migrating: extending parse_status CHECK to include 'backfill'...")
-    db.conn.execute("PRAGMA writable_schema = ON")
-    db.conn.execute("""
-        UPDATE sqlite_master
-        SET sql = REPLACE(sql,
-            "'pending', 'parsing', 'parsed', 'failed')",
-            "'pending', 'parsing', 'parsed', 'failed', 'backfill')")
-        WHERE type = 'table' AND name = 'job_queue'
-    """)
-    db.conn.execute("PRAGMA writable_schema = OFF")
-    db.conn.commit()
-    logger.info("parse_status CHECK extended to include 'backfill'")
 
 
 def migrate_users_email_nullable(db):
@@ -397,126 +337,6 @@ def migrate_users_firebase_uid(db):
         logger.info("firebase_uid column + unique index added to users")
 
 
-def migrate_error_code(db):
-    """Add error_code column to job_queue for structured error classification."""
-    if not db._table_exists('job_queue'):
-        return
-    try:
-        db.conn.execute("SELECT error_code FROM job_queue LIMIT 1")
-    except Exception:
-        logger.info("Migrating: adding error_code column to job_queue...")
-        db.conn.execute("ALTER TABLE job_queue ADD COLUMN error_code TEXT DEFAULT NULL")
-        db.conn.commit()
-        logger.info("error_code column added to job_queue")
-
-    # Backfill: infer error_code from legacy error_message for failed jobs
-    cursor = db.conn.execute(
-        "SELECT COUNT(*) FROM job_queue WHERE status='failed' AND error_code IS NULL AND error_message IS NOT NULL"
-    )
-    null_count = cursor.fetchone()[0]
-    if null_count > 0:
-        logger.info(f"Backfilling error_code for {null_count} legacy failed jobs...")
-        # FILE_NOT_FOUND pattern
-        db.conn.execute("""
-            UPDATE job_queue SET error_code = 'FILE_NOT_FOUND'
-            WHERE status = 'failed' AND error_code IS NULL
-            AND (LOWER(error_message) LIKE '%file unavailable%'
-                 OR LOWER(error_message) LIKE '%file not found%'
-                 OR LOWER(error_message) LIKE '%cannot access%')
-        """)
-        # THUMB_MISSING pattern
-        db.conn.execute("""
-            UPDATE job_queue SET error_code = 'THUMB_MISSING'
-            WHERE status = 'failed' AND error_code IS NULL
-            AND LOWER(error_message) LIKE '%thumbnail%requires%'
-        """)
-        # PARSE_FAILED pattern
-        db.conn.execute("""
-            UPDATE job_queue SET error_code = 'PARSE_FAILED'
-            WHERE status = 'failed' AND error_code IS NULL
-            AND LOWER(error_message) LIKE '%parse failed%'
-        """)
-        # UNKNOWN fallback for everything else
-        db.conn.execute("""
-            UPDATE job_queue SET error_code = 'UNKNOWN'
-            WHERE status = 'failed' AND error_code IS NULL
-        """)
-        db.conn.commit()
-        filled = null_count - db.conn.execute(
-            "SELECT COUNT(*) FROM job_queue WHERE status='failed' AND error_code IS NULL AND error_message IS NOT NULL"
-        ).fetchone()[0]
-        logger.info(f"Backfilled error_code for {filled}/{null_count} jobs")
-
-
-def migrate_file_ready(db):
-    """Add file_ready column to job_queue (2-stage pipeline gate).
-
-    file_ready=1: file is locally available for processing (default)
-    file_ready=0: file needs preparation (WebDAV download pending)
-
-    Also resets existing WebDAV failed jobs to pending + file_ready=0
-    so DownloadAheadPool can pick them up fresh.
-    """
-    if not db._table_exists('job_queue'):
-        return
-    try:
-        db.conn.execute("SELECT file_ready FROM job_queue LIMIT 1")
-    except Exception:
-        logger.info("Migrating: adding file_ready column to job_queue...")
-        db.conn.execute(
-            "ALTER TABLE job_queue ADD COLUMN file_ready INTEGER NOT NULL DEFAULT 1"
-        )
-        db.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_job_queue_file_ready "
-            "ON job_queue(file_ready, status, priority DESC, created_at ASC)"
-        )
-        # Backfill: mark existing WebDAV jobs as not ready
-        cursor = db.conn.execute(
-            """UPDATE job_queue SET file_ready = 0
-               WHERE file_path LIKE 'webdav://%'
-                 AND status != 'completed'"""
-        )
-        webdav_count = cursor.rowcount
-        # Reset permanently failed WebDAV jobs to pending
-        cursor2 = db.conn.execute(
-            """UPDATE job_queue SET status = 'pending', retry_count = 0,
-                   error_message = NULL, error_code = NULL
-               WHERE file_path LIKE 'webdav://%'
-                 AND status = 'failed'"""
-        )
-        reset_count = cursor2.rowcount
-        db.conn.commit()
-        logger.info(
-            f"file_ready column added to job_queue "
-            f"(webdav={webdav_count} marked not-ready, "
-            f"{reset_count} failed jobs reset to pending)"
-        )
-
-
-def migrate_job_completions(db):
-    """Create job_completions table for throughput tracking."""
-    if db._table_exists('job_completions'):
-        return
-    try:
-        logger.info("Migrating: creating job_completions table...")
-        db.conn.execute("""
-            CREATE TABLE IF NOT EXISTS job_completions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_id INTEGER,
-                completed_at TEXT NOT NULL DEFAULT (datetime('now')),
-                worker_session_id INTEGER
-            )
-        """)
-        db.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_job_completions_at "
-            "ON job_completions(completed_at)"
-        )
-        db.conn.commit()
-        logger.info("job_completions table created")
-    except Exception as e:
-        logger.warning(f"job_completions migration failed (non-fatal): {e}")
-
-
 def migrate_files_processing_status(db):
     """Add processing_status and processing_error columns to files table."""
     if not db._table_exists('files'):
@@ -531,117 +351,8 @@ def migrate_files_processing_status(db):
         db.conn.execute(
             "ALTER TABLE files ADD COLUMN processing_error TEXT DEFAULT NULL"
         )
-        # Backfill: mark files associated with permanently failed jobs
-        cursor = db.conn.execute("""
-            UPDATE files SET processing_status = 'failed',
-                processing_error = jq.error_message
-            FROM (
-                SELECT file_id, error_message FROM job_queue
-                WHERE status = 'failed'
-                  AND (error_code IN ('FILE_NOT_FOUND', 'PARSE_FAILED')
-                       OR retry_count >= 3)
-            ) AS jq
-            WHERE files.id = jq.file_id
-        """)
-        backfilled = cursor.rowcount
         db.conn.commit()
-        logger.info(
-            f"processing_status columns added to files "
-            f"({backfilled} permanently failed files backfilled)"
-        )
-
-
-def migrate_work_requests(db):
-    """Create work_requests and work_subtasks tables, add FK columns to job_queue."""
-    # 1) work_requests table
-    if not db._table_exists('work_requests'):
-        try:
-            logger.info("Migrating: creating work_requests table...")
-            db.conn.execute("""
-                CREATE TABLE IF NOT EXISTS work_requests (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    source_path TEXT,
-                    status TEXT NOT NULL DEFAULT 'queued'
-                        CHECK (status IN ('queued', 'processing', 'completed', 'paused', 'cancelled')),
-                    sort_order INTEGER NOT NULL DEFAULT 0,
-                    total_files INTEGER NOT NULL DEFAULT 0,
-                    completed_count INTEGER NOT NULL DEFAULT 0,
-                    failed_count INTEGER NOT NULL DEFAULT 0,
-                    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                    created_at TEXT DEFAULT (datetime('now')),
-                    started_at TEXT,
-                    completed_at TEXT
-                )
-            """)
-            db.conn.commit()
-            logger.info("work_requests table created")
-        except Exception as e:
-            logger.warning(f"work_requests migration failed (non-fatal): {e}")
-
-    # 2) work_subtasks table
-    if not db._table_exists('work_subtasks'):
-        try:
-            logger.info("Migrating: creating work_subtasks table...")
-            db.conn.execute("""
-                CREATE TABLE IF NOT EXISTS work_subtasks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    work_request_id INTEGER NOT NULL REFERENCES work_requests(id) ON DELETE CASCADE,
-                    folder_path TEXT NOT NULL,
-                    folder_name TEXT NOT NULL,
-                    total_files INTEGER NOT NULL DEFAULT 0,
-                    completed_count INTEGER NOT NULL DEFAULT 0,
-                    failed_count INTEGER NOT NULL DEFAULT 0,
-                    UNIQUE(work_request_id, folder_path)
-                )
-            """)
-            db.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_work_subtasks_wr "
-                "ON work_subtasks(work_request_id)"
-            )
-            db.conn.commit()
-            logger.info("work_subtasks table created")
-        except Exception as e:
-            logger.warning(f"work_subtasks migration failed (non-fatal): {e}")
-
-    # 3) job_queue FK columns
-    if db._table_exists('job_queue'):
-        try:
-            db.conn.execute("SELECT work_request_id FROM job_queue LIMIT 1")
-        except Exception:
-            try:
-                logger.info("Migrating: adding work_request_id/work_subtask_id to job_queue...")
-                db.conn.execute(
-                    "ALTER TABLE job_queue ADD COLUMN work_request_id INTEGER "
-                    "REFERENCES work_requests(id) ON DELETE SET NULL"
-                )
-                db.conn.execute(
-                    "ALTER TABLE job_queue ADD COLUMN work_subtask_id INTEGER "
-                    "REFERENCES work_subtasks(id) ON DELETE SET NULL"
-                )
-                db.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_job_queue_work_request "
-                    "ON job_queue(work_request_id)"
-                )
-                db.conn.commit()
-                logger.info("work_request_id/work_subtask_id columns added to job_queue")
-            except Exception as e:
-                logger.warning(f"job_queue work_request columns migration failed (non-fatal): {e}")
-
-    # 4) work_requests.started_at column (added post-initial migration)
-    if db._table_exists('work_requests'):
-        try:
-            db.conn.execute("SELECT started_at FROM work_requests LIMIT 1")
-        except Exception:
-            try:
-                logger.info("Migrating: adding started_at to work_requests...")
-                db.conn.execute(
-                    "ALTER TABLE work_requests ADD COLUMN started_at TEXT"
-                )
-                db.conn.commit()
-                logger.info("started_at column added to work_requests")
-            except Exception as e:
-                logger.warning(f"work_requests started_at migration failed (non-fatal): {e}")
+        logger.info("processing_status columns added to files")
 
 
 def migrate_members_table(db):
@@ -704,37 +415,6 @@ def migrate_vlm_raw_outputs(db):
         logger.warning(f"vlm_raw_outputs migration failed (non-fatal): {e}")
 
 
-def migrate_job_queue_unique_file_id(db):
-    """Add partial unique index on job_queue(file_id) for active jobs."""
-    try:
-        db.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_file_id_active "
-            "ON job_queue(file_id) WHERE status IN ('pending', 'assigned', 'processing')"
-        )
-        db.conn.commit()
-    except Exception:
-        pass  # Index may already exist
-
-
-def migrate_job_queue_archived_at(db):
-    """Add archived_at column for job history soft delete."""
-    if not db._table_exists('job_queue'):
-        return
-    try:
-        db.conn.execute("SELECT archived_at FROM job_queue LIMIT 1")
-    except Exception:
-        logger.info("Migrating: adding archived_at to job_queue...")
-        db.conn.execute(
-            "ALTER TABLE job_queue ADD COLUMN archived_at TEXT DEFAULT NULL"
-        )
-        db.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_job_queue_archived "
-            "ON job_queue(archived_at)"
-        )
-        db.conn.commit()
-        logger.info("archived_at column added to job_queue")
-
-
 def migrate_search_logs(db):
     """Create search_logs table for search request tracking."""
     if db._table_exists('search_logs'):
@@ -781,64 +461,6 @@ def migrate_worker_phase_tracking(db):
         db.conn.execute("ALTER TABLE worker_sessions ADD COLUMN phase_job_count INTEGER DEFAULT 0")
         db.conn.commit()
         logger.info("worker_sessions phase tracking columns added")
-
-
-def migrate_phase_completed_vv_mv(db):
-    """Split phase_completed 'embed' key into separate 'vv' and 'mv' keys.
-    Also sync with actual vec_files/vec_text data."""
-    if not db._table_exists('job_queue'):
-        return
-    import json as _json
-    cursor = db.conn.cursor()
-
-    # 1. Convert embed → vv + mv
-    cursor.execute("SELECT id, phase_completed FROM job_queue WHERE phase_completed LIKE '%embed%'")
-    rows = cursor.fetchall()
-    if rows:
-        for jid, pc_str in rows:
-            pc = _json.loads(pc_str or '{}')
-            if 'embed' in pc:
-                val = pc.pop('embed')
-                pc['vv'] = val
-                pc['mv'] = val
-                cursor.execute("UPDATE job_queue SET phase_completed = ? WHERE id = ?",
-                             (_json.dumps(pc), jid))
-        db.conn.commit()
-        logger.info(f"Migrated {len(rows)} jobs: embed → vv + mv")
-
-    # 2. Sync vv/mv with actual DB data (vec_files/vec_text)
-    cursor.execute("""SELECT jq.id, jq.file_id, jq.phase_completed FROM job_queue jq
-                      WHERE jq.file_id IS NOT NULL""")
-    rows = cursor.fetchall()
-    fixed = 0
-    for jid, fid, pc_str in rows:
-        pc = _json.loads(pc_str or '{}')
-        cursor.execute("SELECT COUNT(*) FROM vec_files WHERE file_id = ?", (fid,))
-        actual_vv = cursor.fetchone()[0] > 0
-        cursor.execute("SELECT COUNT(*) FROM vec_text WHERE file_id = ?", (fid,))
-        actual_mv = cursor.fetchone()[0] > 0
-        if pc.get('vv') != actual_vv or pc.get('mv') != actual_mv:
-            pc['vv'] = actual_vv
-            pc['mv'] = actual_mv
-            cursor.execute("UPDATE job_queue SET phase_completed = ? WHERE id = ?",
-                         (_json.dumps(pc), jid))
-            fixed += 1
-    if fixed:
-        db.conn.commit()
-        logger.info(f"Synced {fixed} jobs vv/mv with actual DB data")
-
-
-def migrate_vv_mv_completed_at(db):
-    """Add vv_completed_at and mv_completed_at columns for phase-level throughput measurement."""
-    cursor = db.conn.cursor()
-    for col in ("vv_completed_at", "mv_completed_at"):
-        try:
-            cursor.execute(f"SELECT {col} FROM job_queue LIMIT 1")
-        except Exception:
-            logger.info(f"Migrating: adding {col} to job_queue...")
-            cursor.execute(f"ALTER TABLE job_queue ADD COLUMN {col} TEXT")
-            db.conn.commit()
-            logger.info(f"Added {col}")
 
 
 def _ensure_analysis_tables(db):
@@ -889,28 +511,17 @@ def run_migrations(db, *, existing_db: bool = True):
             ("fts", lambda: db._ensure_fts()),
             ("auth_tables", lambda: migrate_auth_tables(db)),
             ("drop_worker_tokens", lambda: migrate_drop_worker_tokens(db)),
+            ("drop_legacy_queue_tables", lambda: migrate_drop_legacy_queue_tables(db)),
             ("worker_sessions", lambda: migrate_worker_sessions(db)),
-            ("parse_ahead_columns", lambda: migrate_parse_ahead_columns(db)),
-            ("worker_session_tracking", lambda: migrate_worker_session_tracking(db)),
             ("worker_session_overrides", lambda: migrate_worker_session_overrides(db)),
             ("worker_resources_json", lambda: migrate_worker_resources_json(db)),
-            ("mc_completed_at", lambda: migrate_mc_completed_at(db)),
-            ("backfill_parse_status", lambda: migrate_backfill_parse_status(db)),
             ("users_email_nullable", lambda: migrate_users_email_nullable(db)),
             ("users_firebase_uid", lambda: migrate_users_firebase_uid(db)),
-            ("error_code", lambda: migrate_error_code(db)),
-            ("file_ready", lambda: migrate_file_ready(db)),
-            ("job_completions", lambda: migrate_job_completions(db)),
             ("files_processing_status", lambda: migrate_files_processing_status(db)),
-            ("work_requests", lambda: migrate_work_requests(db)),
             ("members_table", lambda: migrate_members_table(db)),
             ("drop_fts_update_trigger", lambda: migrate_drop_fts_update_trigger(db)),
-            ("job_queue_unique_file_id", lambda: migrate_job_queue_unique_file_id(db)),
-            ("job_queue_archived_at", lambda: migrate_job_queue_archived_at(db)),
             ("search_logs", lambda: migrate_search_logs(db)),
             ("worker_phase_tracking", lambda: migrate_worker_phase_tracking(db)),
-            ("phase_completed_vv_mv", lambda: migrate_phase_completed_vv_mv(db)),
-            ("vv_mv_completed_at", lambda: migrate_vv_mv_completed_at(db)),
             ("analysis_tables", lambda: _ensure_analysis_tables(db)),
             ("dismissed_at", lambda: migrate_dismissed_at(db)),
         ]
@@ -942,15 +553,11 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_vlm_raw_outputs(db)
         migrate_auth_tables(db)
         migrate_worker_sessions(db)
-        migrate_parse_ahead_columns(db)
-        migrate_worker_session_tracking(db)
         migrate_worker_session_overrides(db)
         migrate_worker_resources_json(db)
-        migrate_mc_completed_at(db)
-        migrate_backfill_parse_status(db)
-        migrate_error_code(db)
-        migrate_file_ready(db)
-        migrate_job_completions(db)
         migrate_files_processing_status(db)
-        migrate_work_requests(db)
         migrate_members_table(db)
+        migrate_search_logs(db)
+        migrate_worker_phase_tracking(db)
+        _ensure_analysis_tables(db)
+        migrate_dismissed_at(db)
