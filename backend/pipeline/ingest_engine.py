@@ -477,42 +477,35 @@ def process_file(
                 from backend.vision.domain_loader import get_active_domain as _get_domain
                 _domain = _get_domain()
 
-                # Check if adapter supports 2-stage
-                if hasattr(_global_vision_analyzer, 'classify_and_analyze'):
-                    # v3.1: 2-Stage with MC.raw context injection
-                    # v3.7: Domain-aware classification
-                    vision_result = _global_vision_analyzer.classify_and_analyze(
-                        image, context=mc_raw, domain=_domain
+                if not hasattr(_global_vision_analyzer, 'classify_and_analyze'):
+                    raise RuntimeError(
+                        f"{type(_global_vision_analyzer).__name__} does not implement spatial 2-stage analysis"
                     )
 
-                    # Common fields
-                    meta.mc_caption = vision_result.get('caption', '')
-                    meta.ai_tags = vision_result.get('tags', [])
-                    meta.ocr_text = vision_result.get('ocr', '') or vision_result.get('text_content', '')
-                    meta.dominant_color = vision_result.get('color', '') or vision_result.get('color_palette', '')
-                    meta.ai_style = vision_result.get('style', '') or vision_result.get('art_style', '')
+                vision_result = _global_vision_analyzer.classify_and_analyze(
+                    image, context=mc_raw, domain=_domain
+                )
 
-                    # v3 P0: structured fields
-                    meta.image_type = vision_result.get('image_type')
-                    meta.art_style = vision_result.get('art_style')
-                    meta.color_palette = vision_result.get('color_palette')
-                    meta.scene_type = vision_result.get('scene_type')
-                    meta.time_of_day = vision_result.get('time_of_day')
-                    meta.weather = vision_result.get('weather')
-                    meta.character_type = vision_result.get('character_type')
-                    meta.item_type = vision_result.get('item_type')
-                    meta.ui_type = vision_result.get('ui_type')
-                    meta.structured_meta = _json.dumps(vision_result, ensure_ascii=False)
+                # Common fields
+                meta.mc_caption = vision_result.get('caption', '')
+                meta.ai_tags = vision_result.get('tags', [])
+                meta.ocr_text = vision_result.get('ocr', '') or vision_result.get('text_content', '')
+                meta.dominant_color = vision_result.get('color', '') or vision_result.get('color_palette', '')
+                meta.ai_style = vision_result.get('style', '') or vision_result.get('art_style', '')
 
-                    logger.info(f"   Type: {meta.image_type}")
-                else:
-                    # Legacy single-pass fallback
-                    vision_result = _global_vision_analyzer.analyze(image)
-                    meta.mc_caption = vision_result.get('caption', '')
-                    meta.ai_tags = vision_result.get('tags', [])
-                    meta.ocr_text = vision_result.get('ocr', '')
-                    meta.dominant_color = vision_result.get('color', '')
-                    meta.ai_style = vision_result.get('style', '')
+                # v3 P0: structured fields
+                meta.image_type = vision_result.get('image_type')
+                meta.art_style = vision_result.get('art_style')
+                meta.color_palette = vision_result.get('color_palette')
+                meta.scene_type = vision_result.get('scene_type')
+                meta.time_of_day = vision_result.get('time_of_day')
+                meta.weather = vision_result.get('weather')
+                meta.character_type = vision_result.get('character_type')
+                meta.item_type = vision_result.get('item_type')
+                meta.ui_type = vision_result.get('ui_type')
+                meta.structured_meta = _json.dumps(vision_result, ensure_ascii=False)
+
+                logger.info(f"   Type: {meta.image_type}")
 
                 vision_duration = time.time() - vision_start
                 logger.info(f"  → AI Vision completed in {vision_duration:.2f}s")

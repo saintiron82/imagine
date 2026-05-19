@@ -41,7 +41,10 @@ def test_backend(image_path: str, backend: str):
     start = time.time()
 
     analyzer = get_vision_analyzer()
-    result = analyzer.analyze(image)
+    result = analyzer.classify_and_analyze(
+        image,
+        context={"file_name": Path(image_path).name},
+    )
 
     duration = time.time() - start
 

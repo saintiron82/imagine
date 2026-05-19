@@ -2,6 +2,8 @@ import sqlite3
 import sys
 import types
 
+from PIL import Image
+
 sys.modules.setdefault(
     "jwt",
     types.SimpleNamespace(
@@ -14,7 +16,7 @@ sys.modules.setdefault(
 
 from backend.server.routers.analysis import _save_vision_fields_for_file
 from backend.worker.transport import LocalTransport
-from backend.worker.worker_daemon import _vision_result_to_fields
+from backend.worker.worker_daemon import WorkerDaemon, _vision_result_to_fields
 
 
 def _spatial_vision_result():
@@ -118,3 +120,38 @@ def test_server_vision_endpoint_helper_routes_through_spatial_storage_contract()
             {"structured_meta": _spatial_vision_result(), "caption_model": "mlx"},
         )
     ]
+
+
+def test_worker_run_vision_uses_spatial_two_stage_analyzer(monkeypatch, tmp_path):
+    class SpatialOnlyAnalyzer:
+        def analyze(self, *_args, **_kwargs):
+            raise AssertionError("legacy analyze() must not be used for worker MC")
+
+        def classify_and_analyze(self, image, *, context=None, domain=None):
+            assert context["file_name"] == "asset.png"
+            assert domain == "active-domain"
+            assert image.mode == "RGB"
+            return _spatial_vision_result()
+
+    image_path = tmp_path / "asset.png"
+    Image.new("RGBA", (2, 2), (255, 0, 0, 255)).save(image_path)
+
+    monkeypatch.setattr(
+        "backend.vision.vision_factory.get_vision_analyzer",
+        lambda: SpatialOnlyAnalyzer(),
+    )
+    monkeypatch.setattr(
+        "backend.vision.domain_loader.get_active_domain",
+        lambda: "active-domain",
+    )
+
+    fields = WorkerDaemon._run_vision(
+        object.__new__(WorkerDaemon),
+        image_path,
+        str(image_path),
+        meta=None,
+        mc_raw_override={"file_name": "asset.png"},
+    )
+
+    assert fields["mc_caption"] == "red chair beside a window"
+    assert fields["structured_meta"]["_vlm_provenance"]["prompt_version"] == "spatial_v2"

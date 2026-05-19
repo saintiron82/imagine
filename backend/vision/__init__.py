@@ -10,6 +10,12 @@ This module provides AI-powered vision analysis for images:
 """
 
 from .base import BaseVisionAnalyzer
-from .analyzer import VisionAnalyzer
 
 __all__ = ['BaseVisionAnalyzer', 'VisionAnalyzer']
+
+
+def __getattr__(name):
+    if name == 'VisionAnalyzer':
+        from .analyzer import VisionAnalyzer
+        return VisionAnalyzer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

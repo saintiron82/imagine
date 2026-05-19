@@ -133,15 +133,15 @@ class PhaseRunner:
                     # Build context from item metadata
                     context = self._build_vision_context(item)
 
-                    # Call VLM
+                    if not hasattr(analyzer, "classify_and_analyze"):
+                        raise RuntimeError(
+                            f"{type(analyzer).__name__} does not implement spatial 2-stage analysis"
+                        )
+
+                    # Call the canonical spatial v2 2-stage VLM contract.
                     t_vlm = time.perf_counter()
-                    if hasattr(analyzer, "classify_and_analyze"):
-                        result = analyzer.classify_and_analyze(
-                            img, context=context, domain=domain)
-                    elif hasattr(analyzer, "analyze"):
-                        result = analyzer.analyze(img, context or {})
-                    else:
-                        result = {}
+                    result = analyzer.classify_and_analyze(
+                        img, context=context, domain=domain)
                     vlm_elapsed = time.perf_counter() - t_vlm
 
                     # Compute perceptual hash before closing image (P02)

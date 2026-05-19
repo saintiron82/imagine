@@ -149,12 +149,10 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
             return result.text
         return str(result)
 
-    # ── Legacy single-pass interface ──────────────────────────────
-
     def analyze(
         self, image: Image.Image, context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Legacy single-pass analysis. Delegates to 2-Stage pipeline."""
+        """Run the canonical spatial v2 2-stage analysis contract."""
         return self.classify_and_analyze(image, context=context)
 
     def analyze_file(
@@ -163,7 +161,7 @@ class MLXVisionAdapter(BaseVisionAnalyzer):
         """Analyze an image file."""
         try:
             image = Image.open(image_path).convert("RGB")
-            return self.analyze(image, context)
+            return self.classify_and_analyze(image, context=context)
         except Exception as e:
             logger.error(f"Failed to load image {image_path}: {e}")
             return {"caption": "", "tags": [], "image_type": "other"}

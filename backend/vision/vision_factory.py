@@ -347,6 +347,6 @@ def get_vision_analyzer() -> BaseVisionAnalyzer:
 
     Usage:
         analyzer = get_vision_analyzer()
-        result = analyzer.analyze(image)
+        result = analyzer.classify_and_analyze(image, context=mc_raw)
     """
     return VisionAnalyzerFactory.create()

@@ -428,13 +428,14 @@ def _bench_mc(image_path: str) -> float:
 
     analyzer = get_vision_analyzer()
     img = PILImage.open(image_path).convert("RGB")
+    context = {"file_name": Path(image_path).name}
 
     # Warm up (first call loads model)
-    analyzer.analyze(img)
+    analyzer.classify_and_analyze(img, context=context)
 
     # Measure
     t = time.perf_counter()
-    analyzer.analyze(img)
+    analyzer.classify_and_analyze(img, context=context)
     elapsed = time.perf_counter() - t
 
     return 60.0 / elapsed if elapsed > 0 else 0

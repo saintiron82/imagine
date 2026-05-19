@@ -48,18 +48,22 @@ def test_vision_analyzer():
         return
 
     # Analyze image
-    print("4. Analyzing image (this will download Florence-2 model on first run)...")
+    print("4. Analyzing image with spatial 2-stage pipeline...")
     print("   This may take 1-2 minutes for model download...")
 
     try:
-        result = analyzer.analyze(image)
+        result = analyzer.classify_and_analyze(
+            image,
+            context={"file_name": test_image.name},
+        )
 
         print("\n=== Analysis Results ===\n")
-        print(f"Caption: {result['caption']}")
-        print(f"\nTags ({len(result['tags'])}): {', '.join(result['tags'][:10])}")
-        print(f"\nOCR Text: {result['ocr'] if result['ocr'] else '(none)'}")
-        print(f"\nStyle: {result['style'] if result['style'] else '(none)'}")
-        print(f"\nDominant Color: {result['color']}")
+        tags = result.get("tags") or []
+        print(f"Caption: {result.get('caption', '')}")
+        print(f"\nTags ({len(tags)}): {', '.join(tags[:10])}")
+        print(f"\nOCR Text: {result.get('ocr') or result.get('text_content') or '(none)'}")
+        print(f"\nImage Type: {result.get('image_type') or '(none)'}")
+        print(f"\nSpatial Objects: {len(result.get('objects') or [])}")
 
         print("\n=== Test PASSED ===")
 

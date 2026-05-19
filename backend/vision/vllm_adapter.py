@@ -139,25 +139,13 @@ class VLLMAdapter(BaseVisionAnalyzer):
         image: Image.Image,
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Legacy single-pass analysis.
-
-        Args:
-            image: PIL Image to analyze
-            context: Optional context information
-
-        Returns:
-            Dictionary with analysis results
-        """
-        logger.warning("analyze() is legacy method. Use classify_and_analyze() instead.")
-
-        # For now, use 2-stage pipeline
-        return self.classify_and_analyze(image, keep_alive=None)
+        """Run the canonical spatial v2 2-stage analysis contract."""
+        return self.classify_and_analyze(image, context=context)
 
     def analyze_file(self, image_path: str, context: Optional[Dict] = None) -> Dict[str, Any]:
         """Analyze an image file."""
         image = Image.open(image_path)
-        return self.analyze(image, context)
+        return self.classify_and_analyze(image, context=context)
 
     def classify(
         self,

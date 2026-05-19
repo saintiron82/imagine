@@ -26,22 +26,22 @@ class BaseVisionAnalyzer(ABC):
       - unload_model()
 
     Default implementations provided for:
-      - analyze_file()  (opens image, delegates to analyze())
+      - analyze_file()  (opens image, delegates to classify_and_analyze())
       - classify_and_analyze_sequence()  (sequential loop over items)
     """
 
     @abstractmethod
     def analyze(self, image: Image.Image, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Legacy single-pass analysis.
+        Compatibility entrypoint for the canonical 2-stage analysis.
 
         Returns:
-            Dictionary with caption, tags, ocr, color, style
+            Stage 2 structured metadata with caption, tags, and spatial evidence
         """
         ...
 
     def analyze_file(self, image_path, context: Optional[Dict] = None) -> Dict[str, Any]:
-        """Analyze an image file (legacy single-pass)."""
+        """Analyze an image file through the canonical 2-stage pipeline."""
         raise NotImplementedError
 
     # -- v3 P0: 2-Stage Pipeline ------------------------------------

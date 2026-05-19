@@ -169,7 +169,7 @@ class WorkerDaemon:
     def __init__(self, transport=None):
         import requests
 
-        self.transport = transport  # None = HTTP mode (legacy compatible)
+        self.transport = transport  # None = HTTP mode
         self.server_url = get_server_url()
         self.session = requests.Session()
         # Do NOT set Content-Type on session — requests sets it automatically:
@@ -477,7 +477,7 @@ class WorkerDaemon:
         """
         if self.transport:
             logger.debug(f"[SKIP-HTTP] {method.upper()} {url} (using LocalTransport)")
-            # Return a fake 200 response to avoid crashes in legacy code paths
+            # Return a fake 200 response to avoid crashes in HTTP-only call sites.
             import types
             fake = types.SimpleNamespace(status_code=200, text='{}', json=lambda: {})
             return fake
@@ -616,7 +616,7 @@ class WorkerDaemon:
     # ── Job Pool Management ────────────────────────────────────
 
     def claim_jobs_count(self, count: int) -> list:
-        """Claim tasks from new Analysis Job system, fallback to legacy."""
+        """Claim tasks from the Analysis Job system."""
         if count <= 0:
             return []
 
@@ -633,7 +633,7 @@ class WorkerDaemon:
                     data = resp.json()
                     tasks = data.get("tasks", [])
                     if tasks:
-                        # Convert to legacy job format for compatibility
+                        # Convert API tasks to the worker batch format.
                         jobs = []
                         for t in tasks:
                             jobs.append({
@@ -1018,7 +1018,7 @@ class WorkerDaemon:
 
         try:
             from backend.vision.vision_factory import get_vision_analyzer
-            from backend.pipeline.ingest_engine import _build_mc_raw
+            from backend.vision.domain_loader import get_active_domain
             from PIL import Image
 
             analyzer = get_vision_analyzer()
@@ -1042,6 +1042,7 @@ class WorkerDaemon:
             if mc_raw_override:
                 mc_raw = mc_raw_override
             elif meta is not None:
+                from backend.pipeline.ingest_engine import _build_mc_raw
                 mc_raw = _build_mc_raw(meta)
             else:
                 # MC-only mode without mc_raw or meta — build minimal context from job
@@ -1054,9 +1055,18 @@ class WorkerDaemon:
                     "text_content": [],
                 }
 
-            # Run 2-Stage vision
+            if not hasattr(analyzer, "classify_and_analyze"):
+                raise RuntimeError(
+                    f"{type(analyzer).__name__} does not implement spatial 2-stage analysis"
+                )
+
+            # Run the canonical spatial v2 2-stage vision contract.
             try:
-                vision_result = analyzer.analyze(thumb_img, mc_raw)
+                vision_result = analyzer.classify_and_analyze(
+                    thumb_img,
+                    context=mc_raw,
+                    domain=get_active_domain(),
+                )
             finally:
                 thumb_img.close()
 
@@ -2070,7 +2080,7 @@ class WorkerDaemon:
             job_id = job.get("job_id") or job.get("task_id")
             task_id = job.get("task_id")
 
-            # Get MC data: from vision_data (legacy) or fetch from server (new system)
+            # Get MC data from the claim payload or fetch it from the server.
             vision_data = job.get("vision_data", {})
             mc_caption = vision_data.get("mc_caption", "")
 

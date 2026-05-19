@@ -277,63 +277,8 @@ class VisionAnalyzer(BaseVisionAnalyzer):
         image: Image.Image,
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Analyze an image and extract comprehensive information.
-
-        Args:
-            image: PIL Image object to analyze
-            context: Optional context information (layer name, type, etc.)
-
-        Returns:
-            Dictionary containing:
-                - caption: Detailed description
-                - tags: List of extracted tags
-                - ocr: Text found in the image
-                - objects: Detected objects with bounding boxes
-                - style: Style description
-                - color: Dominant color
-        """
-        self._load_model()
-
-        try:
-            # Generate detailed caption
-            caption = self._generate_caption(image, context)
-
-            # Extract tags from caption
-            tags = self._extract_tags(caption)
-
-            # Perform OCR
-            ocr_text = self._extract_text(image)
-
-            # Detect objects (optional, can be expensive)
-            objects = []  # self._detect_objects(image) if needed
-
-            # Analyze style and color
-            style = self._analyze_style(caption)
-            color = self._analyze_color(image)
-
-            result = {
-                "caption": caption,
-                "tags": tags,
-                "ocr": ocr_text,
-                "objects": objects,
-                "style": style,
-                "color": color
-            }
-
-            logger.info(f"Analysis complete: {len(tags)} tags, OCR: {bool(ocr_text)}")
-            return result
-
-        except Exception as e:
-            logger.error(f"Analysis failed: {e}")
-            return {
-                "caption": "",
-                "tags": [],
-                "ocr": "",
-                "objects": [],
-                "style": "",
-                "color": ""
-            }
+        """Run the canonical spatial v2 2-stage analysis contract."""
+        return self.classify_and_analyze(image, context=context)
 
     def analyze_file(self, image_path: Path, context: Optional[Dict] = None) -> Dict[str, Any]:
         """
@@ -348,7 +293,7 @@ class VisionAnalyzer(BaseVisionAnalyzer):
         """
         try:
             image = Image.open(image_path).convert("RGB")
-            return self.analyze(image, context)
+            return self.classify_and_analyze(image, context=context)
         except Exception as e:
             logger.error(f"Failed to load image {image_path}: {e}")
             return {

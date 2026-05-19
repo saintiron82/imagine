@@ -8,7 +8,6 @@ v3 P0: 2-Stage Pipeline support (classify → analyze_structured).
 """
 
 import logging
-import json
 import base64
 import time
 from io import BytesIO
@@ -51,20 +50,7 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
         from ..utils.config import get_config
         cfg = get_config()
 
-        # v3 P17: explicit `model` from VisionAnalyzerFactory should always win.
-        # `vision.model` and `vision.*` are deprecated legacy keys kept only for
-        # back-compat with old user_settings.yaml. Warn when actually used.
-        if not model:
-            legacy_model = cfg.get("vision.model")
-            if legacy_model:
-                logger.warning(
-                    "[DEPRECATED] Using legacy `vision.model` config key (%s). "
-                    "Migrate to ai_mode.tiers.{tier}.vlm.backends.{platform}.ollama.model.",
-                    legacy_model,
-                )
-            self.model = legacy_model or "qwen3.5:4b"
-        else:
-            self.model = model
+        self.model = model or "qwen3.5:4b"
 
         self.host = host or cfg.get("vision.ollama_host", "http://localhost:11434")
         self.api_url = f"{self.host}/api/chat"
@@ -87,74 +73,8 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
         image: Image.Image,
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Analyze an image using Ollama vision model.
-
-        Args:
-            image: PIL Image to analyze
-            context: Optional context information
-
-        Returns:
-            Dictionary with analysis results:
-            {
-                "caption": str,
-                "tags": list[str],
-                "ocr": str,
-                "color": str,
-                "style": str
-            }
-        """
-        if not self.check_ollama_running():
-            logger.error("Ollama server is not running!")
-            return self._empty_result()
-
-        try:
-            # Convert image to base64
-            buffered = BytesIO()
-            image.save(buffered, format="JPEG", quality=95)
-            img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-
-            # Prepare prompt
-            prompt = self._build_prompt(context)
-
-            # Call Ollama chat API with think=false to avoid thinking-mode empty response
-            payload = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt, "images": [img_base64]}],
-                "stream": False,
-                "think": False,
-                "options": {
-                    "temperature": 0.7,
-                    "top_p": 0.9
-                },
-                "keep_alive": 0,
-            }
-
-            logger.info(f"Analyzing image with {self.model}...")
-            response = requests.post(
-                self.api_url,
-                json=payload,
-                timeout=60
-            )
-
-            if response.status_code != 200:
-                logger.error(f"Ollama API error: {response.status_code}")
-                return self._empty_result()
-
-            result = response.json()
-            response_text = result.get("message", {}).get("content", "")
-
-            # Parse response
-            parsed = self._parse_response(response_text)
-
-            logger.info(f"Analysis complete: {len(parsed['tags'])} tags extracted")
-            return parsed
-
-        except Exception as e:
-            logger.error(f"Ollama analysis failed: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
-            return self._empty_result()
+        """Run the canonical spatial v2 2-stage analysis contract."""
+        return self.classify_and_analyze(image, context=context)
 
     def analyze_file(
         self,
@@ -173,89 +93,10 @@ class OllamaVisionAdapter(BaseVisionAnalyzer):
         """
         try:
             image = Image.open(image_path).convert("RGB")
-            return self.analyze(image, context)
+            return self.classify_and_analyze(image, context=context)
         except Exception as e:
             logger.error(f"Failed to load image {image_path}: {e}")
             return self._empty_result()
-
-    def _build_prompt(self, context: Optional[Dict] = None) -> str:
-        """Build analysis prompt."""
-        prompt = """Analyze this image and provide:
-
-1. A detailed caption (1-2 sentences describing what you see)
-2. Extract 5-10 relevant tags/keywords
-3. Any visible text (OCR)
-4. Dominant color
-5. Art style (if applicable)
-
-Format your response as JSON:
-{
-    "caption": "description here",
-    "tags": ["tag1", "tag2", ...],
-    "ocr": "any visible text",
-    "color": "dominant color name",
-    "style": "art style description"
-}"""
-
-        if context and context.get("layer_name"):
-            prompt += f"\n\nContext: This is a layer named '{context['layer_name']}'"
-
-        return prompt
-
-    def _parse_response(self, response_text: str) -> Dict[str, Any]:
-        """
-        Parse Ollama response text.
-
-        Tries to extract JSON, falls back to text parsing.
-        """
-        # Try JSON parsing first
-        try:
-            # Find JSON in response
-            start = response_text.find('{')
-            end = response_text.rfind('}') + 1
-
-            if start >= 0 and end > start:
-                json_str = response_text[start:end]
-                data = json.loads(json_str)
-
-                return {
-                    "caption": data.get("caption", ""),
-                    "tags": data.get("tags", []),
-                    "ocr": data.get("ocr", ""),
-                    "color": data.get("color", ""),
-                    "style": data.get("style", "")
-                }
-        except json.JSONDecodeError:
-            pass
-
-        # Fallback: Extract from text
-        lines = response_text.split('\n')
-        caption = ""
-        tags = []
-
-        for line in lines:
-            line = line.strip()
-            if line and not caption:
-                caption = line
-            elif ',' in line:
-                # Likely tags
-                tags.extend([t.strip() for t in line.split(',') if t.strip()])
-
-        return {
-            "caption": caption or response_text[:200],
-            "tags": tags[:10] if tags else self._extract_tags_simple(response_text),
-            "ocr": "",
-            "color": "",
-            "style": ""
-        }
-
-    def _extract_tags_simple(self, text: str) -> list[str]:
-        """Simple tag extraction from text."""
-        words = text.lower().split()
-        # Filter common words, keep meaningful nouns/adjectives
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'in', 'on', 'at', 'to', 'for'}
-        tags = [w for w in words if w not in stop_words and len(w) > 3]
-        return list(set(tags))[:10]
 
     def _empty_result(self) -> Dict[str, Any]:
         """Return empty analysis result."""
