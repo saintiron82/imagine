@@ -44,7 +44,6 @@ from backend.worker.config import (
     get_batch_capacity,
     get_heartbeat_interval,
 )
-from backend.utils.meta_helpers import meta_to_dict
 from backend.worker.result_uploader import ResultUploader
 from backend.worker.schedule import is_active_now
 from backend.worker.worker_state import WorkerStateMachine, WorkerState
@@ -698,126 +697,6 @@ class WorkerDaemon:
         """Claim jobs using configured batch size (used by worker_ipc loop)."""
         return self.claim_jobs_count(get_claim_batch_size())
 
-    # ── Job Lifecycle ──────────────────────────────────────────
-
-    def process_job(self, job: dict, progress_callback=None) -> bool:
-        """Process a single job: parse → vision → embed → upload results.
-
-        Args:
-            job: Job dict with job_id, file_id, file_path.
-            progress_callback: Optional callback(phase, file_name) for IPC progress.
-                Phase values: parse, parse_done, vision, vision_done,
-                              embed_vv, embed_vv_done, embed_mv, embed_mv_done.
-        """
-        job_id = job["job_id"]
-        file_id = job["file_id"]
-        file_path = job["file_path"]
-        file_name = Path(file_path).name
-
-        self._current_job_id = job_id
-        self._current_file = file_name
-        self._current_phase = "parse"
-
-        logger.info(f"Processing job {job_id}: {file_path}")
-
-        # Resolve file access
-        local_path = self._resolve_file(job)
-        if not local_path:
-            self.uploader.fail_job(
-                job_id, f"Cannot access file: {file_path}", "FILE_NOT_FOUND")
-            self._total_failed += 1
-            self._clear_current()
-            return False
-
-        local_file = Path(local_path)
-        if not local_file.exists():
-            self.uploader.fail_job(
-                job_id, f"File not found: {local_path}", "FILE_NOT_FOUND")
-            self._total_failed += 1
-            self._clear_current()
-            return False
-
-        def _cb(phase):
-            if progress_callback:
-                progress_callback(phase, file_name)
-
-        try:
-            # ── Phase P: Parse ──
-            self._current_phase = "parse"
-            _cb("parse")
-            self.uploader.report_progress(job_id, "parse")
-            parse_result = self._run_parse(local_file)
-            if parse_result is None:
-                self.uploader.fail_job(
-                    job_id, f"Parse failed for {local_file.name}", "PARSE_FAILED")
-                self._total_failed += 1
-                return False
-            _cb("parse_done")
-
-            metadata, thumb_path, meta_obj = parse_result
-
-            # ── Phase V: Vision (MC generation) ──
-            self._current_phase = "vision"
-            _cb("vision")
-            self.uploader.report_progress(job_id, "vision")
-            vision_fields = self._run_vision(local_file, thumb_path, meta_obj)
-            if vision_fields:
-                metadata.update(vision_fields)
-            self._phase_counts["mc"] += 1
-            _cb("vision_done")
-
-            # ── Phase E-VV: Visual Vector (SigLIP2) ──
-            self._current_phase = "embed"
-            _cb("embed_vv")
-            self.uploader.report_progress(job_id, "embed")
-            logger.info(f"Job {job_id}: Phase VV (SigLIP2) start")
-            vv_vec, structure_vec = self._run_embed_vv(thumb_path)
-            logger.info(f"Job {job_id}: Phase VV done")
-            self._phase_counts["vv"] += 1
-            _cb("embed_vv_done")
-
-            # ── Phase E-MV: Meaning Vector (Qwen3-Embedding) ──
-            _cb("embed_mv")
-            logger.info(f"Job {job_id}: Phase MV (Qwen3-Embedding) start")
-            mv_vec = self._run_embed_mv(metadata)
-            logger.info(f"Job {job_id}: Phase MV done")
-            self._phase_counts["mv"] += 1
-            _cb("embed_mv_done")
-
-            # ── Upload results ──
-            success = self.uploader.complete_job(
-                job_id,
-                metadata=metadata,
-                vv_vec=vv_vec,
-                mv_vec=mv_vec,
-                structure_vec=structure_vec,
-            )
-
-            # Upload thumbnail to server (dual storage)
-            if thumb_path and Path(thumb_path).exists():
-                self.uploader.upload_thumbnail(file_id, thumb_path)
-
-            if success:
-                self._total_completed += 1
-                logger.info(f"Job {job_id} completed: {local_file.name}")
-            else:
-                self._total_failed += 1
-            return success
-
-        except Exception as e:
-            logger.error(f"Job {job_id} failed: {e}", exc_info=True)
-            self.uploader.fail_job(job_id, str(e))
-            self._total_failed += 1
-            return False
-        finally:
-            self._clear_current()
-            # Clean up temp files (no cache — server manages downloads)
-            if self.storage_mode == "server_upload" and local_path != file_path:
-                try:
-                    Path(local_path).unlink(missing_ok=True)
-                except Exception:
-                    pass
-
     def _clear_current(self):
         """Clear current job tracking."""
         self._current_job_id = None
@@ -855,7 +734,6 @@ class WorkerDaemon:
         # 4) Non-pre-parsed local file (should not happen for mc/vv/mv workers)
         logger.error(f"[RESOLVE] Job not pre-parsed and not remote — cannot process: {file_name}")
         return None
-        return result
 
     # _resolve_download_ahead removed — workers don't access download pool.
     # Parse is server-side (FileTaskParsePool).
@@ -947,61 +825,7 @@ class WorkerDaemon:
             future.cancel()
         self._download_cache.clear()
 
-    # ── Pipeline Phases (reusing existing backend code) ────────
-
-    def _run_parse(self, file_path: Path):
-        """Phase P: Parse file and extract metadata."""
-        try:
-            from backend.pipeline.ingest_engine import ParserFactory, _build_mc_raw, _set_tier_metadata, _normalize_paths
-
-            parser = ParserFactory.get_parser(file_path)
-            if not parser:
-                logger.warning(f"No parser for: {file_path}")
-                return None
-
-            result = parser.parse(file_path)
-            if not result.success:
-                logger.warning(f"Parse failed: {result.errors}")
-                return None
-
-            meta = result.asset_meta
-
-            # Content hash
-            from backend.utils.content_hash import compute_content_hash
-            try:
-                meta.content_hash = compute_content_hash(file_path)
-            except Exception:
-                pass
-
-            # Folder metadata from path
-            parent = file_path.parent
-            if parent.name and parent.name not in (".", ""):
-                meta.folder_path = parent.name
-                meta.folder_depth = 0
-                meta.folder_tags = [parent.name]
-
-            # Tier metadata
-            _set_tier_metadata(meta)
-
-            # Normalize storage_root and relative_path (required for folder stats)
-            _normalize_paths(meta, file_path)
-
-            # Resolve thumbnail
-            thumb_path = None
-            if meta.thumbnail_url:
-                tp = Path(meta.thumbnail_url)
-                if tp.exists():
-                    thumb_path = str(tp)
-
-            # Build metadata dict for API upload
-            metadata = meta_to_dict(meta)
-            metadata["file_path"] = str(file_path)
-
-            return metadata, thumb_path, meta
-
-        except Exception as e:
-            logger.error(f"Parse error: {e}", exc_info=True)
-            return None
+    # ── Pipeline Phases ────────
 
     def _run_vision(self, file_path: Path, thumb_path: str, meta, mc_raw_override: dict = None) -> dict:
         """Phase V: Run VLM to generate MC (caption, tags, classification).
