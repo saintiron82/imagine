@@ -18,6 +18,7 @@ from datetime import datetime
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
+from backend.server.security import audit_log
 
 
 def _utcnow_sql() -> str:
@@ -266,6 +267,15 @@ def create_headless_worker_command(
         admin.get("username"),
         username,
         req.connect_mode,
+    )
+    audit_log.record(
+        db,
+        "worker_enrollment_token_created",
+        actor_user_id=admin.get("id"),
+        actor_username=admin.get("username"),
+        target_kind="worker",
+        target_id=req.worker_name,
+        detail=f"launcher={req.launcher} connect_mode={req.connect_mode} ttl_min={req.expires_minutes}",
     )
     return {
         "worker_name": req.worker_name,
@@ -529,6 +539,16 @@ def worker_connect(
             processing_mode = "mc"
 
     logger.info(f"Worker connected: {req.worker_name} (session={session_id}, user={user['username']}, mode={processing_mode})")
+    audit_log.record(
+        db,
+        "worker_connected",
+        actor_user_id=user["id"],
+        actor_username=user["username"],
+        target_kind="worker_session",
+        target_id=session_id,
+        ip_address=getattr(request.client, "host", None) if request.client else None,
+        detail=f"name={req.worker_name} origin={req.origin} launcher={req.launcher}",
+    )
     return {
         "session_id": session_id,
         "pool_hint": effective_batch * 2,
@@ -1021,6 +1041,15 @@ def admin_block_worker(
         raise HTTPException(status_code=404, detail="Session not found")
     db.conn.commit()
     logger.info(f"Admin blocked worker session {session_id}, reclaimed {reclaimed} jobs")
+    audit_log.record(
+        db,
+        "worker_blocked",
+        actor_user_id=admin.get("id"),
+        actor_username=admin.get("username"),
+        target_kind="worker_session",
+        target_id=session_id,
+        detail=f"reclaimed={reclaimed}",
+    )
 
     # Recalculate pools after blocking
     _recalculate_server_pools(request.app, db)

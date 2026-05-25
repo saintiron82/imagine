@@ -143,6 +143,8 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
     if row is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
     if not _verify_password(req.server_password, row[0]):
+        from backend.server.security import audit_log as _audit
+        _audit.record(db, "failed_login", detail="bad server password")
         raise HTTPException(status_code=403, detail="Invalid server password")
 
     # 2. Verify Firebase ID token
@@ -223,6 +225,15 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
 
     db.conn.commit()
     logger.info(f"Firebase connect: {username} (uid={firebase_uid[:8]}..., role={role})")
+    if role == "admin":
+        from backend.server.security import audit_log as _audit
+        _audit.record(
+            db,
+            "admin_login",
+            actor_user_id=user_id,
+            actor_username=username,
+            detail="firebase connect",
+        )
 
     return TokenResponse(
         access_token=access_token,

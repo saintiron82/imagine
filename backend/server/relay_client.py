@@ -80,6 +80,7 @@ class RelayClient:
         transport_factory: Callable[[str], Any],
         firebase_register: Callable[..., bool],
         clock: Callable[[], float] = time.time,
+        audit_hook: Optional[Callable[[str], None]] = None,
     ):
         self._cfg = normalize_relay_settings(config)
         self._group_name = group_name
@@ -87,6 +88,7 @@ class RelayClient:
         self._transport_factory: Callable[[str], Any] = transport_factory
         self._firebase_register = firebase_register
         self._clock = clock
+        self._audit_hook = audit_hook
 
         self._transport: Any | None = None
         self._connected: bool = False
@@ -267,6 +269,11 @@ class RelayClient:
             )
         except Exception as exc:  # pragma: no cover - registry is best-effort
             logger.warning("Failed to publish relay state to Firestore: %s", exc)
+        if self._audit_hook is not None:
+            try:
+                self._audit_hook("relay_connected" if online else "relay_disconnected")
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Audit hook failed: %s", exc)
 
 
 # ── Production transport ───────────────────────────────────────────
@@ -371,9 +378,19 @@ def maybe_start(*, app, db) -> Optional[RelayClient]:
 
     from backend.server.connection_info import get_or_create_server_id, get_group_name
     from backend.server.firebase_registry import register_group
+    from backend.server.security import audit_log as _audit
 
     server_id = get_or_create_server_id(db)
     group = get_group_name(db) or "imagine"
+
+    def _audit_hook(event_name: str) -> None:
+        _audit.record(
+            db,
+            event_name,
+            target_kind="relay",
+            target_id=server_id,
+            detail=endpoint,
+        )
 
     flat_cfg = {
         "relay.enabled": True,
@@ -396,6 +413,7 @@ def maybe_start(*, app, db) -> Optional[RelayClient]:
         port=port,
         transport_factory=default_transport_factory,
         firebase_register=register_group,
+        audit_hook=_audit_hook,
     )
     if client.start():
         _singleton = client
