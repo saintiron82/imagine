@@ -1,0 +1,231 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  Imagine on-demand control relay (Phase 4 MVP).
+  WebSocket-only control plane for direct/relay session selection.
+  Original image bytes and bulk vectors never flow through this stack.
+
+Parameters:
+  StageName:
+    Type: String
+    Default: prod
+  LogRetentionDays:
+    Type: Number
+    Default: 3
+    AllowedValues: [1, 3, 7, 14]
+    Description: Keep CloudWatch logs short — relay is control-plane only.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 10
+    MemorySize: 256
+    Architectures: [arm64]
+    Environment:
+      Variables:
+        RELAY_CONNECTIONS_TABLE: !Ref RelayConnections
+        RELAY_SESSIONS_TABLE: !Ref RelaySessions
+        RELAY_SECRET_SSM_PREFIX: /imagine/relay
+
+Resources:
+  RelayConnections:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connection_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connection_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  RelaySessions:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: server_id
+          AttributeType: S
+        - AttributeName: role
+          AttributeType: S
+        - AttributeName: connection_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: server_id
+          KeyType: HASH
+        - AttributeName: role
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: ConnectionIndex
+          KeySchema:
+            - AttributeName: connection_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  RelayWebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "imagine-relay-${StageName}"
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.type"
+
+  ConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: connect.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RelayConnections
+
+  DisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: disconnect.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RelayConnections
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RelaySessions
+
+  MessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: message.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RelayConnections
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RelaySessions
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RelayWebSocketApi}/${StageName}/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/imagine/relay/*"
+
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref RelayWebSocketApi
+      RouteKey: "$connect"
+      Target: !Sub "integrations/${ConnectIntegration}"
+
+  ConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref RelayWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConnectFunction.Arn}/invocations"
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref RelayWebSocketApi
+      RouteKey: "$disconnect"
+      Target: !Sub "integrations/${DisconnectIntegration}"
+
+  DisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref RelayWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectFunction.Arn}/invocations"
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref RelayWebSocketApi
+      RouteKey: "$default"
+      Target: !Sub "integrations/${MessageIntegration}"
+
+  MessageIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref RelayWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MessageFunction.Arn}/invocations"
+
+  ConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ConnectFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RelayWebSocketApi}/*"
+
+  DisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DisconnectFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RelayWebSocketApi}/*"
+
+  MessagePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MessageFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RelayWebSocketApi}/*"
+
+  Deployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+      - ConnectRoute
+      - DisconnectRoute
+      - DefaultRoute
+    Properties:
+      ApiId: !Ref RelayWebSocketApi
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref RelayWebSocketApi
+      DeploymentId: !Ref Deployment
+      StageName: !Ref StageName
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 25
+
+  ConnectLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ConnectFunction}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  DisconnectLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DisconnectFunction}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  MessageLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${MessageFunction}"
+      RetentionInDays: !Ref LogRetentionDays
+
+Outputs:
+  RelayEndpoint:
+    Description: WebSocket URL for the relay.
+    Value: !Sub "wss://${RelayWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+  RelayApiId:
+    Value: !Ref RelayWebSocketApi
+  ConnectionsTable:
+    Value: !Ref RelayConnections
+  SessionsTable:
+    Value: !Ref RelaySessions
