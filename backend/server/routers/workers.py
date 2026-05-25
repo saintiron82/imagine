@@ -38,8 +38,17 @@ def _linux_bootstrap_script() -> str:
     return """#!/usr/bin/env bash
 set -euo pipefail
 
-: "${IMAGINE_SERVER_URL:?Set IMAGINE_SERVER_URL}"
 : "${IMAGINE_WORKER_ACCESS_TOKEN:?Set IMAGINE_WORKER_ACCESS_TOKEN}"
+
+IMAGINE_CONNECT_MODE="${IMAGINE_CONNECT_MODE:-direct}"
+export IMAGINE_CONNECT_MODE
+
+if [ "$IMAGINE_CONNECT_MODE" = "relay" ]; then
+    : "${IMAGINE_RELAY_ENDPOINT:?Set IMAGINE_RELAY_ENDPOINT for relay mode}"
+    : "${IMAGINE_SERVER_ID:?Set IMAGINE_SERVER_ID for relay mode}"
+else
+    : "${IMAGINE_SERVER_URL:?Set IMAGINE_SERVER_URL for direct mode}"
+fi
 
 REPO_URL="${IMAGINE_REPO_URL:-https://github.com/sungchulJE/Imagine.git}"
 BRANCH="${IMAGINE_BRANCH:-main}"
@@ -125,6 +134,12 @@ class HeadlessWorkerCommandRequest(BaseModel):
     worker_name: str = Field("headless-worker", min_length=1, max_length=80)
     launcher: Literal["cli", "service", "cloud"] = "cloud"
     expires_minutes: int = Field(1440, ge=15, le=43200)
+    # Phase 2: the admin picks which discovery URL the worker should hit.
+    # `server_url` overrides the request origin for direct modes.
+    server_url: Optional[str] = None
+    connect_mode: Literal[
+        "direct_lan", "manual_external", "relay_session"
+    ] = "direct_lan"
 
 
 @router.get("/workers/bootstrap/linux.sh", response_class=PlainTextResponse)
@@ -188,26 +203,71 @@ def create_headless_worker_command(
     )
     db.conn.commit()
 
-    server_url = _server_origin(request)
-    bootstrap_url = f"{server_url}/api/v1/workers/bootstrap/linux.sh"
-    command = (
-        f"IMAGINE_SERVER_URL='{server_url}' "
-        f"IMAGINE_WORKER_ACCESS_TOKEN='{access_token}' "
-        f"IMAGINE_WORKER_REFRESH_TOKEN='{refresh_token}' "
-        f"IMAGINE_WORKER_NAME='{req.worker_name}' "
-        f"IMAGINE_WORKER_LAUNCHER='{req.launcher}' "
-        f"bash -c \"$(curl -fsSL '{bootstrap_url}')\""
-    )
+    request_origin = _server_origin(request)
+    direct_url = (req.server_url or request_origin).rstrip("/")
+    bootstrap_url = f"{request_origin}/api/v1/workers/bootstrap/linux.sh"
+
+    relay_endpoint = ""
+    server_id = ""
+    if req.connect_mode == "relay_session":
+        try:
+            from backend.utils.config import get_config
+
+            relay_endpoint = (get_config().get("server.relay_endpoint", "") or "").strip()
+        except Exception:
+            relay_endpoint = ""
+        if not relay_endpoint:
+            raise HTTPException(
+                status_code=503,
+                detail="Relay session is not configured on this server.",
+            )
+        try:
+            from backend.server.connection_info import get_or_create_server_id
+
+            server_id = get_or_create_server_id(db)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to resolve server_id: {exc}",
+            )
+
+        command = (
+            f"IMAGINE_CONNECT_MODE='relay' "
+            f"IMAGINE_RELAY_ENDPOINT='{relay_endpoint}' "
+            f"IMAGINE_SERVER_ID='{server_id}' "
+            f"IMAGINE_WORKER_ACCESS_TOKEN='{access_token}' "
+            f"IMAGINE_WORKER_REFRESH_TOKEN='{refresh_token}' "
+            f"IMAGINE_WORKER_NAME='{req.worker_name}' "
+            f"IMAGINE_WORKER_LAUNCHER='{req.launcher}' "
+            f"bash -c \"$(curl -fsSL '{bootstrap_url}')\""
+        )
+        effective_server_url = ""
+    else:
+        command = (
+            f"IMAGINE_CONNECT_MODE='direct' "
+            f"IMAGINE_SERVER_URL='{direct_url}' "
+            f"IMAGINE_WORKER_ACCESS_TOKEN='{access_token}' "
+            f"IMAGINE_WORKER_REFRESH_TOKEN='{refresh_token}' "
+            f"IMAGINE_WORKER_NAME='{req.worker_name}' "
+            f"IMAGINE_WORKER_LAUNCHER='{req.launcher}' "
+            f"bash -c \"$(curl -fsSL '{bootstrap_url}')\""
+        )
+        effective_server_url = direct_url
+
     logger.info(
-        "Admin %s issued headless worker command for %s",
+        "Admin %s issued headless worker command for %s (mode=%s)",
         admin.get("username"),
         username,
+        req.connect_mode,
     )
     return {
         "worker_name": req.worker_name,
         "worker_username": username,
         "launcher": req.launcher,
-        "server_url": server_url,
+        "connect_mode": req.connect_mode,
+        "server_url": effective_server_url,
+        "relay_endpoint": relay_endpoint,
+        "server_id": server_id,
         "bootstrap_url": bootstrap_url,
         "access_token": access_token,
         "refresh_token": refresh_token,

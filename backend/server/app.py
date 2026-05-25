@@ -296,6 +296,7 @@ from backend.server.routers.license import router as license_router
 from backend.server.routers.archive import router as archive_router
 from backend.server.routers.analysis import router as analysis_router
 from backend.server.routers.tools import router as tools_router
+from backend.server.routers.connection_info import router as connection_info_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -313,6 +314,7 @@ app.include_router(license_router, prefix="/api/v1")
 app.include_router(analysis_router)  # Already has /api/v1 prefix in routes
 app.include_router(archive_router, prefix="/api/v1")
 app.include_router(tools_router, prefix="/api/v1")
+app.include_router(connection_info_router, prefix="/api/v1")
 
 
 @app.post("/api/v1/server/activate")
