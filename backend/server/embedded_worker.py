@@ -42,7 +42,11 @@ def start_worker(server_url: str = "", access_token: str = "", refresh_token: st
         scheduler = WorkerScheduler(db)
         transport = LocalTransport(db, scheduler, manager)
 
-        _daemon = WorkerDaemon(transport=transport)
+        _daemon = WorkerDaemon(
+            transport=transport,
+            origin="server-local",
+            launcher="server",
+        )
 
         # Connect session
         from backend.worker.capability import collect_capability
@@ -53,6 +57,8 @@ def start_worker(server_url: str = "", access_token: str = "", refresh_token: st
             hostname=socket.gethostname(),
             batch_capacity=20,
             resources=resources,
+            origin="server-local",
+            launcher="server",
         )
         if not session.get("session_id"):
             return {"success": False, "error": "Session create failed"}

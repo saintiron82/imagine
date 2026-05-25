@@ -85,7 +85,8 @@ class WorkerTransport(ABC):
 
     @abstractmethod
     def connect(self, worker_name: str, hostname: str,
-                batch_capacity: int, resources: dict) -> dict:
+                batch_capacity: int, resources: dict,
+                origin: str = "headless", launcher: str = "cli") -> dict:
         """Connect worker session. Returns session info."""
         ...
 
@@ -271,7 +272,8 @@ class LocalTransport(WorkerTransport):
             return False
 
     def connect(self, worker_name: str, hostname: str,
-                batch_capacity: int, resources: dict) -> dict:
+                batch_capacity: int, resources: dict,
+                origin: str = "server-local", launcher: str = "server") -> dict:
         """Register embedded worker session directly in DB."""
         from datetime import datetime
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -290,10 +292,13 @@ class LocalTransport(WorkerTransport):
 
             cursor.execute("""
                 INSERT INTO worker_sessions
-                    (user_id, worker_name, hostname, status, batch_capacity,
-                     connected_at, last_heartbeat)
-                VALUES (?, ?, ?, 'online', ?, ?, ?)
-            """, (user_id, worker_name, hostname, batch_capacity, now, now))
+                    (user_id, worker_name, hostname, origin, launcher, status,
+                     batch_capacity, connected_at, last_heartbeat)
+                VALUES (?, ?, ?, ?, ?, 'online', ?, ?, ?)
+            """, (
+                user_id, worker_name, hostname, origin, launcher,
+                batch_capacity, now, now,
+            ))
             self.session_id = cursor.lastrowid
             self.db.conn.commit()
         except Exception:
@@ -511,7 +516,8 @@ class HttpTransport(WorkerTransport):
             return False
 
     def connect(self, worker_name: str, hostname: str,
-                batch_capacity: int, resources: dict) -> dict:
+                batch_capacity: int, resources: dict,
+                origin: str = "headless", launcher: str = "cli") -> dict:
         try:
             resp = self._request(
                 "post",
@@ -520,6 +526,8 @@ class HttpTransport(WorkerTransport):
                     "worker_name": worker_name,
                     "hostname": hostname,
                     "batch_capacity": batch_capacity,
+                    "origin": origin,
+                    "launcher": launcher,
                     "resources": resources,
                 },
             )

@@ -238,6 +238,10 @@ def migrate_worker_sessions(db):
             user_id INTEGER NOT NULL REFERENCES users(id),
             worker_name TEXT NOT NULL,
             hostname TEXT,
+            origin TEXT DEFAULT 'headless'
+                CHECK (origin IN ('server-local', 'client-launched', 'headless')),
+            launcher TEXT DEFAULT 'cli'
+                CHECK (launcher IN ('server', 'electron', 'cli', 'service', 'cloud')),
             status TEXT DEFAULT 'online'
                 CHECK (status IN ('online', 'offline', 'blocked')),
             batch_capacity INTEGER DEFAULT 5,
@@ -284,6 +288,24 @@ def migrate_worker_resources_json(db):
         db.conn.execute("ALTER TABLE worker_sessions ADD COLUMN resources_json TEXT DEFAULT NULL")
         db.conn.commit()
         logger.info("resources_json column added to worker_sessions")
+
+
+def migrate_worker_origin_launcher(db):
+    """Add worker origin/launcher columns for runtime classification."""
+    if not db._table_exists('worker_sessions'):
+        return
+    try:
+        db.conn.execute("SELECT origin FROM worker_sessions LIMIT 1")
+    except Exception:
+        logger.info("Migrating: adding worker origin/launcher columns...")
+        db.conn.execute(
+            "ALTER TABLE worker_sessions ADD COLUMN origin TEXT DEFAULT 'headless'"
+        )
+        db.conn.execute(
+            "ALTER TABLE worker_sessions ADD COLUMN launcher TEXT DEFAULT 'cli'"
+        )
+        db.conn.commit()
+        logger.info("worker origin/launcher columns added")
 
 
 def migrate_users_email_nullable(db):
@@ -515,6 +537,7 @@ def run_migrations(db, *, existing_db: bool = True):
             ("worker_sessions", lambda: migrate_worker_sessions(db)),
             ("worker_session_overrides", lambda: migrate_worker_session_overrides(db)),
             ("worker_resources_json", lambda: migrate_worker_resources_json(db)),
+            ("worker_origin_launcher", lambda: migrate_worker_origin_launcher(db)),
             ("users_email_nullable", lambda: migrate_users_email_nullable(db)),
             ("users_firebase_uid", lambda: migrate_users_firebase_uid(db)),
             ("files_processing_status", lambda: migrate_files_processing_status(db)),
@@ -555,6 +578,7 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_worker_sessions(db)
         migrate_worker_session_overrides(db)
         migrate_worker_resources_json(db)
+        migrate_worker_origin_launcher(db)
         migrate_files_processing_status(db)
         migrate_members_table(db)
         migrate_search_logs(db)

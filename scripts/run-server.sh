@@ -9,6 +9,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 PORT="${1:-8000}"
+export IMAGINE_SERVER_PORT="$PORT"
 
 # Activate venv if exists
 if [ -f ".venv/bin/activate" ]; then

@@ -33,6 +33,13 @@ def get_server_config() -> dict:
     if host:
         server_cfg["host"] = host
 
+    port = os.getenv("IMAGINE_SERVER_PORT")
+    if port:
+        try:
+            server_cfg["port"] = int(port)
+        except ValueError:
+            logger.warning("Invalid IMAGINE_SERVER_PORT=%r; using config/default port", port)
+
     cors_allow_all = os.getenv("IMAGINE_CORS_ALLOW_ALL")
     if cors_allow_all is not None:
         server_cfg["cors_allow_all"] = cors_allow_all.strip().lower() in {

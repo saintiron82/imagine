@@ -2,12 +2,12 @@
 # Imagine Cloud Worker Boot
 #
 # 외부 GPU 인스턴스(Elice Cloud G-NAHP-80 등)에서 1회 실행.
-# git clone → venv → pip → worker_daemon.
+# git clone → venv → pip → headless worker CLI.
 #
 # 필수 환경변수:
 #   IMAGINE_SERVER_URL       메인 서버의 외부 노출 URL (Firebase 경유)
-#   IMAGINE_WORKER_EMAIL     워커 전용 user 계정 이메일
-#   IMAGINE_WORKER_PASSWORD  위 계정 비밀번호
+#   IMAGINE_WORKER_ACCESS_TOKEN  서버에서 발급한 worker access token
+#   IMAGINE_WORKER_REFRESH_TOKEN 선택: refresh token
 #
 # 선택 환경변수:
 #   IMAGINE_REPO_URL    기본: https://github.com/<your-account>/Imagine.git
@@ -19,8 +19,8 @@
 #
 # 사용 예:
 #   export IMAGINE_SERVER_URL=https://imagine.example.com
-#   export IMAGINE_WORKER_EMAIL=cloud-worker@imagine.local
-#   export IMAGINE_WORKER_PASSWORD='...'
+#   export IMAGINE_WORKER_ACCESS_TOKEN='...'
+#   export IMAGINE_WORKER_REFRESH_TOKEN='...'
 #   curl -O https://raw.githubusercontent.com/<repo>/main/scripts/cloud_worker_boot.sh
 #   chmod +x cloud_worker_boot.sh
 #   ./cloud_worker_boot.sh
@@ -29,8 +29,7 @@ set -euo pipefail
 
 # ── 0. 환경변수 검증 ───────────────────────────────────────
 : "${IMAGINE_SERVER_URL:?Set IMAGINE_SERVER_URL (메인 서버 외부 URL)}"
-: "${IMAGINE_WORKER_EMAIL:?Set IMAGINE_WORKER_EMAIL}"
-: "${IMAGINE_WORKER_PASSWORD:?Set IMAGINE_WORKER_PASSWORD}"
+: "${IMAGINE_WORKER_ACCESS_TOKEN:?Set IMAGINE_WORKER_ACCESS_TOKEN}"
 
 REPO_URL="${IMAGINE_REPO_URL:-https://github.com/sungchulJE/Imagine.git}"
 BRANCH="${IMAGINE_BRANCH:-main}"
@@ -38,7 +37,7 @@ WORK_DIR="${IMAGINE_WORK_DIR:-$HOME/imagine}"
 CUDA_INDEX="${CUDA_WHEEL_INDEX:-https://download.pytorch.org/whl/cu121}"
 export HF_HOME="${HF_HOME:-$WORK_DIR/.hf-cache}"
 
-echo "[boot] server=$IMAGINE_SERVER_URL  worker=$IMAGINE_WORKER_EMAIL"
+echo "[boot] server=$IMAGINE_SERVER_URL  launcher=cloud"
 echo "[boot] repo=$REPO_URL@$BRANCH  work_dir=$WORK_DIR"
 echo "[boot] cuda_index=$CUDA_INDEX  hf_home=$HF_HOME"
 
@@ -74,7 +73,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip wheel
 
 # ── 5. torch (CUDA wheel) → 나머지 의존성 ──────────────────
-pip install torch>=2.6.0 --index-url "$CUDA_INDEX"
+pip install 'torch>=2.6.0' --index-url "$CUDA_INDEX"
 pip install -r requirements-worker-cuda.txt
 
 # ── 6. CUDA + vLLM 동작 확인 ───────────────────────────────
@@ -94,5 +93,5 @@ PY
 # ── 7. 워커 데몬 실행 (PYTHONPATH=프로젝트 루트) ──────────
 mkdir -p "$HF_HOME"
 export PYTHONPATH="$WORK_DIR"
-echo "[boot] starting worker_daemon..."
-exec python -m backend.worker.worker_daemon
+echo "[boot] starting headless worker..."
+exec python -m backend.worker.cli --launcher cloud

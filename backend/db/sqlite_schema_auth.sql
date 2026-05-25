@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
     user_id INTEGER NOT NULL REFERENCES users(id),
     worker_name TEXT NOT NULL,
     hostname TEXT,
+    origin TEXT DEFAULT 'headless'
+        CHECK (origin IN ('server-local', 'client-launched', 'headless')),
+    launcher TEXT DEFAULT 'cli'
+        CHECK (launcher IN ('server', 'electron', 'cli', 'service', 'cloud')),
     -- Status
     status TEXT DEFAULT 'online'
         CHECK (status IN ('online', 'offline', 'blocked')),

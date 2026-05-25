@@ -10,12 +10,13 @@ Features:
     - Server commands: responds to stop/block via heartbeat
 
 Usage:
-    python -m backend.worker.worker_daemon
+    WorkerDaemon is the shared worker core. Use backend.worker.cli for
+    Electron-free headless execution:
+
+    python -m backend.worker.cli
 
 Environment variables (override config.yaml):
     IMAGINE_SERVER_URL       — Server base URL (e.g. http://192.168.1.10:8000)
-    IMAGINE_WORKER_EMAIL     — Worker login email
-    IMAGINE_WORKER_PASSWORD  — Worker login password
 """
 
 import gc
@@ -165,10 +166,12 @@ class WorkerDaemon:
     - transport=LocalTransport: direct DB calls, for embedded worker
     """
 
-    def __init__(self, transport=None):
+    def __init__(self, transport=None, origin: str = "headless", launcher: str = "cli"):
         import requests
 
         self.transport = transport  # None = HTTP mode
+        self.origin = origin
+        self.launcher = launcher
         self.server_url = get_server_url()
         self.session = requests.Session()
         # Do NOT set Content-Type on session — requests sets it automatically:
@@ -514,6 +517,8 @@ class WorkerDaemon:
                     "worker_name": self.worker_name or f"{socket.gethostname()}-worker",
                     "hostname": socket.gethostname(),
                     "batch_capacity": self.batch_capacity,
+                    "origin": self.origin,
+                    "launcher": self.launcher,
                     "resources": connect_resources,
                 },
             )

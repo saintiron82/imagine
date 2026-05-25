@@ -130,7 +130,7 @@ class WorkerIPCController:
             _emit_log("[IMPORT] OK — all imports complete", "info")
 
             _emit_log("[THREAD] Creating WorkerDaemon...", "info")
-            daemon = WorkerDaemon()
+            daemon = WorkerDaemon(origin="client-launched", launcher="electron")
             self._daemon = daemon
             _emit_log(f"[THREAD] Daemon created, server_url={daemon.server_url}", "info")
 

@@ -4,7 +4,7 @@
 # 메인 requirements.txt 와 동일하나 macOS 전용 (mlx) 라인을 제거.
 #
 # 설치:
-#   pip install torch>=2.6.0 --index-url https://download.pytorch.org/whl/cu121
+#   pip install 'torch>=2.6.0' --index-url https://download.pytorch.org/whl/cu121
 #   pip install -r requirements-worker-cuda.txt
 #
 # torch 만 별도 설치하는 이유: 기본 PyPI는 CPU wheel 이라

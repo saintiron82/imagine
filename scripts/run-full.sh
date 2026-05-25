@@ -8,6 +8,7 @@
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 PORT="${1:-8000}"
+export IMAGINE_SERVER_PORT="$PORT"
 
 # 1. Build frontend
 echo "=== Imagine — Full Build + Server ==="

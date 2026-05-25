@@ -7,10 +7,12 @@ Server piggybacks commands (stop/block) in heartbeat responses.
 
 import logging
 import json
-from typing import Optional
+import re
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, Field
 
 from datetime import datetime
 
@@ -27,12 +29,76 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["workers"])
 
 
+def _server_origin(request: Request) -> str:
+    """Return scheme://host[:port] without trailing slash."""
+    return str(request.base_url).rstrip("/")
+
+
+def _linux_bootstrap_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+: "${IMAGINE_SERVER_URL:?Set IMAGINE_SERVER_URL}"
+: "${IMAGINE_WORKER_ACCESS_TOKEN:?Set IMAGINE_WORKER_ACCESS_TOKEN}"
+
+REPO_URL="${IMAGINE_REPO_URL:-https://github.com/sungchulJE/Imagine.git}"
+BRANCH="${IMAGINE_BRANCH:-main}"
+WORK_DIR="${IMAGINE_WORK_DIR:-$HOME/imagine-worker}"
+CUDA_INDEX="${CUDA_WHEEL_INDEX:-https://download.pytorch.org/whl/cu121}"
+LAUNCHER="${IMAGINE_WORKER_LAUNCHER:-cloud}"
+export HF_HOME="${HF_HOME:-$WORK_DIR/.hf-cache}"
+
+echo "[worker-bootstrap] server=$IMAGINE_SERVER_URL launcher=$LAUNCHER"
+
+if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+else
+    echo "[worker-bootstrap] WARN: nvidia-smi not found"
+fi
+
+if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq python3-venv python3-pip git
+fi
+
+if [ ! -d "$WORK_DIR/.git" ]; then
+    git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$WORK_DIR"
+else
+    git -C "$WORK_DIR" fetch --depth 1 origin "$BRANCH"
+    git -C "$WORK_DIR" reset --hard "origin/$BRANCH"
+fi
+
+cd "$WORK_DIR"
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
+
+source .venv/bin/activate
+python -m pip install --upgrade pip wheel
+pip install 'torch>=2.6.0' --index-url "$CUDA_INDEX"
+pip install -r requirements-worker-cuda.txt
+
+mkdir -p "$HF_HOME"
+export PYTHONPATH="$WORK_DIR"
+exec python -m backend.worker.cli --launcher "$LAUNCHER"
+"""
+
+
+def _worker_username(worker_name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", worker_name.strip()).strip("-._")
+    if not cleaned:
+        cleaned = "headless-worker"
+    return f"worker:{cleaned[:80]}"
+
+
 # ── Schemas ──────────────────────────────────────────────────
 
 class ConnectRequest(BaseModel):
     worker_name: str
     hostname: Optional[str] = None
     batch_capacity: int = 5
+    origin: Literal["server-local", "client-launched", "headless"] = "headless"
+    launcher: Literal["server", "electron", "cli", "service", "cloud"] = "cli"
     resources: Optional[dict] = None  # GPU info for immediate mode detection at connect time
 
 
@@ -53,6 +119,101 @@ class HeartbeatRequest(BaseModel):
 
 class DisconnectRequest(BaseModel):
     session_id: int
+
+
+class HeadlessWorkerCommandRequest(BaseModel):
+    worker_name: str = Field("headless-worker", min_length=1, max_length=80)
+    launcher: Literal["cli", "service", "cloud"] = "cloud"
+    expires_minutes: int = Field(1440, ge=15, le=43200)
+
+
+@router.get("/workers/bootstrap/linux.sh", response_class=PlainTextResponse)
+def linux_worker_bootstrap():
+    """Public Linux bootstrap script. Credentials are supplied by the caller."""
+    return PlainTextResponse(
+        _linux_bootstrap_script(),
+        media_type="text/x-shellscript; charset=utf-8",
+    )
+
+
+@router.post("/admin/workers/headless-command")
+def create_headless_worker_command(
+    req: HeadlessWorkerCommandRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Create a dedicated worker user token and a Linux bootstrap command."""
+    from backend.server.auth.jwt import (
+        create_access_token,
+        create_refresh_token,
+        get_refresh_token_expiry,
+        hash_refresh_token,
+    )
+
+    username = _worker_username(req.worker_name)
+    cursor = db.conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    if row:
+        worker_user_id = row[0]
+        cursor.execute(
+            "UPDATE users SET is_active = 1, role = 'user' WHERE id = ?",
+            (worker_user_id,),
+        )
+    else:
+        cursor.execute(
+            """INSERT INTO users
+               (username, email, firebase_uid, password_hash, role, is_active)
+               VALUES (?, NULL, NULL, '', 'user', 1)""",
+            (username,),
+        )
+        worker_user_id = cursor.lastrowid
+
+    access_token = create_access_token(
+        worker_user_id,
+        username,
+        "user",
+        expires_minutes=req.expires_minutes,
+    )
+    refresh_token = create_refresh_token()
+    cursor.execute(
+        """INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+           VALUES (?, ?, ?)""",
+        (
+            worker_user_id,
+            hash_refresh_token(refresh_token),
+            get_refresh_token_expiry().isoformat(),
+        ),
+    )
+    db.conn.commit()
+
+    server_url = _server_origin(request)
+    bootstrap_url = f"{server_url}/api/v1/workers/bootstrap/linux.sh"
+    command = (
+        f"IMAGINE_SERVER_URL='{server_url}' "
+        f"IMAGINE_WORKER_ACCESS_TOKEN='{access_token}' "
+        f"IMAGINE_WORKER_REFRESH_TOKEN='{refresh_token}' "
+        f"IMAGINE_WORKER_NAME='{req.worker_name}' "
+        f"IMAGINE_WORKER_LAUNCHER='{req.launcher}' "
+        f"bash -c \"$(curl -fsSL '{bootstrap_url}')\""
+    )
+    logger.info(
+        "Admin %s issued headless worker command for %s",
+        admin.get("username"),
+        username,
+    )
+    return {
+        "worker_name": req.worker_name,
+        "worker_username": username,
+        "launcher": req.launcher,
+        "server_url": server_url,
+        "bootstrap_url": bootstrap_url,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "linux_command": command,
+        "expires_minutes": req.expires_minutes,
+    }
 
 
 class WorkerConfigUpdate(BaseModel):
@@ -228,9 +389,13 @@ def worker_connect(
 
     cursor.execute(
         """INSERT INTO worker_sessions
-           (user_id, worker_name, hostname, batch_capacity, status, connected_at, last_heartbeat)
-           VALUES (?, ?, ?, ?, 'online', ?, ?)""",
-        (user["id"], req.worker_name, req.hostname, req.batch_capacity, now, now)
+           (user_id, worker_name, hostname, origin, launcher, batch_capacity,
+            status, connected_at, last_heartbeat)
+           VALUES (?, ?, ?, ?, ?, ?, 'online', ?, ?)""",
+        (
+            user["id"], req.worker_name, req.hostname, req.origin,
+            req.launcher, req.batch_capacity, now, now,
+        )
     )
     session_id = cursor.lastrowid
 
@@ -538,7 +703,7 @@ def list_my_workers(
     """List current user's worker sessions."""
     cursor = db.conn.cursor()
     cursor.execute(
-        """SELECT id, worker_name, hostname, status, batch_capacity,
+        """SELECT id, worker_name, hostname, origin, launcher, status, batch_capacity,
                   jobs_completed, jobs_failed, current_file, current_phase,
                   last_heartbeat, connected_at
            FROM worker_sessions
@@ -551,10 +716,11 @@ def list_my_workers(
     for row in cursor.fetchall():
         workers.append({
             "id": row[0], "worker_name": row[1], "hostname": row[2],
-            "status": row[3], "batch_capacity": row[4],
-            "jobs_completed": row[5], "jobs_failed": row[6],
-            "current_file": row[7], "current_phase": row[8],
-            "last_heartbeat": row[9], "connected_at": row[10],
+            "origin": row[3], "launcher": row[4],
+            "status": row[5], "batch_capacity": row[6],
+            "jobs_completed": row[7], "jobs_failed": row[8],
+            "current_file": row[9], "current_phase": row[10],
+            "last_heartbeat": row[11], "connected_at": row[12],
         })
     return {"workers": workers}
 
@@ -594,7 +760,8 @@ def admin_list_workers(
                   ws.last_heartbeat, ws.connected_at, ws.disconnected_at,
                   ws.pending_command, u.username, ws.user_id,
                   ws.processing_mode_override, ws.batch_capacity_override,
-                  ws.resources_json, ws.assigned_mode, ws.phase_job_count
+                  ws.resources_json, ws.assigned_mode, ws.phase_job_count,
+                  ws.origin, ws.launcher
            FROM worker_sessions ws
            LEFT JOIN users u ON ws.user_id = u.id
            ORDER BY
@@ -705,6 +872,8 @@ def admin_list_workers(
             "assigned_mode": row[18],
             "phase_counts": phase_counts,       # session-scoped (resets on restart)
             "phase_job_count": row[19] or 0,    # DB cumulative (reference only)
+            "origin": row[20],
+            "launcher": row[21],
         })
 
     # BUG-005: override embedded worker's data from live memory
