@@ -217,3 +217,26 @@ export async function startRepairParse() {
 export async function getRepairParseStatus() {
   return apiClient.get('/api/v1/admin/tools/repair-parse/status');
 }
+
+// ── Connection Info / Headless Worker Install ──────────────
+
+export async function getConnectionInfo() {
+  return apiClient.get('/api/v1/server/connection-info');
+}
+
+export async function createHeadlessWorkerCommand({
+  worker_name,
+  launcher = 'cloud',
+  expires_minutes = 1440,
+  server_url = null,
+  connect_mode = 'direct_lan',
+} = {}) {
+  const payload = {
+    worker_name,
+    launcher,
+    expires_minutes,
+    connect_mode,
+  };
+  if (server_url) payload.server_url = server_url;
+  return apiClient.post('/api/v1/admin/workers/headless-command', payload);
+}

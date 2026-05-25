@@ -36,6 +36,9 @@ def _db():
         )
     """)
     conn.execute(
+        "CREATE TABLE system_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    conn.execute(
         """INSERT INTO users (username, email, password_hash, role, is_active)
            VALUES ('admin', 'admin@example.com', '', 'admin', 1)"""
     )
@@ -99,3 +102,84 @@ def test_admin_can_issue_headless_worker_command(monkeypatch):
 
     token_count = db.conn.execute("SELECT COUNT(*) FROM refresh_tokens").fetchone()[0]
     assert token_count == 1
+
+
+def test_headless_command_honors_server_url_override():
+    db = _db()
+    client = _client(db)
+
+    response = client.post(
+        "/api/v1/admin/workers/headless-command",
+        json={
+            "worker_name": "cloud-a100-2",
+            "launcher": "cloud",
+            "expires_minutes": 120,
+            "server_url": "https://studio.imagine.example.com",
+            "connect_mode": "manual_external",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["connect_mode"] == "manual_external"
+    assert body["server_url"] == "https://studio.imagine.example.com"
+    assert "IMAGINE_SERVER_URL='https://studio.imagine.example.com'" in body["linux_command"]
+    assert "IMAGINE_CONNECT_MODE='direct'" in body["linux_command"]
+
+
+def test_headless_command_relay_session_requires_endpoint(monkeypatch):
+    db = _db()
+    client = _client(db)
+
+    from backend.utils.config import get_config
+
+    monkeypatch.setattr(get_config(), "get", lambda key, default=None: default)
+
+    response = client.post(
+        "/api/v1/admin/workers/headless-command",
+        json={
+            "worker_name": "relay-worker",
+            "launcher": "cloud",
+            "expires_minutes": 120,
+            "connect_mode": "relay_session",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "relay" in response.json()["detail"].lower()
+
+
+def test_headless_command_relay_session_emits_relay_env(monkeypatch):
+    db = _db()
+    client = _client(db)
+
+    from backend.utils.config import get_config
+
+    cfg = get_config()
+    monkeypatch.setattr(
+        cfg,
+        "get",
+        lambda key, default=None: (
+            "wss://relay.example.com" if key == "server.relay_endpoint" else default
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/admin/workers/headless-command",
+        json={
+            "worker_name": "relay-worker",
+            "launcher": "cloud",
+            "expires_minutes": 120,
+            "connect_mode": "relay_session",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["connect_mode"] == "relay_session"
+    assert body["relay_endpoint"] == "wss://relay.example.com"
+    assert body["server_id"]
+    assert "IMAGINE_CONNECT_MODE='relay'" in body["linux_command"]
+    assert "IMAGINE_RELAY_ENDPOINT='wss://relay.example.com'" in body["linux_command"]
+    assert "IMAGINE_SERVER_ID=" in body["linux_command"]
+    assert "IMAGINE_SERVER_URL=" not in body["linux_command"]
