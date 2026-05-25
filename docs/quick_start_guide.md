@@ -377,5 +377,51 @@ python backend/pipeline/ingest_engine.py \
 
 ---
 
-**버전**: v3.1.1
-**최종 업데이트**: 2026-02-09
+## 외부 접속 모드 (보안)
+
+Imagine은 네 가지 연결 모드를 구분한다. 외부망 접속이 필요하면 **공인 IP 포트
+직접 공개를 기본으로 권장하지 않는다.**
+
+| 모드 | 용도 | 보안 등급 |
+|------|------|-----------|
+| `direct_local` (`localhost`)        | 같은 PC                  | 안전 |
+| `direct_lan` (`192.168.x.x`)        | 같은 네트워크             | 보통 |
+| `manual_external` (사용자 책임)      | 고급 사용자 터널/포트포워딩 | **주의(검증되지 않음)** |
+| `relay_session` (AWS 443)            | 외부 클라우드 워커/클라이언트 | **권장** |
+
+각 모드별 안전·위험 라벨은 관리자 페이지의 **연결 탭**(`/admin` → 연결)
+에서 같이 확인할 수 있다.
+
+### 외부 워커가 필요할 때
+
+권장 절차:
+
+1. AWS relay 1회 배포 (`infra/aws-relay/scripts/deploy.sh`).
+2. SSM에 `server_secret` 1회 등록 (`infra/aws-relay/README.md` 참조).
+3. 서버에 `IMAGINE_RELAY_ENDPOINT` / `IMAGINE_RELAY_SERVER_SECRET` 환경
+   변수를 설정하고 재시작 → Firestore에 `connect_mode=relay_session,
+   relay_online=true` 가 게시된다.
+4. 관리자 페이지 → 연결 탭에서 워커 이름과 만료 시간을 입력하고
+   **명령 발급**. 출력된 한 줄을 외부 GPU 머신에서 실행.
+5. 사용 안 할 때는 환경 변수를 unset 하고 서버를 재시작. 비용을 막기
+   위해 stack 자체를 내리려면 `infra/aws-relay/scripts/teardown.sh`.
+
+### 보안 경고 (잊지 말 것)
+
+- 공인 IP의 8000 포트를 직접 공개하면 공격을 받을 수 있다.
+- AWS 무료 한도는 **0원 보장이 아니다.** `infra/aws-relay/budget.md`의
+  Budgets 알람을 1회 셋업할 것.
+- **원본 이미지 데이터는 Relay를 통과하지 않는다.** Relay는 task
+  메타데이터/하트비트 등 16KB 이하의 control 메시지만 중계한다.
+
+자세한 내용:
+
+- `docs/relay_protocol_contract_ko.md` — 프로토콜 메시지/리밋
+- `docs/data_plane_policy_ko.md`        — 무엇이 relay를 통과하고 통과
+  하지 않는지
+- `docs/relay_e2e_runbook_ko.md`        — 외부 워커 e2e 셋업 절차
+
+---
+
+**버전**: v3.1.2
+**최종 업데이트**: 2026-05-25
