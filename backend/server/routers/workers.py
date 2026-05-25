@@ -18,6 +18,7 @@ from datetime import datetime
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import get_db, get_db_safe, get_current_user, require_admin
+from backend.server.security import audit_log
 
 
 def _utcnow_sql() -> str:
@@ -46,6 +47,7 @@ export IMAGINE_CONNECT_MODE
 if [ "$IMAGINE_CONNECT_MODE" = "relay" ]; then
     : "${IMAGINE_RELAY_ENDPOINT:?Set IMAGINE_RELAY_ENDPOINT for relay mode}"
     : "${IMAGINE_SERVER_ID:?Set IMAGINE_SERVER_ID for relay mode}"
+    : "${IMAGINE_WORKER_ENROLLMENT_TOKEN:?Set IMAGINE_WORKER_ENROLLMENT_TOKEN for relay mode}"
 else
     : "${IMAGINE_SERVER_URL:?Set IMAGINE_SERVER_URL for direct mode}"
 fi
@@ -231,10 +233,16 @@ def create_headless_worker_command(
                 detail=f"Failed to resolve server_id: {exc}",
             )
 
+        # Phase 6 worker CLI requires IMAGINE_WORKER_ENROLLMENT_TOKEN for
+        # the worker.attach envelope. Phase 8 will issue a separately
+        # scoped token; until then we reuse the access token so the
+        # relay's authorize_attach (non-empty check) succeeds.
+        enrollment_token = access_token
         command = (
             f"IMAGINE_CONNECT_MODE='relay' "
             f"IMAGINE_RELAY_ENDPOINT='{relay_endpoint}' "
             f"IMAGINE_SERVER_ID='{server_id}' "
+            f"IMAGINE_WORKER_ENROLLMENT_TOKEN='{enrollment_token}' "
             f"IMAGINE_WORKER_ACCESS_TOKEN='{access_token}' "
             f"IMAGINE_WORKER_REFRESH_TOKEN='{refresh_token}' "
             f"IMAGINE_WORKER_NAME='{req.worker_name}' "
@@ -259,6 +267,15 @@ def create_headless_worker_command(
         admin.get("username"),
         username,
         req.connect_mode,
+    )
+    audit_log.record(
+        db,
+        "worker_enrollment_token_created",
+        actor_user_id=admin.get("id"),
+        actor_username=admin.get("username"),
+        target_kind="worker",
+        target_id=req.worker_name,
+        detail=f"launcher={req.launcher} connect_mode={req.connect_mode} ttl_min={req.expires_minutes}",
     )
     return {
         "worker_name": req.worker_name,
@@ -522,6 +539,16 @@ def worker_connect(
             processing_mode = "mc"
 
     logger.info(f"Worker connected: {req.worker_name} (session={session_id}, user={user['username']}, mode={processing_mode})")
+    audit_log.record(
+        db,
+        "worker_connected",
+        actor_user_id=user["id"],
+        actor_username=user["username"],
+        target_kind="worker_session",
+        target_id=session_id,
+        ip_address=getattr(request.client, "host", None) if request.client else None,
+        detail=f"name={req.worker_name} origin={req.origin} launcher={req.launcher}",
+    )
     return {
         "session_id": session_id,
         "pool_hint": effective_batch * 2,
@@ -1014,6 +1041,15 @@ def admin_block_worker(
         raise HTTPException(status_code=404, detail="Session not found")
     db.conn.commit()
     logger.info(f"Admin blocked worker session {session_id}, reclaimed {reclaimed} jobs")
+    audit_log.record(
+        db,
+        "worker_blocked",
+        actor_user_id=admin.get("id"),
+        actor_username=admin.get("username"),
+        target_kind="worker_session",
+        target_id=session_id,
+        detail=f"reclaimed={reclaimed}",
+    )
 
     # Recalculate pools after blocking
     _recalculate_server_pools(request.app, db)

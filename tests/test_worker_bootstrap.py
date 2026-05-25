@@ -182,4 +182,7 @@ def test_headless_command_relay_session_emits_relay_env(monkeypatch):
     assert "IMAGINE_CONNECT_MODE='relay'" in body["linux_command"]
     assert "IMAGINE_RELAY_ENDPOINT='wss://relay.example.com'" in body["linux_command"]
     assert "IMAGINE_SERVER_ID=" in body["linux_command"]
+    # Phase 6 worker CLI requires the enrollment token; the relay
+    # branch must emit it so the worker can attach.
+    assert "IMAGINE_WORKER_ENROLLMENT_TOKEN=" in body["linux_command"]
     assert "IMAGINE_SERVER_URL=" not in body["linux_command"]

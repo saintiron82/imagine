@@ -308,6 +308,64 @@ def migrate_worker_origin_launcher(db):
         logger.info("worker origin/launcher columns added")
 
 
+def migrate_audit_log(db):
+    """Phase 8: append-only audit log for security-relevant events."""
+    if db._table_exists('audit_log'):
+        return
+    logger.info("Migrating: creating audit_log table...")
+    db.conn.executescript(
+        """
+        CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event TEXT NOT NULL,
+            actor_user_id INTEGER,
+            actor_username TEXT,
+            target_kind TEXT,
+            target_id TEXT,
+            ip_address TEXT,
+            detail TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_audit_log_created ON audit_log(created_at);
+        CREATE INDEX idx_audit_log_event ON audit_log(event);
+        CREATE INDEX idx_audit_log_actor ON audit_log(actor_user_id);
+        """
+    )
+    db.conn.commit()
+    logger.info("audit_log table created")
+
+
+def migrate_worker_enrollment_tokens(db):
+    """Phase 8: short-lived, single-use tokens for worker attachment.
+
+    Separate from refresh_tokens so they can never grant admin API
+    access. Hash stored, plaintext never persisted.
+    """
+    if db._table_exists('worker_enrollment_tokens'):
+        return
+    logger.info("Migrating: creating worker_enrollment_tokens table...")
+    db.conn.executescript(
+        """
+        CREATE TABLE worker_enrollment_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash TEXT UNIQUE NOT NULL,
+            created_by INTEGER,
+            worker_name TEXT,
+            max_uses INTEGER DEFAULT 1,
+            use_count INTEGER DEFAULT 0,
+            expires_at TEXT NOT NULL,
+            revoked INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            last_used_at TEXT
+        );
+        CREATE INDEX idx_enrollment_hash ON worker_enrollment_tokens(token_hash);
+        CREATE INDEX idx_enrollment_expires ON worker_enrollment_tokens(expires_at);
+        """
+    )
+    db.conn.commit()
+    logger.info("worker_enrollment_tokens table created")
+
+
 def migrate_users_email_nullable(db):
     """Make users.email nullable (remove NOT NULL constraint).
 
@@ -538,6 +596,8 @@ def run_migrations(db, *, existing_db: bool = True):
             ("worker_session_overrides", lambda: migrate_worker_session_overrides(db)),
             ("worker_resources_json", lambda: migrate_worker_resources_json(db)),
             ("worker_origin_launcher", lambda: migrate_worker_origin_launcher(db)),
+            ("audit_log", lambda: migrate_audit_log(db)),
+            ("worker_enrollment_tokens", lambda: migrate_worker_enrollment_tokens(db)),
             ("users_email_nullable", lambda: migrate_users_email_nullable(db)),
             ("users_firebase_uid", lambda: migrate_users_firebase_uid(db)),
             ("files_processing_status", lambda: migrate_files_processing_status(db)),
@@ -579,6 +639,8 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_worker_session_overrides(db)
         migrate_worker_resources_json(db)
         migrate_worker_origin_launcher(db)
+        migrate_audit_log(db)
+        migrate_worker_enrollment_tokens(db)
         migrate_files_processing_status(db)
         migrate_members_table(db)
         migrate_search_logs(db)

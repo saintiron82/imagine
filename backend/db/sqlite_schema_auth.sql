@@ -141,3 +141,45 @@ CREATE TABLE IF NOT EXISTS search_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_search_logs_created ON search_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_search_logs_user ON search_logs(username);
+
+-- ═══════════════════════════════════════════════════════════════
+-- Phase 8 — Audit Log
+-- Append-only ledger of security-relevant events.
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event TEXT NOT NULL,                          -- enum below
+    actor_user_id INTEGER,                        -- nullable: system events
+    actor_username TEXT,
+    target_kind TEXT,                             -- 'worker'/'session'/'group'/'token'/etc
+    target_id TEXT,                               -- free-form id (worker name, session id, ...)
+    ip_address TEXT,
+    detail TEXT,                                  -- short human-readable
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_event ON audit_log(event);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_user_id);
+
+-- ═══════════════════════════════════════════════════════════════
+-- Phase 8 — Worker Enrollment Tokens
+-- Short-lived, single-use (or limit-bound), revocable tokens that
+-- attach a worker. These are separate from access/refresh tokens so
+-- they never grant admin API access.
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS worker_enrollment_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT UNIQUE NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    worker_name TEXT,
+    max_uses INTEGER DEFAULT 1,
+    use_count INTEGER DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    revoked INTEGER DEFAULT 0,                    -- boolean 0/1
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_enrollment_hash ON worker_enrollment_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_enrollment_expires ON worker_enrollment_tokens(expires_at);
