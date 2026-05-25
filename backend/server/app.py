@@ -252,6 +252,17 @@ def _activate_server(app_instance):
     except Exception as e:
         logger.warning(f"Firebase re-registration skipped: {e}")
 
+    # Phase 5: relay connector (only when explicitly configured)
+    try:
+        from backend.server import relay_client as _relay
+        _client = _relay.maybe_start(app=app_instance, db=db)
+        if _client is not None:
+            logger.info("Relay connector started (endpoint=%s)", _client.endpoint)
+        else:
+            logger.debug("Relay connector not configured — skipping")
+    except Exception as e:
+        logger.warning(f"Relay connector failed to start: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -274,6 +285,11 @@ async def shutdown():
         logger.info("License check stopped")
     if hasattr(app.state, "mdns") and app.state.mdns:
         app.state.mdns.stop()
+    try:
+        from backend.server import relay_client as _relay
+        _relay.stop_singleton()
+    except Exception as e:
+        logger.warning(f"Relay stop failed (non-critical): {e}")
     close_db()
 
 

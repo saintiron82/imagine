@@ -155,3 +155,30 @@ def get_queue_config() -> dict:
 def get_db_path() -> str:
     """Get SQLite database path."""
     return str(PROJECT_ROOT / "imageparser.db")
+
+
+def get_relay_config() -> dict:
+    """Phase 5: relay connector settings (env vars override config.yaml)."""
+    try:
+        from backend.utils.config import get_config
+
+        cfg = get_config()
+        relay_cfg = dict(cfg.get("relay", {}) or {})
+    except Exception:
+        relay_cfg = {}
+
+    env_endpoint = os.getenv("IMAGINE_RELAY_ENDPOINT")
+    if env_endpoint:
+        relay_cfg["endpoint"] = env_endpoint
+    env_secret = os.getenv("IMAGINE_RELAY_SERVER_SECRET")
+    if env_secret:
+        relay_cfg["server_secret"] = env_secret
+    env_enabled = os.getenv("IMAGINE_RELAY_ENABLED")
+    if env_enabled is not None:
+        relay_cfg["enabled"] = env_enabled.strip().lower() in {"1", "true", "yes", "on"}
+
+    relay_cfg.setdefault("enabled", False)
+    relay_cfg.setdefault("auto_connect", True)
+    relay_cfg.setdefault("heartbeat_interval_seconds", 60)
+    relay_cfg.setdefault("idle_timeout_seconds", 600)
+    return relay_cfg
