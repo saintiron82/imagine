@@ -37,7 +37,6 @@ def handler(event, _context):
             # duration is reached, even if the disconnect handler is
             # never invoked (clients can vanish mid-route).
             "expires_at": now + RelayLimits.SESSION_MAX_DURATION_SECONDS,
-            "kind": "unauthenticated",
         }
     )
     return {"statusCode": 200, "body": json.dumps({"ok": True})}

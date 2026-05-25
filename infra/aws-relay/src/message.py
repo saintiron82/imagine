@@ -96,6 +96,10 @@ def _known_servers() -> set[str]:
     The message handler uses this to authorize routing without trusting
     the originator's claim. For MVP we do a single Scan because the
     table size is bounded by the number of active Imagine servers.
+
+    TODO(phase-9): replace with a paginated query against a dedicated
+    'role=server' GSI once we have more than ~50 active servers, and
+    add a cost guardrail so this Scan is never run on a hot path.
     """
     sessions = _ddb.Table(SESSIONS_TABLE)
     resp = sessions.scan(FilterExpression=Key("role").eq("server"))
@@ -152,6 +156,11 @@ def handler(event, _context):
 
     if msg_type in ("client.attach", "worker.attach"):
         kind = "client" if msg_type == "client.attach" else "worker"
+        # TODO(phase-8): authorize_attach currently only checks the
+        # token is non-empty. Phase 8 introduces per-server-issued
+        # enrollment/attach tokens with revocation; once that lands,
+        # validate the token against the server's public verification
+        # key (sent at register time) instead of trusting any string.
         ok, err = authorize_attach(envelope, expected_kind=kind)
         if not ok:
             _post(api, connection_id, make_error(err, msg_id=msg_id))
@@ -162,6 +171,11 @@ def handler(event, _context):
         _save_session(connection_id, server_id, role=kind)
 
     # Forward to the registered server's connection.
+    # TODO(phase-7): server-to-worker responses need msg_id correlation
+    # so the server can address a specific worker connection. For MVP we
+    # only support originator → server fan-in; broadcasting back to a
+    # specific worker requires storing (msg_id, requester_connection)
+    # tuples here and routing on the response.
     decision = route(envelope, known_servers=_known_servers())
     if decision["action"] == "error":
         _post(

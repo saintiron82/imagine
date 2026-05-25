@@ -40,8 +40,14 @@ def _envelope(msg_type: str, *, server_id: str, body: dict) -> dict:
     }
 
 
-def get_relay_config(cfg) -> dict:
-    """Read relay.* keys with defaults — accepts the Config object or a dict."""
+def normalize_relay_settings(cfg) -> dict:
+    """Read relay.* keys with defaults — accepts the Config object or a dict.
+
+    Always returns a flat dict keyed by the dotted relay.* names so
+    callers don't have to know which container they were handed. Public
+    name avoids collision with `backend.server.config.get_relay_config`,
+    which loads from config.yaml + env vars.
+    """
     def _read(key: str, default: Any):
         if isinstance(cfg, dict):
             return cfg.get(key, default)
@@ -75,7 +81,7 @@ class RelayClient:
         firebase_register: Callable[..., bool],
         clock: Callable[[], float] = time.time,
     ):
-        self._cfg = get_relay_config(config)
+        self._cfg = normalize_relay_settings(config)
         self._group_name = group_name
         self._port = port
         self._transport_factory: Callable[[str], Any] = transport_factory
@@ -87,6 +93,8 @@ class RelayClient:
         self._stop_requested = False
         self._last_heartbeat: float = 0.0
         self._lock = threading.Lock()
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_stop = threading.Event()
 
     # ── Properties ─────────────────────────────────────────────────
 
@@ -124,6 +132,7 @@ class RelayClient:
     def stop(self) -> None:
         with self._lock:
             self._stop_requested = True
+            self._heartbeat_stop.set()
             if self._transport is not None:
                 try:
                     self._transport.close()
@@ -133,8 +142,32 @@ class RelayClient:
             self._connected = False
             self._transport = None
 
+        thread = self._heartbeat_thread
+        self._heartbeat_thread = None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+
         if was_connected:
             self._publish_relay_state(online=False)
+
+    def _start_heartbeat_thread(self) -> None:
+        if self._heartbeat_thread is not None:
+            return
+        self._heartbeat_stop.clear()
+
+        def _loop():
+            interval = max(5, int(self._cfg["relay.heartbeat_interval_seconds"]))
+            while not self._heartbeat_stop.wait(interval):
+                try:
+                    self._tick_heartbeat()
+                except Exception as exc:  # pragma: no cover - heartbeat is best-effort
+                    logger.warning("Relay heartbeat failed: %s", exc)
+
+        thread = threading.Thread(
+            target=_loop, daemon=True, name="relay-heartbeat"
+        )
+        self._heartbeat_thread = thread
+        thread.start()
 
     def request_reconnect(self) -> bool:
         """Tear down any existing transport and run start() again."""
@@ -219,6 +252,7 @@ class RelayClient:
             )
         )
         self._last_heartbeat = self._clock()
+        self._start_heartbeat_thread()
         return True
 
     def _publish_relay_state(self, *, online: bool) -> None:
@@ -251,7 +285,6 @@ class WebSocketRelayTransport:
         self._ws = None
         self._thread: threading.Thread | None = None
         self._on_message: Optional[Callable[[dict], None]] = None
-        self._stop = threading.Event()
 
     def set_on_message(self, cb):
         self._on_message = cb
@@ -291,7 +324,6 @@ class WebSocketRelayTransport:
         self._ws.send(_json.dumps(envelope))
 
     def close(self):
-        self._stop.set()
         if self._ws is not None:
             try:
                 self._ws.close()
@@ -321,21 +353,19 @@ def maybe_start(*, app, db) -> Optional[RelayClient]:
         return _singleton
 
     try:
-        from backend.utils.config import get_config
+        from backend.server.config import get_relay_config as _settings
+        from backend.server.config import get_server_config as _server_cfg
 
-        cfg = get_config()
+        relay_settings = _settings()
+        server_settings = _server_cfg()
     except Exception:  # pragma: no cover - bootstrapping safety
-        cfg = {}
+        relay_settings, server_settings = {}, {}
 
-    endpoint = os.environ.get("IMAGINE_RELAY_ENDPOINT") or cfg.get(
-        "relay.endpoint", ""
-    )
+    endpoint = (relay_settings.get("endpoint") or "").strip()
     if not endpoint:
         return None
 
-    secret = os.environ.get("IMAGINE_RELAY_SERVER_SECRET") or cfg.get(
-        "relay.server_secret", ""
-    )
+    secret = (relay_settings.get("server_secret") or "").strip()
     if not secret:
         return None
 
@@ -350,15 +380,15 @@ def maybe_start(*, app, db) -> Optional[RelayClient]:
         "relay.endpoint": endpoint,
         "relay.server_id": server_id,
         "relay.server_secret": secret,
-        "relay.auto_connect": True,
+        "relay.auto_connect": bool(relay_settings.get("auto_connect", True)),
         "relay.heartbeat_interval_seconds": int(
-            cfg.get("relay.heartbeat_interval_seconds", 60)
+            relay_settings.get("heartbeat_interval_seconds", 60)
         ),
         "relay.idle_timeout_seconds": int(
-            cfg.get("relay.idle_timeout_seconds", 600)
+            relay_settings.get("idle_timeout_seconds", 600)
         ),
     }
-    port = int(cfg.get("server.port", 8000))
+    port = int(server_settings.get("port", 8000))
 
     client = RelayClient(
         config=flat_cfg,

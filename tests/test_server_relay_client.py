@@ -257,3 +257,28 @@ def test_request_reconnect_re_attempts_connection():
     assert transport.connect_attempts == 2
     assert len(transport.sent) == 1
     assert transport.sent[0]["type"] == "server.register"
+
+
+def test_heartbeat_thread_runs_periodically():
+    """RelayClient must drive heartbeats so the relay doesn't idle-timeout."""
+    transport = FakeTransport()
+    client, _ = _make_client(
+        transport,
+        config=_config(**{"relay.heartbeat_interval_seconds": 1}),
+    )
+
+    client.start()
+    transport.sent.clear()
+
+    # Wait briefly — the thread loop should fire at least one heartbeat
+    # at the 1s interval. Cap the wait so a regression doesn't hang CI.
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if any(e["type"] == "server.heartbeat" for e in transport.sent):
+            break
+        time.sleep(0.1)
+
+    client.stop()
+
+    types_sent = [e["type"] for e in transport.sent]
+    assert "server.heartbeat" in types_sent, types_sent

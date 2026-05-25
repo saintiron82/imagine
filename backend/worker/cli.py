@@ -131,13 +131,15 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
 
     transport = _build_transport(cfg)
     if cfg.connect_mode == "relay":
-        # Relay-mode workers are control-plane only; the daemon's job is
-        # to forward heartbeats/claims/completes. The HTTP storage paths
-        # remain on the local server side. We hand the daemon the relay
-        # transport and let it route the messages it knows how to send.
+        # Phase 6 MVP: this loop only attaches the worker to the relay
+        # and keeps the session alive with heartbeats. Actually claiming
+        # and completing tasks over the relay requires the server-side
+        # relay router (Phase 7) so the server can address a specific
+        # worker connection by msg_id. Until Phase 7 lands, use direct
+        # mode for real work and relay mode for connectivity smoke tests.
         transport.connect()
         try:
-            print("[worker] relay attached — Phase 6 MVP", flush=True)
+            print("[worker] relay attached (Phase 6 MVP — control plane only)", flush=True)
             while True:
                 transport.heartbeat({"phase": "idle"})
                 time.sleep(cfg.poll_interval)

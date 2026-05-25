@@ -46,6 +46,7 @@ export IMAGINE_CONNECT_MODE
 if [ "$IMAGINE_CONNECT_MODE" = "relay" ]; then
     : "${IMAGINE_RELAY_ENDPOINT:?Set IMAGINE_RELAY_ENDPOINT for relay mode}"
     : "${IMAGINE_SERVER_ID:?Set IMAGINE_SERVER_ID for relay mode}"
+    : "${IMAGINE_WORKER_ENROLLMENT_TOKEN:?Set IMAGINE_WORKER_ENROLLMENT_TOKEN for relay mode}"
 else
     : "${IMAGINE_SERVER_URL:?Set IMAGINE_SERVER_URL for direct mode}"
 fi
@@ -231,10 +232,16 @@ def create_headless_worker_command(
                 detail=f"Failed to resolve server_id: {exc}",
             )
 
+        # Phase 6 worker CLI requires IMAGINE_WORKER_ENROLLMENT_TOKEN for
+        # the worker.attach envelope. Phase 8 will issue a separately
+        # scoped token; until then we reuse the access token so the
+        # relay's authorize_attach (non-empty check) succeeds.
+        enrollment_token = access_token
         command = (
             f"IMAGINE_CONNECT_MODE='relay' "
             f"IMAGINE_RELAY_ENDPOINT='{relay_endpoint}' "
             f"IMAGINE_SERVER_ID='{server_id}' "
+            f"IMAGINE_WORKER_ENROLLMENT_TOKEN='{enrollment_token}' "
             f"IMAGINE_WORKER_ACCESS_TOKEN='{access_token}' "
             f"IMAGINE_WORKER_REFRESH_TOKEN='{refresh_token}' "
             f"IMAGINE_WORKER_NAME='{req.worker_name}' "
