@@ -3,14 +3,19 @@
 
 The shipped bench uses substring keyword matching to build GT, which
 misses semantic / multilingual / visual-but-not-tagged relevance. This
-tool walks an existing precision_*.json, asks a local LLM to judge
-whether each non-GT item in top-K is actually relevant to the query
-(given its MC caption + tags), and re-computes P@K.
+tool walks an existing precision_*.json, asks an LLM to judge whether
+each top-K item is actually relevant to the query (given its MC caption
++ tags), and re-computes P@K.
+
+Two backends in order of preference:
+  1. agentcli (Codex CLI) — smarter, session-reused via alias.
+  2. Local MLX — fallback when agentcli/codex isn't available.
 
 Usage:
     .venv/bin/python tools/bench_llm_rejudge.py \\
         benchmarks/results/precision_20260528_phaseCD.json \\
-        --top-k 5
+        --top-k 5 \\
+        [--backend agentcli|mlx]
 """
 
 from __future__ import annotations
@@ -27,11 +32,13 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 
-# ── LLM judge backend ───────────────────────────────────────────────
+# ── LLM judge backends ──────────────────────────────────────────────
 
 
 _mlx_model = None
 _mlx_tok = None
+_agentcli_client = None
+_AGENTCLI_TRIED = False
 
 
 def _load_mlx() -> bool:
@@ -49,16 +56,22 @@ def _load_mlx() -> bool:
         return False
 
 
-def _judge_batch(query: str, items: list[dict]) -> dict[int, str]:
-    """Ask the LLM which items are relevant. Returns {file_id: 'yes'|'no'}."""
-    if not items:
-        return {}
-    if not _load_mlx():
-        return {it["id"]: "skip" for it in items}
+def _load_agentcli():
+    """Lazy-init agentcli LLMClient for Codex provider. Returns client or None."""
+    global _agentcli_client, _AGENTCLI_TRIED
+    if _AGENTCLI_TRIED:
+        return _agentcli_client
+    _AGENTCLI_TRIED = True
+    try:
+        from agentcli import LLMClient, MemoryStore
+        _agentcli_client = LLMClient(store=MemoryStore())
+        return _agentcli_client
+    except Exception as e:
+        print(f"[rejudge] agentcli load failed: {e}", file=sys.stderr)
+        return None
 
-    from mlx_lm import generate
 
-    # Build a single-prompt batch (LLM returns JSON list of yes/no).
+def _build_judge_prompt(query: str, items: list[dict]) -> str:
     item_lines = []
     for it in items:
         cap = (it.get("mc_caption") or "")[:200]
@@ -66,7 +79,7 @@ def _judge_batch(query: str, items: list[dict]) -> dict[int, str]:
         item_lines.append(f"  - id={it['id']}: caption='{cap}' tags='{tags}'")
     items_block = "\n".join(item_lines)
 
-    prompt = (
+    return (
         "You are judging image-search relevance. Each candidate has a MC caption "
         "and tag string. Korean queries may map to English caption/tag content.\n\n"
         f"USER QUERY (Korean): {query}\n\n"
@@ -79,6 +92,58 @@ def _judge_batch(query: str, items: list[dict]) -> dict[int, str]:
         "Answer:"
     )
 
+
+def _parse_judgement(out: str, items: list[dict]) -> dict[int, str]:
+    # Find the first JSON object in the response
+    match = re.search(r"\{[^{}]*\}", out, re.DOTALL)
+    if not match:
+        return {it["id"]: "skip" for it in items}
+    try:
+        parsed = json.loads(match.group(0))
+    except Exception:
+        return {it["id"]: "skip" for it in items}
+    result: dict[int, str] = {}
+    for k, v in parsed.items():
+        try:
+            fid = int(k)
+        except (TypeError, ValueError):
+            continue
+        val = str(v).strip().lower()
+        result[fid] = "yes" if val.startswith("y") else "no"
+    for it in items:
+        result.setdefault(it["id"], "skip")
+    return result
+
+
+def _judge_batch_agentcli(query: str, items: list[dict]) -> Optional[dict[int, str]]:
+    client = _load_agentcli()
+    if client is None:
+        return None
+    prompt = _build_judge_prompt(query, items)
+    try:
+        resp = client.chat(
+            prompt=prompt,
+            provider="codex",
+            owner="imagine-bench",
+            alias="imagine-rejudge",
+            cwd=str(REPO),
+            timeout=60,
+        )
+        content = (resp.content or "").strip()
+        if not content:
+            return None
+        return _parse_judgement(content, items)
+    except Exception as e:
+        print(f"[rejudge] agentcli judge failed: {e}", file=sys.stderr)
+        return None
+
+
+def _judge_batch_mlx(query: str, items: list[dict]) -> dict[int, str]:
+    if not _load_mlx():
+        return {it["id"]: "skip" for it in items}
+    from mlx_lm import generate
+
+    prompt = _build_judge_prompt(query, items)
     try:
         messages = [{"role": "user", "content": prompt}]
         text = _mlx_tok.apply_chat_template(
@@ -88,26 +153,23 @@ def _judge_batch(query: str, items: list[dict]) -> dict[int, str]:
             _mlx_model, _mlx_tok, prompt=text,
             max_tokens=300, verbose=False,
         )
-        # Find the first JSON object in the response
-        match = re.search(r"\{[^{}]*\}", out, re.DOTALL)
-        if not match:
-            return {it["id"]: "skip" for it in items}
-        parsed = json.loads(match.group(0))
-        result: dict[int, str] = {}
-        for k, v in parsed.items():
-            try:
-                fid = int(k)
-            except (TypeError, ValueError):
-                continue
-            val = str(v).strip().lower()
-            result[fid] = "yes" if val.startswith("y") else "no"
-        # Default 'skip' for any items the LLM didn't answer
-        for it in items:
-            result.setdefault(it["id"], "skip")
-        return result
+        return _parse_judgement(out, items)
     except Exception as e:
-        print(f"[rejudge] judge_batch failed: {e}", file=sys.stderr)
+        print(f"[rejudge] mlx judge failed: {e}", file=sys.stderr)
         return {it["id"]: "skip" for it in items}
+
+
+def _judge_batch(query: str, items: list[dict], backend: str) -> dict[int, str]:
+    """Dispatch to the requested backend with agentcli→mlx fallback."""
+    if not items:
+        return {}
+    if backend in ("auto", "agentcli"):
+        result = _judge_batch_agentcli(query, items)
+        if result is not None:
+            return result
+        if backend == "agentcli":
+            return {it["id"]: "skip" for it in items}
+    return _judge_batch_mlx(query, items)
 
 
 # ── DB lookup ───────────────────────────────────────────────────────
@@ -128,7 +190,7 @@ def _fetch_items(db: sqlite3.Connection, file_ids: list[int]) -> dict[int, dict]
 # ── Rejudge ─────────────────────────────────────────────────────────
 
 
-def rejudge(report_path: Path, top_k: int) -> dict:
+def rejudge(report_path: Path, top_k: int, backend: str) -> dict:
     report = json.loads(report_path.read_text(encoding="utf-8"))
 
     triaxis = report.get("axes", {}).get("triaxis", {})
@@ -139,8 +201,6 @@ def rejudge(report_path: Path, top_k: int) -> dict:
     db_path = REPO / "imageparser.db"
     db = sqlite3.connect(str(db_path))
 
-    # Tighten ranked_ids: the bench may have stored full ranking but we
-    # judge only the top-K slice.
     queries_processed = 0
     sum_orig_p_at_k = 0.0
     sum_llm_p_at_k = 0.0
@@ -153,11 +213,11 @@ def rejudge(report_path: Path, top_k: int) -> dict:
             continue
 
         items = _fetch_items(db, ranked)
-        # Original GT — we'll recover it from the per_query "hits@K" field.
-        # Better: use the precision pickle we don't have. So instead we run
-        # rejudge on EVERY top-K item, comparing the LLM's verdict to the
-        # original `relevant_in_top_k` count.
-        judged = _judge_batch(q.get("query", ""), [items[fid] for fid in ranked if fid in items])
+        judged = _judge_batch(
+            q.get("query", ""),
+            [items[fid] for fid in ranked if fid in items],
+            backend=backend,
+        )
 
         # P@K (original) — recompute from hits@K stored in the report.
         orig_hits = q.get(f"hits@{top_k}")
@@ -212,13 +272,18 @@ def main() -> int:
     parser.add_argument("report", type=Path)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--backend", choices=("auto", "agentcli", "mlx"), default="auto",
+        help="auto: try agentcli (Codex), fall back to MLX. agentcli: Codex only. mlx: local Qwen only.",
+    )
     args = parser.parse_args()
 
     if not args.report.exists():
         print(f"[rejudge] not found: {args.report}", file=sys.stderr)
         return 2
 
-    summary = rejudge(args.report, args.top_k)
+    print(f"[rejudge] backend={args.backend} report={args.report.name}")
+    summary = rejudge(args.report, args.top_k, args.backend)
 
     print()
     print("=" * 70)
