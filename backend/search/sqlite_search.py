@@ -2574,6 +2574,26 @@ class SqliteVectorSearch:
             for r in merged[:5]
         ]
 
+        # Phase B: hard folder substring filter on folder_path as final safety net.
+        # The earlier FTS-based pre-filter (Step 3b) catches folders that match via
+        # indexed text; this catches the remaining cases where folder appears in
+        # the path but not in indexed content (e.g., hash-prefixed names like #07).
+        if folder_filter:
+            pre_count = len(merged)
+            hard_filtered = apply_folder_filter(merged, folder_filter)
+            # Only apply when the hard filter keeps a usable result count.
+            if len(hard_filtered) >= 3:
+                merged = hard_filtered
+                logger.info(
+                    f"Phase B folder hard-filter '{folder_filter}': "
+                    f"{pre_count} → {len(merged)} results"
+                )
+                diag["folder_hard_filter"] = {
+                    "folder": folder_filter,
+                    "before": pre_count,
+                    "after": len(merged),
+                }
+
         diag["final_results_count"] = len(merged)
         diag["total_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
@@ -3235,3 +3255,20 @@ class SqliteVectorSearch:
             return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic)
         else:
             raise ValueError(f"Invalid mode: {mode}. Use 'vector', 'hybrid', 'metadata', 'fts', 'triaxis', 'plan', or 'structure'")
+
+
+# ── Phase B: hard folder constraint ───────────────────────────────
+
+def apply_folder_filter(rows, folder: str):
+    """Drop rows whose folder_path doesn't contain the requested folder.
+
+    Substring match for now — the same string the Decomposer extracts
+    ("#07", "studio_bg" etc.) is matched against folder_path. Exact
+    boundary handling is upgraded once we have evidence it matters.
+    """
+    if not folder:
+        return rows
+    needle = folder.strip()
+    if not needle:
+        return rows
+    return [r for r in rows if needle in (r.get("folder_path") or "")]

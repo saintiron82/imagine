@@ -162,6 +162,51 @@ class QueryDecomposer:
 
         return result
 
+    # ── Phase B: structured ConstraintPlan output ─────────────────
+
+    def decompose_plan(self, query: str):
+        """Return a ConstraintPlan with one retry on schema violation.
+
+        On both LLM-output failure and validation failure, falls back to
+        the rule-based fallback rather than raising. The legacy
+        decompose() method is unaffected.
+        """
+        from backend.search.constraint_plan import (
+            ConstraintPlan,
+            ConstraintPlanError,
+            from_decomposer_output,
+        )
+        import json as _json
+
+        def _try_parse(raw_text):
+            if raw_text is None:
+                raise ConstraintPlanError("LLM returned no text")
+            try:
+                payload = _json.loads(raw_text)
+            except Exception as exc:
+                raise ConstraintPlanError(f"LLM output is not JSON: {exc}") from exc
+            return from_decomposer_output(payload)
+
+        for attempt in (1, 2):
+            try:
+                raw = self._generate_llm(query)
+                return _try_parse(raw)
+            except ConstraintPlanError as exc:
+                logger.warning(
+                    "[DECOMP] schema attempt %d failed: %s", attempt, exc
+                )
+
+        # Both attempts failed — degrade gracefully via rule-based fallback.
+        fb = self._fallback(query)
+        return ConstraintPlan(
+            folder="",
+            elements=tuple(fb.get("fts_keywords") or [])[:5],
+            negatives=tuple(fb.get("exclude_keywords") or [])[:5],
+            vector_query=fb.get("vector_query") or query,
+            query_type=fb.get("query_type") or "balanced",
+            confidence=0.0,
+        )
+
     def _generate_llm(self, query: str) -> Optional[str]:
         """Generate LLM response using the best available backend.
 

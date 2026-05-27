@@ -18,6 +18,11 @@ from backend.search.sqlite_search import SqliteVectorSearch
 from backend.server.deps import get_db, get_db_safe, get_current_user
 from backend.api_search import format_result
 from backend.search.search_logger import log_search as _log_search
+from backend.search.confidence import (
+    ConfidenceLevel,
+    classify_topk,
+    thresholds_from_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,12 +152,49 @@ def _do_search(req: SearchRequest, mode: str,
             filters=req.filters, threshold=req.threshold,
         )
 
-        response = {
-            "success": True,
-            "results": formatted,
-            "count": len(formatted),
-            "elapsed_ms": elapsed_ms,
-        }
+        # Phase A: confidence + empty-mode envelope.
+        try:
+            from backend.utils.config import get_config
+            thresholds = thresholds_from_config(get_config())
+        except Exception:
+            from backend.search.confidence import ConfidenceThresholds
+            thresholds = ConfidenceThresholds()
+
+        top1 = formatted[0] if formatted else None
+        if top1 is None:
+            confidence = ConfidenceLevel.EMPTY
+            top1_score = 0.0
+        else:
+            vec = float(top1.get("vector_score") or 0.0)
+            txt_vec = float(top1.get("text_vec_score") or 0.0)
+            fts_hit = bool(top1.get("text_score"))
+            confidence = classify_topk(
+                vector_score=vec,
+                text_vec_score=txt_vec,
+                fts_hit=fts_hit,
+                thresholds=thresholds,
+            )
+            top1_score = max(vec, txt_vec)
+
+        if confidence is ConfidenceLevel.EMPTY:
+            response = {
+                "success": True,
+                "results": [],
+                "count": 0,
+                "elapsed_ms": elapsed_ms,
+                "confidence": confidence.value,
+                "top1_raw_score": top1_score,
+                "empty_reason": "no_result_above_confidence_threshold",
+            }
+        else:
+            response = {
+                "success": True,
+                "results": formatted,
+                "count": len(formatted),
+                "elapsed_ms": elapsed_ms,
+                "confidence": confidence.value,
+                "top1_raw_score": top1_score,
+            }
         if diag is not None:
             response["diagnostic"] = diag
 
