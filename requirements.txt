@@ -56,3 +56,9 @@ mlx-vlm>=0.3.0; sys_platform == 'darwin'
 
 # Firebase Auth (2-layer auth: Firebase identity + server password)
 firebase-admin>=6.0.0
+
+# Agentic CLI client — normalizes Codex/Claude/Copilot CLI sessions.
+# Used by query_decomposer for Codex-based query understanding. Optional
+# at import time so installs without it still fall back to legacy
+# subprocess code.
+agentcli>=0.4.2
