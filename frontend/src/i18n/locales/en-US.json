@@ -1023,5 +1023,11 @@
   "connection.warn_public_port": "Exposing a raw public IP port invites attacks.",
   "connection.warn_relay_recommended": "Use a relay session for external cloud workers.",
   "connection.warn_aws_cost": "AWS free tier is not a zero-cost guarantee.",
-  "connection.warn_data_plane": "Original image data is never routed through the relay."
+  "connection.warn_data_plane": "Original image data is never routed through the relay.",
+  "connection.relay_status_title": "Relay status",
+  "connection.relay_status_online": "Online",
+  "connection.relay_status_configured_offline": "Configured (offline)",
+  "connection.relay_status_unconfigured": "Not configured",
+  "connection.relay_status_no_endpoint_hint": "Set the relay endpoint via IMAGINE_RELAY_ENDPOINT env var or config.yaml.",
+  "connection.relay_status_missing_secret": "Endpoint is set but server_secret is missing. Set IMAGINE_RELAY_SERVER_SECRET."
 }

@@ -240,3 +240,7 @@ export async function createHeadlessWorkerCommand({
   if (server_url) payload.server_url = server_url;
   return apiClient.post('/api/v1/admin/workers/headless-command', payload);
 }
+
+export async function getRelayStatus() {
+  return apiClient.get('/api/v1/admin/relay/status');
+}

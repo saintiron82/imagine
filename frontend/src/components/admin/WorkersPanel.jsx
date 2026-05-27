@@ -593,6 +593,11 @@ export default function WorkersPanel() {
                         ? t('admin.worker_builtin_label') : w.worker_name}
                     </div>
                     <div className="text-[10px] text-gray-500">{w.hostname}</div>
+                    {(w.origin || w.launcher) && (
+                      <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
+                        {w.origin}{w.origin && w.launcher ? ' · ' : ''}{w.launcher}
+                      </div>
+                    )}
                   </td>
                   {phaseCell('mc', 'purple')}
                   {phaseCell('mv', 'green')}

@@ -149,3 +149,157 @@ def test_server_id_is_persisted_across_calls(client):
     first = client.get("/api/v1/server/connection-info").json()["server_id"]
     second = client.get("/api/v1/server/connection-info").json()["server_id"]
     assert first == second
+
+
+# ── Phase 3/4 completion: relay state surfaces through the endpoint ──
+
+
+def test_relay_session_reflects_configured_endpoint(in_memory_db, monkeypatch):
+    """When relay is configured + connector online, the candidate becomes available."""
+    from backend.server.routers import connection_info
+
+    monkeypatch.setattr(connection_info, "_detect_lan_ip", lambda: "192.168.0.8")
+    monkeypatch.setattr(connection_info, "_detect_public_ip", lambda: "")
+
+    # Stub config + live singleton: relay endpoint set, connector online.
+    class _FakeSingleton:
+        is_connected = True
+        endpoint = "wss://relay.example.com/prod"
+
+    fake_relay_cfg = {
+        "endpoint": "wss://relay.example.com/prod",
+        "server_secret": "topsecret",
+        "enabled": True,
+    }
+
+    import backend.server.relay_client as _rc
+    monkeypatch.setattr(_rc, "_singleton", _FakeSingleton(), raising=False)
+
+    import backend.server.config as _cfg
+    monkeypatch.setattr(_cfg, "get_relay_config", lambda: dict(fake_relay_cfg))
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from backend.server import deps
+
+    app = FastAPI()
+    app.include_router(connection_info.router, prefix="/api/v1")
+    app.dependency_overrides[deps.get_db_safe] = lambda: in_memory_db
+    app.dependency_overrides[deps.require_admin] = lambda: {
+        "id": 1, "username": "admin", "role": "admin",
+    }
+    test_client = TestClient(app, base_url="http://localhost:8000")
+
+    body = test_client.get("/api/v1/server/connection-info").json()
+    modes = {m["mode"]: m for m in body["connect_modes"]}
+    relay = modes["relay_session"]
+    assert relay["available"] is True
+    assert relay["url"] == "wss://relay.example.com/prod"
+
+
+def test_relay_session_remains_unavailable_when_endpoint_configured_but_offline(
+    in_memory_db, monkeypatch,
+):
+    """Endpoint configured, but connector not online — UI must not claim available."""
+    from backend.server.routers import connection_info
+
+    monkeypatch.setattr(connection_info, "_detect_lan_ip", lambda: "192.168.0.8")
+    monkeypatch.setattr(connection_info, "_detect_public_ip", lambda: "")
+
+    import backend.server.relay_client as _rc
+    monkeypatch.setattr(_rc, "_singleton", None, raising=False)
+
+    import backend.server.config as _cfg
+    monkeypatch.setattr(
+        _cfg, "get_relay_config",
+        lambda: {"endpoint": "wss://relay.example.com/prod", "server_secret": ""},
+    )
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from backend.server import deps
+
+    app = FastAPI()
+    app.include_router(connection_info.router, prefix="/api/v1")
+    app.dependency_overrides[deps.get_db_safe] = lambda: in_memory_db
+    app.dependency_overrides[deps.require_admin] = lambda: {
+        "id": 1, "username": "admin", "role": "admin",
+    }
+    test_client = TestClient(app, base_url="http://localhost:8000")
+
+    body = test_client.get("/api/v1/server/connection-info").json()
+    relay = next(m for m in body["connect_modes"] if m["mode"] == "relay_session")
+    assert relay["available"] is False
+    # Endpoint string is still surfaced so the admin can see what's configured.
+    assert relay["url"] == "wss://relay.example.com/prod"
+
+
+def test_admin_relay_status_reports_configuration_and_liveness(
+    in_memory_db, monkeypatch,
+):
+    """/admin/relay/status: configured? secret? live?"""
+    from backend.server.routers import connection_info
+
+    class _FakeSingleton:
+        is_connected = True
+        endpoint = "wss://relay.example.com/prod"
+
+    import backend.server.relay_client as _rc
+    monkeypatch.setattr(_rc, "_singleton", _FakeSingleton(), raising=False)
+
+    import backend.server.config as _cfg
+    monkeypatch.setattr(
+        _cfg, "get_relay_config",
+        lambda: {
+            "endpoint": "wss://relay.example.com/prod",
+            "server_secret": "topsecret",
+        },
+    )
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from backend.server import deps
+
+    app = FastAPI()
+    app.include_router(connection_info.router, prefix="/api/v1")
+    app.dependency_overrides[deps.get_db_safe] = lambda: in_memory_db
+    app.dependency_overrides[deps.require_admin] = lambda: {
+        "id": 1, "username": "admin", "role": "admin",
+    }
+    test_client = TestClient(app, base_url="http://localhost:8000")
+
+    body = test_client.get("/api/v1/admin/relay/status").json()
+    assert body["configured"] is True
+    assert body["secret_configured"] is True
+    assert body["online"] is True
+    assert body["endpoint"] == "wss://relay.example.com/prod"
+
+
+def test_admin_relay_status_when_nothing_configured(in_memory_db, monkeypatch):
+    from backend.server.routers import connection_info
+
+    import backend.server.relay_client as _rc
+    monkeypatch.setattr(_rc, "_singleton", None, raising=False)
+
+    import backend.server.config as _cfg
+    monkeypatch.setattr(_cfg, "get_relay_config", lambda: {})
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from backend.server import deps
+
+    app = FastAPI()
+    app.include_router(connection_info.router, prefix="/api/v1")
+    app.dependency_overrides[deps.get_db_safe] = lambda: in_memory_db
+    app.dependency_overrides[deps.require_admin] = lambda: {
+        "id": 1, "username": "admin", "role": "admin",
+    }
+    test_client = TestClient(app, base_url="http://localhost:8000")
+
+    body = test_client.get("/api/v1/admin/relay/status").json()
+    assert body == {
+        "configured": False,
+        "secret_configured": False,
+        "online": False,
+        "endpoint": "",
+    }

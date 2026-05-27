@@ -1023,5 +1023,11 @@
   "connection.warn_public_port": "공인 IP 포트를 직접 공개하면 공격을 받을 수 있습니다.",
   "connection.warn_relay_recommended": "외부 클라우드 워커는 Relay 세션을 권장합니다.",
   "connection.warn_aws_cost": "AWS 무료 한도는 0원 보장이 아닙니다.",
-  "connection.warn_data_plane": "원본 이미지 데이터는 Relay를 통과하지 않도록 설계되어 있습니다."
+  "connection.warn_data_plane": "원본 이미지 데이터는 Relay를 통과하지 않도록 설계되어 있습니다.",
+  "connection.relay_status_title": "Relay 상태",
+  "connection.relay_status_online": "온라인",
+  "connection.relay_status_configured_offline": "설정됨 (오프라인)",
+  "connection.relay_status_unconfigured": "미설정",
+  "connection.relay_status_no_endpoint_hint": "IMAGINE_RELAY_ENDPOINT 환경 변수 또는 config.yaml에서 relay endpoint를 설정하세요.",
+  "connection.relay_status_missing_secret": "Relay endpoint는 설정됐지만 server_secret이 없습니다. IMAGINE_RELAY_SERVER_SECRET을 설정해야 합니다."
 }

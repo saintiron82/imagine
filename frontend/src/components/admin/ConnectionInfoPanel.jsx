@@ -12,6 +12,7 @@ import { useLocale } from '../../i18n';
 import {
   getConnectionInfo,
   createHeadlessWorkerCommand,
+  getRelayStatus,
 } from '../../api/admin';
 
 const SECURITY_TONE = {
@@ -62,6 +63,7 @@ export default function ConnectionInfoPanel() {
 
   const [info, setInfo] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [relayStatus, setRelayStatus] = useState(null);
 
   const [workerName, setWorkerName] = useState('cloud-worker-1');
   const [launcher, setLauncher] = useState('cloud');
@@ -87,9 +89,19 @@ export default function ConnectionInfoPanel() {
     }
   }, []);
 
+  const loadRelayStatus = useCallback(async () => {
+    try {
+      const resp = await getRelayStatus();
+      setRelayStatus(resp.data ?? resp);
+    } catch {
+      setRelayStatus(null);
+    }
+  }, []);
+
   useEffect(() => {
     loadInfo();
-  }, [loadInfo]);
+    loadRelayStatus();
+  }, [loadInfo, loadRelayStatus]);
 
   const issueCommand = async () => {
     setIssuing(true);
@@ -159,6 +171,37 @@ export default function ConnectionInfoPanel() {
             <p>{t('connection.warn_aws_cost')}</p>
             <p>{t('connection.warn_data_plane')}</p>
           </div>
+        </section>
+      )}
+
+      {relayStatus && (
+        <section className="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-2">
+          <div className="flex items-baseline justify-between">
+            <h3 className="text-sm font-medium text-white">{t('connection.relay_status_title')}</h3>
+            <span
+              className={`text-[11px] uppercase tracking-wide px-2 py-0.5 rounded border ${
+                relayStatus.online
+                  ? 'text-emerald-300 bg-emerald-900/30 border-emerald-700/40'
+                  : relayStatus.configured
+                    ? 'text-amber-300 bg-amber-900/30 border-amber-700/40'
+                    : 'text-gray-400 bg-gray-900/40 border-gray-700/40'
+              }`}
+            >
+              {relayStatus.online
+                ? t('connection.relay_status_online')
+                : relayStatus.configured
+                  ? t('connection.relay_status_configured_offline')
+                  : t('connection.relay_status_unconfigured')}
+            </span>
+          </div>
+          {relayStatus.endpoint ? (
+            <p className="text-xs font-mono text-gray-200 break-all">{relayStatus.endpoint}</p>
+          ) : (
+            <p className="text-xs text-gray-500">{t('connection.relay_status_no_endpoint_hint')}</p>
+          )}
+          {!relayStatus.secret_configured && relayStatus.configured && (
+            <p className="text-[11px] text-amber-300">{t('connection.relay_status_missing_secret')}</p>
+          )}
         </section>
       )}
 
