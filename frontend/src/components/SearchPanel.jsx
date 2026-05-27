@@ -17,6 +17,16 @@ const DISPLAY_PAGE = 20;   // Show this many per "page" in the UI
 const FALLBACK_IMAGE_TYPES = ['character', 'background', 'ui_element', 'item', 'icon', 'texture', 'effect', 'logo', 'photo', 'illustration'];
 const FALLBACK_ART_STYLES = ['realistic', 'anime', 'pixel', 'painterly', 'cartoon', '3d_render', 'flat_design', 'sketch'];
 
+// Confidence badge styling — one of 'high' | 'medium' | 'low' | 'empty'
+function confidenceBadgeClass(level) {
+    return {
+        high:   'bg-emerald-900/30 text-emerald-300 border border-emerald-700/40 px-2 py-0.5 rounded text-xs',
+        medium: 'bg-blue-900/30 text-blue-300 border border-blue-700/40 px-2 py-0.5 rounded text-xs',
+        low:    'bg-amber-900/30 text-amber-300 border border-amber-700/40 px-2 py-0.5 rounded text-xs',
+        empty:  'bg-gray-900/40 text-gray-400 border border-gray-700/40 px-2 py-0.5 rounded text-xs',
+    }[level] || 'text-gray-400 text-xs';
+}
+
 // Filter label mapping for chips display
 const FILTER_LABELS = {
     format: 'filter.format',
@@ -749,7 +759,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, onFindSimilar, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount }) => {
+const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, onFindSimilar, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount, confidence }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -780,7 +790,23 @@ const SearchResults = React.memo(({ results, isSearching, searchStage, hasResult
     }, [results.length > 0 && results[0]?.path]);
 
     const hasAnyResults = hasResults || (totalCount > 0);
-    if (!hasAnyResults && !isSearching) return <div className="flex-1" />;
+    if (!hasAnyResults && !isSearching) {
+        if (confidence === 'empty') {
+            return (
+                <div className="flex-1 px-6 pb-6">
+                    <div className="flex items-center gap-2 mt-2">
+                        <span className={confidenceBadgeClass('empty')}>
+                            {t('search.confidence_empty')}
+                        </span>
+                    </div>
+                    <p className="text-sm text-gray-400 mt-2">
+                        {t('search.empty_explainer')}
+                    </p>
+                </div>
+            );
+        }
+        return <div className="flex-1" />;
+    }
 
     return (
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6 relative">
@@ -860,6 +886,11 @@ const SearchResults = React.memo(({ results, isSearching, searchStage, hasResult
                         <h3 className="text-sm font-medium text-gray-400">
                             {t('status.results_found', { count: results.length })}
                         </h3>
+                        {confidence && (
+                            <span className={confidenceBadgeClass(confidence)}>
+                                {t(`search.confidence_${confidence}`)}
+                            </span>
+                        )}
                         {/* Active filter chips — always visible */}
                         {activeFilters && Object.entries(activeFilters).map(([key, value]) => {
                             if (!value) return null;
@@ -973,6 +1004,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [queryImages, setQueryImages] = useState([]); // base64 string array
     const [imageSearchMode, setImageSearchMode] = useState('and'); // 'and' | 'or'
     const [results, setResults] = useState([]); // Currently displayed slice
+    const [confidence, setConfidence] = useState(null); // 'high'|'medium'|'low'|'empty' from backend
     const allResultsRef = useRef([]); // Full results from backend (up to FETCH_LIMIT)
     const [isSearching, setIsSearching] = useState(false);
     const [searchStage, setSearchStage] = useState(null); // 'decompose'|'visual'|'semantic'|'keyword'|'ranking'
@@ -1064,11 +1096,13 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     const response = await searchImages(searchOptions);
                     if (response.success) {
                         setResults(response.results);
+                        setConfidence(response.confidence || null);
                         setCurrentLimit(20);
                         setNoMoreResults(response.results.length < 20);
                     } else {
                         setError(response.error || 'Search failed');
                         setResults([]);
+                        setConfidence(null);
                     }
                 } catch (err) {
                     setError(err.message);
@@ -1112,11 +1146,13 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 const response = await searchImages(searchOptions);
                 if (response.success) {
                     setResults(response.results);
+                    setConfidence(response.confidence || null);
                     setCurrentLimit(20);
                     setNoMoreResults(response.results.length < 20);
                 } else {
                     setError(response.error || 'Search failed');
                     setResults([]);
+                    setConfidence(null);
                 }
             } catch (err) {
                 setError(err.message);
@@ -1185,6 +1221,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 // Sort by combined_score descending so display order matches ★ badge
                 allResultsRef.current = (response.results || []).sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
                 setResults(response.results.slice(0, DISPLAY_PAGE));
+                setConfidence(response.confidence || null);
                 setCurrentLimit(DISPLAY_PAGE);
                 setNoMoreResults(response.results.length <= DISPLAY_PAGE);
 
@@ -1213,10 +1250,12 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             } else {
                 setError(response.error || 'Search failed');
                 setResults([]);
+                setConfidence(null);
             }
         } catch (err) {
             setError(err.message);
             setResults([]);
+            setConfidence(null);
         } finally {
             setIsSearching(false); setSearchStage(null);
         }
@@ -1247,6 +1286,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             if (response.success) {
                 const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
                 setResults(sorted);
+                setConfidence(response.confidence || null);
                 setCurrentLimit(sorted.length);
                 setNoMoreResults(true);
                 setRefineStack(prev => [...prev, { query: refineInput, resultIds: fileIds }]);
@@ -1282,6 +1322,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             if (response.success) {
                 const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
                 setResults(sorted);
+                setConfidence(response.confidence || null);
                 setCurrentLimit(sorted.length);
                 setNoMoreResults(true);
             }
@@ -1294,6 +1335,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     const clearSearch = useCallback(() => {
         setResults([]);
+        setConfidence(null);
         allResultsRef.current = [];
         setQuery('');
         setQueryImages([]);
@@ -1593,6 +1635,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onRefineCommit={handleRefineCommit}
                 onRefineRemove={handleRefineRemove}
                 totalCount={allResultsRef.current.length}
+                confidence={confidence}
             />
 
             {/* Search history moved to sidebar (SearchHistorySidebar) */}
