@@ -109,3 +109,23 @@ def test_confidence_falls_back_to_zero_when_non_numeric():
     }
     plan = from_decomposer_output(raw)
     assert plan.confidence == 0.0
+
+
+def test_confidence_nan_or_inf_falls_back_to_zero():
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        plan = from_decomposer_output({
+            "vector_query": "x", "query_type": "visual",
+            "folder": "", "elements": [], "negatives": [],
+            "confidence": bad,
+        })
+        assert plan.confidence == 0.0, f"failed for {bad!r}"
+
+
+def test_confidence_boolean_falls_back_to_zero():
+    for bad in (True, False):
+        plan = from_decomposer_output({
+            "vector_query": "x", "query_type": "visual",
+            "folder": "", "elements": [], "negatives": [],
+            "confidence": bad,
+        })
+        assert plan.confidence == 0.0, f"failed for {bad!r}"

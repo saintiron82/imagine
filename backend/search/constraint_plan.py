@@ -1,11 +1,12 @@
 """Phase B: Decomposer output's structured representation.
 
 ConstraintPlan is the single source of truth for the search pipeline.
-LLM自由 텍스트 응답을 from_decomposer_output()이 이 객체로 정규화
+LLM의 자유 텍스트 응답을 from_decomposer_output()이 이 객체로 정규화
 하고, 정규화 실패는 ConstraintPlanError 로 명시한다.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -79,11 +80,18 @@ def from_decomposer_output(payload: Mapping[str, Any]) -> ConstraintPlan:
         raise ConstraintPlanError("folder must be a string")
 
     confidence_raw = payload.get("confidence", 0.0)
-    try:
-        confidence = float(confidence_raw)
-    except (TypeError, ValueError):
+    if isinstance(confidence_raw, bool):
+        # bool is a subclass of int; treat as "missing" rather than 0.0/1.0
         confidence = 0.0
-    confidence = max(0.0, min(1.0, confidence))
+    else:
+        try:
+            confidence = float(confidence_raw)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if not math.isfinite(confidence):
+            confidence = 0.0
+        else:
+            confidence = max(0.0, min(1.0, confidence))
 
     return ConstraintPlan(
         folder=folder.strip(),
