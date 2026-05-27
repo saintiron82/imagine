@@ -3235,3 +3235,20 @@ class SqliteVectorSearch:
             return self.plan_search(query, top_k, threshold, return_diagnostic=return_diagnostic)
         else:
             raise ValueError(f"Invalid mode: {mode}. Use 'vector', 'hybrid', 'metadata', 'fts', 'triaxis', 'plan', or 'structure'")
+
+
+# ── Phase B: hard folder constraint ───────────────────────────────
+
+def apply_folder_filter(rows, folder: str):
+    """Drop rows whose folder_path doesn't contain the requested folder.
+
+    Substring match for now — the same string the Decomposer extracts
+    ("#07", "studio_bg" etc.) is matched against folder_path. Exact
+    boundary handling is upgraded once we have evidence it matters.
+    """
+    if not folder:
+        return rows
+    needle = folder.strip()
+    if not needle:
+        return rows
+    return [r for r in rows if needle in (r.get("folder_path") or "")]

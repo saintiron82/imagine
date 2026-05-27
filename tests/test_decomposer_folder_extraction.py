@@ -92,3 +92,26 @@ def test_decomposer_existing_decompose_method_is_not_broken(monkeypatch):
     result = decomp.decompose("아무 쿼리")
     assert isinstance(result, dict)
     assert result.get("decomposed") is True
+
+
+def test_folder_scope_applies_as_sql_prefilter():
+    """When ConstraintPlan.folder is set, candidates are restricted before RRF."""
+    from backend.search.sqlite_search import apply_folder_filter
+
+    # 5 files across two folders
+    rows = [
+        {"id": 1, "folder_path": "/lib/#07/a.png"},
+        {"id": 2, "folder_path": "/lib/#07/b.png"},
+        {"id": 3, "folder_path": "/lib/#08/c.png"},
+        {"id": 4, "folder_path": "/lib/other/d.png"},
+        {"id": 5, "folder_path": "/lib/#07/e.png"},
+    ]
+    filtered = apply_folder_filter(rows, folder="#07")
+    assert {r["id"] for r in filtered} == {1, 2, 5}
+
+
+def test_folder_scope_empty_returns_input_unchanged():
+    from backend.search.sqlite_search import apply_folder_filter
+
+    rows = [{"id": 1, "folder_path": "/x/y.png"}]
+    assert apply_folder_filter(rows, folder="") is rows
