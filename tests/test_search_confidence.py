@@ -64,3 +64,21 @@ def test_thresholds_from_config_reads_overrides():
            "search.confidence_thresholds.high": 0.50}
     t = thresholds_from_config(cfg)
     assert t.low == 0.10 and t.mid == 0.30 and t.high == 0.50
+
+
+@pytest.mark.parametrize("vector_score, fts_hit, expected", [
+    (0.60, False, ConfidenceLevel.HIGH),
+    (0.60, True, ConfidenceLevel.HIGH),   # FTS hit must NOT demote HIGH
+    (0.40, True, ConfidenceLevel.MEDIUM), # FTS hit must NOT demote MEDIUM
+    (0.25, True, ConfidenceLevel.LOW),    # FTS hit must NOT promote LOW
+])
+def test_fts_hit_only_floors_empty_does_not_change_other_levels(
+    vector_score, fts_hit, expected,
+):
+    """The FTS upgrade only applies when classification would otherwise be EMPTY."""
+    from backend.search.confidence import classify_topk
+
+    assert classify_topk(
+        vector_score=vector_score, text_vec_score=0.0, fts_hit=fts_hit,
+        thresholds=DEFAULT,
+    ) is expected

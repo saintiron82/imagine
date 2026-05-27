@@ -45,13 +45,8 @@ def classify_topk(
 
 
 def thresholds_from_config(cfg) -> ConfidenceThresholds:
-    def _read(key: str, default: float) -> float:
-        if isinstance(cfg, dict):
-            return float(cfg.get(key, default))
-        return float(cfg.get(key, default))
-
     return ConfidenceThresholds(
-        low=_read("search.confidence_thresholds.low", 0.20),
-        mid=_read("search.confidence_thresholds.mid", 0.35),
-        high=_read("search.confidence_thresholds.high", 0.55),
+        low=float(cfg.get("search.confidence_thresholds.low", 0.20)),
+        mid=float(cfg.get("search.confidence_thresholds.mid", 0.35)),
+        high=float(cfg.get("search.confidence_thresholds.high", 0.55)),
     )
