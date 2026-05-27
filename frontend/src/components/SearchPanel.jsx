@@ -1077,6 +1077,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             setQueryFileId(queryFileId);
             setSearchMode(mode);
             setResults([]);
+            setConfidence(null);
             setNoMoreResults(false);
             setIsSearching(true); setSearchStage('decompose');
             setError(null);
@@ -1128,6 +1129,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setQueryFileId(fileId);
         setSearchMode(mode);
         setResults([]);
+        setConfidence(null);
         setNoMoreResults(false);
         setIsSearching(true); setSearchStage('decompose');
         setError(null);
