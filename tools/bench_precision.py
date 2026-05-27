@@ -39,6 +39,9 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from bench_classify_outcome import classify, Outcome  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmarks" / "results"
 TAG_FILTER_VERSION = "visible_known_tags_v3"
@@ -384,6 +387,7 @@ def evaluate_precision(
     precision_sums = {k: 0.0 for k in k_values}
     recall_sums = {k: 0.0 for k in k_values}
     per_query = []
+    outcome_counts = {o: 0 for o in Outcome}
     n = len(queries)
 
     for i, q in enumerate(queries):
@@ -407,6 +411,18 @@ def evaluate_precision(
             pq[f"P@{k}"] = round(p_at_k, 3)
             pq[f"hits@{k}"] = relevant_in_k
 
+        # 4-way outcome split (Phase C): found / missed / honest_empty / false_answer
+        # NOTE: live confidence wiring is a follow-up. Use "medium" placeholder so
+        # found/missed buckets stay exact and gt=∅ cases still classify.
+        outcome = classify(
+            top_k=ranked_ids,
+            gt=set(gt_ids),
+            system_confidence=q.get("confidence", "medium"),
+        )
+        pq["outcome"] = outcome.value
+        q["outcome"] = outcome.value
+        outcome_counts[outcome] += 1
+
         per_query.append(pq)
 
         if (i + 1) % 10 == 0 or i == n - 1:
@@ -419,6 +435,7 @@ def evaluate_precision(
         "precision": mean_precision,
         "recall": mean_recall,
         "per_query": per_query,
+        "outcome_counts": {o.value: outcome_counts[o] for o in Outcome},
     }
 
 
@@ -842,9 +859,14 @@ def main():
         "scope_ground_truth": args.scope_ground_truth,
         "tag_filter_version": TAG_FILTER_VERSION,
         "axes": {
-            axis: {"precision": r["precision"], "recall": r["recall"]}
+            axis: {
+                "precision": r["precision"],
+                "recall": r["recall"],
+                "outcome_counts": r.get("outcome_counts", {}),
+            }
             for axis, r in all_results.items()
         },
+        "outcome_counts": all_results["triaxis"].get("outcome_counts", {}),
         "timing": timing,
     }
     with open(json_path, "w", encoding="utf-8") as f:
@@ -880,6 +902,16 @@ def main():
     print(f"{'─' * 70}")
     print(f"  Triaxis P@5 = {tri_p5:.3f} → top-5 중 {tri_p5*5:.1f}개가 관련 이미지")
     print(f"  Fusion Lift: {lift:+.1f}% over best single axis")
+    print(f"{'─' * 70}")
+
+    # 4-way outcome split (Phase C) — based on Triaxis results
+    tri_outcomes = all_results["triaxis"].get("outcome_counts", {})
+    n_q = len(queries)
+    print(f"  ── Outcome split (n={n_q}) ──")
+    for key in ("found", "missed", "honest_empty", "false_answer"):
+        cnt = tri_outcomes.get(key, 0)
+        pct = (cnt / n_q * 100) if n_q else 0.0
+        print(f"    {key:<13}: {cnt} ({pct:.1f}%)")
     print(f"{'─' * 70}")
     print(f"  Report: {output_path}")
     if standard_paths:

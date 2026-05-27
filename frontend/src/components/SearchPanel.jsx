@@ -5,7 +5,7 @@ import ImageSearchInput from './ImageSearchInput';
 import SearchHistorySidebar from './SearchHistorySidebar';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
-import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode, getActiveDomainConfig } from '../services/bridge';
+import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode, getActiveDomainConfig, postSearchFeedback } from '../services/bridge';
 import { isElectron, getServerUrl } from '../api/client';
 
 const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
@@ -491,7 +491,7 @@ const MetadataModal = ({ metadata, onClose, onNavigateToFolder }) => {
 };
 
 // Search Result Card Component (memoized to avoid re-renders on scroll/parent update)
-const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavigateToFolder, onFindSimilar }) => {
+const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavigateToFolder, onFindSimilar, onMarkIrrelevant }) => {
     const { t } = useLocale();
     const dbPath = result.db_path || result.path;
     const localPath = result.resolved_path || result.path;
@@ -589,6 +589,16 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                         >
                             <Sparkles size={12} />
                         </button>
+                        {onMarkIrrelevant && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onMarkIrrelevant(result.id); }}
+                                className="p-0.5 hover:bg-red-600/40 rounded text-gray-400 hover:text-red-300 transition-colors text-xs"
+                                title={t('search.mark_irrelevant')}
+                                aria-label={t('search.mark_irrelevant')}
+                            >
+                                <X size={12} />
+                            </button>
+                        )}
                         {isElectron && (
                             <>
                                 <button
@@ -759,7 +769,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, onFindSimilar, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount, confidence }) => {
+const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, onFindSimilar, onMarkIrrelevant, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount, confidence }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -980,6 +990,7 @@ const SearchResults = React.memo(({ results, isSearching, searchStage, hasResult
                                                 onContextMenu={(e) => onContextMenu(e, result)}
                                                 onNavigateToFolder={onNavigateToFolder}
                                                 onFindSimilar={onFindSimilar}
+                                                onMarkIrrelevant={onMarkIrrelevant}
                                             />
                                         </div>
                                     ))}
@@ -1122,6 +1133,23 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, result });
     }, []);
+
+    // Mark a result irrelevant for the current query: post feedback then
+    // locally remove it so the user sees immediate effect. The backend will
+    // soft-demote on subsequent searches via Phase D demotion.
+    const handleMarkIrrelevant = useCallback(async (fileId) => {
+        const currentQuery = query;
+        if (!currentQuery || !fileId) return;
+        // Optimistically remove from both the displayed slice and the full result set
+        setResults(prev => prev.filter(r => r.id !== fileId));
+        allResultsRef.current = allResultsRef.current.filter(r => r.id !== fileId);
+        try {
+            await postSearchFeedback(currentQuery, fileId);
+        } catch (err) {
+            // Non-fatal: log but don't restore (user intent was clear)
+            console.warn('postSearchFeedback failed:', err);
+        }
+    }, [query]);
 
     const triggerStructureSearch = (fileId, mode) => {
         setQuery('');
@@ -1627,6 +1655,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onLoadMore={handleLoadMore}
                 onNavigateToFolder={onNavigateToFolder}
                 onFindSimilar={(fileId) => triggerStructureSearch(fileId, 'vector')}
+                onMarkIrrelevant={handleMarkIrrelevant}
                 activeFilters={activeFilters}
                 onRemoveFilter={(key) => setActiveFilters(prev => ({ ...prev, [key]: undefined }))}
                 searchScope={searchScope}

@@ -183,3 +183,18 @@ CREATE TABLE IF NOT EXISTS worker_enrollment_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_enrollment_hash ON worker_enrollment_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_enrollment_expires ON worker_enrollment_tokens(expires_at);
+
+-- ═══════════════════════════════════════════════════════════════
+-- Phase D — Search Feedback (irrelevant labels)
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS search_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    file_id INTEGER NOT NULL,
+    label TEXT NOT NULL CHECK (label IN ('irrelevant')),
+    user_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_search_feedback_query ON search_feedback(query);
+CREATE INDEX IF NOT EXISTS idx_search_feedback_file ON search_feedback(file_id);
