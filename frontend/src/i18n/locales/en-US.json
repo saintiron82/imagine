@@ -134,6 +134,8 @@
   "search.confidence_low": "Low confidence",
   "search.confidence_empty": "No relevant match",
   "search.empty_explainer": "No image meets the search criteria with enough confidence. Try a different phrasing.",
+  "search.mark_irrelevant": "Mark this result as irrelevant",
+  "search.mark_irrelevant_short": "Irrelevant",
   "status.loading_more": "Searching deeper...",
   "status.results_found": "{count} results found",
   "status.no_more_results": "No more results at lower threshold",

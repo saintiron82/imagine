@@ -70,6 +70,19 @@ export async function searchImages(options) {
 
 
 /**
+ * Submit user feedback that a search result is irrelevant for a query.
+ * Backend accumulates these to soft-demote that file in subsequent searches.
+ */
+export async function postSearchFeedback(query, fileId) {
+  return apiClient.post('/api/v1/search/feedback', {
+    query,
+    file_id: fileId,
+    label: 'irrelevant',
+  });
+}
+
+
+/**
  * Get file detail by ID.
  */
 export async function getFileDetail(fileId) {

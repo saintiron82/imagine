@@ -2574,6 +2574,38 @@ class SqliteVectorSearch:
             for r in merged[:5]
         ]
 
+        # Phase D: soft demotion using accumulated user "irrelevant" feedback.
+        # Files repeatedly flagged irrelevant for the same query get a small
+        # rrf_score penalty so they drop in subsequent searches.
+        try:
+            penalty_rows = self.db.conn.execute(
+                """SELECT file_id, COUNT(*) AS n FROM search_feedback
+                   WHERE query = ? AND label = 'irrelevant'
+                   GROUP BY file_id""",
+                (query,),
+            ).fetchall()
+            if penalty_rows:
+                penalty_map = {fid: 0.05 * min(n, 5) for fid, n in penalty_rows}
+                penalized = 0
+                for r in merged:
+                    p = penalty_map.get(r.get("id"))
+                    if p:
+                        r["rrf_score"] = float(r.get("rrf_score") or 0.0) - p
+                        r["feedback_penalty"] = p
+                        penalized += 1
+                if penalized:
+                    merged.sort(key=lambda r: r.get("rrf_score", 0.0), reverse=True)
+                    logger.info(
+                        f"Phase D feedback demotion: {penalized} file(s) penalised "
+                        f"for query={query!r}"
+                    )
+                    diag["feedback_demotion"] = {
+                        "penalised_count": penalized,
+                        "max_penalty": max(penalty_map.values()),
+                    }
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Feedback demotion skipped: {exc}")
+
         # Phase B: hard folder substring filter on folder_path as final safety net.
         # The earlier FTS-based pre-filter (Step 3b) catches folders that match via
         # indexed text; this catches the remaining cases where folder appears in
