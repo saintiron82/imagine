@@ -335,6 +335,29 @@ def migrate_audit_log(db):
     logger.info("audit_log table created")
 
 
+def migrate_search_feedback(db):
+    """Phase D: store user 'irrelevant' feedback for search results."""
+    if db._table_exists('search_feedback'):
+        return
+    logger.info("Migrating: creating search_feedback table...")
+    db.conn.executescript(
+        """
+        CREATE TABLE search_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query TEXT NOT NULL,
+            file_id INTEGER NOT NULL,
+            label TEXT NOT NULL CHECK (label IN ('irrelevant')),
+            user_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_search_feedback_query ON search_feedback(query);
+        CREATE INDEX idx_search_feedback_file ON search_feedback(file_id);
+        """
+    )
+    db.conn.commit()
+    logger.info("search_feedback table created")
+
+
 def migrate_worker_enrollment_tokens(db):
     """Phase 8: short-lived, single-use tokens for worker attachment.
 
@@ -597,6 +620,7 @@ def run_migrations(db, *, existing_db: bool = True):
             ("worker_resources_json", lambda: migrate_worker_resources_json(db)),
             ("worker_origin_launcher", lambda: migrate_worker_origin_launcher(db)),
             ("audit_log", lambda: migrate_audit_log(db)),
+            ("search_feedback", lambda: migrate_search_feedback(db)),
             ("worker_enrollment_tokens", lambda: migrate_worker_enrollment_tokens(db)),
             ("users_email_nullable", lambda: migrate_users_email_nullable(db)),
             ("users_firebase_uid", lambda: migrate_users_firebase_uid(db)),
@@ -640,6 +664,7 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_worker_resources_json(db)
         migrate_worker_origin_launcher(db)
         migrate_audit_log(db)
+        migrate_search_feedback(db)
         migrate_worker_enrollment_tokens(db)
         migrate_files_processing_status(db)
         migrate_members_table(db)
