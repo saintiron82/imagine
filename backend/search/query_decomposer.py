@@ -266,17 +266,118 @@ class QueryDecomposer:
             except Exception as e:
                 logger.info(f"MLX LLM not available: {e}")
 
-    def _generate_codex(self, query: str) -> Optional[str]:
-        """Generate query decomposition using Codex CLI (GPT-5.3-codex).
+    # ── Codex CLI integration ────────────────────────────────────
+    # agentcli (>=0.4.2) provides a session-aware client over Codex CLI.
+    # We prefer it for: (a) session reuse via `alias=imagine-decomposer`,
+    # (b) cleaner string-in / string-out, and (c) usage tracking. If
+    # agentcli isn't installed at runtime we fall back to the legacy
+    # subprocess + temp-file path so existing deploys keep working.
 
-        Uses file-based I/O: writes query to temp file, Codex writes result.
-        Falls back to None if Codex fails or times out.
+    _AGENTCLI_CHECKED = False
+    _AGENTCLI_CLIENT = None
+
+    @classmethod
+    def _agentcli_client(cls):
+        """Lazy-init a process-level agentcli LLMClient (None if unavailable).
+
+        We pass an in-memory store: the decomposer is stateless aside
+        from the per-session alias that agentcli routes internally, so
+        we don't need a persistent SQLite store here.
         """
+        if cls._AGENTCLI_CHECKED:
+            return cls._AGENTCLI_CLIENT
+        cls._AGENTCLI_CHECKED = True
+        try:
+            from agentcli import LLMClient, MemoryStore
+
+            cls._AGENTCLI_CLIENT = LLMClient(store=MemoryStore())
+            logger.info("agentcli available — using session-aware Codex client")
+        except Exception as exc:
+            logger.info(f"agentcli not available, using legacy subprocess: {exc}")
+            cls._AGENTCLI_CLIENT = None
+        return cls._AGENTCLI_CLIENT
+
+    def _build_codex_prompt(self, query: str) -> str:
+        """Prompt that asks Codex to emit decomposition JSON inline.
+
+        Shared between agentcli and legacy paths — keep one source of
+        truth for the contract LLM is asked to satisfy.
+        """
+        return (
+            "Analyze the Korean/English image search query below and create a search plan. "
+            "Separate the scope (which folder/project to search in) from the intent (what to find). "
+            "Strip Korean particles (에서,중에,자료,폴더,이미지) from folder names. "
+            "Reply with ONLY a single-line JSON object — no prose, no code fences — using this exact structure:\n"
+            '{"pre_filter": {"folder": "folder name or empty string", "image_type": null, "format": null}, '
+            '"search": {"query": "english description of what to find", "mode": "semantic"}, '
+            '"fallback_keywords": ["korean and english keywords"]}\n'
+            "Examples:\n"
+            "  '세일러문 중에서 강이 보이는거' → "
+            '{"pre_filter":{"folder":"세일러문","image_type":null,"format":null},'
+            '"search":{"query":"river scene with water visible","mode":"semantic"},'
+            '"fallback_keywords":["세일러문","river","water","강"]}\n'
+            "  '밤 도시 배경' → "
+            '{"pre_filter":{"folder":"","image_type":null,"format":null},'
+            '"search":{"query":"night city background","mode":"semantic"},'
+            '"fallback_keywords":["night","city","밤","도시"]}\n'
+            f"QUERY: {query}\n"
+            "JSON:"
+        )
+
+    def _generate_codex(self, query: str) -> Optional[str]:
+        """Generate query decomposition using Codex CLI.
+
+        Path A (preferred): agentcli LLMClient with session reuse.
+        Path B (fallback): legacy subprocess + temp-file I/O.
+        Returns the raw JSON string (starting with '{') or None.
+        """
+        client = self._agentcli_client()
+        if client is not None:
+            try:
+                from pathlib import Path
+
+                resp = client.chat(
+                    prompt=self._build_codex_prompt(query),
+                    provider="codex",
+                    owner="imagine-search",
+                    alias="imagine-decomposer",
+                    cwd=str(Path(__file__).resolve().parent.parent.parent),
+                    timeout=45,
+                )
+                content = (resp.content or "").strip()
+                # Codex sometimes wraps JSON in prose — keep only the
+                # first balanced top-level object.
+                if "{" in content:
+                    start = content.index("{")
+                    depth = 0
+                    end = -1
+                    for i in range(start, len(content)):
+                        ch = content[i]
+                        if ch == "{":
+                            depth += 1
+                        elif ch == "}":
+                            depth -= 1
+                            if depth == 0:
+                                end = i + 1
+                                break
+                    if end > start:
+                        extracted = content[start:end]
+                        logger.info(f"Codex (agentcli) result: {extracted[:200]}")
+                        return extracted
+                logger.warning("Codex (agentcli) returned no JSON object")
+                return None
+            except Exception as exc:
+                logger.warning(f"Codex (agentcli) failed, falling back to subprocess: {exc}")
+
+        return self._generate_codex_legacy(query)
+
+    def _generate_codex_legacy(self, query: str) -> Optional[str]:
+        """Legacy subprocess + temp-file path; kept for environments
+        without agentcli installed (or when agentcli itself raises)."""
         import subprocess
         import tempfile
         from pathlib import Path
 
-        # Write query to temp file
         query_file = tempfile.NamedTemporaryFile(
             mode='w', suffix='_query.json', delete=False, dir='/tmp')
         json.dump({"query": query}, query_file)
@@ -306,7 +407,7 @@ class QueryDecomposer:
                 capture_output=True, text=True, timeout=45,
             )
         except subprocess.TimeoutExpired:
-            logger.warning("Codex CLI timed out (30s)")
+            logger.warning("Codex CLI timed out (legacy path)")
             return None
         finally:
             try:
@@ -320,7 +421,7 @@ class QueryDecomposer:
                     content = f.read().strip()
                 os.unlink(result_file)
                 if content.startswith('{'):
-                    logger.info(f"Codex CLI result: {content[:200]}")
+                    logger.info(f"Codex CLI (legacy) result: {content[:200]}")
                     return content
             except Exception as e:
                 logger.warning(f"Codex result read failed: {e}")
