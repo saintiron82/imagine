@@ -1,0 +1,101 @@
+{
+  "timestamp": "2026-05-28T00:50:32+09:00",
+  "run_id": "precision_20260528_phaseCD",
+  "git": {
+    "commit": "e68b35307ea4aec4212427938686f975e142aeb0",
+    "dirty": true
+  },
+  "query_count": 30,
+  "db_size": 17726,
+  "judge_mode": "keyword",
+  "scope_ground_truth": false,
+  "tag_filter_version": "visible_known_tags_v3",
+  "axes": {
+    "vv": {
+      "precision": {
+        "P@3": 0.2667,
+        "P@5": 0.2867,
+        "P@10": 0.2433
+      },
+      "recall": {
+        "Recall@3": 0.0315,
+        "Recall@5": 0.0504,
+        "Recall@10": 0.1018
+      },
+      "outcome_counts": {
+        "found": 24,
+        "missed": 6,
+        "honest_empty": 0,
+        "false_answer": 0
+      }
+    },
+    "mv": {
+      "precision": {
+        "P@3": 0.1778,
+        "P@5": 0.1533,
+        "P@10": 0.1367
+      },
+      "recall": {
+        "Recall@3": 0.0363,
+        "Recall@5": 0.0412,
+        "Recall@10": 0.0674
+      },
+      "outcome_counts": {
+        "found": 17,
+        "missed": 13,
+        "honest_empty": 0,
+        "false_answer": 0
+      }
+    },
+    "fts": {
+      "precision": {
+        "P@3": 0.2,
+        "P@5": 0.16,
+        "P@10": 0.1133
+      },
+      "recall": {
+        "Recall@3": 0.039,
+        "Recall@5": 0.0614,
+        "Recall@10": 0.0762
+      },
+      "outcome_counts": {
+        "found": 14,
+        "missed": 16,
+        "honest_empty": 0,
+        "false_answer": 0
+      }
+    },
+    "triaxis": {
+      "precision": {
+        "P@3": 0.5333,
+        "P@5": 0.4667,
+        "P@10": 0.3133
+      },
+      "recall": {
+        "Recall@3": 0.0992,
+        "Recall@5": 0.1246,
+        "Recall@10": 0.1462
+      },
+      "outcome_counts": {
+        "found": 30,
+        "missed": 0,
+        "honest_empty": 0,
+        "false_answer": 0
+      }
+    }
+  },
+  "outcome_counts": {
+    "found": 30,
+    "missed": 0,
+    "honest_empty": 0,
+    "false_answer": 0
+  },
+  "timing": {
+    "init": 0.1,
+    "query_gen": 0.6,
+    "vv": 53.3,
+    "mv": 45.2,
+    "fts": 0.1,
+    "triaxis": 117.1
+  }
+}

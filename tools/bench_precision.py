@@ -863,6 +863,7 @@ def main():
                 "precision": r["precision"],
                 "recall": r["recall"],
                 "outcome_counts": r.get("outcome_counts", {}),
+                "per_query": r.get("per_query", []),
             }
             for axis, r in all_results.items()
         },
