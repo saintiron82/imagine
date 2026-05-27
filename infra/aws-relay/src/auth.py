@@ -159,12 +159,19 @@ def validate_envelope_bytes(raw: bytes) -> tuple[bool, Optional[str]]:
 def authorize_register(
     envelope: dict, *, expected_secret: str
 ) -> tuple[bool, Optional[str]]:
-    """`server.register` must carry the server's pre-shared secret."""
+    """`server.register` must carry the server's pre-shared secret.
+
+    Whitespace-only secrets are treated as missing — they cannot
+    authenticate even if the same whitespace is configured server-side,
+    because such a value almost certainly reflects misconfiguration
+    rather than intent.
+    """
     body = envelope.get("body") or {}
-    presented = body.get("server_secret") or ""
-    if not expected_secret or not presented:
+    presented = (body.get("server_secret") or "").strip()
+    expected = (expected_secret or "").strip()
+    if not expected or not presented:
         return False, "AUTH_FAILED"
-    if not hmac.compare_digest(presented, expected_secret):
+    if not hmac.compare_digest(presented, expected):
         return False, "AUTH_FAILED"
     return True, None
 

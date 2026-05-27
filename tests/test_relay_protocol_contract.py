@@ -219,3 +219,100 @@ def test_route_message_with_registered_server(relay_auth):
     decision = relay_auth.route(env, known_servers={"imagine-test"})
     assert decision["action"] == "forward"
     assert decision["target"] == "imagine-test"
+
+
+# ── Phase 4 completion: extra contract surface ─────────────────────
+
+
+def test_envelope_with_null_body_is_rejected(relay_auth):
+    env = _envelope("server.heartbeat")
+    env["body"] = None
+    ok, err = relay_auth.validate_envelope(env)
+    assert ok is False
+    assert err == "BAD_ENVELOPE"
+
+
+def test_make_error_uses_bad_envelope_for_unknown_code(relay_auth):
+    err = relay_auth.make_error("NOT_A_REAL_CODE", msg_id="m-1", detail="x")
+    assert err["type"] == "error"
+    assert err["body"]["code"] == "BAD_ENVELOPE"
+    assert err["msg_id"] == "m-1"
+
+
+def test_make_error_carries_documented_shape(relay_auth):
+    """Error envelopes are emitted by the relay and follow a fixed shape.
+
+    They intentionally have empty server_id because the relay may not
+    know which server the failing envelope was for — so validate_envelope
+    rejects them. Callers that build error envelopes go through this
+    helper instead of validate_envelope.
+    """
+    err_env = relay_auth.make_error("AUTH_FAILED", msg_id="m-1", detail="bad secret")
+    assert err_env["v"] == relay_auth.PROTOCOL_VERSION
+    assert err_env["type"] == "error"
+    assert err_env["msg_id"] == "m-1"
+    assert err_env["body"]["code"] == "AUTH_FAILED"
+    assert err_env["body"]["detail"] == "bad secret"
+    assert "ts" in err_env
+
+
+def test_authorize_register_rejects_whitespace_only_secret(relay_auth):
+    env = _envelope("server.register", server_secret="   ")
+    ok, err = relay_auth.authorize_register(env, expected_secret="   ")
+    # Even matching whitespace is rejected — empty/whitespace means missing.
+    assert ok is False
+    assert err == "AUTH_FAILED"
+
+
+def test_authorize_attach_rejects_unknown_kind(relay_auth):
+    env = _envelope("client.attach", attach_token="abc")
+    ok, err = relay_auth.authorize_attach(env, expected_kind="somethingelse")
+    assert ok is False
+    assert err == "AUTH_FAILED"
+
+
+def test_message_size_limit_uses_byte_length_not_char_count(relay_auth):
+    """Korean text expands to ~3 bytes/char in UTF-8; cap is on bytes."""
+    # ~5400 chars × 3 bytes ≈ 16.2KB → over the limit.
+    env = _envelope("server.heartbeat", note="가" * 5400)
+    encoded = json.dumps(env, ensure_ascii=False).encode("utf-8")
+    assert len(encoded) > relay_auth.RelayLimits.MAX_MESSAGE_BYTES
+    ok, err = relay_auth.validate_envelope_bytes(encoded)
+    assert ok is False
+    assert err == "PAYLOAD_TOO_BIG"
+
+
+def test_sam_template_declares_expected_resources():
+    """Phase 4 SAM template must keep the documented resource set.
+
+    A full YAML parse would need CloudFormation-tag-aware loading (!Sub,
+    !Ref, etc.). We instead check the template is readable and contains
+    the named resources via simple text search — enough to catch
+    accidental renames or deletions.
+    """
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "infra" / "aws-relay" / "template.yaml"
+    )
+    assert path.exists(), path
+    text = path.read_text(encoding="utf-8")
+    assert "AWS::Serverless-2016-10-31" in text
+    for name in (
+        "ConnectFunction:",
+        "DisconnectFunction:",
+        "MessageFunction:",
+        "RelayConnections:",
+        "RelaySessions:",
+        "RelayWebSocketApi:",
+    ):
+        assert name in text, f"missing resource declaration: {name}"
+    # Critical security/cost knobs must remain present.
+    for token in (
+        "BillingMode: PAY_PER_REQUEST",
+        "Enabled: true",        # DynamoDB TTL
+        "ThrottlingRateLimit",
+        "ThrottlingBurstLimit",
+    ):
+        assert token in text, f"missing template token: {token}"
