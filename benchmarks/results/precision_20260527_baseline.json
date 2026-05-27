@@ -1,0 +1,71 @@
+{
+  "timestamp": "2026-05-27T23:53:52+09:00",
+  "run_id": "precision_20260527_baseline",
+  "git": {
+    "commit": "8d0b44bdd75471098088e476d9864b37a026e62f",
+    "dirty": true
+  },
+  "query_count": 30,
+  "db_size": 17726,
+  "judge_mode": "keyword",
+  "scope_ground_truth": false,
+  "tag_filter_version": "visible_known_tags_v3",
+  "axes": {
+    "vv": {
+      "precision": {
+        "P@3": 0.2778,
+        "P@5": 0.2333,
+        "P@10": 0.22
+      },
+      "recall": {
+        "Recall@3": 0.0436,
+        "Recall@5": 0.0519,
+        "Recall@10": 0.084
+      }
+    },
+    "mv": {
+      "precision": {
+        "P@3": 0.1556,
+        "P@5": 0.14,
+        "P@10": 0.1133
+      },
+      "recall": {
+        "Recall@3": 0.0451,
+        "Recall@5": 0.0499,
+        "Recall@10": 0.0577
+      }
+    },
+    "fts": {
+      "precision": {
+        "P@3": 0.1889,
+        "P@5": 0.1467,
+        "P@10": 0.1133
+      },
+      "recall": {
+        "Recall@3": 0.0443,
+        "Recall@5": 0.0498,
+        "Recall@10": 0.0724
+      }
+    },
+    "triaxis": {
+      "precision": {
+        "P@3": 0.5556,
+        "P@5": 0.44,
+        "P@10": 0.3367
+      },
+      "recall": {
+        "Recall@3": 0.0717,
+        "Recall@5": 0.0836,
+        "Recall@10": 0.1121
+      }
+    }
+  },
+  "timing": {
+    "init": 0.1,
+    "query_gen": 0.5,
+    "vv": 51.7,
+    "mv": 45.3,
+    "fts": 0.1,
+    "triaxis": 127.6
+  }
+}
