@@ -2577,13 +2577,16 @@ class SqliteVectorSearch:
         # Sprint 1 α: cross-encoder rerank over top-30 candidates.
         # BGE-reranker-v2-m3 is multilingual and CPU-friendly; load is
         # lazy so this is a no-op when transformers/the model is not
-        # available.
+        # available. Env var IMAGINE_BENCH_DISABLE_RERANK=1 lets benches
+        # skip it for A/B comparison.
         try:
+            import os as _bench_os
+            _disable_rerank = _bench_os.environ.get("IMAGINE_BENCH_DISABLE_RERANK") == "1"
             from backend.search.cross_encoder import (
                 rerank as _ce_rerank,
                 load_default_reranker,
             )
-            reranker = load_default_reranker()
+            reranker = None if _disable_rerank else load_default_reranker()
             if reranker is not None and len(merged) > 1:
                 pool_size = min(30, len(merged))
                 pool = merged[:pool_size]
@@ -2597,9 +2600,12 @@ class SqliteVectorSearch:
         # The unified decompose output exposes the element list as
         # `find.keywords` (or legacy `fts_keywords`). We treat the first
         # few of those as required AND-elements when there are 2+.
+        # Env var IMAGINE_BENCH_DISABLE_AND=1 skips this for A/B benches.
         try:
+            import os as _bench_os2
+            _disable_and = _bench_os2.environ.get("IMAGINE_BENCH_DISABLE_AND") == "1"
             elements_for_check = []
-            if isinstance(unified, dict):
+            if not _disable_and and isinstance(unified, dict):
                 find_block = unified.get("find") or {}
                 if isinstance(find_block, dict):
                     raw_keywords = find_block.get("keywords") or []

@@ -762,6 +762,16 @@ def main():
     parser.add_argument("--run-id", default=None, help="run_id for standard Search Evaluation export")
     parser.add_argument("--export-standard-dir", type=Path, default=None,
                         help="write Search Evaluation V1 JSONL artifacts and evaluation report")
+    parser.add_argument(
+        "--queryset", type=Path, default=None,
+        help="load a previously-frozen queryset (skip generation). Used "
+             "for reproducible A/B measurement across runs.",
+    )
+    parser.add_argument(
+        "--save-queryset", type=Path, default=None,
+        help="after generating queries, also save them (with GT) to this "
+             "path so subsequent runs can load via --queryset.",
+    )
     args = parser.parse_args()
 
     random.seed(42)
@@ -789,17 +799,46 @@ def main():
     cursor.execute("SELECT COUNT(*) FROM files")
     db_size = cursor.fetchone()[0]
 
-    # Generate queries + ground truth
-    print("  Generating queries + ground truth...")
+    # Generate queries + ground truth — OR load a frozen queryset.
     t0 = time.perf_counter()
-    queries = generate_queries_with_gt(
-        db,
-        args.count,
-        args.judge_mode,
-        scope_ground_truth=args.scope_ground_truth,
-    )
+    if args.queryset is not None:
+        if not args.queryset.exists():
+            print(f"  ERROR: --queryset not found: {args.queryset}")
+            sys.exit(2)
+        print(f"  Loading frozen queryset from {args.queryset}")
+        with open(args.queryset, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        queries = data["queries"] if isinstance(data, dict) else data
+        # gt_ids round-trips through JSON as a list; restore set semantics.
+        for q in queries:
+            if isinstance(q.get("gt_ids"), list):
+                q["gt_ids"] = set(q["gt_ids"])
+        print(f"  Loaded {len(queries)} queries (frozen set, deterministic A/B)")
+    else:
+        print("  Generating queries + ground truth...")
+        queries = generate_queries_with_gt(
+            db,
+            args.count,
+            args.judge_mode,
+            scope_ground_truth=args.scope_ground_truth,
+        )
+        print(f"  Generated {len(queries)} queries")
+        if args.save_queryset is not None:
+            args.save_queryset.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "frozen_at": created_at,
+                "count": len(queries),
+                "queries": [
+                    {**q, "gt_ids": sorted(q.get("gt_ids") or set())}
+                    for q in queries
+                ],
+            }
+            args.save_queryset.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            print(f"  Frozen queryset saved to {args.save_queryset}")
     timing["query_gen"] = round(time.perf_counter() - t0, 1)
-    print(f"  Generated {len(queries)} queries")
 
     if len(queries) < 5:
         print("  ERROR: Too few valid queries.")
