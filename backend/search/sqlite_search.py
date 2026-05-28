@@ -2216,9 +2216,14 @@ class SqliteVectorSearch:
                 # Same parity fix as VV above: cache t_query_embedding for
                 # enrich_axis_scores so MV scores get backfilled into
                 # results that only matched on FTS or VV.
-                t_query_embedding = self.text_provider.encode(vector_query, is_query=True)
+                # Sprint 3 S3.3: enrich the text-embedding input with
+                # synonym keywords. VV stays on the short clean phrase.
+                expanded_for_mv = expand_query_for_text_embedding(
+                    vector_query, fts_keywords, max_extras=4,
+                )
+                t_query_embedding = self.text_provider.encode(expanded_for_mv, is_query=True)
                 if scope_file_ids:
-                    text_vec_results = self._mv_search_within(vector_query, scope_file_ids, candidate_k, tv_threshold)
+                    text_vec_results = self._mv_search_within(expanded_for_mv, scope_file_ids, candidate_k, tv_threshold)
                 else:
                     text_vec_results = self._text_vector_search_by_embedding(
                         t_query_embedding, top_k=candidate_k, threshold=tv_threshold
@@ -3527,3 +3532,41 @@ def apply_spatial_intent_boost(rows, *, query_type, boost: float = 0.10):
     else:
         rows.sort(key=lambda r: r.get("rrf_score", 0.0), reverse=True)
     return rows
+
+
+def expand_query_for_text_embedding(
+    vector_query,
+    fts_keywords,
+    max_extras: int = 4,
+) -> str:
+    """Sprint 3 S3.3: append distinct synonyms to vector_query for MV.
+
+    SigLIP2 (VV) prefers a clean short phrase; we leave that path alone.
+    Qwen3-Embed (MV) benefits from richer text context, so for the MV
+    encoding step we append up to `max_extras` synonyms taken from
+    fts_keywords that are NOT already present (case-insensitive) in the
+    base query.
+    """
+    if not vector_query:
+        return ""
+    base = str(vector_query)
+    if not fts_keywords or not isinstance(fts_keywords, list):
+        return base
+    seen_lower = set(t.lower() for t in base.split() if t)
+    extras: list[str] = []
+    for kw in fts_keywords:
+        if not isinstance(kw, str):
+            continue
+        kw_stripped = kw.strip()
+        if not kw_stripped:
+            continue
+        kw_lower = kw_stripped.lower()
+        if kw_lower in seen_lower:
+            continue
+        extras.append(kw_stripped)
+        seen_lower.add(kw_lower)
+        if len(extras) >= max_extras:
+            break
+    if not extras:
+        return base
+    return base + " " + " ".join(extras)
