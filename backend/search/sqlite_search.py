@@ -2604,32 +2604,57 @@ class SqliteVectorSearch:
         try:
             import os as _bench_os2
             _disable_and = _bench_os2.environ.get("IMAGINE_BENCH_DISABLE_AND") == "1"
-            elements_for_check = []
+            elements_for_check: list[str] = []
             if not _disable_and and isinstance(unified, dict):
+                # Build synonym groups by pairing Korean intent words with
+                # their English translations from the same keyword list.
+                # Decomposer usually emits [KO_a, KO_b, EN_a, EN_b, ...] —
+                # we pair by position so each AND-element is
+                # ("발코니|balcony", "밤|night").
+                def _classify_lang(token: str) -> str:
+                    for ch in token:
+                        # Hangul syllables: 가–힣
+                        if 0xAC00 <= ord(ch) <= 0xD7A3:
+                            return "ko"
+                    return "en"
+
+                source: list[str] = []
                 find_block = unified.get("find") or {}
                 if isinstance(find_block, dict):
-                    raw_keywords = find_block.get("keywords") or []
-                    if isinstance(raw_keywords, list):
-                        elements_for_check = [
-                            str(x).strip() for x in raw_keywords
+                    src = find_block.get("keywords")
+                    if isinstance(src, list):
+                        source = [
+                            str(x).strip() for x in src
                             if isinstance(x, str) and str(x).strip()
-                        ][:2]   # cap at 2 — first keywords are the structural intent;
-                                # the longer list is mostly synonym expansion and
-                                # treating that as AND over-penalises legitimate
-                                # matches that lack one synonym form.
-                if not elements_for_check:
+                        ]
+                if not source:
                     legacy_block = unified.get("_legacy") or {}
                     if isinstance(legacy_block, dict):
-                        legacy_fts = legacy_block.get("fts_keywords") or []
-                        if isinstance(legacy_fts, list):
-                            elements_for_check = [
-                                str(x).strip() for x in legacy_fts
+                        src = legacy_block.get("fts_keywords")
+                        if isinstance(src, list):
+                            source = [
+                                str(x).strip() for x in src
                                 if isinstance(x, str) and str(x).strip()
-                            ][:2]
+                            ]
+
+                ko_tokens = [t for t in source if _classify_lang(t) == "ko"][:2]
+                en_tokens = [t for t in source if _classify_lang(t) == "en"][:2]
+
+                if len(ko_tokens) >= 2 and len(en_tokens) >= 2:
+                    # Pair by position — typical decomposer output is
+                    # KO_a, KO_b, EN_a, EN_b which lines up.
+                    elements_for_check = [
+                        f"{ko_tokens[i]}|{en_tokens[i]}" for i in range(2)
+                    ]
+                elif len(ko_tokens) >= 2:
+                    elements_for_check = ko_tokens[:2]
+                elif len(en_tokens) >= 2:
+                    elements_for_check = en_tokens[:2]
+                # else fallthrough: <2 distinct tokens — skip AND
             if len(elements_for_check) >= 2 and len(merged) > 1:
                 pre_count = len(merged)
                 merged = apply_element_verification(
-                    merged, elements=elements_for_check, penalty=0.04,
+                    merged, elements=elements_for_check, penalty=0.15,
                 )
                 diag["element_verification"] = {
                     "elements": elements_for_check,
@@ -3390,30 +3415,67 @@ def apply_element_verification(
     if not elements:
         return rows
 
-    needles = []
+    # Each "element" can be either a plain string OR a `|`-separated
+    # synonym group ("balcony|발코니"). A group counts as PRESENT when
+    # ANY of its synonyms appears in the row text. This is what lets
+    # us match Korean intent ("발코니") against English captions
+    # ("balcony") without manual translation tables.
+    needle_groups: list[list[str]] = []
     for e in elements:
         if not isinstance(e, str):
             continue
-        n = e.strip().lower()
-        if n:
-            needles.append(n)
-    if not needles:
+        synonyms = [
+            piece.strip().lower()
+            for piece in e.split("|")
+            if piece.strip()
+        ]
+        if synonyms:
+            needle_groups.append(synonyms)
+    if not needle_groups:
         return rows
 
-    for r in rows:
-        text_parts = [r.get("mc_caption") or "", r.get("ai_tags") or ""]
-        sp = r.get("spatial_objects") or []
-        if isinstance(sp, list):
-            text_parts.extend(str(x) for x in sp)
-        haystack = " ".join(text_parts).lower()
+    def _as_text(value) -> str:
+        # ai_tags / spatial_objects can arrive as list OR comma-string
+        # depending on the enrichment path. Normalise both to plain text
+        # so " ".join() never gets a list element.
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (list, tuple, set)):
+            return " ".join(str(x) for x in value)
+        return str(value)
 
-        present = sum(1 for n in needles if n in haystack)
-        missing = len(needles) - present
+    uses_cross_encoder = any(
+        r.get("cross_encoder_score") is not None for r in rows
+    )
+
+    for r in rows:
+        haystack = " ".join([
+            _as_text(r.get("mc_caption")),
+            _as_text(r.get("ai_tags")),
+            _as_text(r.get("spatial_objects")),
+        ]).lower()
+
+        present = sum(
+            1 for group in needle_groups if any(n in haystack for n in group)
+        )
+        missing = len(needle_groups) - present
         r["element_match_count"] = present
         r["element_miss_count"] = missing
         if missing:
             r["rrf_score"] = float(r.get("rrf_score") or 0.0) - penalty * missing
 
     rows = list(rows)
-    rows.sort(key=lambda r: r.get("rrf_score", 0.0), reverse=True)
+    if uses_cross_encoder:
+        # Cross-encoder ran upstream; preserve its ordering but layer the
+        # AND penalty on top so missing-element rows drop within the
+        # rerank's preference order.
+        rows.sort(
+            key=lambda r: float(r.get("cross_encoder_score") or 0.0)
+            - penalty * (r.get("element_miss_count") or 0),
+            reverse=True,
+        )
+    else:
+        rows.sort(key=lambda r: r.get("rrf_score", 0.0), reverse=True)
     return rows
