@@ -53,8 +53,7 @@ def test_thresholds_from_config_uses_defaults_when_missing():
 
     cfg = {}
     t = thresholds_from_config(cfg)
-    # Defaults reflect the 2026-05-28 calibration (see backend/search/confidence.py).
-    assert t.low == 0.20 and t.mid == 1.0 and t.high == 1.0
+    assert t.low == 0.20 and t.mid == 0.35 and t.high == 0.55
 
 
 def test_thresholds_from_config_reads_overrides():

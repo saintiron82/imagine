@@ -14,17 +14,18 @@ class ConfidenceLevel(str, enum.Enum):
 
 @dataclass(frozen=True)
 class ConfidenceThresholds:
-    # Calibrated 2026-05-28 from precision_20260528_frozen_run1_sprint1
-    # LLM-judge dataset (150 aligned samples). Targets:
-    # precision-at-confidence >= 0.5 / 0.7 / 0.85.
-    # NOTE: current calibration uses a rank-position proxy because the
-    # bench JSON does not yet persist per-result raw axis scores; the
-    # mid/high cuts here reflect that proxy's coarse 5-bucket
-    # distribution and should be revisited once the bench schema is
-    # widened. See tools/calibrate_confidence.py.
+    # Original guesses retained. A calibration tool exists at
+    # tools/calibrate_confidence.py and was run on the 2026-05-28
+    # LLM-judge dataset, but the bench currently only saves the
+    # ranked file_id list per query (not per-result raw axis scores).
+    # The rank-position proxy used in the tool produces only 5
+    # quantized score buckets which cannot satisfy precision-at-
+    # threshold >= 0.85 for any candidate, yielding degenerate values
+    # (mid=high=1.0). Once bench_precision saves per-result raw
+    # scores, re-run the calibration tool and update these literals.
     low: float = 0.20
-    mid: float = 1.0
-    high: float = 1.0
+    mid: float = 0.35
+    high: float = 0.55
 
 
 def classify(score: float, thresholds: ConfidenceThresholds) -> ConfidenceLevel:
@@ -55,6 +56,6 @@ def classify_topk(
 def thresholds_from_config(cfg) -> ConfidenceThresholds:
     return ConfidenceThresholds(
         low=float(cfg.get("search.confidence_thresholds.low", 0.20)),
-        mid=float(cfg.get("search.confidence_thresholds.mid", 1.0)),
-        high=float(cfg.get("search.confidence_thresholds.high", 1.0)),
+        mid=float(cfg.get("search.confidence_thresholds.mid", 0.35)),
+        high=float(cfg.get("search.confidence_thresholds.high", 0.55)),
     )

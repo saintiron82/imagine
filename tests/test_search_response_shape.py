@@ -60,11 +60,9 @@ def _client(results):
 
 
 def test_search_returns_confidence_field_high():
-    # Calibrated 2026-05-28 defaults set high=1.0; use a top-1 score that
-    # reaches that bar so the semantic ("strong match -> HIGH") still holds.
     results = [{
         "id": 1, "file_path": "a.png",
-        "vector_score": 1.0, "text_vec_score": 0.4,
+        "vector_score": 0.7, "text_vec_score": 0.4,
         "rrf_score": 0.5,
     }]
     client = _client(results)
@@ -72,7 +70,7 @@ def test_search_returns_confidence_field_high():
     assert resp.status_code == 200
     body = resp.json()
     assert body["confidence"] == "high"
-    assert body["top1_raw_score"] == pytest.approx(1.0)
+    assert body["top1_raw_score"] == pytest.approx(0.7)
     assert len(body["results"]) == 1
 
 
