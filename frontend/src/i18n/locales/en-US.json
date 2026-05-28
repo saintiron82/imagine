@@ -1031,5 +1031,12 @@
   "connection.relay_status_configured_offline": "Configured (offline)",
   "connection.relay_status_unconfigured": "Not configured",
   "connection.relay_status_no_endpoint_hint": "Set the relay endpoint via IMAGINE_RELAY_ENDPOINT env var or config.yaml.",
-  "connection.relay_status_missing_secret": "Endpoint is set but server_secret is missing. Set IMAGINE_RELAY_SERVER_SECRET."
+  "connection.relay_status_missing_secret": "Endpoint is set but server_secret is missing. Set IMAGINE_RELAY_SERVER_SECRET.",
+  "admin.tab_search_feedback": "Feedback",
+  "admin.search_feedback_title": "Search-result corrections",
+  "admin.search_feedback_total_30d": "'Irrelevant' labels in last 30 days",
+  "admin.search_feedback_top_files": "Most-flagged files (top 20)",
+  "admin.search_feedback_top_queries": "Most-flagged queries (top 10)",
+  "admin.search_feedback_count": "Count",
+  "admin.search_feedback_empty": "No feedback accumulated yet."
 }

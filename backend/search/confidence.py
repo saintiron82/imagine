@@ -14,6 +14,15 @@ class ConfidenceLevel(str, enum.Enum):
 
 @dataclass(frozen=True)
 class ConfidenceThresholds:
+    # Original guesses retained. A calibration tool exists at
+    # tools/calibrate_confidence.py and was run on the 2026-05-28
+    # LLM-judge dataset, but the bench currently only saves the
+    # ranked file_id list per query (not per-result raw axis scores).
+    # The rank-position proxy used in the tool produces only 5
+    # quantized score buckets which cannot satisfy precision-at-
+    # threshold >= 0.85 for any candidate, yielding degenerate values
+    # (mid=high=1.0). Once bench_precision saves per-result raw
+    # scores, re-run the calibration tool and update these literals.
     low: float = 0.20
     mid: float = 0.35
     high: float = 0.55

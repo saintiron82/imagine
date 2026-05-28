@@ -263,6 +263,14 @@ def _activate_server(app_instance):
     except Exception as e:
         logger.warning(f"Relay connector failed to start: {e}")
 
+    # Sprint 2 γ4: auto-tag files repeatedly flagged 'irrelevant'.
+    try:
+        from backend.server.jobs.auto_user_tags import apply_feedback_to_user_tags
+        n_tagged = apply_feedback_to_user_tags(db, threshold=3)
+        logger.info(f"auto_user_tags applied: {n_tagged} file(s) tagged")
+    except Exception as e:
+        logger.warning(f"auto_user_tags failed: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -314,6 +322,7 @@ from backend.server.routers.analysis import router as analysis_router
 from backend.server.routers.tools import router as tools_router
 from backend.server.routers.connection_info import router as connection_info_router
 from backend.server.routers.search_feedback import router as search_feedback_router
+from backend.server.routers.feedback_dashboard import router as feedback_dashboard_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -333,6 +342,7 @@ app.include_router(archive_router, prefix="/api/v1")
 app.include_router(tools_router, prefix="/api/v1")
 app.include_router(connection_info_router, prefix="/api/v1")
 app.include_router(search_feedback_router, prefix="/api/v1")
+app.include_router(feedback_dashboard_router, prefix="/api/v1")
 
 
 @app.post("/api/v1/server/activate")

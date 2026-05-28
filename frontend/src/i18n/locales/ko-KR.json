@@ -1031,5 +1031,12 @@
   "connection.relay_status_configured_offline": "설정됨 (오프라인)",
   "connection.relay_status_unconfigured": "미설정",
   "connection.relay_status_no_endpoint_hint": "IMAGINE_RELAY_ENDPOINT 환경 변수 또는 config.yaml에서 relay endpoint를 설정하세요.",
-  "connection.relay_status_missing_secret": "Relay endpoint는 설정됐지만 server_secret이 없습니다. IMAGINE_RELAY_SERVER_SECRET을 설정해야 합니다."
+  "connection.relay_status_missing_secret": "Relay endpoint는 설정됐지만 server_secret이 없습니다. IMAGINE_RELAY_SERVER_SECRET을 설정해야 합니다.",
+  "admin.tab_search_feedback": "정정 피드백",
+  "admin.search_feedback_title": "검색 정정 누적",
+  "admin.search_feedback_total_30d": "최근 30일 '관련 없음' 합계",
+  "admin.search_feedback_top_files": "가장 많이 정정된 파일 (top 20)",
+  "admin.search_feedback_top_queries": "가장 많이 정정된 쿼리 (top 10)",
+  "admin.search_feedback_count": "건수",
+  "admin.search_feedback_empty": "아직 누적된 피드백이 없습니다."
 }
