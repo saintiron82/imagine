@@ -2593,6 +2593,42 @@ class SqliteVectorSearch:
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"Cross-encoder rerank skipped: {exc}")
 
+        # Sprint 1 β1: enforce ConstraintPlan elements via post-hoc check.
+        # The unified decompose output exposes the element list as
+        # `find.keywords` (or legacy `fts_keywords`). We treat the first
+        # few of those as required AND-elements when there are 2+.
+        try:
+            elements_for_check = []
+            if isinstance(unified, dict):
+                find_block = unified.get("find") or {}
+                if isinstance(find_block, dict):
+                    raw_keywords = find_block.get("keywords") or []
+                    if isinstance(raw_keywords, list):
+                        elements_for_check = [
+                            str(x).strip() for x in raw_keywords
+                            if isinstance(x, str) and str(x).strip()
+                        ][:6]
+                if not elements_for_check:
+                    legacy_block = unified.get("_legacy") or {}
+                    if isinstance(legacy_block, dict):
+                        legacy_fts = legacy_block.get("fts_keywords") or []
+                        if isinstance(legacy_fts, list):
+                            elements_for_check = [
+                                str(x).strip() for x in legacy_fts
+                                if isinstance(x, str) and str(x).strip()
+                            ][:6]
+            if len(elements_for_check) >= 2 and len(merged) > 1:
+                pre_count = len(merged)
+                merged = apply_element_verification(
+                    merged, elements=elements_for_check, penalty=0.10,
+                )
+                diag["element_verification"] = {
+                    "elements": elements_for_check,
+                    "pre_count": pre_count,
+                }
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Element verification skipped: {exc}")
+
         # Phase D: soft demotion using accumulated user "irrelevant" feedback.
         # Files repeatedly flagged irrelevant for the same query get a small
         # rrf_score penalty so they drop in subsequent searches.
@@ -3323,3 +3359,52 @@ def apply_folder_filter(rows, folder: str):
     if not needle:
         return rows
     return [r for r in rows if needle in (r.get("folder_path") or "")]
+
+
+def apply_element_verification(
+    rows,
+    *,
+    elements,
+    penalty: float = 0.10,
+):
+    """Sprint 1 β1: penalise rows missing requested ConstraintPlan elements.
+
+    Counts how many elements appear (case-insensitive substring) in the
+    combined text of mc_caption + ai_tags + str(spatial_objects). For
+    each missing element, subtract `penalty` from `rrf_score`. Then
+    re-sort by rrf_score descending. Rows matching every element are
+    unchanged.
+
+    Elements can be in Korean or English; the substring match works on
+    whichever language the row's text uses.
+    """
+    if not elements:
+        return rows
+
+    needles = []
+    for e in elements:
+        if not isinstance(e, str):
+            continue
+        n = e.strip().lower()
+        if n:
+            needles.append(n)
+    if not needles:
+        return rows
+
+    for r in rows:
+        text_parts = [r.get("mc_caption") or "", r.get("ai_tags") or ""]
+        sp = r.get("spatial_objects") or []
+        if isinstance(sp, list):
+            text_parts.extend(str(x) for x in sp)
+        haystack = " ".join(text_parts).lower()
+
+        present = sum(1 for n in needles if n in haystack)
+        missing = len(needles) - present
+        r["element_match_count"] = present
+        r["element_miss_count"] = missing
+        if missing:
+            r["rrf_score"] = float(r.get("rrf_score") or 0.0) - penalty * missing
+
+    rows = list(rows)
+    rows.sort(key=lambda r: r.get("rrf_score", 0.0), reverse=True)
+    return rows
