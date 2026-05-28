@@ -263,6 +263,14 @@ def _activate_server(app_instance):
     except Exception as e:
         logger.warning(f"Relay connector failed to start: {e}")
 
+    # Sprint 2 γ4: auto-tag files repeatedly flagged 'irrelevant'.
+    try:
+        from backend.server.jobs.auto_user_tags import apply_feedback_to_user_tags
+        n_tagged = apply_feedback_to_user_tags(db, threshold=3)
+        logger.info(f"auto_user_tags applied: {n_tagged} file(s) tagged")
+    except Exception as e:
+        logger.warning(f"auto_user_tags failed: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown():
