@@ -581,6 +581,16 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                 {/* Line 1: filename + folder + action buttons */}
                 <div className="flex items-center gap-1">
                     <div className="text-[11px] font-medium text-white truncate flex-1">{fileName}</div>
+                    {onMarkIrrelevant && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onMarkIrrelevant(result.id); }}
+                            className="text-xs text-gray-400 hover:text-red-300 px-2 py-1 rounded border border-gray-700/40 shrink-0"
+                            title={t('search.mark_irrelevant')}
+                            aria-label={t('search.mark_irrelevant')}
+                        >
+                            <X size={12} />
+                        </button>
+                    )}
                     <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                             onClick={(e) => { e.stopPropagation(); onFindSimilar?.(result.id); }}
@@ -589,16 +599,6 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                         >
                             <Sparkles size={12} />
                         </button>
-                        {onMarkIrrelevant && (
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onMarkIrrelevant(result.id); }}
-                                className="p-0.5 hover:bg-red-600/40 rounded text-gray-400 hover:text-red-300 transition-colors text-xs"
-                                title={t('search.mark_irrelevant')}
-                                aria-label={t('search.mark_irrelevant')}
-                            >
-                                <X size={12} />
-                            </button>
-                        )}
                         {isElectron && (
                             <>
                                 <button
