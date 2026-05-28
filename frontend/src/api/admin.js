@@ -244,3 +244,9 @@ export async function createHeadlessWorkerCommand({
 export async function getRelayStatus() {
   return apiClient.get('/api/v1/admin/relay/status');
 }
+
+// ── Search Feedback (Sprint 2 γ3) ──────────────────────────
+
+export async function getSearchFeedbackSummary() {
+  return apiClient.get('/api/v1/admin/search-feedback/summary');
+}
