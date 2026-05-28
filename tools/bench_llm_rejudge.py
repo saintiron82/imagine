@@ -48,7 +48,14 @@ def _load_mlx() -> bool:
         return True
     try:
         from mlx_lm import load
-        model_id = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+        # Larger model is needed for reliable batch-JSON judgement;
+        # Qwen3.5-9B 4-bit fits in ~6GB RAM and handles the format much
+        # better than the 4B variant. Override via env if desired.
+        import os
+        model_id = os.environ.get(
+            "IMAGINE_REJUDGE_MLX_MODEL",
+            "mlx-community/Qwen3.5-9B-MLX-4bit",
+        )
         _mlx_model, _mlx_tok = load(model_id)
         return True
     except Exception as e:
@@ -93,16 +100,40 @@ def _build_judge_prompt(query: str, items: list[dict]) -> str:
     )
 
 
+def _extract_first_json_object(text: str) -> str | None:
+    """Extract the first balanced top-level {...} from arbitrary text.
+
+    Handles nested braces, trailing prose, and ```json``` fences.
+    Returns the JSON substring or None.
+    """
+    if not text:
+        return None
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 def _parse_judgement(out: str, items: list[dict]) -> dict[int, str]:
-    # Find the first JSON object in the response
-    match = re.search(r"\{[^{}]*\}", out, re.DOTALL)
-    if not match:
+    blob = _extract_first_json_object(out)
+    if blob is None:
         return {it["id"]: "skip" for it in items}
     try:
-        parsed = json.loads(match.group(0))
+        parsed = json.loads(blob)
     except Exception:
         return {it["id"]: "skip" for it in items}
     result: dict[int, str] = {}
+    if not isinstance(parsed, dict):
+        return {it["id"]: "skip" for it in items}
     for k, v in parsed.items():
         try:
             fid = int(k)
@@ -146,12 +177,21 @@ def _judge_batch_mlx(query: str, items: list[dict]) -> dict[int, str]:
     prompt = _build_judge_prompt(query, items)
     try:
         messages = [{"role": "user", "content": prompt}]
-        text = _mlx_tok.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True,
-        )
+        # Qwen3.x has a "thinking mode" that emits reasoning prose
+        # before the final answer — disable it so we just get the JSON.
+        try:
+            text = _mlx_tok.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            # Older tokenizers don't accept enable_thinking; fall through.
+            text = _mlx_tok.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+            )
         out = generate(
             _mlx_model, _mlx_tok, prompt=text,
-            max_tokens=300, verbose=False,
+            max_tokens=400, verbose=False,
         )
         return _parse_judgement(out, items)
     except Exception as e:
