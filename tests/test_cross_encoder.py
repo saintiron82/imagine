@@ -76,3 +76,20 @@ def test_rerank_handles_empty_rows():
             raise AssertionError("should not be called with empty rows")
 
     assert rerank(query="q", rows=[], reranker=_Boom()) == []
+
+
+def test_rerank_keeps_tail_beyond_pool_intact():
+    """Wire pattern: rerank head pool, append untouched tail."""
+    from backend.search.cross_encoder import rerank
+
+    class _Reverse:
+        def score_pairs(self, pairs):
+            # Higher index -> higher score so first 5 reverse order.
+            return list(range(len(pairs)))
+
+    pool = [{"id": i} for i in range(5)]
+    tail = [{"id": i} for i in range(5, 10)]
+    out_pool = rerank(query="q", rows=pool, reranker=_Reverse())
+    full = out_pool + tail
+    assert [r["id"] for r in out_pool] == [4, 3, 2, 1, 0]
+    assert [r["id"] for r in full[5:]] == [5, 6, 7, 8, 9]

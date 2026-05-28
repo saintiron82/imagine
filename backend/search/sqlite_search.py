@@ -2574,6 +2574,25 @@ class SqliteVectorSearch:
             for r in merged[:5]
         ]
 
+        # Sprint 1 α: cross-encoder rerank over top-30 candidates.
+        # BGE-reranker-v2-m3 is multilingual and CPU-friendly; load is
+        # lazy so this is a no-op when transformers/the model is not
+        # available.
+        try:
+            from backend.search.cross_encoder import (
+                rerank as _ce_rerank,
+                load_default_reranker,
+            )
+            reranker = load_default_reranker()
+            if reranker is not None and len(merged) > 1:
+                pool_size = min(30, len(merged))
+                pool = merged[:pool_size]
+                reranked = _ce_rerank(query=query, rows=pool, reranker=reranker)
+                merged = reranked + merged[pool_size:]
+                diag["cross_encoder_rerank"] = {"pool_size": pool_size}
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Cross-encoder rerank skipped: {exc}")
+
         # Phase D: soft demotion using accumulated user "irrelevant" feedback.
         # Files repeatedly flagged irrelevant for the same query get a small
         # rrf_score penalty so they drop in subsequent searches.
