@@ -2607,7 +2607,10 @@ class SqliteVectorSearch:
                         elements_for_check = [
                             str(x).strip() for x in raw_keywords
                             if isinstance(x, str) and str(x).strip()
-                        ][:6]
+                        ][:2]   # cap at 2 — first keywords are the structural intent;
+                                # the longer list is mostly synonym expansion and
+                                # treating that as AND over-penalises legitimate
+                                # matches that lack one synonym form.
                 if not elements_for_check:
                     legacy_block = unified.get("_legacy") or {}
                     if isinstance(legacy_block, dict):
@@ -2616,11 +2619,11 @@ class SqliteVectorSearch:
                             elements_for_check = [
                                 str(x).strip() for x in legacy_fts
                                 if isinstance(x, str) and str(x).strip()
-                            ][:6]
+                            ][:2]
             if len(elements_for_check) >= 2 and len(merged) > 1:
                 pre_count = len(merged)
                 merged = apply_element_verification(
-                    merged, elements=elements_for_check, penalty=0.10,
+                    merged, elements=elements_for_check, penalty=0.04,
                 )
                 diag["element_verification"] = {
                     "elements": elements_for_check,
