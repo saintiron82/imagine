@@ -1038,5 +1038,8 @@
   "admin.search_feedback_top_files": "Most-flagged files (top 20)",
   "admin.search_feedback_top_queries": "Most-flagged queries (top 10)",
   "admin.search_feedback_count": "Count",
-  "admin.search_feedback_empty": "No feedback accumulated yet."
+  "admin.search_feedback_empty": "No feedback accumulated yet.",
+  "search.axis_vv": "Strong visual match",
+  "search.axis_mv": "Strong meaning match",
+  "search.axis_fts": "Keyword match"
 }

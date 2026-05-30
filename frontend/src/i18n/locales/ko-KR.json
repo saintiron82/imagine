@@ -1038,5 +1038,8 @@
   "admin.search_feedback_top_files": "가장 많이 정정된 파일 (top 20)",
   "admin.search_feedback_top_queries": "가장 많이 정정된 쿼리 (top 10)",
   "admin.search_feedback_count": "건수",
-  "admin.search_feedback_empty": "아직 누적된 피드백이 없습니다."
+  "admin.search_feedback_empty": "아직 누적된 피드백이 없습니다.",
+  "search.axis_vv": "VV 강함",
+  "search.axis_mv": "의미 일치",
+  "search.axis_fts": "키워드 일치"
 }

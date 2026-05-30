@@ -367,9 +367,11 @@ def search_fts(searcher, query, top_k):
 
 def search_triaxis(searcher, query, top_k):
     try:
-        return [r["id"] for r in searcher.triaxis_search(
+        # Return full row dicts (not just ids) so evaluate_precision can
+        # capture per-result raw axis scores for downstream calibration.
+        return searcher.triaxis_search(
             query, top_k=top_k, threshold=0.0, use_codex=False
-        )]
+        )
     except Exception:
         return []
 
@@ -392,7 +394,27 @@ def evaluate_precision(
 
     for i, q in enumerate(queries):
         gt_ids = q["gt_ids"]
-        ranked_ids = search_fn(q["query"])
+        ranked = search_fn(q["query"])
+
+        # Support BOTH shapes:
+        #  - list of ids (VV/MV/FTS): legacy behavior
+        #  - list of result dicts (triaxis): extract ids + raw axis scores
+        ranked_scores = None
+        if ranked and isinstance(ranked[0], dict):
+            ranked_ids = [r.get("id") for r in ranked]
+            ranked_scores = [
+                {
+                    "id": r.get("id"),
+                    "vector_score": r.get("vector_score"),
+                    "text_vec_score": r.get("text_vec_score"),
+                    "text_score": r.get("text_score"),
+                    "cross_encoder_score": r.get("cross_encoder_score"),
+                    "rrf_score": r.get("rrf_score"),
+                }
+                for r in ranked
+            ]
+        else:
+            ranked_ids = list(ranked)
 
         pq = {
             "file": q["file_name"],
@@ -400,6 +422,8 @@ def evaluate_precision(
             "gt_size": len(gt_ids),
             "ranked_ids": list(ranked_ids),
         }
+        if ranked_scores is not None:
+            pq["ranked_scores"] = ranked_scores
 
         for k in k_values:
             top_k_ids = set(ranked_ids[:k])

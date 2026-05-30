@@ -1485,3 +1485,49 @@ Compare `P@5_llm` against the pre-rerank baseline (0.633 from 2026-05-28). Expec
 - Per-axis weighting in RRF (separate plan).
 - LLM-driven query expansion when `confidence=empty`.
 - Bench live-confidence wiring (still uses `"medium"` placeholder in `bench_precision.py`).
+
+---
+
+## Outcome (2026-05-29)
+
+Sprint 3 was executed against the frozen `frozen_30_v1` queryset with the
+SLM-judge (Qwen3.5-9B-MLX-4bit, thinking-mode disabled).
+
+### Ablation result
+
+| setting                                                  | P@5 keyword | P@5 SLM-judge |
+|----------------------------------------------------------|------------:|--------------:|
+| Sprint 2 baseline                                        |       0.380 |     **0.673** |
+| Sprint 3 full (α+β1+S3.2+S3.3+S3.4)                      |       0.393 |         0.593 |
+| Sprint 3 — spatial OFF (`IMAGINE_BENCH_DISABLE_SPATIAL=1`) |     0.393 |         0.593 |
+| Sprint 3 — expansion OFF                                 |       0.380 |     **0.673** |
+
+S3.3 query expansion was the **sole cause** of the −0.080p (−12%)
+SLM-judge regression. Appending `fts_keywords` synonyms to the MV
+embedding input averages out narrow folder-specific context. S3.2
+spatial boost is harmless on this queryset (queries are mostly `visual`
+type, not `spatial`); kept under an env toggle for future evaluation.
+
+### Final state of Sprint 3 (commit `ce9a502`)
+
+| task | status | kept on branch |
+|------|--------|----------------|
+| S3.1 — bench saves per-result raw axis scores | shipped | yes — enables future calibration |
+| S3.2 — spatial-intent boost                   | shipped | yes — toggleable, no harm on `visual` queries |
+| S3.3 — query expansion                        | reverted | no — proven to regress perceived quality |
+| S3.4 — dominant-axis badge                    | shipped | yes — UX only, no ranking effect |
+
+### Ceiling diagnosis
+
+The architectural ceiling for this approach is **P@5 SLM ≈ 0.67** on a
+17K-asset library with the current decomposer + Triaxis + α-rerank + β1
+AND verification. Further lift requires changes *outside* the search
+engine:
+
+1. Larger queryset (≥200) so micro-optimization signal exceeds variance.
+2. Higher MC caption quality (analysis-side improvement, separately
+   tracked by the user).
+3. Accumulated user `search_feedback` (γ-track) feeding the re-rank
+   passes — requires time-in-production for signal to build up.
+
+Model training was explicitly rejected as a direction.

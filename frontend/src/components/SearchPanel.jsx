@@ -27,6 +27,24 @@ function confidenceBadgeClass(level) {
     }[level] || 'text-gray-400 text-xs';
 }
 
+function dominantAxis(result) {
+    const v = Number(result.vector_score ?? 0);
+    const m = Number(result.text_vec_score ?? 0);
+    const f = Number(result.text_score ?? 0) > 0 ? 0.4 : 0;
+    const scores = [['vv', v], ['mv', m], ['fts', f]];
+    scores.sort((a, b) => b[1] - a[1]);
+    if (scores[0][1] <= 0) return null;
+    return scores[0][0];
+}
+
+function axisBadgeClass(axis) {
+    return {
+        vv:  'bg-blue-900/30 text-blue-300 border border-blue-700/40 px-1.5 py-0.5 rounded text-[10px]',
+        mv:  'bg-purple-900/30 text-purple-300 border border-purple-700/40 px-1.5 py-0.5 rounded text-[10px]',
+        fts: 'bg-amber-900/30 text-amber-300 border border-amber-700/40 px-1.5 py-0.5 rounded text-[10px]',
+    }[axis] || '';
+}
+
 // Filter label mapping for chips display
 const FILTER_LABELS = {
     format: 'filter.format',
@@ -568,12 +586,19 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                         )}
                     </div>
                 </div>
-                {/* Bottom: image_type badge */}
-                {result.image_type && (
-                    <span className="absolute bottom-2 left-2 bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
-                        {result.image_type}
-                    </span>
-                )}
+                {/* Bottom: image_type badge + dominant-axis badge */}
+                <div className="absolute bottom-2 left-2 flex items-center gap-1">
+                    {result.image_type && (
+                        <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
+                            {result.image_type}
+                        </span>
+                    )}
+                    {dominantAxis(result) && (
+                        <span className={axisBadgeClass(dominantAxis(result))}>
+                            {t(`search.axis_${dominantAxis(result)}`)}
+                        </span>
+                    )}
+                </div>
             </div>
 
             {/* Info — compact 2-line layout */}

@@ -2596,6 +2596,24 @@ class SqliteVectorSearch:
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"Cross-encoder rerank skipped: {exc}")
 
+        # Sprint 3 S3.2: spatial-intent boost.
+        # Env IMAGINE_BENCH_DISABLE_SPATIAL=1 skips for A/B benches.
+        try:
+            import os as _bench_os_sp
+            _disable_spatial = _bench_os_sp.environ.get("IMAGINE_BENCH_DISABLE_SPATIAL") == "1"
+            if not _disable_spatial and query_type == "spatial":
+                pre_count = len(merged)
+                merged = apply_spatial_intent_boost(
+                    merged, query_type=query_type, boost=0.10,
+                )
+                boosted = sum(1 for r in merged if (r.get("spatial_score") or 0) > 0)
+                diag["spatial_intent_boost"] = {
+                    "pre_count": pre_count,
+                    "rows_with_spatial_score": boosted,
+                }
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Spatial intent boost skipped: {exc}")
+
         # Sprint 1 β1: enforce ConstraintPlan elements via post-hoc check.
         # The unified decompose output exposes the element list as
         # `find.keywords` (or legacy `fts_keywords`). We treat the first
@@ -3479,3 +3497,38 @@ def apply_element_verification(
     else:
         rows.sort(key=lambda r: r.get("rrf_score", 0.0), reverse=True)
     return rows
+
+
+def apply_spatial_intent_boost(rows, *, query_type, boost: float = 0.10):
+    """Sprint 3 S3.2: when query_type == 'spatial', boost rows with
+    positive spatial_score by `boost * spatial_score`. Adds to both
+    rrf_score and cross_encoder_score (when present), then re-sorts.
+    """
+    if query_type != "spatial" or not rows:
+        return rows
+
+    has_ce = any(r.get("cross_encoder_score") is not None for r in rows)
+    boosted_count = 0
+    for r in rows:
+        s = float(r.get("spatial_score") or 0.0)
+        if s <= 0.0:
+            continue
+        gain = boost * s
+        r["rrf_score"] = float(r.get("rrf_score") or 0.0) + gain
+        if r.get("cross_encoder_score") is not None:
+            r["cross_encoder_score"] = (
+                float(r.get("cross_encoder_score") or 0.0) + gain
+            )
+        boosted_count += 1
+
+    rows = list(rows)
+    if has_ce:
+        rows.sort(
+            key=lambda r: float(r.get("cross_encoder_score") or 0.0),
+            reverse=True,
+        )
+    else:
+        rows.sort(key=lambda r: r.get("rrf_score", 0.0), reverse=True)
+    return rows
+
+
