@@ -55,6 +55,7 @@ _test_*.json
 
 # Claude Code local settings
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Windows build artifacts
 dist-win/
