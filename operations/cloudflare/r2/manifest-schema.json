@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://imagine.zeroechodaily.com/schemas/release-manifest-v1.json",
+  "title": "Imagine release manifest",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "channel",
+    "version",
+    "released_at",
+    "artifacts",
+    "signature"
+  ],
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "channel": { "enum": ["stable", "beta", "nightly"] },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-z0-9.]+)?$" },
+    "released_at": { "type": "string", "format": "date-time" },
+    "min_supported_version": { "type": "string" },
+    "rollback_policy": {
+      "enum": ["auto_on_health_check_failure", "manual_only", "never"]
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["url", "sha256", "size_bytes"],
+        "properties": {
+          "url": { "type": "string", "format": "uri" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "size_bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "migration_plan": {
+      "type": "object",
+      "properties": {
+        "db_schema_target": { "type": "integer" },
+        "scripts": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": ["alg", "key_id", "value"],
+      "properties": {
+        "alg": { "const": "ed25519" },
+        "key_id": { "type": "string" },
+        "value": { "type": "string" }
+      }
+    }
+  }
+}
