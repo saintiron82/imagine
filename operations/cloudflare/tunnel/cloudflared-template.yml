@@ -1,0 +1,21 @@
+# cloudflared template — copy to ~/.cloudflared/config.yml on the host running
+# the Imagine local server. Replace the placeholders before use.
+#
+# Setup once: `cloudflared tunnel login` (opens browser to authorize).
+# Create tunnel:  `cloudflared tunnel create imagine-<host-nick>`
+# Route DNS:      `cloudflared tunnel route dns imagine-<host-nick> <hostname>`
+# Run service:    `cloudflared service install` (uses this config)
+
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /etc/cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+
+ingress:
+  # Public hostname → local Imagine HTTP API (default port 5174 in dev).
+  - hostname: REPLACE_WITH_HOSTNAME
+    service: http://localhost:5174
+    originRequest:
+      noTLSVerify: false
+      connectTimeout: 30s
+
+  # Required catch-all — anything that doesn't match above gets 404.
+  - service: http_status:404
