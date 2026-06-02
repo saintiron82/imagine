@@ -41,6 +41,20 @@
 
 **A → B → C 점진**. C까지 한 번에 묶지 않는다. 단, **D(Spatial 백필)는 A/B와 병렬 가능**하다 — backfill은 분석 파이프라인 작업이라 Control Plane과 코드 표면이 겹치지 않음.
 
+### AI Recommendation (2026-06-02)
+
+> **A + P10 병렬**.
+
+근거 요약:
+1. A만으로 Personal Local 플랜 출시 가능 → 6~8주 안에 첫 매출 경로 확보.
+2. B(P1/P3/P7)는 실제 사용자 피드백 없이 만들면 가짜 요구사항으로 재작업 위험.
+3. P10은 분석 트랙이라 Control Plane과 코드 표면이 겹치지 않음 — 검색 천장 0.673을 깨는 마지막 측정 가능 카드. 미루면 영영 측정 안 됨.
+4. C와 D 단독은 거절: C는 출시 자체가 늦어짐(6~9개월), D는 매출 0.
+
+위험: A 출시 후 Team 사용자가 "초대 기능 없네"를 즉시 발견 → B를 빠르게 따라가야 하지만 이는 의도된 시퀀스.
+
+상세: `~/.claude/plans/rosy-herding-pebble.md` § Decision 1.
+
 ### Decision
 
 | 항목 | 값 |
@@ -73,6 +87,26 @@
 - **C가 운영비/단순성 측면에서 최강**. 단, 사이트와 SaaS Control Plane을 같이 두는 것이 보안적으로 문제 없는지 사용자 판단 필요.
 - 만약 분리하고 싶으면 **B (Fly.io + Postgres)**가 가장 표준적.
 - A는 D1의 schema migration 한계로 인해 비추. KV만 보조 사용하는 hybrid는 가능.
+
+### AI Recommendation (2026-06-02)
+
+> **B. Fly.io 또는 Railway + 관리형 Postgres (Neon free)** — Cloudflare는 BYO 라우팅·R2 release CDN으로만 사용.
+
+근거 요약:
+1. 표준 Postgres = §15.1의 13개 테이블 migration이 Alembic 등으로 표준 처리 가능. D1은 migration 도구가 약하고 row limit 존재.
+2. Stripe webhook 수신·재시도·서명 검증이 standard HTTP server에서 자연스러움. Workers + D1은 까다로움.
+3. 비용 차이 무시 가능 ($0~5/월 vs Workers free).
+4. zeroechodaily.com과 보안 도메인 분리 — 한쪽 취약점이 다른 쪽으로 번지지 않음.
+5. Lock-in 최소 — Postgres는 어디든 이주 가능.
+
+미해결 단서: zeroechodaily.com의 실제 스택을 모름. 이미 Node + Postgres 기반이라면 C(공유)도 합리적이고 재평가 가치 있음. WordPress 등이라면 명확히 B 추천.
+
+거절한 옵션:
+- A (Cloudflare Workers + D1): D1 migration 한계 + webhook 재시도 부재. v1에 과한 선택.
+- C (zeroechodaily.com 공유): 스택 정보 부족, 보안 도메인 합쳐지는 비용 큼.
+- D (Supabase/Firebase 풀스택): entitlement 로직 vendor-lock 위험. Firebase auth는 별개로 유지.
+
+상세: `~/.claude/plans/rosy-herding-pebble.md` § Decision 2.
 
 ### Decision
 
@@ -114,6 +148,14 @@
 | Entitlement engine | Build / Stripe Customer Portal에 위임 | **Build (얇게)**. 핵심 IP. Stripe webhook → 자체 entitlement table 동기화 패턴. |
 | License token 서명 | Build 필수 | RSA/Ed25519 키 페어로 자체 서명. 외부 vendor 의존 비추. |
 | Seat management UI | Build 필수 | 조직 admin 화면 (§19.1). |
+
+### AI Recommendation (2026-06-02)
+
+> **트래커의 권장안을 그대로 채택**. 새로 바꿀 항목 없음.
+
+추가 권장: **기존 11-phase Secure External Worker Access(`docs/superpowers/plans/2026-05-25-secure-external-worker-access.md`)의 enrollment token + audit log 패턴을 P2 Token Authority의 PoC로 추출·재사용**. Node Activation Token과 Route Token의 원형이 그대로 거기에 있음 — 새로 설계하지 말고 추출.
+
+상세: `~/.claude/plans/rosy-herding-pebble.md` § Decision 3.
 
 ### Decision
 
