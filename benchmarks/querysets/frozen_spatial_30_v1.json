@@ -1,5 +1,5 @@
 {
-  "frozen_at": "2026-06-02T23:36:36.329877+00:00",
+  "frozen_at": "2026-06-02T23:37:29.828469+00:00",
   "count": 30,
   "queries": [
     {
@@ -32,7 +32,9 @@
         28779,
         28781,
         28782
-      ]
+      ],
+      "gt_count": 17,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28707,
@@ -63,7 +65,9 @@
         28774,
         28775,
         28787
-      ]
+      ],
+      "gt_count": 16,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28699,
@@ -87,7 +91,9 @@
         28767,
         28772,
         28782
-      ]
+      ],
+      "gt_count": 9,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28696,
@@ -110,7 +116,9 @@
         28765,
         28786,
         31333
-      ]
+      ],
+      "gt_count": 8,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28697,
@@ -133,7 +141,9 @@
         28729,
         28785,
         28787
-      ]
+      ],
+      "gt_count": 8,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28714,
@@ -156,7 +166,9 @@
         28753,
         28765,
         28784
-      ]
+      ],
+      "gt_count": 8,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28701,
@@ -178,7 +190,9 @@
         28895,
         28901,
         31346
-      ]
+      ],
+      "gt_count": 7,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28695,
@@ -200,7 +214,9 @@
         28737,
         28744,
         28753
-      ]
+      ],
+      "gt_count": 7,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28710,
@@ -222,7 +238,9 @@
         28729,
         28768,
         28771
-      ]
+      ],
+      "gt_count": 7,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28727,
@@ -243,7 +261,9 @@
         28780,
         28784,
         28896
-      ]
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28695,
@@ -264,7 +284,9 @@
         28754,
         28775,
         28893
-      ]
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28709,
@@ -285,7 +307,9 @@
         28764,
         28784,
         28785
-      ]
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28698,
@@ -305,7 +329,9 @@
         28717,
         28732,
         28754
-      ]
+      ],
+      "gt_count": 5,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28699,
@@ -325,7 +351,9 @@
         28767,
         28772,
         28782
-      ]
+      ],
+      "gt_count": 5,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28887,
@@ -344,7 +372,9 @@
         28896,
         28897,
         28901
-      ]
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28695,
@@ -363,7 +393,9 @@
         28734,
         28754,
         28777
-      ]
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28706,
@@ -382,7 +414,9 @@
         28897,
         28901,
         28910
-      ]
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28706,
@@ -401,7 +435,9 @@
         28723,
         28736,
         28760
-      ]
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28709,
@@ -420,7 +456,9 @@
         28724,
         28730,
         28734
-      ]
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28716,
@@ -439,7 +477,9 @@
         28717,
         28730,
         28779
-      ]
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28725,
@@ -458,7 +498,9 @@
         28734,
         28736,
         28768
-      ]
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28730,
@@ -477,7 +519,9 @@
         28753,
         28755,
         28895
-      ]
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28754,
@@ -495,7 +539,9 @@
         28754,
         28770,
         63121
-      ]
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28696,
@@ -513,7 +559,9 @@
         28696,
         28758,
         28775
-      ]
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28696,
@@ -531,7 +579,9 @@
         28696,
         28724,
         28780
-      ]
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28704,
@@ -549,7 +599,9 @@
         28704,
         28757,
         28763
-      ]
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28706,
@@ -567,7 +619,9 @@
         28706,
         28784,
         28785
-      ]
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28707,
@@ -585,7 +639,9 @@
         28707,
         28708,
         28777
-      ]
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28713,
@@ -603,7 +659,9 @@
         28713,
         28774,
         28787
-      ]
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
     },
     {
       "source_id": 28715,
@@ -621,7 +679,9 @@
         28715,
         28756,
         28758
-      ]
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
     }
   ]
 }

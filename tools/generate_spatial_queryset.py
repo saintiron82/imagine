@@ -125,6 +125,8 @@ def build_queryset(pairs: list[dict], count: int) -> dict:
                 "folder": None,
                 "spatial_location": p["location"],
                 "gt_ids": p["file_ids"],
+                "gt_count": len(p["file_ids"]),
+                "scope_ground_truth": False,
             }
         )
     return {
