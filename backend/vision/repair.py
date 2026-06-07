@@ -16,6 +16,7 @@ MINIMUM_GUARANTEED_FIELDS = {
     "caption": "",
     "tags": [],
     "objects": [],
+    "structural_objects": [],
     "depth_layers": [],
     "relations": [],
     "art_style": "other",
@@ -41,6 +42,7 @@ _OBJECT_FIELDS = {
     "primary_location",
     "extent",
     "confidence",
+    "salience",
 }
 
 _DEPTH_LAYERS = {"foreground", "midground", "background"}
@@ -150,7 +152,7 @@ def _extract_fields_fallback(raw: str, schema: dict) -> dict:
         if extracted_value is not None:
             try:
                 parsed_value = json.loads(extracted_value)
-                if field_name == "objects":
+                if field_name in {"objects", "structural_objects"}:
                     result[field_name] = _coerce_spatial_objects(parsed_value)
                 else:
                     result[field_name] = parsed_value
@@ -158,8 +160,8 @@ def _extract_fields_fallback(raw: str, schema: dict) -> dict:
             except json.JSONDecodeError:
                 pass
 
-        if field_name == "objects":
-            result.setdefault("objects", [])
+        if field_name in {"objects", "structural_objects"}:
+            result.setdefault(field_name, [])
             continue
 
         # String value pattern
@@ -186,6 +188,9 @@ def _validate_fields(parsed: dict) -> bool:
 def _sanitize_result(parsed: dict) -> dict:
     result = dict(parsed)
     result["objects"] = _coerce_spatial_objects(result.get("objects", []))
+    result["structural_objects"] = _coerce_spatial_objects(
+        result.get("structural_objects", [])
+    )
     result["depth_layers"] = _coerce_depth_layers(result.get("depth_layers", []))
     result["relations"] = _coerce_relations(result.get("relations", []))
     return result
@@ -299,7 +304,7 @@ def _coerce_flat_object_tokens(tokens: list) -> list[dict]:
                 i += 1
             current["locations"] = locations
             continue
-        elif token in {"primary_location", "extent", "confidence"}:
+        elif token in {"primary_location", "extent", "confidence", "salience"}:
             if i + 1 < len(text_tokens) and text_tokens[i + 1] not in _OBJECT_FIELDS:
                 current[token] = text_tokens[i + 1]
                 i += 2
@@ -343,6 +348,8 @@ def _sanitize_spatial_object(raw: dict) -> dict | None:
 
     if not primary_location or not locations:
         return None
+    if len(locations) > 3:
+        locations = locations[:3]
 
     extent = str(raw.get("extent") or "").strip().lower()
     if extent not in {"small", "medium", "large", "wide", "full"}:
@@ -352,7 +359,7 @@ def _sanitize_spatial_object(raw: dict) -> dict | None:
     if confidence not in {"high", "medium", "low"}:
         confidence = "low"
 
-    return {
+    obj = {
         "name": name,
         "ko_name": ko_name,
         "locations": locations,
@@ -360,6 +367,10 @@ def _sanitize_spatial_object(raw: dict) -> dict | None:
         "extent": extent,
         "confidence": confidence,
     }
+    salience = str(raw.get("salience") or "").strip().lower()
+    if salience in {"primary", "secondary", "background"}:
+        obj["salience"] = salience
+    return obj
 
 
 def _normalize_location(value) -> str | None:

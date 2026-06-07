@@ -40,7 +40,7 @@ def test_spatial_objects_are_normalized_from_structured_meta():
         },
         {
             "name": "tree",
-            "ko_name": "",
+            "ko_name": "나무",
             "locations": ["bottom-left"],
             "primary_location": "bottom-left",
             "extent": "",
@@ -74,6 +74,93 @@ def test_flat_spatial_object_tokens_are_normalized_from_legacy_fallback():
             "extent": "",
             "confidence": "low",
         }
+    ]
+
+
+def test_spatial_object_normalization_limits_secondary_locations_and_salience():
+    structured_meta = {
+        "objects": [
+            {
+                "name": "Walls",
+                "ko_name": "",
+                "primary_location": "center",
+                "locations": [
+                    "center",
+                    "left",
+                    "right",
+                    "top",
+                    "bottom",
+                    "top-left",
+                ],
+                "extent": "full",
+                "confidence": "high",
+                "salience": "primary",
+            }
+        ]
+    }
+
+    objects = SQLiteDB._normalize_spatial_objects_from_meta(structured_meta)
+
+    assert objects == [
+        {
+            "name": "wall",
+            "ko_name": "벽",
+            "locations": ["center", "left", "right"],
+            "primary_location": "center",
+            "extent": "full",
+            "confidence": "high",
+            "salience": "primary",
+        }
+    ]
+
+
+def test_structural_objects_are_normalized_alongside_ordinary_objects():
+    structured_meta = {
+        "objects": [
+            {
+                "name": "Chair",
+                "ko_name": "의자",
+                "primary_location": "left",
+                "locations": ["left"],
+                "extent": "medium",
+                "confidence": "high",
+                "salience": "secondary",
+            }
+        ],
+        "structural_objects": [
+            {
+                "name": "Walls",
+                "ko_name": "",
+                "primary_location": "center",
+                "locations": ["center", "left", "right", "top"],
+                "extent": "full",
+                "confidence": "medium",
+                "salience": "background",
+            }
+        ],
+    }
+
+    objects = SQLiteDB._normalize_spatial_objects_from_meta(structured_meta)
+
+    assert objects == [
+        {
+            "name": "chair",
+            "ko_name": "의자",
+            "locations": ["left"],
+            "primary_location": "left",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary",
+        },
+        {
+            "name": "wall",
+            "ko_name": "벽",
+            "locations": ["center", "left", "right"],
+            "primary_location": "center",
+            "extent": "full",
+            "confidence": "medium",
+            "salience": "background",
+        },
     ]
 
 

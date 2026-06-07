@@ -15,8 +15,22 @@ SPATIAL_OBJECTS_FIELD = (
     "name (English object/tag name), ko_name (Korean object name if known), "
     "locations (array using one or more of: top-left, top, top-right, left, center, right, "
     "bottom-left, bottom, bottom-right), primary_location (one value from locations), "
-    "extent (small, medium, large, wide, full), confidence (high, medium, low). "
-    "Use multiple locations for wide or spanning objects such as sky, ground, forest, walls."
+    "extent (small, medium, large, wide, full), confidence (high, medium, low), "
+    "salience (primary, secondary, background). "
+    "Choose exactly one primary_location as the representative grid cell. "
+    "Use extra locations sparingly for secondary cells only when the object clearly spans them; "
+    "locations should contain at most 3 cells total. Include searchable structural objects "
+    "such as walls, floors, ceilings, doors, windows, stairs, fences, gates, buildings, shelves, "
+    "cabinets, sky, water, and trees when visible."
+)
+
+SPATIAL_STRUCTURAL_OBJECTS_FIELD = (
+    "array of visible scene-structure objects only. Keep ordinary objects and structural objects separate. "
+    "Use this for architecture, room parts, and large environmental anchors such as wall, floor, ceiling, "
+    "door, window, stairs, railing, fence, gate, castle, building, shelf, cabinet, road, sky, water, tree, "
+    "and mountain. Each item must use the same object-location shape as objects: name, ko_name, locations, "
+    "primary_location, extent, confidence, salience. Choose exactly one primary_location first and keep "
+    "locations to at most 3 cells total."
 )
 
 SPATIAL_DEPTH_LAYERS_FIELD = (
@@ -27,12 +41,12 @@ SPATIAL_DEPTH_LAYERS_FIELD = (
 )
 
 SPATIAL_RELATIONS_FIELD = (
-    "array of maximum 5 visible object-to-object spatial relations. Each item must be an object with: "
-    "subject (English object/tag name), relation (one of: on, under, left_of, right_of, above, below, "
-    "in_front_of, behind, inside, around, attached_to, near, overlapping), "
+    "array of maximum 3 high-confidence visible object-to-object spatial relations. Each item must be an object with: "
+    "subject (English object/tag name), relation (one of: left_of, right_of, above, below, "
+    "in_front_of, behind, on, under, inside, attached_to), "
     "object (English object/tag name), subject_location (optional 3x3 grid cell), "
     "object_location (optional 3x3 grid cell), confidence (high, medium, low). "
-    "Only include relations that are directly visible."
+    "Only include relations that are directly visible and whose subject/object names match listed objects."
 )
 
 SPATIAL_SCHEMA_VERSION_FIELD = "integer. Current value must be 2."
@@ -146,6 +160,7 @@ def get_schema(image_type: str) -> dict:
     else:
         schema = dict(STAGE2_SCHEMAS.get(image_type, STAGE2_SCHEMAS["generic"]))
     schema.setdefault("objects", SPATIAL_OBJECTS_FIELD)
+    schema.setdefault("structural_objects", SPATIAL_STRUCTURAL_OBJECTS_FIELD)
     schema.setdefault("depth_layers", SPATIAL_DEPTH_LAYERS_FIELD)
     schema.setdefault("relations", SPATIAL_RELATIONS_FIELD)
     schema.setdefault("spatial_schema_version", SPATIAL_SCHEMA_VERSION_FIELD)

@@ -35,16 +35,21 @@ STAGE1_PROMPT = STAGE1_USER
 STAGE2_SYSTEM = "You are a strict JSON generator. Output valid JSON only matching the provided schema. No explanation, no markdown fences."
 
 SPATIAL_OBJECT_INSTRUCTIONS = """Object-location extraction:
-- Populate "objects" for the concrete visible elements that justify the caption/tags.
+- Populate "objects" for ordinary concrete visible elements that justify the caption/tags: furniture, props, characters, items, curtains, boxes, bottles, handles, lights, symbols, and other searchable non-structural objects.
+- Searchable structural objects: populate "structural_objects" separately for visible architecture, room parts, and large scene anchors such as wall, floor, ceiling, door, window, stairs, railing, fence, gate, castle, building, shelf, cabinet, road, sky, water, tree, and mountain.
+- Keep ordinary objects and structural objects separate. Do not move ordinary props into structural_objects.
 - Use a 3x3 image grid only: top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right.
-- Use multiple locations when an element spans more than one grid cell.
-- Set primary_location to the most representative cell from locations.
+- Choose exactly one primary_location: the single most representative grid cell for the object.
+- Use extra locations sparingly. Add secondary cells only when a large object visibly spans them; locations should contain at most 3 cells total.
+- For wide/full objects such as walls, floors, ceilings, sky, or water, still choose one primary_location first.
 - Use extent small/medium/large/wide/full and confidence high/medium/low.
+- Add salience primary/secondary/background for each object. Use primary for the most searchable scene anchors, secondary for useful visible objects, background for weak decorative/repeating elements.
 - Prefer concrete visible elements: moon, character, tree, window, sword, text overlay, sky, wall, water.
 - Populate "depth_layers" for clear foreground, midground, background evidence.
-- Populate "relations" with maximum 5 visible object-to-object spatial relations.
-- Use relation values only from: on, under, left_of, right_of, above, below, in_front_of, behind, inside, around, attached_to, near, overlapping.
-- Do not invent invisible objects. If no reliable object can be localized, return "objects": [].
+- Populate "relations" with maximum 3 high-confidence visible object-to-object spatial relations.
+- Use relation values only from: left_of, right_of, above, below, in_front_of, behind, on, under, inside, attached_to.
+- Relation subject/object names should match objects you already listed.
+- Do not invent invisible objects. If no reliable object can be localized, return "objects": [] and/or "structural_objects": [].
 """
 
 STAGE2_PROMPTS = {
@@ -169,10 +174,22 @@ _CONCISE_OUTPUT_FMT = f"""\nReturn ONLY this JSON (no markdown fences):
     {{
       "name": "visible object/tag name",
       "ko_name": "Korean object name if known",
-      "locations": ["one or more of: top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right"],
+      "locations": ["primary_location first; add few secondary cells only when object clearly spans them"],
       "primary_location": "one value from locations",
       "extent": "small|medium|large|wide|full",
-      "confidence": "high|medium|low"
+      "confidence": "high|medium|low",
+      "salience": "primary|secondary|background"
+    }}
+  ],
+  "structural_objects": [
+    {{
+      "name": "visible structural object/tag name",
+      "ko_name": "Korean object name if known",
+      "locations": ["primary_location first; add few secondary cells only when object clearly spans them"],
+      "primary_location": "one value from locations",
+      "extent": "small|medium|large|wide|full",
+      "confidence": "high|medium|low",
+      "salience": "primary|secondary|background"
     }}
   ],
   "depth_layers": [
@@ -186,7 +203,7 @@ _CONCISE_OUTPUT_FMT = f"""\nReturn ONLY this JSON (no markdown fences):
   "relations": [
     {{
       "subject": "visible object/tag name",
-      "relation": "on|under|left_of|right_of|above|below|in_front_of|behind|inside|around|attached_to|near|overlapping",
+      "relation": "left_of|right_of|above|below|in_front_of|behind|on|under|inside|attached_to",
       "object": "visible object/tag name",
       "subject_location": "optional 3x3 grid cell",
       "object_location": "optional 3x3 grid cell",

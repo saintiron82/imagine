@@ -68,14 +68,39 @@ def _build_query(ko: str, location: str) -> str:
     return f"{_location_phrase(location)} {ko}{particle} 있는 이미지"
 
 
-def collect_pairs(db_path: Path, min_files_per_pair: int = 2) -> list[dict]:
+def load_file_ids(path: Path) -> set[int]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    raw_files = data.get("files", data if isinstance(data, list) else [])
+    file_ids = set()
+    for row in raw_files:
+        if not isinstance(row, dict):
+            continue
+        value = row.get("file_id", row.get("id"))
+        if value is not None:
+            file_ids.add(int(value))
+    return file_ids
+
+
+def collect_pairs(
+    db_path: Path,
+    min_files_per_pair: int = 2,
+    file_ids: set[int] | None = None,
+) -> list[dict]:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
+        params: tuple[int, ...] = ()
+        file_filter = ""
+        if file_ids:
+            placeholders = ",".join("?" for _ in file_ids)
+            file_filter = f" AND file_id IN ({placeholders})"
+            params = tuple(sorted(file_ids))
         rows = conn.execute(
-            """SELECT file_id, name, ko_name, primary_location
-               FROM file_objects
-               WHERE primary_location IS NOT NULL AND primary_location != ''"""
+            f"""SELECT file_id, name, ko_name, primary_location
+                FROM file_objects
+                WHERE primary_location IS NOT NULL AND primary_location != ''
+                {file_filter}""",
+            params,
         ).fetchall()
     finally:
         conn.close()
@@ -146,10 +171,17 @@ def main() -> int:
     parser.add_argument("--count", type=int, default=30)
     parser.add_argument("--min-files", type=int, default=2,
                         help="Each (object, location) pair must appear in ≥N files.")
+    parser.add_argument(
+        "--file-id-json",
+        help="Optional manifest containing files[].file_id/id; limits queryset to those files.",
+    )
     args = parser.parse_args()
 
-    pairs = collect_pairs(Path(args.db), min_files_per_pair=args.min_files)
+    file_ids = load_file_ids(Path(args.file_id_json)) if args.file_id_json else None
+    pairs = collect_pairs(Path(args.db), min_files_per_pair=args.min_files, file_ids=file_ids)
     print(f"pairs with ≥{args.min_files} supporting files: {len(pairs)}")
+    if file_ids is not None:
+        print(f"limited to sample file_ids: {len(file_ids)}")
     if len(pairs) < args.count:
         print(
             f"WARNING: only {len(pairs)} eligible pairs available; "
