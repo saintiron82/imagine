@@ -238,7 +238,7 @@ class DownloadAheadPool(BaseAheadPool):
         except Exception as e:
             logger.warning(f"DownloadAhead: failed to mark task {task_id}: {e}")
             try:
-                self.db.conn.commit()
+                self.db.conn.rollback()
             except Exception:
                 pass
 
@@ -266,7 +266,7 @@ class DownloadAheadPool(BaseAheadPool):
         except Exception as e:
             logger.warning(f"DownloadAhead: recovery check failed: {e}")
             try:
-                self.db.conn.commit()
+                self.db.conn.rollback()
             except Exception:
                 pass
 
@@ -361,7 +361,7 @@ class DownloadAheadPool(BaseAheadPool):
         except Exception as e:
             logger.warning(f"DownloadAhead: force recovery failed: {e}")
             try:
-                self.db.conn.commit()
+                self.db.conn.rollback()
             except Exception:
                 pass
             return 0
@@ -380,7 +380,7 @@ class DownloadAheadPool(BaseAheadPool):
                 logger.warning(f"DownloadAheadPool: temp cleanup failed: {e}")
         self._temp_dir = None
 
-    def release_slot(self, file_id: int, file_path: str = None):
+    def release_slot(self, file_id: int):
         """Release a buffer slot after parse completion.
 
         Deletes the temp file and frees a semaphore slot for new downloads.
@@ -437,25 +437,6 @@ class DownloadAheadPool(BaseAheadPool):
                 self.db.conn.rollback()
             except Exception:
                 pass
-
-    def _has_active_workers(self) -> bool:
-        """Check if any worker (embedded or external) is active."""
-        if self.has_recent_demand():
-            return True
-        try:
-            from backend.server.embedded_worker import get_status
-            if get_status().get("running"):
-                return True
-        except Exception:
-            pass
-        try:
-            cursor = self.db.conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM worker_sessions WHERE status = 'online'")
-            if cursor.fetchone()[0] > 0:
-                return True
-        except Exception:
-            pass
-        return False
 
     def _loop(self):
         """Main loop: find pending WebDAV jobs, download originals.
@@ -646,6 +627,12 @@ class DownloadAheadPool(BaseAheadPool):
                         logger.warning("DownloadAhead: network unreachable — pausing")
                         self._network_paused = True
                 self._buffer_sem.release()
+                # Remove partially-written file so it can't be mistaken
+                # for a completed download later
+                try:
+                    local_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
                 return
 
             # Success — reset failure streak
@@ -656,24 +643,8 @@ class DownloadAheadPool(BaseAheadPool):
             with self._active_lock:
                 self._active_files[file_id] = str(local_path)
 
-            # Mark file_task download as done (with retry for DB locked)
-            for _retry in range(5):
-                try:
-                    cursor = self.db.conn.cursor()
-                    cursor.execute(
-                        "UPDATE file_tasks SET download_status = 'done', updated_at = ? WHERE id = ?",
-                        (time.strftime("%Y-%m-%d %H:%M:%S"), task_id),
-                    )
-                    self.db.conn.commit()
-                    break
-                except Exception as e:
-                    if "locked" in str(e) and _retry < 4:
-                        time.sleep(1)
-                        continue
-                    logger.warning(
-                        f"DownloadAhead: failed to update file_tasks "
-                        f"for task {task_id}: {e}"
-                    )
+            # Mark file_task download as done → FileTaskParsePool picks it up
+            self._mark_task_downloaded(task_id)
 
             logger.info(
                 f"DownloadAhead: downloaded {filename} "

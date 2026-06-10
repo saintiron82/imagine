@@ -278,7 +278,7 @@ class FileTaskParsePool(BaseAheadPool):
 
         # 8. Release download buffer slot (WebDAV only)
         if is_webdav and self._download_pool:
-            self._download_pool.release_slot(file_id, file_path)
+            self._download_pool.release_slot(file_id)
 
         return ""  # success
 
