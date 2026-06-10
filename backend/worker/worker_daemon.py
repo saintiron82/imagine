@@ -907,56 +907,6 @@ class WorkerDaemon:
 
     _vv_encoder = None  # Cached SigLIP2 encoder (class-level singleton)
 
-    def _run_embed_vv(self, thumb_path: str):
-        """Phase E-VV: Generate visual vector (SigLIP2)."""
-        vv_vec = None
-        structure_vec = None
-
-        if thumb_path and Path(thumb_path).exists():
-            try:
-                from backend.vector.siglip2_encoder import SigLIP2Encoder
-                from PIL import Image
-
-                if WorkerDaemon._vv_encoder is None:
-                    WorkerDaemon._vv_encoder = SigLIP2Encoder()
-                encoder = WorkerDaemon._vv_encoder
-                img = Image.open(thumb_path).convert("RGB")
-                try:
-                    vv_vec = encoder.encode_image(img)
-
-                    if hasattr(encoder, 'encode_structure'):
-                        structure_vec = encoder.encode_structure(img)
-                finally:
-                    img.close()
-
-            except Exception as e:
-                logger.warning(f"VV encoding failed: {e}")
-
-        return vv_vec, structure_vec
-
-    def _run_embed_mv(self, metadata: dict):
-        """Phase E-MV: Generate meaning vector (Qwen3-Embedding)."""
-        mv_vec = None
-
-        mc_caption = metadata.get("mc_caption", "")
-        ai_tags = metadata.get("ai_tags", "")
-        # ai_tags may be a list from VLM — convert to string
-        if isinstance(ai_tags, list):
-            ai_tags = ", ".join(str(t) for t in ai_tags)
-        if mc_caption or ai_tags:
-            try:
-                from backend.vector.text_embedding import get_text_embedding_provider
-
-                embedder = get_text_embedding_provider()
-                mv_text = f"{mc_caption} {ai_tags}".strip()
-                if mv_text:
-                    mv_vec = embedder.encode(mv_text)
-
-            except Exception as e:
-                logger.warning(f"MV encoding failed: {e}")
-
-        return mv_vec
-
     # ── Phase Helpers ────────────────────────────────────────────
 
     def _run_vision_phase(self, active: list, progress_callback=None) -> float:
@@ -987,7 +937,6 @@ class WorkerDaemon:
 
             self._current_phase = "vision"
             self._current_file = Path(ctx.job["file_path"]).name
-            self.uploader.report_progress(ctx.job["job_id"], "vision")
 
             # Keep-alive: update DB metrics during long processing
             if i > 0 and i % 5 == 0:
@@ -1102,30 +1051,22 @@ class WorkerDaemon:
     # ── Batch Processing (Phase-Level with Sub-Batch Inference) ──
 
     def process_batch_phased(self, jobs: list, progress_callback=None) -> list:
-        """Process a batch of jobs using phase-level sub-batch processing.
+        """Process a batch of claimed tasks for the current processing_mode.
 
-        Mirrors the local pipeline (ingest_engine.py) approach:
-        - Parse: 1-by-1 (CPU-bound)
-        - Vision (VLM): 1-by-1 (MLX/transformers batch_size=1)
-        - VV (SigLIP2): real batch via encode_image_batch()
-        - MV (Qwen3-Embedding): real batch via encode_batch()
+        Mode routing (mode is assigned by the server scheduler):
+        - "mc": Vision (VLM/MC) phase only. VLM stays loaded across batches.
+        - "vv": VV (SigLIP2) phase only — real batch via encode_image_batch().
+        - "mv": MV (Qwen3-Embedding) phase only — real batch via encode_batch().
 
-        Mode routing:
-        - "mc":    Only Vision (VLM/MC) phase. VLM stays loaded.
-                   Server handles Parse (FileTaskParsePool), VV, MV separately.
-        - "vv":    Only VV (SigLIP2) phase.
-        - "mv":    Only MV (Qwen3-Embedding) phase.
-        - "parse": Only Parse + Thumbnail (CPU-only, no GPU).
-
-        Each phase tracks elapsed time and reports files/min.
+        Parse and Download are server-side pools (FileTaskParsePool /
+        DownloadAheadPool) — workers never handle them.
 
         Args:
-            jobs: List of job dicts with job_id, file_id, file_path.
+            jobs: List of task dicts with job_id (== file_tasks.id), file_id, file_path.
             progress_callback: Optional callback(event_type, data) for IPC progress.
         Returns:
             List of (job_id, success) tuples.
         """
-        # Parse is server-only (FileTaskParsePool). Workers handle MC/VV/MV only.
         if self.processing_mode == "mc":
             return self._process_batch_mc(jobs, progress_callback)
 
@@ -1135,369 +1076,19 @@ class WorkerDaemon:
         if self.processing_mode == "mv":
             return self._process_batch_mv_only(jobs, progress_callback)
 
-        t_batch = time.perf_counter()
-
-        # Build job contexts and resolve file access (uses prefetched downloads)
-        contexts = []
-        for job in jobs:
-            ctx = _JobContext(job=job)
-            file_path = job.get("file_path", "")
-            is_remote = file_path.startswith(("webdav://", "http://", "https://"))
-
-            if not job.get("pre_parsed") and not is_remote:
-                # Server must always pre-parse jobs. Non-pre-parsed = error.
-                ctx.failed = True
-                ctx.error = f"Job not pre-parsed by server: {file_path} (file_id={job.get('file_id')})"
-                logger.error(f"[RESOLVE] {ctx.error}")
-                _notify(progress_callback, "file_error", {
-                    "file_name": Path(file_path).name,
-                    "error": ctx.error,
-                })
-            else:
-                # Pre-parsed by server, or remote URI
-                ctx.local_path = self._get_downloaded(job)
-                ctx.metadata = dict(job.get("metadata", {}))
-                # Use server-generated thumbnail if available (shared_fs mode
-                # returns original file path, not thumbnail)
-                server_thumb = job.get("thumb_path")
-                if server_thumb and Path(server_thumb).exists():
-                    ctx.thumb_path = server_thumb
-                else:
-                    ctx.thumb_path = ctx.local_path
-                ctx.meta_obj = None  # No AssetMeta object (use mc_raw dict instead)
-                if not ctx.local_path or not Path(ctx.local_path).exists():
-                    ctx.failed = True
-                    if is_remote:
-                        ctx.error_code = "THUMB_MISSING"
-                        ctx.error = (
-                            f"No thumbnail for remote file: {file_path} "
-                            f"(file_id={job.get('file_id')})"
-                        )
-                    else:
-                        ctx.error_code = "FILE_NOT_FOUND"
-                        ctx.error = (
-                            f"File unavailable: {file_path} "
-                            f"(file_id={job.get('file_id')})"
-                        )
-                    logger.error(f"[RESOLVE] [{ctx.error_code}] {ctx.error}")
-                    _notify(progress_callback, "file_error", {
-                        "file_name": Path(file_path).name,
-                        "error": ctx.error,
-                    })
-
-            contexts.append(ctx)
-
-        active = [c for c in contexts if not c.failed]
-
-        # Phase P is always handled by the server (ParseAheadPool).
-        if self.verbose_log:
-            file_names = [Path(c.job.get("file_path","")).name for c in active]
-            logger.info(f"{self._log_prefix} Batch START: {len(active)} files, chunk={self.batch_capacity}, mode={self.processing_mode}")
-            logger.info(f"[WORKER] Files: {file_names}")
-        logger.info(f"Phase P: {len(active)} jobs pre-parsed by server (worker skips parsing)")
-        elapsed_parse = 0.0
-        fpm_parse = 0.0
-
-        # ── Phase V → VV → MV via unified PhaseRunner ──
-        from backend.pipeline.protocols import PhaseItem, FixedBatchStrategy
-        from backend.pipeline.model_manager import ModelManager
-        from backend.pipeline.phase_runner import PhaseRunner
-
-        # Convert _JobContext → PhaseItem
-        phase_items = []
-        for ctx in active:
-            has_vision = bool(ctx.job.get("vision_data"))
-            item = PhaseItem(
-                job_id=ctx.job["job_id"],
-                file_id=ctx.job["file_id"],
-                file_path=ctx.job["file_path"],
-                thumb_path=ctx.thumb_path,
-                mc_raw=ctx.job.get("mc_raw"),
-                analysis_profile=ctx.job.get("analysis_profile"),
-                skip_vision=has_vision,
-            )
-            # If server already provided vision data (gap-fill), populate mc_raw
-            if has_vision:
-                vd = ctx.job["vision_data"]
-                item.mc_raw = vd
-                item.vision_result = vd
-                # Also update context metadata with server-provided vision data
-                ctx.metadata.update(vd)
-                ctx.vision_fields = vd
-            phase_items.append(item)
-
-        if [it for it in phase_items if not it.skip_vision]:
-            logger.info(
-                f"Phase V: {sum(1 for it in phase_items if not it.skip_vision)} "
-                f"need VLM, {sum(1 for it in phase_items if it.skip_vision)} "
-                f"already have MC (server gap-fill)"
-            )
-
-        # No-op storage — results accumulate on PhaseItem, uploaded later
-        class _AccumulatorStorage:
-            def save_vision(self, item, result): pass
-            def save_vv(self, item, vv_vec, structure_vec=None): pass
-            def save_mv(self, item, mv_vec, text): pass
-            def flush(self): pass
-
-        # Worker progress reporter → IPC _notify bridge
-        class _WorkerProgress:
-            _PHASE_MAP = {"vision": "vision", "vv": "embed_vv", "mv": "embed_mv"}
-
-            def __init__(self, cb, daemon):
-                self._cb = cb
-                self._daemon = daemon
-
-            def phase_start(self, phase, count):
-                mapped = self._PHASE_MAP.get(phase, phase)
-                self._daemon._current_phase = mapped
-                if self._daemon.verbose_log:
-                    logger.info(f"{self._daemon._log_prefix} Phase {mapped} START ({count} files, batch_capacity={self._daemon.batch_capacity})")
-                try:
-                    self._daemon._heartbeat()
-                except Exception:
-                    pass
-                _notify(self._cb, "phase_start", {"phase": mapped, "count": count})
-
-            def file_done(self, phase, index, count, file_name, success):
-                mapped = self._PHASE_MAP.get(phase, phase)
-                self._daemon._current_phase = mapped
-                self._daemon._current_file = file_name
-                if self._daemon.verbose_log:
-                    status = "OK" if success else "FAIL"
-                    logger.info(f"[WORKER] {mapped} [{index+1}/{count}] {file_name} → {status}")
-                _notify(self._cb, "file_done", {
-                    "phase": mapped, "file_name": file_name,
-                    "index": index + 1, "count": count, "success": success,
-                })
-
-            def phase_complete(self, phase, elapsed_s):
-                mapped = self._PHASE_MAP.get(phase, phase)
-                pc = self._daemon._phase_counts
-                if self._daemon.verbose_log:
-                    logger.info(f"{self._daemon._log_prefix} Phase {mapped} DONE in {elapsed_s:.1f}s (totals: MC:{pc['mc']} VV:{pc['vv']} MV:{pc['mv']})")
-                try:
-                    self._daemon._heartbeat()
-                except Exception:
-                    pass
-                mapped = self._PHASE_MAP.get(phase, phase)
-                _notify(self._cb, "phase_complete", {
-                    "phase": mapped, "count": 0,
-                    "elapsed_s": round(elapsed_s, 2),
-                    "files_per_min": 0,
-                })
-
-        models = ModelManager()
-        storage = _AccumulatorStorage()
-        batch_strategy = FixedBatchStrategy(vision=1, vv=8, mv=16)
-        runner = PhaseRunner(
-            models=models,
-            storage=storage,
-            batch_strategy=batch_strategy,
-            stop_check=lambda: self._stop_requested,
-            progress=_WorkerProgress(progress_callback, self),
+        # Workers only ever receive mc/vv/mv from the scheduler.
+        # (Parse/Download are server-side pools; the old full-pipeline
+        # mode died with the legacy job_queue system.)
+        logger.warning(
+            f"process_batch_phased: unsupported processing_mode "
+            f"'{self.processing_mode}' — nothing to do"
         )
-
-        n = len(active)
-
-        # Phase V (MC)
-        t_v = time.perf_counter()
-        phase_items = runner.run_vision(phase_items)
-        elapsed_vision = time.perf_counter() - t_v
-        fpm_vision = (n / elapsed_vision * 60) if elapsed_vision > 0 else 0
-        self._phase_counts["mc"] += n
-        # Update throughput: files / elapsed since batch start
-        _fpm = round(n / (time.perf_counter() - t_batch) * 60, 1)
-        self._batch_throughput = _fpm
-        self._phase_throughput["mc"] = _fpm
-
-        # Emit VLM model info + per-file error diagnostics to IPC
-        vision_errors = [
-            (it.file_name, it.error)
-            for it in phase_items if it.error
-        ]
-        if vision_errors:
-            _notify(progress_callback, "phase_errors", {
-                "phase": "vision",
-                "total": len(phase_items),
-                "failed": len(vision_errors),
-                "errors": [
-                    {"file": name, "error": err}
-                    for name, err in vision_errors[:20]  # cap at 20
-                ],
-            })
-
-        if self._stop_requested:
-            logger.info("Stop requested after Vision phase — aborting batch")
-            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
-
-        # Phase VV
-        t_vv = time.perf_counter()
-        phase_items = runner.run_vv(phase_items)
-        elapsed_vv = time.perf_counter() - t_vv
-        fpm_vv = (n / elapsed_vv * 60) if elapsed_vv > 0 else 0
-        self._phase_counts["vv"] += n
-        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
-        self._phase_throughput["vv"] = round(fpm_vv, 1)
-
-        if self._stop_requested:
-            logger.info("Stop requested after VV phase — aborting batch")
-            return self._finalize_batch(contexts, progress_callback, t_batch, interrupted=True)
-
-        # Phase MV
-        t_mv = time.perf_counter()
-        phase_items = runner.run_mv(phase_items)
-        elapsed_mv = time.perf_counter() - t_mv
-        self._phase_counts["mv"] += n
-        fpm_mv = (n / elapsed_mv * 60) if elapsed_mv > 0 else 0
-        self._batch_throughput = round(n / (time.perf_counter() - t_batch) * 60, 1)
-        self._phase_throughput["mv"] = round(fpm_mv, 1)
-
-        # Map PhaseItem results back to _JobContext for upload
-        for i, item in enumerate(phase_items):
-            ctx = active[i]
-            if item.vision_result and not ctx.vision_fields:
-                fields = _vision_result_to_fields(item.vision_result)
-                if fields:
-                    ctx.metadata.update(fields)
-                    ctx.vision_fields = fields
-            if item.vv_embedding is not None:
-                ctx.vv_vec = item.vv_embedding
-            if item.structure_embedding is not None:
-                ctx.structure_vec = item.structure_embedding
-            if item.mv_embedding is not None:
-                ctx.mv_vec = item.mv_embedding
-            if item.error and not ctx.failed:
-                ctx.failed = True
-                ctx.error = item.error
-
-        # ── Upload all results ──
-        t_phase = time.perf_counter()
-        results = []
-        for ctx in contexts:
-            job_id = ctx.job["job_id"]
-            file_id = ctx.job["file_id"]
-
-            if ctx.failed:
-                self.uploader.fail_job(job_id, ctx.error, ctx.error_code)
-                self._total_failed += 1
-                results.append((job_id, False, ctx.error or "unknown error"))
-                continue
-
-            success = self.uploader.complete_job(
-                job_id,
-                metadata=ctx.metadata,
-                vv_vec=ctx.vv_vec,
-                mv_vec=ctx.mv_vec,
-                structure_vec=ctx.structure_vec,
-            )
-
-            # Upload thumbnail to server
-            if ctx.thumb_path and Path(ctx.thumb_path).exists():
-                self.uploader.upload_thumbnail(file_id, ctx.thumb_path)
-
-            if success:
-                self._total_completed += 1
-            else:
-                self._total_failed += 1
-            results.append((job_id, success, ""))
-
-            _notify(progress_callback, "job_upload", {
-                "job_id": job_id, "success": success,
-                "file_name": Path(ctx.job["file_path"]).name,
-            })
-
-            # Clean up temp files (no cache — server manages downloads)
-            if self.storage_mode == "server_upload" and ctx.local_path != ctx.job["file_path"]:
-                try:
-                    Path(ctx.local_path).unlink(missing_ok=True)
-                except Exception:
-                    pass
-
-        elapsed_upload = time.perf_counter() - t_phase
-
-        # Emit total batch timing
-        total_elapsed = elapsed_parse + elapsed_vision + elapsed_vv + elapsed_mv + elapsed_upload
-        total_fpm = (len(contexts) / total_elapsed * 60) if total_elapsed > 0 else 0
-        self._batch_throughput = round(total_fpm, 1)
-        _notify(progress_callback, "batch_complete", {
-            "count": len(contexts),
-            "elapsed_s": round(total_elapsed, 2),
-            "files_per_min": round(total_fpm, 1),
-            "phase_times": {
-                "parse": round(elapsed_parse, 2),
-                "vision": round(elapsed_vision, 2),
-                "embed_vv": round(elapsed_vv, 2),
-                "embed_mv": round(elapsed_mv, 2),
-                "upload": round(elapsed_upload, 2),
-            },
-            "phase_fpm": {
-                "parse": round(fpm_parse, 1),
-                "vision": round(fpm_vision, 1),
-                "embed_vv": round(fpm_vv, 1),
-                "embed_mv": round(fpm_mv, 1),
-            },
-        })
-
-        self._clear_current()
-
-        # GPU memory cleanup
-        gc.collect()
-        self._try_empty_gpu_cache()
-
-        return results
-
-    def _finalize_batch(
-        self, contexts, progress_callback, t_batch, interrupted=False
-    ) -> list:
-        """Finalize a batch — upload completed results, fail the rest.
-
-        Called on normal completion or when stop is requested mid-batch.
-        Already-completed phase results are uploaded; incomplete jobs are
-        released back to the queue so other workers can pick them up.
-        """
-        results = []
-        for ctx in contexts:
-            job_id = ctx.job["job_id"]
-            if ctx.failed or (interrupted and not ctx.metadata):
-                # No useful work done — fail the job so it returns to queue
-                err = ctx.error or "Interrupted by stop request"
-                self.uploader.fail_job(
-                    job_id, err,
-                    ctx.error_code)
-                self._total_failed += 1
-                results.append((job_id, False, err))
-            elif interrupted:
-                # Partial work done — fail to return to queue for re-processing
-                self.uploader.fail_job(
-                    job_id, "Interrupted by stop request", "INTERRUPTED")
-                self._total_failed += 1
-                results.append((job_id, False, "Interrupted by stop request"))
-            else:
-                results.append((job_id, True, ""))
-
-        _notify(progress_callback, "batch_complete", {
-            "count": len(contexts),
-            "elapsed_s": round(time.perf_counter() - t_batch, 2),
-            "files_per_min": 0,
-            "interrupted": interrupted,
-        })
-
-        self._clear_current()
-        gc.collect()
-        self._try_empty_gpu_cache()
-
-        if interrupted:
-            logger.info(
-                f"Batch interrupted: {len(results)} jobs returned to queue"
-            )
-
-        return results
+        return []
 
     def _process_batch_mc(self, jobs: list, progress_callback=None) -> list:
         """MC mode: VLM stays loaded, only generate MC (caption/tags).
 
-        Server handles Parse (ParseAheadPool); VV/MV workers handle embedding.
+        Server handles Parse (FileTaskParsePool); VV/MV workers handle embedding.
         Worker only runs Phase V (VLM) and uploads vision fields.
 
         VLM is NOT unloaded between batches — stays resident for speed.
@@ -1587,7 +1178,7 @@ class WorkerDaemon:
 
             if ctx.failed:
                 err = ctx.error or "unknown error"
-                self.uploader.fail_job(job_id, err, ctx.error_code)
+                self._report_task_phase(ctx.job.get("task_id") or job_id, "mc", False, err)
                 self._total_failed += 1
                 results.append((job_id, False, err))
                 continue
@@ -1595,7 +1186,7 @@ class WorkerDaemon:
             if not ctx.vision_fields:
                 err = f"VLM returned empty vision_fields for {file_name}"
                 _log(f"[MC] FAIL {file_name}: {err}", "warning")
-                self.uploader.fail_job(job_id, err, "VLM_EMPTY")
+                self._report_task_phase(ctx.job.get("task_id") or job_id, "mc", False, err)
                 self._total_failed += 1
                 results.append((job_id, False, err))
                 continue
@@ -1605,10 +1196,8 @@ class WorkerDaemon:
             file_id = ctx.job.get("file_id")
             if self.transport and file_id:
                 upload_result = self.transport.save_vision(file_id, ctx.vision_fields)
-            elif task_id:
-                upload_result = self.uploader.save_vision_fields(file_id, ctx.vision_fields)
             else:
-                upload_result = self.uploader.complete_mc(job_id, ctx.vision_fields)
+                upload_result = self.uploader.save_vision_fields(file_id, ctx.vision_fields)
             self._report_task_phase(task_id or job_id, "mc", upload_result is True,
                                     None if upload_result is True else str(upload_result),
                                     elapsed_s=getattr(ctx, '_inference_elapsed', None))
@@ -1705,11 +1294,7 @@ class WorkerDaemon:
             if not thumb:
                 err = f"THUMB_FAIL: file_id={file_id}, thumb_path={job.get('thumb_path')}"
                 _log(f"[VV] FAIL {file_name}: {err}", "warning")
-                task_id = job.get("task_id")
-                if task_id:
-                    self._report_task_phase(task_id, "vv", False, err)
-                else:
-                    self.uploader.fail_job(job_id, err)
+                self._report_task_phase(job.get("task_id") or job_id, "vv", False, err)
                 results.append((job_id, False, err))
                 _notify(progress_callback, "file_error", {"file_name": file_name, "error": err})
                 continue
@@ -1736,7 +1321,7 @@ class WorkerDaemon:
             _log(f"[VV] {err}", "error")
             for ctx in active:
                 job_id = ctx["job"]["job_id"]
-                self.uploader.fail_job(job_id, err)
+                self._report_task_phase(ctx["job"].get("task_id") or job_id, "vv", False, err)
                 results.append((job_id, False, err))
             _notify(progress_callback, "phase_errors", {
                 "phase": "embed_vv", "total": len(active), "failed": len(active),
@@ -1769,7 +1354,7 @@ class WorkerDaemon:
                     file_name = Path(ctx["job"].get("file_path", "")).name
                     err = f"Image open failed: {e}"
                     logger.warning(f"[VV-ONLY] {file_name}: {err}")
-                    self.uploader.fail_job(job_id, err)
+                    self._report_task_phase(ctx["job"].get("task_id") or job_id, "vv", False, err)
                     results.append((job_id, False, err))
                     _notify(progress_callback, "file_done", {
                         "phase": "embed_vv", "file_name": file_name,
@@ -1791,7 +1376,7 @@ class WorkerDaemon:
                 for ctx in valid_ctxs:
                     job_id = ctx["job"]["job_id"]
                     file_name = Path(ctx["job"].get("file_path", "")).name
-                    self.uploader.fail_job(job_id, err)
+                    self._report_task_phase(ctx["job"].get("task_id") or job_id, "vv", False, err)
                     results.append((job_id, False, err))
                     _notify(progress_callback, "file_done", {
                         "phase": "embed_vv", "file_name": file_name,
@@ -1821,7 +1406,7 @@ class WorkerDaemon:
                 else:
                     err = "VV encoding returned None"
                     logger.warning(f"[VV-ONLY] {file_name}: {err}")
-                    self.uploader.fail_job(job_id, err)
+                    self._report_task_phase(ctx["job"].get("task_id") or job_id, "vv", False, err)
                     failed_items.append((job_id, False, err))
                     _notify(progress_callback, "file_done", {
                         "phase": "embed_vv", "file_name": file_name,
@@ -1931,10 +1516,7 @@ class WorkerDaemon:
             if not mc_caption:
                 err = f"NO_MC_CAPTION: file has no MC data"
                 _log(f"[MV] FAIL {file_name}: {err}", "warning")
-                if task_id:
-                    self._report_task_phase(task_id, "mv", False, err)
-                else:
-                    self.uploader.fail_job(job_id, err, "MODE_MISMATCH")
+                self._report_task_phase(task_id or job_id, "mv", False, err)
                 results.append((job_id, False, err))
                 _notify(progress_callback, "file_error", {"file_name": file_name, "error": err})
                 continue
@@ -1992,7 +1574,7 @@ class WorkerDaemon:
                     batch_items.append({"job_id": job_id, "vec": vec, "ctx": ctx})
                 else:
                     err = "MV encoding failed"
-                    self.uploader.fail_job(job_id, err)
+                    self._report_task_phase(ctx["job"].get("task_id") or job_id, "mv", False, err)
                     failed_items.append((job_id, False, err))
 
             if batch_items:
