@@ -1,5 +1,10 @@
 # 레거시 코드 감사 결과 (2026-04-04)
 
+> **상태: 완료 (2026-06-10)** — 아래 삭제 순서 1~10 전부 종료.
+> 마지막 잔여분(워커의 죽은 `/api/v1/jobs/*` 호출, 도달 불가능한 full-pipeline 모드,
+> 참조 없는 storage_direct/storage_server, BaseAheadPool demand signal)은
+> refactor/legacy-queue-final 브랜치에서 제거. 가드 테스트: `tests/test_worker_legacy_cleanup.py`
+
 ## 백엔드 레거시 (총 4808줄)
 
 | 파일 | 줄 | 상태 | 조치 |

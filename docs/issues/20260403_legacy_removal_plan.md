@@ -1,6 +1,12 @@
 # 레거시 큐 코드 제거 계획
 
-## 현재 상태
+> **상태: 완료 (2026-06-10)** — 아래 10단계 전부 종료.
+> - `manager.py`, `parse_ahead.py`, `api_queue.py`, `routers/pipeline.py`, 프론트 레거시 컴포넌트: 삭제됨
+> - 레거시 테이블 DROP: `migrate_drop_legacy_queue_tables` 마이그레이션으로 등록됨
+> - 워커의 죽은 `/api/v1/jobs/*` 보고 경로 제거 + 실패 보고를 `/api/v1/tasks/complete`로 일원화 (refactor/legacy-queue-final)
+> - 회귀 방지: `tests/test_worker_legacy_cleanup.py`
+
+## 현재 상태 (작성 당시)
 
 새 시스템 (`analysis_jobs` + `file_tasks` + `AnalysisJobManager`) 구현 완료.
 기존 시스템 (`job_queue` + `work_requests` + `JobQueueManager`)이 20곳에서 import 중.
