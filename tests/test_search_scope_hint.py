@@ -176,3 +176,16 @@ def test_relax_unmatched_scope_keeps_explicit_format():
 
     assert relaxed == {"folder": "로네느의집", "image_type": None, "format": "PNG"}
     assert keys == set()
+
+
+def test_relax_unmatched_scope_drops_image_type_but_keeps_folder():
+    # "#08에서 캐릭터과 밤" — LLM absorbed the element "캐릭터" into
+    # image_type; folder ∩ type matched 0 files. Relax must drop the type
+    # and keep the folder so results stay inside the requested scope.
+    relaxed, keys = _relax_unmatched_scope(
+        {"folder": "#08", "image_type": "character", "format": None},
+        "#08에서 캐릭터과 밤 있는 이미지",
+    )
+
+    assert relaxed == {"folder": "#08", "image_type": None, "format": None}
+    assert keys == {"image_type"}

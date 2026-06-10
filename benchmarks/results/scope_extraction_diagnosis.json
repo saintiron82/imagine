@@ -1,0 +1,686 @@
+{
+ "summary": {
+  "queries": 30,
+  "zero_scope": 0,
+  "gt_fully_in_scope": 1,
+  "gt_partially_in_scope": 28,
+  "gt_outside_scope": 1
+ },
+ "rows": [
+  {
+   "query": "학교교실에서 창문과 교실 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 11410.6,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(학교교실)",
+     "count": 112
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 112,
+   "hint_folder": "학교교실",
+   "zero_scope": false,
+   "gt_total": 70,
+   "gt_in_scope": 24
+  },
+  {
+   "query": "실내소품에서 램프과 벽 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 5075.7,
+   "scope": {
+    "folder": "실내소품",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 621
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 621,
+   "zero_scope": false,
+   "gt_total": 78,
+   "gt_in_scope": 19
+  },
+  {
+   "query": "실내소품에서 책장과 교실 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 5330.6,
+   "scope": {
+    "folder": "실내소품",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 621
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 621,
+   "zero_scope": false,
+   "gt_total": 2,
+   "gt_in_scope": 1
+  },
+  {
+   "query": "발송작품에서 그림과 문 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4584.9,
+   "scope": {
+    "folder": "발송작품",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 1040
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 1040,
+   "zero_scope": false,
+   "gt_total": 43,
+   "gt_in_scope": 2
+  },
+  {
+   "query": "라투루의저택.장미.정원에서 book과 정원 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 5181.6,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(라투루의저택.장미.정원)",
+     "count": 121
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 121,
+   "hint_folder": "라투루의저택.장미.정원",
+   "zero_scope": false,
+   "gt_total": 2,
+   "gt_in_scope": 2
+  },
+  {
+   "query": "BG에서 발코니과 캐릭터 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4545.5,
+   "scope": {
+    "folder": "BG",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 5738
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 5738,
+   "zero_scope": false,
+   "gt_total": 42,
+   "gt_in_scope": 26
+  },
+  {
+   "query": "#02에서 집과 거리 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4021.2,
+   "scope": {
+    "folder": "#02",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 382
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 382,
+   "zero_scope": false,
+   "gt_total": 86,
+   "gt_in_scope": 1
+  },
+  {
+   "query": "학교교실에서 캐릭터과 창문 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4982.1,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(학교교실)",
+     "count": 112
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 112,
+   "hint_folder": "학교교실",
+   "zero_scope": false,
+   "gt_total": 4,
+   "gt_in_scope": 3
+  },
+  {
+   "query": "BG에서 발코니과 밤 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4743.0,
+   "scope": {
+    "folder": "BG",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 5738
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 5738,
+   "zero_scope": false,
+   "gt_total": 27,
+   "gt_in_scope": 12
+  },
+  {
+   "query": "실내소품에서 침대과 그림 있는 이미지",
+   "backend": "fallback",
+   "decompose_ms": 24050.7,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(실내소품)",
+     "count": 621
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 621,
+   "hint_folder": "실내소품",
+   "zero_scope": false,
+   "gt_total": 21,
+   "gt_in_scope": 10
+  },
+  {
+   "query": "실내소품에서 벽과 vase 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4878.0,
+   "scope": {
+    "folder": "실내소품",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 621
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 621,
+   "zero_scope": false,
+   "gt_total": 29,
+   "gt_in_scope": 11
+  },
+  {
+   "query": "BG에서 밤과 정원 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4909.7,
+   "scope": {
+    "folder": "BG",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 5738
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 5738,
+   "zero_scope": false,
+   "gt_total": 14,
+   "gt_in_scope": 9
+  },
+  {
+   "query": "크랑베르무에서 호수과 밤 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4861.4,
+   "scope": {
+    "folder": "크랑베르무",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 3190
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 3190,
+   "zero_scope": false,
+   "gt_total": 48,
+   "gt_in_scope": 40
+  },
+  {
+   "query": "작품 쫑에서 shield과 밤 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 3864.8,
+   "scope": {
+    "folder": "작품 쫑",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 2823
+    },
+    {
+     "stage": "query_hint_override(작품/쫑)",
+     "count": 2823
+    }
+   ],
+   "final_source": "query_hint_override",
+   "final_count": 2823,
+   "hint_folder": "작품/쫑",
+   "zero_scope": false,
+   "gt_total": 11,
+   "gt_in_scope": 3
+  },
+  {
+   "query": "크랑베르무에서 다리과 달 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4576.5,
+   "scope": {
+    "folder": "크랑베르무",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 3190
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 3190,
+   "zero_scope": false,
+   "gt_total": 13,
+   "gt_in_scope": 12
+  },
+  {
+   "query": "#07에서 검과 캐릭터 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 3923.8,
+   "scope": {
+    "folder": "#07",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 899
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 899,
+   "zero_scope": false,
+   "gt_total": 28,
+   "gt_in_scope": 2
+  },
+  {
+   "query": "#05에서 계단과 일몰 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4207.1,
+   "scope": {
+    "folder": "#05",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 421
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 421,
+   "zero_scope": false,
+   "gt_total": 8,
+   "gt_in_scope": 2
+  },
+  {
+   "query": "크랑베르무에서 숲과 호수 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4896.1,
+   "scope": {
+    "folder": "크랑베르무",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 3190
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 3190,
+   "zero_scope": false,
+   "gt_total": 19,
+   "gt_in_scope": 5
+  },
+  {
+   "query": "#07에서 일몰과 tower 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 3937.7,
+   "scope": {
+    "folder": "#07",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 899
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 899,
+   "zero_scope": false,
+   "gt_total": 20,
+   "gt_in_scope": 1
+  },
+  {
+   "query": "크랑베르무에서 창문과 교실 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 5124.4,
+   "scope": {
+    "folder": "크랑베르무",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 3190
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 3190,
+   "zero_scope": false,
+   "gt_total": 12,
+   "gt_in_scope": 4
+  },
+  {
+   "query": "실내소품에서 빛과 복도 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 5655.2,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(실내소품)",
+     "count": 621
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 621,
+   "hint_folder": "실내소품",
+   "zero_scope": false,
+   "gt_total": 2,
+   "gt_in_scope": 1
+  },
+  {
+   "query": "안나의집에서 집과 일몰 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 5317.5,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(안나의집)",
+     "count": 170
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 170,
+   "hint_folder": "안나의집",
+   "zero_scope": false,
+   "gt_total": 52,
+   "gt_in_scope": 2
+  },
+  {
+   "query": "도시 낮에서 거울과 거리 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 5334.5,
+   "scope": {
+    "folder": "",
+    "image_type": "ui_element",
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 9
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 9,
+   "zero_scope": false,
+   "gt_total": 4,
+   "gt_in_scope": 0
+  },
+  {
+   "query": "사카모토에서 숲과 절벽 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4701.7,
+   "scope": {
+    "folder": "사카모토",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 165
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 165,
+   "zero_scope": false,
+   "gt_total": 28,
+   "gt_in_scope": 8
+  },
+  {
+   "query": "호텔실내에서 그림과 candle 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 6699.2,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(호텔실내)",
+     "count": 182
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 182,
+   "hint_folder": "호텔실내",
+   "zero_scope": false,
+   "gt_total": 7,
+   "gt_in_scope": 2
+  },
+  {
+   "query": "기절용사와 암살공주에서 하늘과 검 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 5449.8,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(기절용사와 암살공주)",
+     "count": 3181
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 3181,
+   "hint_folder": "기절용사와 암살공주",
+   "zero_scope": false,
+   "gt_total": 41,
+   "gt_in_scope": 5
+  },
+  {
+   "query": "늪지대에서 fog과 숲 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4421.9,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(늪지대)",
+     "count": 117
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 117,
+   "hint_folder": "늪지대",
+   "zero_scope": false,
+   "gt_total": 50,
+   "gt_in_scope": 30
+  },
+  {
+   "query": "#12에서 lantern과 복도 있는 이미지",
+   "backend": "fallback",
+   "decompose_ms": 23453.2,
+   "scope": {
+    "folder": "",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": false,
+   "stages": [
+    {
+     "stage": "query_hint_no_scope(#12)",
+     "count": 446
+    }
+   ],
+   "final_source": "query_hint_hard_or_soft",
+   "final_count": 446,
+   "hint_folder": "#12",
+   "zero_scope": false,
+   "gt_total": 16,
+   "gt_in_scope": 4
+  },
+  {
+   "query": "만게츠의집에서 발코니과 책상 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4597.3,
+   "scope": {
+    "folder": "만게츠의집",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 120
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 120,
+   "zero_scope": false,
+   "gt_total": 3,
+   "gt_in_scope": 1
+  },
+  {
+   "query": "크랑베르무에서 거리과 캐릭터 있는 이미지",
+   "backend": "mlx",
+   "decompose_ms": 4626.4,
+   "scope": {
+    "folder": "크랑베르무",
+    "image_type": null,
+    "format": null
+   },
+   "scope_requested": true,
+   "stages": [
+    {
+     "stage": "decomposition",
+     "count": 3190
+    }
+   ],
+   "final_source": "decomposition",
+   "final_count": 3190,
+   "zero_scope": false,
+   "gt_total": 12,
+   "gt_in_scope": 1
+  }
+ ]
+}

@@ -381,7 +381,16 @@ def _query_explicitly_requests_format(query: str, fmt: str) -> bool:
 
 
 def _relax_unmatched_scope(scope: dict, query: str) -> tuple[dict, set[str]]:
-    """Relax LLM-only scope filters that commonly cause false-empty results."""
+    """Relax LLM-only scope filters that commonly cause false-empty results.
+
+    Only called when the combined scope matched 0 files. The folder is never
+    relaxed here (it has fuzzy/hint resolution and a deliberate strict-empty
+    policy); image_type and non-explicit format are dropped because the LLM
+    routinely absorbs *search elements* into them — e.g. "#08에서 캐릭터과 밤"
+    became {folder: '#08', image_type: 'character'}, and since that folder has
+    no character-classified files the user got an empty page instead of #08's
+    night scenes.
+    """
     if not scope or not scope.get("folder"):
         return dict(scope or {}), set()
 
@@ -391,6 +400,9 @@ def _relax_unmatched_scope(scope: dict, query: str) -> tuple[dict, set[str]]:
     if fmt and not _query_explicitly_requests_format(query, str(fmt)):
         relaxed["format"] = None
         relaxed_keys.add("format")
+    if relaxed.get("image_type"):
+        relaxed["image_type"] = None
+        relaxed_keys.add("image_type")
     return relaxed, relaxed_keys
 
 
