@@ -33,11 +33,13 @@ def test_stage2_schema_includes_spatial_objects():
     schema = schemas.get_schema("background")
 
     assert "objects" in schema
+    assert "structural_objects" in schema
     assert "depth_layers" in schema
     assert "relations" in schema
     assert "top-left" in schema["objects"]
     assert "primary_location" in schema["objects"]
     assert "locations" in schema["objects"]
+    assert "wall" in schema["structural_objects"]
     assert "foreground" in schema["depth_layers"]
     assert "behind" in schema["relations"]
 
@@ -62,13 +64,19 @@ def test_stage2_prompts_request_object_locations_in_full_and_concise_modes():
 
     for prompt in (full_prompt, concise_prompt):
         assert '"objects"' in prompt
+        assert '"structural_objects"' in prompt
         assert '"depth_layers"' in prompt
         assert '"relations"' in prompt
         assert "Object-location extraction" in prompt
+        assert "Keep ordinary objects and structural objects separate" in prompt
         assert "top-left, top, top-right" in prompt
-        assert "Use multiple locations" in prompt
+        assert "Choose exactly one primary_location" in prompt
+        assert "Use extra locations sparingly" in prompt
+        assert "Searchable structural objects" in prompt
+        assert "locations should contain at most 3 cells" in prompt
+        assert "salience" in prompt
         assert "foreground, midground, background" in prompt
-        assert "maximum 5" in prompt
+        assert "maximum 3" in prompt
 
 
 def test_analysis_profile_prior_is_injected_into_stage1_and_stage2_prompts():

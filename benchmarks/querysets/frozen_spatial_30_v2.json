@@ -1,0 +1,955 @@
+{
+  "frozen_at": "2026-06-03T06:55:22.742858+00:00",
+  "count": 30,
+  "queries": [
+    {
+      "source_id": 28705,
+      "file_name": null,
+      "query": "위쪽에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "top",
+      "gt_ids": [
+        28705,
+        28730,
+        28753,
+        28755,
+        28895,
+        31089,
+        31106,
+        31109,
+        31119,
+        31146,
+        31162,
+        31187,
+        31192,
+        31194,
+        31195,
+        31198,
+        31201,
+        31202,
+        31259,
+        31260,
+        31269,
+        31285,
+        31376,
+        31380,
+        31406,
+        31444,
+        31467,
+        31478,
+        31481,
+        31491,
+        31507,
+        31514,
+        31521,
+        31522,
+        31552,
+        31559,
+        31573,
+        31576,
+        31578,
+        31589,
+        31591,
+        31654,
+        31655
+      ],
+      "gt_count": 43,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28706,
+      "file_name": null,
+      "query": "중앙에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28706,
+        28759,
+        28788,
+        28897,
+        28901,
+        28907,
+        28910,
+        30625,
+        31115,
+        31141,
+        31142,
+        31144,
+        31152,
+        31153,
+        31159,
+        31178,
+        31185,
+        31199,
+        31200,
+        31209,
+        31212,
+        31215,
+        31252,
+        31344,
+        31365,
+        31377,
+        31396,
+        31397,
+        31407,
+        31448,
+        31494,
+        31503,
+        31509,
+        31630,
+        31638,
+        31639,
+        31657
+      ],
+      "gt_count": 37,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28707,
+      "file_name": null,
+      "query": "위쪽에 천장이 있는 이미지",
+      "elements_en": [
+        "ceiling"
+      ],
+      "elements_ko": [
+        "천장"
+      ],
+      "folder": null,
+      "spatial_location": "top",
+      "gt_ids": [
+        28707,
+        28708,
+        28713,
+        28716,
+        28717,
+        28721,
+        28725,
+        28727,
+        28728,
+        28734,
+        28736,
+        28744,
+        28750,
+        28756,
+        28774,
+        28775,
+        28787,
+        31110,
+        31166,
+        31212,
+        31313,
+        31315,
+        31316,
+        31317,
+        31322,
+        31324,
+        31341,
+        31344,
+        31377,
+        31448,
+        31527,
+        31529,
+        31594,
+        31656,
+        31657
+      ],
+      "gt_count": 35,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31115,
+      "file_name": null,
+      "query": "중앙에 선반이 있는 이미지",
+      "elements_en": [
+        "shelf"
+      ],
+      "elements_ko": [
+        "선반"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        31115,
+        31120,
+        31122,
+        31125,
+        31128,
+        31146,
+        31174,
+        31182,
+        31205,
+        31245,
+        31335,
+        31381,
+        31444,
+        31454,
+        31544,
+        31566,
+        31567,
+        31568,
+        31571,
+        31573,
+        31575,
+        31576,
+        31579,
+        31580,
+        31581,
+        31583,
+        31625,
+        31636
+      ],
+      "gt_count": 28,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28709,
+      "file_name": null,
+      "query": "왼쪽에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "left",
+      "gt_ids": [
+        28709,
+        28722,
+        28743,
+        28764,
+        28784,
+        28785,
+        31122,
+        31123,
+        31128,
+        31139,
+        31154,
+        31161,
+        31208,
+        31302,
+        31322,
+        31330,
+        31414,
+        31477,
+        31501,
+        31511,
+        31544,
+        31565,
+        31600,
+        31601,
+        31656
+      ],
+      "gt_count": 25,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28705,
+      "file_name": null,
+      "query": "아래쪽에 바닥이 있는 이미지",
+      "elements_en": [
+        "floor"
+      ],
+      "elements_ko": [
+        "바닥"
+      ],
+      "folder": null,
+      "spatial_location": "bottom",
+      "gt_ids": [
+        28705,
+        28714,
+        28725,
+        28734,
+        28741,
+        28744,
+        28750,
+        28753,
+        28765,
+        28784,
+        31124,
+        31320,
+        31373,
+        31380,
+        31491,
+        31514,
+        31567,
+        31638,
+        31654,
+        31656,
+        31657
+      ],
+      "gt_count": 21,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28698,
+      "file_name": null,
+      "query": "중앙에 애니메이션 캐릭터가 있는 이미지",
+      "elements_en": [
+        "anime character"
+      ],
+      "elements_ko": [
+        "애니메이션 캐릭터"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28698,
+        28701,
+        28702,
+        28704,
+        28736,
+        28737,
+        28745,
+        28747,
+        28755,
+        28757,
+        28764,
+        28766,
+        28767,
+        28768,
+        28770,
+        28779,
+        28781,
+        28782,
+        31560,
+        31622
+      ],
+      "gt_count": 20,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28701,
+      "file_name": null,
+      "query": "중앙에 창문이 있는 이미지",
+      "elements_en": [
+        "window"
+      ],
+      "elements_ko": [
+        "창문"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28701,
+        28703,
+        28722,
+        28887,
+        28895,
+        28901,
+        31085,
+        31221,
+        31256,
+        31330,
+        31339,
+        31343,
+        31346,
+        31373,
+        31444,
+        31452,
+        31481,
+        31501,
+        31511
+      ],
+      "gt_count": 19,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28696,
+      "file_name": null,
+      "query": "오른쪽에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "right",
+      "gt_ids": [
+        28696,
+        28697,
+        28701,
+        28716,
+        28762,
+        28765,
+        28786,
+        31124,
+        31248,
+        31303,
+        31333,
+        31341,
+        31349,
+        31393,
+        31504,
+        31527,
+        31529,
+        31546
+      ],
+      "gt_count": 18,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31139,
+      "file_name": null,
+      "query": "중앙에 커튼이 있는 이미지",
+      "elements_en": [
+        "curtain"
+      ],
+      "elements_ko": [
+        "커튼"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        31139,
+        31309,
+        31311,
+        31312,
+        31314,
+        31319,
+        31320,
+        31321,
+        31323,
+        31325,
+        31466,
+        31477,
+        31511,
+        31565,
+        31578,
+        31638,
+        31661
+      ],
+      "gt_count": 17,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28695,
+      "file_name": null,
+      "query": "왼쪽에 창문이 있는 이미지",
+      "elements_en": [
+        "window"
+      ],
+      "elements_ko": [
+        "창문"
+      ],
+      "folder": null,
+      "spatial_location": "left",
+      "gt_ids": [
+        28695,
+        28697,
+        28706,
+        28716,
+        28737,
+        28744,
+        28750,
+        28751,
+        28753,
+        31142,
+        31144,
+        31159,
+        31503,
+        31556,
+        31658
+      ],
+      "gt_count": 15,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28725,
+      "file_name": null,
+      "query": "오른쪽에 창문이 있는 이미지",
+      "elements_en": [
+        "window"
+      ],
+      "elements_ko": [
+        "창문"
+      ],
+      "folder": null,
+      "spatial_location": "right",
+      "gt_ids": [
+        28725,
+        28734,
+        28736,
+        28747,
+        28768,
+        28907,
+        31119,
+        31141,
+        31184,
+        31185,
+        31189,
+        31341,
+        31477
+      ],
+      "gt_count": 13,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28786,
+      "file_name": null,
+      "query": "왼쪽에 문이 있는 이미지",
+      "elements_en": [
+        "door"
+      ],
+      "elements_ko": [
+        "문"
+      ],
+      "folder": null,
+      "spatial_location": "left",
+      "gt_ids": [
+        28786,
+        31202,
+        31212,
+        31248,
+        31302,
+        31365,
+        31377,
+        31491,
+        31504,
+        31529,
+        31552,
+        31654
+      ],
+      "gt_count": 12,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28699,
+      "file_name": null,
+      "query": "중앙에 바닥이 있는 이미지",
+      "elements_en": [
+        "floor"
+      ],
+      "elements_ko": [
+        "바닥"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28699,
+        28700,
+        28719,
+        28720,
+        28748,
+        28751,
+        28761,
+        28767,
+        28769,
+        28772,
+        28782
+      ],
+      "gt_count": 11,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28906,
+      "file_name": null,
+      "query": "중앙에 문이 있는 이미지",
+      "elements_en": [
+        "door"
+      ],
+      "elements_ko": [
+        "문"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28906,
+        31089,
+        31199,
+        31221,
+        31303,
+        31330,
+        31376,
+        31428,
+        31499,
+        31620,
+        31639
+      ],
+      "gt_count": 11,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31085,
+      "file_name": null,
+      "query": "왼쪽에 커튼이 있는 이미지",
+      "elements_en": [
+        "curtain"
+      ],
+      "elements_ko": [
+        "커튼"
+      ],
+      "folder": null,
+      "spatial_location": "left",
+      "gt_ids": [
+        31085,
+        31142,
+        31144,
+        31150,
+        31313,
+        31315,
+        31316,
+        31317,
+        31481,
+        31594
+      ],
+      "gt_count": 10,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31254,
+      "file_name": null,
+      "query": "중앙에 책장이 있는 이미지",
+      "elements_en": [
+        "bookshelf"
+      ],
+      "elements_ko": [
+        "책장"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        31254,
+        31256,
+        31258,
+        31380,
+        31381,
+        31478,
+        31489,
+        31629,
+        31630,
+        31636
+      ],
+      "gt_count": 10,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31254,
+      "file_name": null,
+      "query": "중앙에 책이 있는 이미지",
+      "elements_en": [
+        "book"
+      ],
+      "elements_ko": [
+        "책"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        31254,
+        31256,
+        31258,
+        31380,
+        31381,
+        31478,
+        31489,
+        31566,
+        31602,
+        31636
+      ],
+      "gt_count": 10,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28705,
+      "file_name": null,
+      "query": "중앙에 기둥이 있는 이미지",
+      "elements_en": [
+        "pillars"
+      ],
+      "elements_ko": [
+        "기둥"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28705,
+        28727,
+        28744,
+        28750,
+        28775,
+        28780,
+        28784,
+        28896,
+        31396
+      ],
+      "gt_count": 9,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28697,
+      "file_name": null,
+      "query": "위쪽에 배관이 있는 이미지",
+      "elements_en": [
+        "pipe"
+      ],
+      "elements_ko": [
+        "배관"
+      ],
+      "folder": null,
+      "spatial_location": "top",
+      "gt_ids": [
+        28697,
+        28708,
+        28710,
+        28727,
+        28728,
+        28729,
+        28747,
+        28785,
+        28787
+      ],
+      "gt_count": 9,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28710,
+      "file_name": null,
+      "query": "왼쪽에 기둥이 있는 이미지",
+      "elements_en": [
+        "pillar"
+      ],
+      "elements_ko": [
+        "기둥"
+      ],
+      "folder": null,
+      "spatial_location": "left",
+      "gt_ids": [
+        28710,
+        28722,
+        28725,
+        28728,
+        28729,
+        28768,
+        28771,
+        31638
+      ],
+      "gt_count": 8,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28759,
+      "file_name": null,
+      "query": "위쪽에 창문이 있는 이미지",
+      "elements_en": [
+        "window"
+      ],
+      "elements_ko": [
+        "창문"
+      ],
+      "folder": null,
+      "spatial_location": "top",
+      "gt_ids": [
+        28759,
+        31124,
+        31152,
+        31301,
+        31414,
+        31560,
+        31612,
+        31655
+      ],
+      "gt_count": 8,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28897,
+      "file_name": null,
+      "query": "왼쪽 위에 창문이 있는 이미지",
+      "elements_en": [
+        "window"
+      ],
+      "elements_ko": [
+        "창문"
+      ],
+      "folder": null,
+      "spatial_location": "top-left",
+      "gt_ids": [
+        28897,
+        31265,
+        31432,
+        31467,
+        31514,
+        31521,
+        31522
+      ],
+      "gt_count": 7,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31137,
+      "file_name": null,
+      "query": "왼쪽 위에 커튼이 있는 이미지",
+      "elements_en": [
+        "curtain"
+      ],
+      "elements_ko": [
+        "커튼"
+      ],
+      "folder": null,
+      "spatial_location": "top-left",
+      "gt_ids": [
+        31137,
+        31138,
+        31195,
+        31206,
+        31324,
+        31514,
+        31521
+      ],
+      "gt_count": 7,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28695,
+      "file_name": null,
+      "query": "왼쪽 아래에 계단이 있는 이미지",
+      "elements_en": [
+        "stair"
+      ],
+      "elements_ko": [
+        "계단"
+      ],
+      "folder": null,
+      "spatial_location": "bottom-left",
+      "gt_ids": [
+        28695,
+        28729,
+        28736,
+        28754,
+        28775,
+        28893
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28696,
+      "file_name": null,
+      "query": "왼쪽 위에 천장이 있는 이미지",
+      "elements_en": [
+        "ceiling"
+      ],
+      "elements_ko": [
+        "천장"
+      ],
+      "folder": null,
+      "spatial_location": "top-left",
+      "gt_ids": [
+        28696,
+        28724,
+        28780,
+        31122,
+        31321,
+        31544
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28699,
+      "file_name": null,
+      "query": "중앙에 타일이 있는 이미지",
+      "elements_en": [
+        "tile"
+      ],
+      "elements_ko": [
+        "타일"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28699,
+        28700,
+        28767,
+        28769,
+        28772,
+        28782
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28706,
+      "file_name": null,
+      "query": "중앙에 선화가 있는 이미지",
+      "elements_en": [
+        "sketch line"
+      ],
+      "elements_ko": [
+        "선화"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28706,
+        28723,
+        28736,
+        28760,
+        31556,
+        31560
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28709,
+      "file_name": null,
+      "query": "중앙에 캐릭터가 있는 이미지",
+      "elements_en": [
+        "character"
+      ],
+      "elements_ko": [
+        "캐릭터"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28709,
+        28724,
+        28730,
+        28734,
+        31607,
+        31620
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28885,
+      "file_name": null,
+      "query": "중앙에 나무가 있는 이미지",
+      "elements_en": [
+        "tree"
+      ],
+      "elements_ko": [
+        "나무"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28885,
+        28886,
+        31085,
+        31214,
+        31258,
+        31481
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
+    }
+  ]
+}

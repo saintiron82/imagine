@@ -1,19 +1,7 @@
-import sys
-import types
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-
-sys.modules.setdefault(
-    "jwt",
-    types.SimpleNamespace(
-        ExpiredSignatureError=Exception,
-        InvalidTokenError=Exception,
-        decode=lambda *args, **kwargs: {},
-        encode=lambda *args, **kwargs: "",
-    ),
-)
 
 from backend.server.routers.server_init import _require_init_allowed
 

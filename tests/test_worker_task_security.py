@@ -1,20 +1,8 @@
 import sqlite3
-import sys
-import types
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-
-sys.modules.setdefault(
-    "jwt",
-    types.SimpleNamespace(
-        ExpiredSignatureError=Exception,
-        InvalidTokenError=Exception,
-        decode=lambda *args, **kwargs: {},
-        encode=lambda *args, **kwargs: "",
-    ),
-)
 
 from backend.server.routers.analysis import (
     _require_file_phase_assignment,

@@ -1,22 +1,9 @@
 """agentcli integration in QueryDecomposer._generate_codex."""
 from __future__ import annotations
 
-import sys
-import types
 from types import SimpleNamespace
 
 import pytest
-
-
-sys.modules.setdefault(
-    "jwt",
-    types.SimpleNamespace(
-        ExpiredSignatureError=Exception,
-        InvalidTokenError=Exception,
-        decode=lambda *a, **k: {},
-        encode=lambda *a, **k: "",
-    ),
-)
 
 
 @pytest.fixture(autouse=True)

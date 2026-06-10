@@ -1,0 +1,717 @@
+{
+  "schema_version": "multicondition_recall_diagnosis_v1",
+  "source_result": "benchmarks/results/multicondition_pairs_20260605_s19_post_ce_evidence_sample100.json",
+  "variant": "current",
+  "summary": {
+    "query_count": 24,
+    "gt_total": 60,
+    "found_gt_at10": 55,
+    "missed_gt_total": 5,
+    "micro_recall_at10": 0.916667,
+    "miss_cause_counts": {
+      "object_evidence_present_but_not_top10": 5
+    },
+    "condition_group_issue_count": 18
+  },
+  "rows": [
+    {
+      "query": "벽, 커튼가 함께 있는 이미지",
+      "elements_ko": [
+        "벽",
+        "커튼"
+      ],
+      "gt_count": 5,
+      "found_at10": 4,
+      "missed_at10": 1,
+      "misses": [
+        {
+          "item_id": "31639",
+          "cause": "object_evidence_present_but_not_top10",
+          "matched_object_conditions": [
+            "벽",
+            "커튼"
+          ],
+          "objects": [
+            {
+              "name": "door",
+              "ko_name": "문",
+              "primary_location": "center",
+              "locations": [
+                "center"
+              ],
+              "extent": "medium",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "wall",
+              "ko_name": "벽",
+              "primary_location": "center",
+              "locations": [
+                "center",
+                "left",
+                "right"
+              ],
+              "extent": "wide",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "curtain",
+              "ko_name": "커튼",
+              "primary_location": "right",
+              "locations": [
+                "right"
+              ],
+              "extent": "medium",
+              "confidence": "medium",
+              "source": "vlm"
+            },
+            {
+              "name": "panel",
+              "ko_name": "패널",
+              "primary_location": "left",
+              "locations": [
+                "left",
+                "right"
+              ],
+              "extent": "medium",
+              "confidence": "medium",
+              "source": "vlm"
+            }
+          ]
+        }
+      ],
+      "condition_group_issues": [
+        {
+          "label": "벽|curtain",
+          "ko": "벽",
+          "expected_en": [
+            "brick wall",
+            "wall"
+          ],
+          "actual_en": [
+            "curtain"
+          ],
+          "issue": "condition_group_cross_pairing"
+        },
+        {
+          "label": "커튼|wall",
+          "ko": "커튼",
+          "expected_en": [
+            "blind",
+            "curtain"
+          ],
+          "actual_en": [
+            "wall"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": null,
+      "s17_full_evidence_non_gt_top10": null
+    },
+    {
+      "query": "창문, 커튼가 함께 있는 이미지",
+      "elements_ko": [
+        "창문",
+        "커튼"
+      ],
+      "gt_count": 5,
+      "found_at10": 4,
+      "missed_at10": 1,
+      "misses": [
+        {
+          "item_id": "31346",
+          "cause": "object_evidence_present_but_not_top10",
+          "matched_object_conditions": [
+            "창문",
+            "커튼"
+          ],
+          "objects": [
+            {
+              "name": "lamp",
+              "ko_name": "등",
+              "primary_location": "top-left",
+              "locations": [
+                "top-left",
+                "top",
+                "top-right"
+              ],
+              "extent": "large",
+              "confidence": "medium",
+              "source": "vlm"
+            },
+            {
+              "name": "plant",
+              "ko_name": "식물",
+              "primary_location": "left",
+              "locations": [
+                "left",
+                "center"
+              ],
+              "extent": "medium",
+              "confidence": "medium",
+              "source": "vlm"
+            },
+            {
+              "name": "chair",
+              "ko_name": "의자",
+              "primary_location": "bottom-left",
+              "locations": [
+                "bottom-left",
+                "bottom",
+                "bottom-right"
+              ],
+              "extent": "large",
+              "confidence": "medium",
+              "source": "vlm"
+            },
+            {
+              "name": "curtain",
+              "ko_name": "커튼",
+              "primary_location": "right",
+              "locations": [
+                "right"
+              ],
+              "extent": "medium",
+              "confidence": "medium",
+              "source": "vlm"
+            },
+            {
+              "name": "window",
+              "ko_name": "창문",
+              "primary_location": "top-left",
+              "locations": [
+                "top-left",
+                "top",
+                "top-right"
+              ],
+              "extent": "wide",
+              "confidence": "high",
+              "source": "vlm"
+            }
+          ]
+        }
+      ],
+      "condition_group_issues": [
+        {
+          "label": "창문|curtain",
+          "ko": "창문",
+          "expected_en": [
+            "bright window",
+            "window"
+          ],
+          "actual_en": [
+            "curtain"
+          ],
+          "issue": "condition_group_cross_pairing"
+        },
+        {
+          "label": "커튼|window",
+          "ko": "커튼",
+          "expected_en": [
+            "blind",
+            "curtain"
+          ],
+          "actual_en": [
+            "window"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": null,
+      "s17_full_evidence_non_gt_top10": null
+    },
+    {
+      "query": "문, 벽가 함께 있는 이미지",
+      "elements_ko": [
+        "문",
+        "벽"
+      ],
+      "gt_count": 4,
+      "found_at10": 2,
+      "missed_at10": 2,
+      "misses": [
+        {
+          "item_id": "31639",
+          "cause": "object_evidence_present_but_not_top10",
+          "matched_object_conditions": [
+            "문",
+            "벽"
+          ],
+          "objects": [
+            {
+              "name": "door",
+              "ko_name": "문",
+              "primary_location": "center",
+              "locations": [
+                "center"
+              ],
+              "extent": "medium",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "wall",
+              "ko_name": "벽",
+              "primary_location": "center",
+              "locations": [
+                "center",
+                "left",
+                "right"
+              ],
+              "extent": "wide",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "curtain",
+              "ko_name": "커튼",
+              "primary_location": "right",
+              "locations": [
+                "right"
+              ],
+              "extent": "medium",
+              "confidence": "medium",
+              "source": "vlm"
+            },
+            {
+              "name": "panel",
+              "ko_name": "패널",
+              "primary_location": "left",
+              "locations": [
+                "left",
+                "right"
+              ],
+              "extent": "medium",
+              "confidence": "medium",
+              "source": "vlm"
+            }
+          ]
+        },
+        {
+          "item_id": "31654",
+          "cause": "object_evidence_present_but_not_top10",
+          "matched_object_conditions": [
+            "문",
+            "벽"
+          ],
+          "objects": [
+            {
+              "name": "divider",
+              "ko_name": "분리벽",
+              "primary_location": "center",
+              "locations": [
+                "center"
+              ],
+              "extent": "large",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "wall",
+              "ko_name": "벽",
+              "primary_location": "center",
+              "locations": [
+                "center",
+                "left",
+                "right"
+              ],
+              "extent": "wide",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "floor",
+              "ko_name": "바닥",
+              "primary_location": "bottom",
+              "locations": [
+                "bottom",
+                "bottom-left",
+                "bottom-right"
+              ],
+              "extent": "wide",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "door",
+              "ko_name": "문",
+              "primary_location": "left",
+              "locations": [
+                "left",
+                "right"
+              ],
+              "extent": "medium",
+              "confidence": "high",
+              "source": "vlm"
+            }
+          ]
+        }
+      ],
+      "condition_group_issues": [
+        {
+          "label": "문|wall",
+          "ko": "문",
+          "expected_en": [
+            "door",
+            "gate"
+          ],
+          "actual_en": [
+            "wall"
+          ],
+          "issue": "condition_group_cross_pairing"
+        },
+        {
+          "label": "벽|door",
+          "ko": "벽",
+          "expected_en": [
+            "brick wall",
+            "wall"
+          ],
+          "actual_en": [
+            "door"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": [
+        2,
+        10
+      ],
+      "s17_full_evidence_non_gt_top10": 8
+    },
+    {
+      "query": "등, 커튼가 함께 있는 이미지",
+      "elements_ko": [
+        "등",
+        "커튼"
+      ],
+      "gt_count": 3,
+      "found_at10": 3,
+      "missed_at10": 0,
+      "misses": [],
+      "condition_group_issues": [
+        {
+          "label": "등|curtain",
+          "ko": "등",
+          "expected_en": [
+            "lamp",
+            "light",
+            "sconce"
+          ],
+          "actual_en": [
+            "curtain"
+          ],
+          "issue": "condition_group_cross_pairing"
+        },
+        {
+          "label": "커튼|lamp",
+          "ko": "커튼",
+          "expected_en": [
+            "blind",
+            "curtain"
+          ],
+          "actual_en": [
+            "lamp"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": [
+        4,
+        8,
+        9
+      ],
+      "s17_full_evidence_non_gt_top10": 4
+    },
+    {
+      "query": "바닥, 벽가 함께 있는 이미지",
+      "elements_ko": [
+        "바닥",
+        "벽"
+      ],
+      "gt_count": 3,
+      "found_at10": 2,
+      "missed_at10": 1,
+      "misses": [
+        {
+          "item_id": "31654",
+          "cause": "object_evidence_present_but_not_top10",
+          "matched_object_conditions": [
+            "바닥",
+            "벽"
+          ],
+          "objects": [
+            {
+              "name": "divider",
+              "ko_name": "분리벽",
+              "primary_location": "center",
+              "locations": [
+                "center"
+              ],
+              "extent": "large",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "wall",
+              "ko_name": "벽",
+              "primary_location": "center",
+              "locations": [
+                "center",
+                "left",
+                "right"
+              ],
+              "extent": "wide",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "floor",
+              "ko_name": "바닥",
+              "primary_location": "bottom",
+              "locations": [
+                "bottom",
+                "bottom-left",
+                "bottom-right"
+              ],
+              "extent": "wide",
+              "confidence": "high",
+              "source": "vlm"
+            },
+            {
+              "name": "door",
+              "ko_name": "문",
+              "primary_location": "left",
+              "locations": [
+                "left",
+                "right"
+              ],
+              "extent": "medium",
+              "confidence": "high",
+              "source": "vlm"
+            }
+          ]
+        }
+      ],
+      "condition_group_issues": [
+        {
+          "label": "바닥|wall",
+          "ko": "바닥",
+          "expected_en": [
+            "floor",
+            "ground"
+          ],
+          "actual_en": [
+            "wall"
+          ],
+          "issue": "condition_group_cross_pairing"
+        },
+        {
+          "label": "벽|floor",
+          "ko": "벽",
+          "expected_en": [
+            "brick wall",
+            "wall"
+          ],
+          "actual_en": [
+            "floor"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": [
+        1,
+        6
+      ],
+      "s17_full_evidence_non_gt_top10": 8
+    },
+    {
+      "query": "등, 창문가 함께 있는 이미지",
+      "elements_ko": [
+        "등",
+        "창문"
+      ],
+      "gt_count": 2,
+      "found_at10": 2,
+      "missed_at10": 0,
+      "misses": [],
+      "condition_group_issues": [
+        {
+          "label": "등|window",
+          "ko": "등",
+          "expected_en": [
+            "lamp",
+            "light",
+            "sconce"
+          ],
+          "actual_en": [
+            "window"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": [
+        2,
+        9
+      ],
+      "s17_full_evidence_non_gt_top10": 8
+    },
+    {
+      "query": "수납장, 창문가 함께 있는 이미지",
+      "elements_ko": [
+        "수납장",
+        "창문"
+      ],
+      "gt_count": 2,
+      "found_at10": 2,
+      "missed_at10": 0,
+      "misses": [],
+      "condition_group_issues": [
+        {
+          "label": "수납장|window",
+          "ko": "수납장",
+          "expected_en": [
+            "cabinet"
+          ],
+          "actual_en": [
+            "window"
+          ],
+          "issue": "condition_group_cross_pairing"
+        },
+        {
+          "label": "창문|cabinet",
+          "ko": "창문",
+          "expected_en": [
+            "bright window",
+            "window"
+          ],
+          "actual_en": [
+            "cabinet"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": [
+        1
+      ],
+      "s17_full_evidence_non_gt_top10": 9
+    },
+    {
+      "query": "벽, 책장가 함께 있는 이미지",
+      "elements_ko": [
+        "벽",
+        "책장"
+      ],
+      "gt_count": 2,
+      "found_at10": 2,
+      "missed_at10": 0,
+      "misses": [],
+      "condition_group_issues": [
+        {
+          "label": "벽|bookshelf",
+          "ko": "벽",
+          "expected_en": [
+            "brick wall",
+            "wall"
+          ],
+          "actual_en": [
+            "bookshelf"
+          ],
+          "issue": "condition_group_cross_pairing"
+        },
+        {
+          "label": "책장|wall",
+          "ko": "책장",
+          "expected_en": [
+            "bookshelf"
+          ],
+          "actual_en": [
+            "wall"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": null,
+      "s17_full_evidence_non_gt_top10": null
+    },
+    {
+      "query": "식물, 의자가 함께 있는 이미지",
+      "elements_ko": [
+        "식물",
+        "의자"
+      ],
+      "gt_count": 2,
+      "found_at10": 2,
+      "missed_at10": 0,
+      "misses": [],
+      "condition_group_issues": [
+        {
+          "label": "식물|chair",
+          "ko": "식물",
+          "expected_en": [
+            "hedge",
+            "plant"
+          ],
+          "actual_en": [
+            "chair"
+          ],
+          "issue": "condition_group_cross_pairing"
+        },
+        {
+          "label": "의자|plant",
+          "ko": "의자",
+          "expected_en": [
+            "armchair",
+            "bench",
+            "benche",
+            "chair"
+          ],
+          "actual_en": [
+            "plant"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": [
+        4,
+        7
+      ],
+      "s17_full_evidence_non_gt_top10": 4
+    },
+    {
+      "query": "조명, 커튼가 함께 있는 이미지",
+      "elements_ko": [
+        "조명",
+        "커튼"
+      ],
+      "gt_count": 2,
+      "found_at10": 2,
+      "missed_at10": 0,
+      "misses": [],
+      "condition_group_issues": [
+        {
+          "label": "커튼|lighting",
+          "ko": "커튼",
+          "expected_en": [
+            "blind",
+            "curtain"
+          ],
+          "actual_en": [
+            "lighting"
+          ],
+          "issue": "condition_group_cross_pairing"
+        }
+      ],
+      "s17_gt_rank_positions": null,
+      "s17_full_evidence_non_gt_top10": null
+    }
+  ],
+  "recommendations": [
+    "validate_condition_group_pairing",
+    "add_object_evidence_recall_guard",
+    "run_top50_miss_trace"
+  ]
+}

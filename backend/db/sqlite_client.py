@@ -359,11 +359,31 @@ class SQLiteDB:
         "background": ["배경", "뒤쪽"],
     }
     _OBJECT_SYNONYMS = {
+        "walls": "wall",
         "shelves": "shelf",
         "cupboard": "cabinet",
         "bottles": "bottle",
+        "windows": "window",
+        "doors": "door",
+        "stairs": "stairs",
+        "steps": "stairs",
+        "fences": "fence",
+        "gates": "gate",
+        "buildings": "building",
     }
     _OBJECT_KO_NAMES = {
+        "wall": "벽",
+        "window": "창문",
+        "door": "문",
+        "stairs": "계단",
+        "fence": "울타리",
+        "gate": "문",
+        "building": "건물",
+        "floor": "바닥",
+        "ceiling": "천장",
+        "sky": "하늘",
+        "water": "물",
+        "tree": "나무",
         "shelf": "선반",
         "cabinet": "수납장",
         "bottle": "병",
@@ -794,7 +814,10 @@ class SQLiteDB:
     @classmethod
     def _coerce_flat_spatial_objects(cls, raw_objects: list[Any]) -> list[dict]:
         """Recover the old fallback-parser shape: ["name", "moon", "locations", ...]."""
-        object_fields = {"name", "ko_name", "locations", "primary_location", "extent", "confidence"}
+        object_fields = {
+            "name", "ko_name", "locations", "primary_location",
+            "extent", "confidence", "salience",
+        }
         tokens = [str(token).strip() for token in raw_objects if str(token).strip()]
         objects: list[dict] = []
         current: dict[str, Any] = {}
@@ -822,7 +845,7 @@ class SQLiteDB:
                     i += 1
                 current["locations"] = locations
                 continue
-            elif token in {"primary_location", "extent", "confidence"}:
+            elif token in {"primary_location", "extent", "confidence", "salience"}:
                 if i + 1 < len(tokens) and tokens[i + 1] not in object_fields:
                     current[token] = tokens[i + 1]
                     i += 2
@@ -847,13 +870,20 @@ class SQLiteDB:
             return []
 
         raw_objects = structured_meta.get("objects")
-        if not isinstance(raw_objects, list):
+        raw_structural_objects = structured_meta.get("structural_objects")
+        combined_objects: list[Any] = []
+        for raw_list in (raw_objects, raw_structural_objects):
+            if not isinstance(raw_list, list):
+                continue
+            if raw_list and all(not isinstance(raw, dict) for raw in raw_list):
+                raw_list = cls._coerce_flat_spatial_objects(raw_list)
+            combined_objects.extend(raw_list)
+        if not combined_objects:
             return []
-        if raw_objects and all(not isinstance(raw, dict) for raw in raw_objects):
-            raw_objects = cls._coerce_flat_spatial_objects(raw_objects)
 
         normalized: list[dict] = []
-        for raw in raw_objects:
+        seen_objects: set[tuple[str, str]] = set()
+        for raw in combined_objects:
             if not isinstance(raw, dict):
                 continue
             name = cls._canonical_object_name(raw.get("name"))
@@ -886,6 +916,8 @@ class SQLiteDB:
                 primary_location = locations[0]
             if not locations or not primary_location:
                 continue
+            if len(locations) > 3:
+                locations = locations[:3]
 
             extent = str(raw.get("extent") or "").strip().lower()
             if extent not in {"small", "medium", "large", "wide", "full"}:
@@ -895,14 +927,22 @@ class SQLiteDB:
             if confidence not in {"high", "medium", "low"}:
                 confidence = "low"
 
-            normalized.append({
+            obj = {
                 "name": name,
                 "ko_name": ko_name,
                 "locations": locations,
                 "primary_location": primary_location,
                 "extent": extent,
                 "confidence": confidence,
-            })
+            }
+            salience = str(raw.get("salience") or "").strip().lower()
+            if salience in {"primary", "secondary", "background"}:
+                obj["salience"] = salience
+            dedupe_key = (obj["name"], obj["primary_location"])
+            if dedupe_key in seen_objects:
+                continue
+            seen_objects.add(dedupe_key)
+            normalized.append(obj)
         return normalized
 
     @classmethod
@@ -998,13 +1038,15 @@ class SQLiteDB:
             structured_meta = {}
 
         raw_objects = structured_meta.get("objects")
+        raw_structural_objects = structured_meta.get("structural_objects")
         objects = cls._normalize_spatial_objects_from_meta(structured_meta)
         relations = cls._normalize_spatial_relations_from_meta(structured_meta)
         depth_layers = cls._normalize_depth_layers_from_meta(structured_meta)
 
-        if parse_status == "fallback" and raw_objects:
+        has_raw_objects = bool(raw_objects or raw_structural_objects)
+        if parse_status == "fallback" and has_raw_objects:
             objects_status = "partial"
-        elif raw_objects and not objects:
+        elif has_raw_objects and not objects:
             objects_status = "partial"
         elif objects:
             objects_status = "ok"
@@ -1053,6 +1095,8 @@ class SQLiteDB:
                 parts.append(str(obj["extent"]))
             if obj.get("confidence"):
                 parts.append(str(obj["confidence"]))
+            if obj.get("salience"):
+                parts.append(str(obj["salience"]))
 
         for layer in depth_layers or []:
             if layer.get("name") and layer.get("ko_name"):

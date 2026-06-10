@@ -1,19 +1,8 @@
 import sqlite3
-import sys
 import types
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-sys.modules.setdefault(
-    "jwt",
-    types.SimpleNamespace(
-        ExpiredSignatureError=Exception,
-        InvalidTokenError=Exception,
-        decode=lambda *args, **kwargs: {},
-        encode=lambda *args, **kwargs: "",
-    ),
-)
 
 from backend.server import deps
 from backend.server.routers import workers

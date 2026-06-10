@@ -1,18 +1,6 @@
 import sqlite3
-import sys
-import types
 
 from PIL import Image
-
-sys.modules.setdefault(
-    "jwt",
-    types.SimpleNamespace(
-        ExpiredSignatureError=Exception,
-        InvalidTokenError=Exception,
-        decode=lambda *args, **kwargs: {},
-        encode=lambda *args, **kwargs: "",
-    ),
-)
 
 from backend.server.routers.analysis import _save_vision_fields_for_file
 from backend.worker.transport import LocalTransport

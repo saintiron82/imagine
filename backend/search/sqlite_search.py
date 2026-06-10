@@ -141,14 +141,27 @@ _SPATIAL_DEPTH_ALIASES = {
 }
 _SPATIAL_STOPWORDS = {
     "이미지", "사진", "그림", "파일", "자료", "찾기", "찾아줘", "보이는",
-    "있는", "있다", "있", "그리고", "with", "and", "the", "a", "an", "of", "in",
-    "to", "is", "are",
+    "보이", "있는", "있고", "있음", "있다", "있", "함께", "같이", "모두",
+    "있어", "그리고", "와", "과", "가", "이", "을", "를", "에", "의", "은",
+    "는", "도", "로", "으로", "함", "with", "and", "together", "the", "a",
+    "an", "of", "in", "to", "is", "are",
 }
 _SPATIAL_TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣_-]+")
 _SPATIAL_KO_PARTICLES_RE = re.compile(
     r"(?:에게서|에게|한테|으로|부터|까지|보다|처럼|만큼|대로|마다|"
     r"이랑|이나|하고|과|와|에|의|은|는|이|가|을|를|도|만|나)$"
 )
+_SPATIAL_LOCATION_COMPONENTS = {
+    "top-left": {"top-left", "top", "left"},
+    "top-right": {"top-right", "top", "right"},
+    "bottom-left": {"bottom-left", "bottom", "left"},
+    "bottom-right": {"bottom-right", "bottom", "right"},
+    "top": {"top"},
+    "bottom": {"bottom"},
+    "left": {"left"},
+    "right": {"right"},
+    "center": {"center"},
+}
 
 
 def _ordered_unique(values: List[str]) -> List[str]:
@@ -163,13 +176,11 @@ def _ordered_unique(values: List[str]) -> List[str]:
     return out
 
 
-def _extract_spatial_intent(query: str, keywords: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Extract rule-based spatial intent for relation/location/depth searches."""
-    text = str(query or "").strip()
-    joined = " ".join([text] + [str(k) for k in (keywords or []) if k])
-    lowered = joined.lower()
-    compact_ko = re.sub(r"\s+", "", joined)
-
+def _extract_spatial_locations_from_text(text: str) -> List[str]:
+    """Extract location aliases from one text segment without cross-keyword joins."""
+    segment = str(text or "").strip()
+    lowered = segment.lower()
+    compact_ko = re.sub(r"\s+", "", segment)
     locations: List[str] = []
     for raw, canonical in SQLiteDB._SPATIAL_LOCATION_ALIASES.items():
         if raw in lowered:
@@ -178,8 +189,68 @@ def _extract_spatial_intent(query: str, keywords: Optional[List[str]] = None) ->
         if canonical in lowered:
             locations.append(canonical)
     for raw, canonical in _SPATIAL_KO_LOCATION_ALIASES.items():
-        if raw in joined or raw.replace(" ", "") in compact_ko:
+        if raw in segment or raw.replace(" ", "") in compact_ko:
             locations.append(canonical)
+    return _ordered_unique(locations)
+
+
+def _location_conflicts(candidate: str, allowed_locations: List[str]) -> bool:
+    candidate_parts = _SPATIAL_LOCATION_COMPONENTS.get(candidate, {candidate})
+    allowed_parts: set[str] = set()
+    for location in allowed_locations:
+        allowed_parts.update(_SPATIAL_LOCATION_COMPONENTS.get(location, {location}))
+    if not candidate_parts or not allowed_parts:
+        return False
+    horizontal = {"left", "right"}
+    vertical = {"top", "bottom"}
+    return (
+        bool(candidate_parts & horizontal)
+        and bool(allowed_parts & horizontal)
+        and not bool(candidate_parts & allowed_parts & horizontal)
+    ) or (
+        bool(candidate_parts & vertical)
+        and bool(allowed_parts & vertical)
+        and not bool(candidate_parts & allowed_parts & vertical)
+    )
+
+
+def _sanitize_spatial_fts_keywords(query: str, keywords: Optional[List[str]]) -> List[str]:
+    """Remove decomposer location keywords that contradict explicit query location."""
+    if not keywords:
+        return []
+    query_locations = _extract_spatial_locations_from_text(query)
+    if not query_locations:
+        return _ordered_unique([str(kw) for kw in keywords if str(kw).strip()])
+
+    sanitized: List[str] = []
+    for keyword in keywords:
+        text = str(keyword or "").strip()
+        if not text:
+            continue
+        keyword_locations = _extract_spatial_locations_from_text(text)
+        if keyword_locations and all(
+            _location_conflicts(location, query_locations)
+            for location in keyword_locations
+        ):
+            continue
+        sanitized.append(text)
+    return _ordered_unique(sanitized)
+
+
+def _extract_spatial_intent(query: str, keywords: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Extract rule-based spatial intent for relation/location/depth searches."""
+    text = str(query or "").strip()
+    clean_keywords = _sanitize_spatial_fts_keywords(text, keywords)
+    joined = " ".join([text] + [str(k) for k in clean_keywords if k])
+    lowered = joined.lower()
+
+    query_locations = _extract_spatial_locations_from_text(text)
+    if query_locations:
+        locations = query_locations
+    else:
+        locations = []
+        for segment in [text] + clean_keywords:
+            locations.extend(_extract_spatial_locations_from_text(str(segment)))
 
     relations: List[str] = []
     for raw, canonical in SQLiteDB._SPATIAL_RELATION_ALIASES.items():
@@ -1858,35 +1929,54 @@ class SqliteVectorSearch:
                         row_locations.update(json.loads(row["locations"] or "[]"))
                     except (json.JSONDecodeError, TypeError):
                         pass
-                    if row["primary_location"]:
-                        row_locations.add(row["primary_location"])
+                    primary_location = row["primary_location"] or ""
+                    secondary_locations = set(row_locations)
+                    if primary_location:
+                        row_locations.add(primary_location)
+                        secondary_locations.discard(primary_location)
                     hay = " ".join(
                         str(value or "")
                         for value in (
-                            row["name"], row["ko_name"], row["primary_location"],
+                            row["name"], row["ko_name"], primary_location,
                             row["locations"], row["extent"], spatial_text,
                         )
                     )
                     term_hits = self._spatial_term_hits(hay, terms)
-                    loc_hits = sum(
+                    primary_hits = sum(1 for loc in locations if loc == primary_location)
+                    secondary_hits = sum(1 for loc in locations if loc in secondary_locations)
+                    text_only_hits = sum(
                         1 for loc in locations
-                        if loc in row_locations or loc in spatial_text
+                        if loc not in row_locations and loc in spatial_text
                     )
+                    loc_hits = primary_hits + secondary_hits + text_only_hits
                     if terms and term_hits == 0:
                         continue
                     if locations and loc_hits == 0:
                         continue
+                    if primary_hits:
+                        loc_bonus = 0.52 * primary_hits
+                        match_strength = "primary"
+                    elif secondary_hits:
+                        loc_bonus = 0.18 * secondary_hits
+                        match_strength = "secondary"
+                    elif text_only_hits:
+                        loc_bonus = 0.07 * text_only_hits
+                        match_strength = "text"
+                    else:
+                        loc_bonus = 0.0
+                        match_strength = "term_only"
                     score = (
                         0.45
                         + 0.18 * term_hits
-                        + 0.30 * loc_hits
+                        + loc_bonus
                         + self._spatial_confidence_bonus(row["confidence"])
                     )
                     add_match(row["file_id"], score, {
                         "table": "file_objects",
                         "name": row["name"],
                         "ko_name": row["ko_name"],
-                        "primary_location": row["primary_location"],
+                        "primary_location": primary_location,
+                        "match_strength": match_strength,
                         "confidence": row["confidence"],
                     })
 
@@ -2143,6 +2233,10 @@ class SqliteVectorSearch:
                            and kw.lower() not in folder_filter.lower()]
             if not fts_keywords:
                 fts_keywords = [vector_query] if vector_query else [query]
+
+        fts_keywords = _sanitize_spatial_fts_keywords(query, fts_keywords)
+        if not fts_keywords:
+            fts_keywords = [vector_query] if vector_query else [query]
 
         query_type = legacy.get("query_type", "balanced")
         spatial_intent = _extract_spatial_intent(query, fts_keywords)
@@ -2513,6 +2607,60 @@ class SqliteVectorSearch:
                     "boosted_candidates": boosted,
                 }
 
+        # Enforce decomposed scene conditions before trimming so full-condition
+        # candidates can rise from the wider RRF/rerank pool.
+        elements_for_check: list[str] = []
+        evidence_boost = 0.0
+        try:
+            import os as _bench_os2
+            _disable_and = _bench_os2.environ.get("IMAGINE_BENCH_DISABLE_AND") == "1"
+            if not _disable_and and isinstance(unified, dict):
+                source: list[str] = []
+                find_block = unified.get("find") or {}
+                if isinstance(find_block, dict):
+                    src = find_block.get("keywords")
+                    if isinstance(src, list):
+                        source = [
+                            str(x).strip() for x in src
+                            if isinstance(x, str) and str(x).strip()
+                        ]
+                if not source:
+                    legacy_block = unified.get("_legacy") or {}
+                    if isinstance(legacy_block, dict):
+                        src = legacy_block.get("fts_keywords")
+                        if isinstance(src, list):
+                            source = [
+                                str(x).strip() for x in src
+                                if isinstance(x, str) and str(x).strip()
+                            ]
+
+                elements_for_check = _build_element_verification_groups(source)
+            if len(elements_for_check) >= 2 and len(merged) > 1:
+                pre_count = len(merged)
+                merged = apply_element_verification(
+                    merged, elements=elements_for_check, penalty=0.15,
+                )
+                evidence_boost = float(_search_cfg.get("search.rerank.evidence_matrix_boost", 0.20))
+                if evidence_boost > 0:
+                    merged = apply_evidence_matrix_rerank(
+                        merged,
+                        elements=elements_for_check,
+                        boost=evidence_boost,
+                    )
+                    diag["evidence_matrix"] = {
+                        "elements": elements_for_check,
+                        "pre_count": pre_count,
+                        "stage": "pre_trim",
+                        "boost": evidence_boost,
+                    }
+                diag["element_verification"] = {
+                    "elements": elements_for_check,
+                    "pre_count": pre_count,
+                    "stage": "pre_trim",
+                }
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Element verification skipped: {exc}")
+
         # Step 5e: FTS priority for keyword queries.
         # When query_type is "keyword", FTS results take full priority —
         # fill all slots with FTS matches first, remaining slots get VV/MV.
@@ -2574,7 +2722,7 @@ class SqliteVectorSearch:
             for r in merged[:5]
         ]
 
-        # Sprint 1 α: cross-encoder rerank over top-30 candidates.
+        # Cross-encoder rerank over top candidates.
         # BGE-reranker-v2-m3 is multilingual and CPU-friendly; load is
         # lazy so this is a no-op when transformers/the model is not
         # available. Env var IMAGINE_BENCH_DISABLE_RERANK=1 lets benches
@@ -2596,15 +2744,23 @@ class SqliteVectorSearch:
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"Cross-encoder rerank skipped: {exc}")
 
-        # Sprint 3 S3.2: spatial-intent boost.
-        # Env IMAGINE_BENCH_DISABLE_SPATIAL=1 skips for A/B benches.
+        if diag.get("cross_encoder_rerank") and evidence_boost > 0 and len(elements_for_check) >= 2 and len(merged) > 1:
+            merged = apply_evidence_matrix_rerank(
+                merged,
+                elements=elements_for_check,
+                boost=evidence_boost,
+            )
+            diag.setdefault("evidence_matrix", {})["post_cross_encoder"] = True
+
+        # Spatial-intent queries should keep structured spatial matches high.
+        # Env IMAGINE_BENCH_DISABLE_SPATIAL=1 skips this for A/B comparisons.
         try:
             import os as _bench_os_sp
             _disable_spatial = _bench_os_sp.environ.get("IMAGINE_BENCH_DISABLE_SPATIAL") == "1"
             if not _disable_spatial and query_type == "spatial":
                 pre_count = len(merged)
                 merged = apply_spatial_intent_boost(
-                    merged, query_type=query_type, boost=0.10,
+                    merged, query_type=query_type, boost=0.35,
                 )
                 boosted = sum(1 for r in merged if (r.get("spatial_score") or 0) > 0)
                 diag["spatial_intent_boost"] = {
@@ -2613,73 +2769,6 @@ class SqliteVectorSearch:
                 }
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"Spatial intent boost skipped: {exc}")
-
-        # Sprint 1 β1: enforce ConstraintPlan elements via post-hoc check.
-        # The unified decompose output exposes the element list as
-        # `find.keywords` (or legacy `fts_keywords`). We treat the first
-        # few of those as required AND-elements when there are 2+.
-        # Env var IMAGINE_BENCH_DISABLE_AND=1 skips this for A/B benches.
-        try:
-            import os as _bench_os2
-            _disable_and = _bench_os2.environ.get("IMAGINE_BENCH_DISABLE_AND") == "1"
-            elements_for_check: list[str] = []
-            if not _disable_and and isinstance(unified, dict):
-                # Build synonym groups by pairing Korean intent words with
-                # their English translations from the same keyword list.
-                # Decomposer usually emits [KO_a, KO_b, EN_a, EN_b, ...] —
-                # we pair by position so each AND-element is
-                # ("발코니|balcony", "밤|night").
-                def _classify_lang(token: str) -> str:
-                    for ch in token:
-                        # Hangul syllables: 가–힣
-                        if 0xAC00 <= ord(ch) <= 0xD7A3:
-                            return "ko"
-                    return "en"
-
-                source: list[str] = []
-                find_block = unified.get("find") or {}
-                if isinstance(find_block, dict):
-                    src = find_block.get("keywords")
-                    if isinstance(src, list):
-                        source = [
-                            str(x).strip() for x in src
-                            if isinstance(x, str) and str(x).strip()
-                        ]
-                if not source:
-                    legacy_block = unified.get("_legacy") or {}
-                    if isinstance(legacy_block, dict):
-                        src = legacy_block.get("fts_keywords")
-                        if isinstance(src, list):
-                            source = [
-                                str(x).strip() for x in src
-                                if isinstance(x, str) and str(x).strip()
-                            ]
-
-                ko_tokens = [t for t in source if _classify_lang(t) == "ko"][:2]
-                en_tokens = [t for t in source if _classify_lang(t) == "en"][:2]
-
-                if len(ko_tokens) >= 2 and len(en_tokens) >= 2:
-                    # Pair by position — typical decomposer output is
-                    # KO_a, KO_b, EN_a, EN_b which lines up.
-                    elements_for_check = [
-                        f"{ko_tokens[i]}|{en_tokens[i]}" for i in range(2)
-                    ]
-                elif len(ko_tokens) >= 2:
-                    elements_for_check = ko_tokens[:2]
-                elif len(en_tokens) >= 2:
-                    elements_for_check = en_tokens[:2]
-                # else fallthrough: <2 distinct tokens — skip AND
-            if len(elements_for_check) >= 2 and len(merged) > 1:
-                pre_count = len(merged)
-                merged = apply_element_verification(
-                    merged, elements=elements_for_check, penalty=0.15,
-                )
-                diag["element_verification"] = {
-                    "elements": elements_for_check,
-                    "pre_count": pre_count,
-                }
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(f"Element verification skipped: {exc}")
 
         # Phase D: soft demotion using accumulated user "irrelevant" feedback.
         # Files repeatedly flagged irrelevant for the same query get a small
@@ -3413,13 +3502,131 @@ def apply_folder_filter(rows, folder: str):
     return [r for r in rows if needle in (r.get("folder_path") or "")]
 
 
+def _build_element_verification_groups(
+    source: list[str],
+    *,
+    max_groups: int = 4,
+) -> list[str]:
+    """Build synonym groups for multi-condition evidence verification."""
+    if not source:
+        return []
+
+    location_noise = {
+        *SQLiteDB._SPATIAL_LOCATIONS,
+        *SQLiteDB._SPATIAL_LOCATION_ALIASES.keys(),
+        *_SPATIAL_KO_LOCATION_ALIASES.keys(),
+    }
+    generic = {
+        "이미지", "사진", "그림", "파일", "자료",
+        "image", "images", "photo", "photos", "picture", "pictures",
+    }
+
+    def _classify_lang(token: str) -> str:
+        for ch in token:
+            if 0xAC00 <= ord(ch) <= 0xD7A3:
+                return "ko"
+        return "en"
+
+    def _clean(token: str) -> str:
+        normalized = str(token or "").strip()
+        if any("\uac00" <= c <= "\ud7af" for c in normalized):
+            normalized = _SPATIAL_KO_PARTICLES_RE.sub("", normalized) or normalized
+        return normalized.strip()
+
+    known_pairs = {
+        "벽": {"wall", "brick wall"},
+        "커튼": {"curtain", "curtains", "blind"},
+        "창문": {"window", "bright window"},
+        "문": {"door", "gate"},
+        "바닥": {"floor", "ground"},
+        "천장": {"ceiling"},
+        "등": {"lamp", "light", "sconce"},
+        "조명": {"light", "lighting", "light fixture"},
+        "배관": {"pipe", "pipes"},
+        "레일": {"rail", "railing"},
+        "수납장": {"cabinet"},
+        "책장": {"bookshelf"},
+        "병": {"bottle"},
+        "상자": {"box", "boxes"},
+        "선반": {"shelf"},
+        "화면": {"screen"},
+        "버튼": {"button"},
+        "식물": {"plant"},
+        "의자": {"chair", "bench", "armchair"},
+        "테이블": {"table"},
+        "초콜릿": {"chocolate", "candy"},
+    }
+
+    def _phrase_noise(token: str, all_source: set[str]) -> bool:
+        low = token.lower()
+        if "," in token or "，" in token:
+            return True
+        if re.search(r"[가-힣]\s*(?:과|와|하고|및)\s*[가-힣]", token):
+            return True
+        if any(glue in low.split() for glue in {"and", "with", "together"}):
+            return True
+        parts = [part for part in re.split(r"\s+", low) if part]
+        if len(parts) >= 2 and any(part in all_source for part in parts):
+            return True
+        return False
+
+    def _keep(token: str) -> bool:
+        low = token.lower()
+        if not token or low in _SPATIAL_STOPWORDS or low in generic:
+            return False
+        if token in location_noise or low in {str(v).lower() for v in location_noise}:
+            return False
+        if len(token) == 1 and _classify_lang(token) != "ko":
+            return False
+        return True
+
+    raw_cleaned = [_clean(raw) for raw in source]
+    source_terms = {token.lower() for token in raw_cleaned if token}
+    cleaned = _ordered_unique([
+        token for token in raw_cleaned
+        if _keep(token) and not _phrase_noise(token, source_terms)
+    ])
+    ko_tokens = [t for t in cleaned if _classify_lang(t) == "ko"]
+    en_tokens = [t for t in cleaned if _classify_lang(t) == "en"]
+
+    groups: list[str] = []
+    remaining_en = list(en_tokens)
+    for ko_token in ko_tokens[:max_groups]:
+        expected = known_pairs.get(ko_token, set())
+        match_idx = next(
+            (
+                idx for idx, en_token in enumerate(remaining_en)
+                if en_token.lower() in expected
+            ),
+            None,
+        )
+        if match_idx is None:
+            continue
+        en_token = remaining_en.pop(match_idx)
+        groups.append(f"{ko_token}|{en_token}")
+
+    paired_ko = {group.split("|", 1)[0] for group in groups}
+    unpaired_ko = [token for token in ko_tokens if token not in paired_ko]
+    pair_count = min(len(unpaired_ko), len(remaining_en), max_groups - len(groups))
+    for idx in range(pair_count):
+        groups.append(f"{unpaired_ko[idx]}|{remaining_en[idx]}")
+
+    remaining = unpaired_ko[pair_count:] + remaining_en[pair_count:]
+    for token in remaining:
+        if len(groups) >= max_groups:
+            break
+        groups.append(token)
+
+    return groups
+
+
 def apply_element_verification(
     rows,
     *,
     elements,
     penalty: float = 0.10,
 ):
-    """Sprint 1 β1: penalise rows missing requested ConstraintPlan elements.
+    """Penalise rows missing requested condition elements.
 
     Counts how many elements appear (case-insensitive substring) in the
     combined text of mc_caption + ai_tags + str(spatial_objects). For
@@ -3438,7 +3645,7 @@ def apply_element_verification(
     # ANY of its synonyms appears in the row text. This is what lets
     # us match Korean intent ("발코니") against English captions
     # ("balcony") without manual translation tables.
-    needle_groups: list[list[str]] = []
+    needle_groups: list[tuple[str, list[str]]] = []
     for e in elements:
         if not isinstance(e, str):
             continue
@@ -3448,7 +3655,7 @@ def apply_element_verification(
             if piece.strip()
         ]
         if synonyms:
-            needle_groups.append(synonyms)
+            needle_groups.append((e, synonyms))
     if not needle_groups:
         return rows
 
@@ -3475,17 +3682,34 @@ def apply_element_verification(
             _as_text(r.get("spatial_objects")),
         ]).lower()
 
-        present = sum(
-            1 for group in needle_groups if any(n in haystack for n in group)
-        )
+        matched: list[str] = []
+        missing_groups: list[str] = []
+        evidence: dict[str, list[str]] = {}
+        for label, group in needle_groups:
+            hits = [n for n in group if n in haystack]
+            if hits:
+                matched.append(label)
+                evidence[label] = hits
+            else:
+                missing_groups.append(label)
+        present = len(matched)
         missing = len(needle_groups) - present
         r["element_match_count"] = present
         r["element_miss_count"] = missing
+        r["element_match_ratio"] = round(present / len(needle_groups), 4)
+        r["element_missing"] = missing_groups
+        r["element_evidence"] = evidence
         if missing:
             r["rrf_score"] = float(r.get("rrf_score") or 0.0) - penalty * missing
 
     rows = list(rows)
-    if uses_cross_encoder:
+    if any(r.get("quality_score") is not None for r in rows):
+        rows.sort(
+            key=lambda r: float(r.get("quality_score") or 0.0)
+            - penalty * (r.get("element_miss_count") or 0),
+            reverse=True,
+        )
+    elif uses_cross_encoder:
         # Cross-encoder ran upstream; preserve its ordering but layer the
         # AND penalty on top so missing-element rows drop within the
         # rerank's preference order.
@@ -3499,11 +3723,157 @@ def apply_element_verification(
     return rows
 
 
-def apply_spatial_intent_boost(rows, *, query_type, boost: float = 0.10):
-    """Sprint 3 S3.2: when query_type == 'spatial', boost rows with
-    positive spatial_score by `boost * spatial_score`. Adds to both
-    rrf_score and cross_encoder_score (when present), then re-sorts.
+def _evidence_value_text(value) -> str:
+    """Compact recursive text for already-loaded search result evidence."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(
+            _evidence_value_text(v)
+            for v in value.values()
+            if v is not None
+        )
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(_evidence_value_text(v) for v in value)
+    return str(value)
+
+
+def _candidate_evidence_text(row: dict) -> str:
+    """Build evidence text from existing data/search axes without new parsing."""
+    fields = [
+        "file_name", "folder_path", "relative_path", "file_path",
+        "mc_caption", "ai_tags", "metadata", "structured_meta",
+        "image_type", "art_style", "color_palette", "scene_type",
+        "time_of_day", "weather", "character_type", "item_type", "ui_type",
+        "user_note", "user_tags", "user_category",
+        "spatial_objects", "spatial_relations", "spatial_matches",
+        "depth_layers",
+    ]
+    return " ".join(_evidence_value_text(row.get(field)) for field in fields).lower()
+
+
+def _candidate_structured_object_text(row: dict) -> str:
+    """Build text only from structured object rows attached to the result."""
+    return _evidence_value_text(row.get("spatial_objects")).lower()
+
+
+def _axis_evidence(row: dict) -> dict:
+    """Summarize which existing axes supplied usable evidence for a row."""
+    return {
+        "visual": {
+            "present": row.get("vector_score") is not None or row.get("similarity") is not None,
+            "score": row.get("vector_score", row.get("similarity")),
+        },
+        "text_vec": {
+            "present": row.get("text_vec_score") is not None or row.get("text_similarity") is not None,
+            "score": row.get("text_vec_score", row.get("text_similarity")),
+        },
+        "fts": {
+            "present": row.get("text_score") is not None or row.get("fts_rank") is not None,
+            "score": row.get("text_score", row.get("fts_rank")),
+        },
+        "spatial": {
+            "present": bool(row.get("spatial_score")) or bool(row.get("spatial_matches")),
+            "score": row.get("spatial_score"),
+        },
+        "metadata": {
+            "present": bool(
+                row.get("metadata")
+                or row.get("structured_meta")
+                or row.get("mc_caption")
+                or row.get("ai_tags")
+                or row.get("image_type")
+                or row.get("scene_type")
+                or row.get("art_style")
+                or row.get("user_tags")
+                or row.get("user_note")
+                or row.get("user_category")
+            ),
+            "score": row.get("metadata_reliability_score"),
+        },
+    }
+
+
+def apply_evidence_matrix_rerank(
+    rows,
+    *,
+    elements,
+    boost: float = 0.20,
+):
+    """Attach condition/axis evidence and rerank using existing search data.
+
+    This does not create a new search pipeline. It only reads fields already
+    loaded by VV/MV/FTS/spatial/metadata paths and makes their support explicit.
     """
+    if not rows or not elements:
+        return rows
+
+    needle_groups: list[tuple[str, list[str]]] = []
+    for element in elements:
+        if not isinstance(element, str):
+            continue
+        synonyms = [piece.strip().lower() for piece in element.split("|") if piece.strip()]
+        if synonyms:
+            needle_groups.append((element, synonyms))
+    if not needle_groups:
+        return rows
+
+    rescored = []
+    for idx, row in enumerate(rows):
+        haystack = _candidate_evidence_text(row)
+        object_haystack = _candidate_structured_object_text(row)
+        matches: dict[str, list[str]] = {}
+        missing: list[str] = []
+        object_matches: dict[str, list[str]] = {}
+        object_missing: list[str] = []
+        for label, synonyms in needle_groups:
+            hits = [synonym for synonym in synonyms if synonym in haystack]
+            if hits:
+                matches[label] = hits
+            else:
+                missing.append(label)
+            object_hits = [synonym for synonym in synonyms if synonym in object_haystack]
+            if object_hits:
+                object_matches[label] = object_hits
+            else:
+                object_missing.append(label)
+
+        axis_evidence = _axis_evidence(row)
+        axis_count = sum(1 for axis in axis_evidence.values() if axis["present"])
+        match_count = len(matches)
+        object_match_count = len(object_matches)
+        match_ratio = round(match_count / len(needle_groups), 4)
+        object_full_bonus = 1.0 if object_match_count == len(needle_groups) and len(needle_groups) >= 2 else 0.0
+        evidence_score = round(
+            match_count + (0.25 * axis_count) + object_match_count + object_full_bonus,
+            4,
+        )
+        row["evidence_score"] = evidence_score
+        row["evidence_matrix"] = {
+            "conditions": {
+                "total": len(needle_groups),
+                "matched": match_count,
+                "missing": missing,
+                "match_ratio": match_ratio,
+                "matches": matches,
+                "object_matched": object_match_count,
+                "object_missing": object_missing,
+                "object_matches": object_matches,
+            },
+            "axes": axis_evidence,
+        }
+
+        base = float(row.get("quality_score") or row.get("rrf_score") or 0.0)
+        rescored.append((base + (float(boost) * evidence_score), row.get("rrf_score", 0.0), -idx, row))
+
+    rescored.sort(reverse=True)
+    return [row for _, _, _, row in rescored]
+
+
+def apply_spatial_intent_boost(rows, *, query_type, boost: float = 0.10):
+    """Boost rows with spatial evidence for spatial-intent queries."""
     if query_type != "spatial" or not rows:
         return rows
 
@@ -3515,6 +3885,8 @@ def apply_spatial_intent_boost(rows, *, query_type, boost: float = 0.10):
             continue
         gain = boost * s
         r["rrf_score"] = float(r.get("rrf_score") or 0.0) + gain
+        if r.get("quality_score") is not None:
+            r["quality_score"] = float(r.get("quality_score") or 0.0) + gain
         if r.get("cross_encoder_score") is not None:
             r["cross_encoder_score"] = (
                 float(r.get("cross_encoder_score") or 0.0) + gain
@@ -3522,7 +3894,12 @@ def apply_spatial_intent_boost(rows, *, query_type, boost: float = 0.10):
         boosted_count += 1
 
     rows = list(rows)
-    if has_ce:
+    if any(r.get("quality_score") is not None for r in rows):
+        rows.sort(
+            key=lambda r: float(r.get("quality_score") or 0.0),
+            reverse=True,
+        )
+    elif has_ce:
         rows.sort(
             key=lambda r: float(r.get("cross_encoder_score") or 0.0),
             reverse=True,
@@ -3530,5 +3907,3 @@ def apply_spatial_intent_boost(rows, *, query_type, boost: float = 0.10):
     else:
         rows.sort(key=lambda r: r.get("rrf_score", 0.0), reverse=True)
     return rows
-
-

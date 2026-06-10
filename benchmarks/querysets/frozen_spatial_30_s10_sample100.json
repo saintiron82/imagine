@@ -1,0 +1,369 @@
+{
+  "frozen_at": "2026-06-03T14:47:10.525703+00:00",
+  "count": 18,
+  "queries": [
+    {
+      "source_id": 31115,
+      "file_name": null,
+      "query": "중앙에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        31115,
+        31123,
+        31144,
+        31162,
+        31178,
+        31215,
+        31639
+      ],
+      "gt_count": 7,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28721,
+      "file_name": null,
+      "query": "위쪽에 천장이 있는 이미지",
+      "elements_en": [
+        "ceiling"
+      ],
+      "elements_ko": [
+        "천장"
+      ],
+      "folder": null,
+      "spatial_location": "top",
+      "gt_ids": [
+        28721,
+        30625,
+        31162,
+        31178,
+        31317,
+        31322
+      ],
+      "gt_count": 6,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31187,
+      "file_name": null,
+      "query": "위쪽에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "top",
+      "gt_ids": [
+        31187,
+        31478,
+        31576,
+        31607,
+        31633
+      ],
+      "gt_count": 5,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28696,
+      "file_name": null,
+      "query": "오른쪽에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "right",
+      "gt_ids": [
+        28696,
+        28703,
+        31303,
+        31349
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 30625,
+      "file_name": null,
+      "query": "왼쪽에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "left",
+      "gt_ids": [
+        30625,
+        31141,
+        31322,
+        31569
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31115,
+      "file_name": null,
+      "query": "중앙에 선반이 있는 이미지",
+      "elements_en": [
+        "shelf"
+      ],
+      "elements_ko": [
+        "선반"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        31115,
+        31179,
+        31569,
+        31576
+      ],
+      "gt_count": 4,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28696,
+      "file_name": null,
+      "query": "왼쪽 위에 천장이 있는 이미지",
+      "elements_en": [
+        "ceiling"
+      ],
+      "elements_ko": [
+        "천장"
+      ],
+      "folder": null,
+      "spatial_location": "top-left",
+      "gt_ids": [
+        28696,
+        31321,
+        31323
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31144,
+      "file_name": null,
+      "query": "왼쪽에 커튼이 있는 이미지",
+      "elements_en": [
+        "curtain"
+      ],
+      "elements_ko": [
+        "커튼"
+      ],
+      "folder": null,
+      "spatial_location": "left",
+      "gt_ids": [
+        31144,
+        31317,
+        31321
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31346,
+      "file_name": null,
+      "query": "왼쪽 위에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "top-left",
+      "gt_ids": [
+        31346,
+        31553,
+        31638
+      ],
+      "gt_count": 3,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28696,
+      "file_name": null,
+      "query": "중앙에 상자가 있는 이미지",
+      "elements_en": [
+        "box"
+      ],
+      "elements_ko": [
+        "상자"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        28696,
+        31179
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28721,
+      "file_name": null,
+      "query": "아래쪽에 벽이 있는 이미지",
+      "elements_en": [
+        "wall"
+      ],
+      "elements_ko": [
+        "벽"
+      ],
+      "folder": null,
+      "spatial_location": "bottom",
+      "gt_ids": [
+        28721,
+        28897
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28893,
+      "file_name": null,
+      "query": "왼쪽 아래에 손잡이가 있는 이미지",
+      "elements_en": [
+        "railing"
+      ],
+      "elements_ko": [
+        "손잡이"
+      ],
+      "folder": null,
+      "spatial_location": "bottom-left",
+      "gt_ids": [
+        28893,
+        31303
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 28897,
+      "file_name": null,
+      "query": "왼쪽 위에 창문이 있는 이미지",
+      "elements_en": [
+        "window"
+      ],
+      "elements_ko": [
+        "창문"
+      ],
+      "folder": null,
+      "spatial_location": "top-left",
+      "gt_ids": [
+        28897,
+        31607
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31141,
+      "file_name": null,
+      "query": "오른쪽에 커튼이 있는 이미지",
+      "elements_en": [
+        "curtain"
+      ],
+      "elements_ko": [
+        "커튼"
+      ],
+      "folder": null,
+      "spatial_location": "right",
+      "gt_ids": [
+        31141,
+        31349
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31144,
+      "file_name": null,
+      "query": "왼쪽에 창문이 있는 이미지",
+      "elements_en": [
+        "window"
+      ],
+      "elements_ko": [
+        "창문"
+      ],
+      "folder": null,
+      "spatial_location": "left",
+      "gt_ids": [
+        31144,
+        31179
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31179,
+      "file_name": null,
+      "query": "오른쪽에 병이 있는 이미지",
+      "elements_en": [
+        "jar"
+      ],
+      "elements_ko": [
+        "병"
+      ],
+      "folder": null,
+      "spatial_location": "right",
+      "gt_ids": [
+        31179,
+        31569
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31321,
+      "file_name": null,
+      "query": "왼쪽 위에 조명이 있는 이미지",
+      "elements_en": [
+        "light"
+      ],
+      "elements_ko": [
+        "조명"
+      ],
+      "folder": null,
+      "spatial_location": "top-left",
+      "gt_ids": [
+        31321,
+        31323
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    },
+    {
+      "source_id": 31325,
+      "file_name": null,
+      "query": "중앙에 커튼이 있는 이미지",
+      "elements_en": [
+        "curtain"
+      ],
+      "elements_ko": [
+        "커튼"
+      ],
+      "folder": null,
+      "spatial_location": "center",
+      "gt_ids": [
+        31325,
+        31638
+      ],
+      "gt_count": 2,
+      "scope_ground_truth": false
+    }
+  ]
+}
