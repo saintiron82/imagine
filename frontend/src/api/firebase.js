@@ -170,18 +170,3 @@ export async function registerGroup(groupName, info) {
     }
 }
 
-/**
- * Unregister (delete) a group from Firestore.
- * @param {string} groupName
- */
-export async function unregisterGroup(groupName) {
-    const key = toKey(groupName);
-    try {
-        await fetch(`${FS_BASE}/${key}`, {
-            method: 'DELETE',
-            signal: AbortSignal.timeout(8000),
-        });
-    } catch (e) {
-        console.error('Firebase group unregister failed:', e);
-    }
-}
