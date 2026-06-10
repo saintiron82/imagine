@@ -2648,6 +2648,38 @@ class SqliteVectorSearch:
 
                 elements_for_check = _build_element_verification_groups(source)
             if len(elements_for_check) >= 2 and len(merged) > 1:
+                # Recall guard: files whose structured objects satisfy ALL
+                # conditions but never surfaced in any axis's top-N can't be
+                # rescued by the evidence rerank below — inject them into the
+                # pool first. Skipped when a negative query is active (the
+                # negative filter already ran on the pool) and constrained to
+                # the user's scope when one is set.
+                guard_max = int(_search_cfg.get(
+                    "search.rerank.object_evidence_guard_max", 50))
+                _disable_guard = _bench_os2.environ.get(
+                    "IMAGINE_BENCH_DISABLE_EVIDENCE_GUARD") == "1"
+                if guard_max > 0 and not negative_query and not _disable_guard:
+                    guard_ids = self._object_evidence_guard_ids(
+                        elements_for_check, limit=guard_max)
+                    if guard_ids:
+                        present_ids = {r.get("id") for r in merged}
+                        inject_ids = [
+                            fid for fid in guard_ids if fid not in present_ids]
+                        if scope_file_ids:
+                            inject_ids = [
+                                fid for fid in inject_ids
+                                if fid in scope_file_ids]
+                        if inject_ids:
+                            injected_rows = self._rows_for_file_ids(inject_ids)
+                            for row in injected_rows:
+                                row["rrf_score"] = 0.0
+                                row["evidence_injected"] = True
+                            merged.extend(injected_rows)
+                            diag["object_evidence_guard"] = {
+                                "full_match_files": len(guard_ids),
+                                "injected": len(injected_rows),
+                                "limit": guard_max,
+                            }
                 pre_count = len(merged)
                 merged = apply_element_verification(
                     merged, elements=elements_for_check, penalty=0.15,
@@ -2951,6 +2983,81 @@ class SqliteVectorSearch:
         except Exception as e:
             logger.warning(f"Batch FTS score lookup failed: {e}")
             return {}
+        finally:
+            cursor.close()
+
+    def _object_evidence_guard_ids(self, elements: list, limit: int = 50) -> list:
+        """File ids whose structured objects (file_objects) cover ALL condition groups.
+
+        Recall guard for multi-condition queries: a file can satisfy every
+        condition via VLM object evidence yet never surface in any axis's
+        top-N, so the evidence rerank can't rescue it (s19 diagnosis:
+        object_evidence_present_but_not_top10). This finds such files
+        directly so they can be injected into the candidate pool.
+        """
+        groups: list[list[str]] = []
+        for element in elements:
+            if not isinstance(element, str):
+                continue
+            synonyms = [s.strip().lower() for s in element.split("|") if s.strip()]
+            if synonyms:
+                groups.append(synonyms)
+        if len(groups) < 2:
+            return []
+
+        cursor = self.db.conn.cursor()
+        try:
+            per_group: list[set] = []
+            for synonyms in groups:
+                # Same substring semantics as _candidate_structured_object_text
+                clause = " OR ".join(
+                    ["instr(lower(coalesce(name,'') || ' ' || coalesce(ko_name,'')), ?) > 0"]
+                    * len(synonyms)
+                )
+                cursor.execute(
+                    f"SELECT DISTINCT file_id FROM file_objects WHERE {clause}",
+                    synonyms,
+                )
+                ids = {row[0] for row in cursor.fetchall()}
+                if not ids:
+                    return []
+                per_group.append(ids)
+            full_match = set.intersection(*per_group)
+            return sorted(full_match)[:limit]
+        except Exception as e:
+            logger.warning(f"Object evidence guard query failed: {e}")
+            return []
+        finally:
+            cursor.close()
+
+    def _rows_for_file_ids(self, file_ids: list) -> list[dict]:
+        """Build full result rows for arbitrary file ids (same shape as axis results)."""
+        if not file_ids:
+            return []
+        placeholders = ",".join("?" * len(file_ids))
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(f"""
+                SELECT
+                    f.id, f.file_path, f.file_name, f.format, f.width, f.height,
+                    f.mc_caption, f.ai_tags, f.ocr_text, f.metadata,
+                    f.thumbnail_url, f.user_note, f.user_tags, f.user_category,
+                    f.user_rating, f.folder_path, f.folder_depth, f.folder_tags,
+                    f.storage_root, f.relative_path, f.image_type, f.art_style,
+                    f.color_palette, f.scene_type, f.time_of_day, f.weather,
+                    f.character_type, f.item_type, f.ui_type
+                FROM files f
+                WHERE f.id IN ({placeholders}) AND f.preview_only = 0
+            """, list(file_ids))
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                self._parse_json_fields(result)
+                results.append(result)
+            return results
+        except Exception as e:
+            logger.warning(f"Row fetch for guard ids failed: {e}")
+            return []
         finally:
             cursor.close()
 
