@@ -1,13 +1,12 @@
 """
 phase_runner.py — Single Source of Truth for V / VV / MV phase execution.
 
-Replaces duplicated phase logic in:
-  - ingest_engine.py (phase2_vision_adaptive, phase3a_vv_adaptive, phase3b_mv_adaptive)
-  - worker_daemon.py (_run_vision, _run_embed_vv, _run_embed_mv)
-  - parse_ahead.py (_auto_run_vision_batch, _auto_run_mv_batch)
+Used by both pipeline modes:
+  - ingest_engine.py (local pipeline: phase2 vision, phase3a VV, phase3b MV)
+  - worker_daemon.py (server/worker: _run_vision, _run_embed_vv, _run_embed_mv)
 
-All three pipeline modes inject different StorageBackend / BatchStrategy
-but share the same phase execution code here.
+Each mode injects its own StorageBackend / BatchStrategy but shares the
+same phase execution code here.
 """
 
 from __future__ import annotations

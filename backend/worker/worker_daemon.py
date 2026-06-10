@@ -1112,7 +1112,7 @@ class WorkerDaemon:
 
         Mode routing:
         - "mc":    Only Vision (VLM/MC) phase. VLM stays loaded.
-                   Server handles Parse (ParseAhead), VV, MV separately.
+                   Server handles Parse (FileTaskParsePool), VV, MV separately.
         - "vv":    Only VV (SigLIP2) phase.
         - "mv":    Only MV (Qwen3-Embedding) phase.
         - "parse": Only Parse + Thumbnail (CPU-only, no GPU).

@@ -2,8 +2,7 @@
 model_manager.py — Unified model lifecycle management.
 
 Single source of truth for loading/unloading VLM, SigLIP2, Qwen3-Embedding.
-Replaces duplicated load/unload code across ingest_engine, worker_daemon,
-and parse_ahead.
+Shared by ingest_engine (local pipeline) and worker_daemon (server/worker).
 """
 
 from __future__ import annotations
