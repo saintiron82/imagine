@@ -41,6 +41,55 @@ _mlx_model = None
 _mlx_tokenizer = None
 _llm_initialized = False
 
+# Evidence terms a query must contain for an LLM-proposed scope type/format
+# to be trusted. LLMs occasionally hallucinate image_type (e.g. 'ui_element'
+# for "도시 낮에서 거울과 거리"), which collapses the scope to a handful of
+# files and silently drops every relevant result.
+_IMAGE_TYPE_EVIDENCE: Dict[str, Tuple[str, ...]] = {
+    "background": ("배경", "background"),
+    "character": ("캐릭터", "인물", "character"),
+    "ui_element": ("ui", "버튼", "인터페이스", "button"),
+    "item": ("아이템", "item"),
+    "icon": ("아이콘", "icon"),
+    "texture": ("텍스처", "texture", "재질"),
+    "effect": ("이펙트", "효과", "effect"),
+    "logo": ("로고", "logo"),
+    "photo": ("사진", "photo"),
+    "illustration": ("일러스트", "삽화", "illustration"),
+}
+
+_FORMAT_EVIDENCE: Tuple[str, ...] = ("psd", "png", "jpg", "jpeg")
+
+
+def validate_scope_evidence(scope: Dict[str, Any], query: str) -> Tuple[Dict[str, Any], List[str]]:
+    """Drop scope.image_type / scope.format unless the query itself mentions them.
+
+    Folder scope is left untouched — folder names are arbitrary user
+    vocabulary and have their own fuzzy/hint resolution downstream.
+
+    Returns (validated_scope, dropped_keys).
+    """
+    q = query.lower()
+    dropped: List[str] = []
+    validated = dict(scope)
+
+    img_type = validated.get("image_type")
+    if img_type:
+        evidence = _IMAGE_TYPE_EVIDENCE.get(str(img_type).lower())
+        if evidence is None or not any(term in q for term in evidence):
+            dropped.append(f"image_type={img_type}")
+            validated["image_type"] = None
+
+    fmt = validated.get("format")
+    if fmt:
+        fmt_l = str(fmt).lower()
+        fmt_terms = {"jpg": ("jpg", "jpeg"), "jpeg": ("jpg", "jpeg")}.get(fmt_l, (fmt_l,))
+        if fmt_l not in _FORMAT_EVIDENCE or not any(t in q for t in fmt_terms):
+            dropped.append(f"format={fmt}")
+            validated["format"] = None
+
+    return validated, dropped
+
 
 def _init_llm_backend():
     """Initialize the best available LLM backend (once)."""
@@ -499,12 +548,22 @@ class QueryDecomposer:
         folder = pre_filter.get("folder", "") if pre_filter else result.get("folder_filter", "")
         filters = result.get("filters", {})
 
-        unified = {
-            "scope": {
+        scope, scope_dropped = validate_scope_evidence(
+            {
                 "folder": folder,
                 "image_type": filters.get("image_type") or (pre_filter.get("image_type") if pre_filter else None),
                 "format": filters.get("format") or (pre_filter.get("format") if pre_filter else None),
             },
+            original_query,
+        )
+        if scope_dropped:
+            logger.info(
+                f"Scope evidence check dropped {scope_dropped} "
+                f"(no mention in query: '{original_query[:60]}')"
+            )
+
+        unified = {
+            "scope": scope,
             "find": {
                 "description": result.get("search", {}).get("query", "") if result.get("search") else result.get("vector_query", ""),
                 "keywords": result.get("fallback_keywords", []) if result.get("fallback_keywords") else result.get("fts_keywords", []),
@@ -514,6 +573,7 @@ class QueryDecomposer:
                 "keywords": result.get("exclude_keywords", []),
             },
             "decomposed": result.get("decomposed", False),
+            "scope_dropped": scope_dropped,
             # Keep legacy fields for backward compatibility during transition
             "_legacy": result,
         }
