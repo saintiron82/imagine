@@ -53,6 +53,22 @@ frozen_30_v1 30쿼리 전수 추적 결과, 통념과 다른 사실 3가지:
 구 라벨(폴더 무시 GT)에서도 P@5 동일, P@3/found는 소폭 개선.
 결과: `benchmarks/results/precision_20260610_frozen30v1_regression.json`
 
+## SLM Judge 재측정 (Codex judge, top-5)
+
+| | keyword P@5 | SLM P@5 (30쿼리 정규화) |
+|---|---:|---:|
+| baseline | 0.707 | 0.747 |
+| fix 1+2 | 0.740 | **0.767** |
+
+- "#08에서 캐릭터과 밤": 빈 페이지(0건) → SLM 판정 **5/5 만점 top5**.
+  복구된 결과가 양적으로만이 아니라 질적으로도 정답이었음을 확인.
+- keyword→SLM lift가 +0.03 수준으로 작음 — scope 정합 라벨
+  (scope_ground_truth=True)이 구 라벨 대비 훨씬 정확하다는 방증
+  (Sprint 3 구 라벨은 lift +0.3이었음).
+- 주의: 동일 top5에 judge 판정이 갈리는 노이즈 케이스 존재
+  (크랑베르무 캐릭터+밤, 두 런 검색 결과 동일한데 판정 상이).
+  SLM delta는 ±0.03 노이즈 대역을 가짐. keyword delta(+0.033)는 결정적.
+
 ## 남은 것
 
 - 측정 표준을 frozen_30_scoped_v1으로 이전할지 결정 필요 — 구 frozen_30_v1
