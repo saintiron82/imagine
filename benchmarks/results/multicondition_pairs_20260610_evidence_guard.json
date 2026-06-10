@@ -1,0 +1,4248 @@
+{
+ "run_id": "multicondition_pairs_20260610_evidence_guard",
+ "timestamp": "2026-06-10T20:15:36+09:00",
+ "queryset": "benchmarks/querysets/frozen_multicondition_pairs_s15_sample100.json",
+ "sample_file_count": 100,
+ "variants": [
+  "current",
+  "no_guard"
+ ],
+ "summary": {
+  "current": {
+   "queries": 24,
+   "p5": 0.3333,
+   "p10": 0.2042,
+   "hit5": 22,
+   "hit10": 23
+  },
+  "no_guard": {
+   "queries": 24,
+   "p5": 0.3333,
+   "p10": 0.2042,
+   "hit5": 22,
+   "hit10": 23
+  }
+ },
+ "comparison": {
+  "current_vs_no_guard": {
+   "delta_p5": 0.0,
+   "delta_p10": 0.0
+  }
+ },
+ "runs": {
+  "current": [
+   {
+    "query": "벽, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "벽",
+     "커튼"
+    ],
+    "gt_count": 5,
+    "gt_ids": [
+     31141,
+     31144,
+     31349,
+     31638,
+     31639
+    ],
+    "ids5": [
+     31477,
+     31578,
+     31511,
+     31144,
+     31139
+    ],
+    "ids10": [
+     31477,
+     31578,
+     31511,
+     31144,
+     31139,
+     31141,
+     31481,
+     31187,
+     31638,
+     31195
+    ],
+    "p5": 0.2,
+    "p10": 0.3,
+    "elapsed_s": 25.67,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.16992110013961792
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6955426037311554
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9007883419954873
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "창문, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "창문",
+     "커튼"
+    ],
+    "gt_count": 5,
+    "gt_ids": [
+     31141,
+     31144,
+     31325,
+     31346,
+     31349
+    ],
+    "ids5": [
+     31477,
+     31511,
+     31481,
+     31144,
+     31325
+    ],
+    "ids10": [
+     31477,
+     31511,
+     31481,
+     31144,
+     31325,
+     31142,
+     31141,
+     31349,
+     31578,
+     31085
+    ],
+    "p5": 0.4,
+    "p10": 0.4,
+    "elapsed_s": 7.55,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "창문|window": [
+        "창문",
+        "window"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "창문|window": [
+        "창문",
+        "window"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1424127221107483
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6894003748893738
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9651339306471967
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "문, 벽가 함께 있는 이미지",
+    "elements_ko": [
+     "문",
+     "벽"
+    ],
+    "gt_count": 4,
+    "gt_ids": [
+     31303,
+     31552,
+     31639,
+     31654
+    ],
+    "ids5": [
+     31504,
+     31199,
+     31248,
+     31559,
+     31089
+    ],
+    "ids10": [
+     31504,
+     31199,
+     31248,
+     31559,
+     31089,
+     31330,
+     31491,
+     31503,
+     31212,
+     31529
+    ],
+    "p5": 0.0,
+    "p10": 0.0,
+    "elapsed_s": 6.73,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "문|door": [
+        "문",
+        "door"
+       ],
+       "벽|wall": [
+        "벽",
+        "wall"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "문|door": [
+        "문",
+        "door"
+       ],
+       "벽|wall": [
+        "벽",
+        "wall"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1256614327430725
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6202252209186554
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "벽, 천장가 함께 있는 이미지",
+    "elements_ko": [
+     "벽",
+     "천장"
+    ],
+    "gt_count": 3,
+    "gt_ids": [
+     30625,
+     31162,
+     31322
+    ],
+    "ids5": [
+     30625,
+     31212,
+     31322,
+     31341,
+     28713
+    ],
+    "ids10": [
+     30625,
+     31212,
+     31322,
+     31341,
+     28713,
+     31344,
+     31377,
+     31162,
+     31529,
+     31527
+    ],
+    "p5": 0.4,
+    "p10": 0.3,
+    "elapsed_s": 7.54,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "천장|ceiling": [
+        "천장",
+        "ceiling"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "천장|ceiling": [
+        "천장",
+        "ceiling"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.12871390581130981
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5287858247756958
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9247356104218791
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "벽, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "벽",
+     "창문"
+    ],
+    "gt_count": 3,
+    "gt_ids": [
+     31141,
+     31144,
+     31349
+    ],
+    "ids5": [
+     31477,
+     31481,
+     31521,
+     31503,
+     31144
+    ],
+    "ids10": [
+     31477,
+     31481,
+     31521,
+     31503,
+     31144,
+     31522,
+     31141,
+     28907,
+     31511,
+     31474
+    ],
+    "p5": 0.2,
+    "p10": 0.2,
+    "elapsed_s": 7.95,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.13927680253982544
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6377921402454376
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9264494230404278
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "등, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "등",
+     "커튼"
+    ],
+    "gt_count": 3,
+    "gt_ids": [
+     31144,
+     31326,
+     31346
+    ],
+    "ids5": [
+     31661,
+     31144,
+     31346,
+     31326,
+     31321
+    ],
+    "ids10": [
+     31661,
+     31144,
+     31346,
+     31326,
+     31321,
+     31323,
+     34212,
+     31477,
+     31529,
+     31511
+    ],
+    "p5": 0.6,
+    "p10": 0.3,
+    "elapsed_s": 7.18,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 3,
+      "matched": 3,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "등|lamp": [
+        "등",
+        "lamp"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ],
+       "light": [
+        "light"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [
+       "light"
+      ],
+      "object_matches": {
+       "등|lamp": [
+        "등"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1338980793952942
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6484926342964172
+      },
+      "fts": {
+       "present": true,
+       "score": 0.549741662331833
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "바닥, 벽가 함께 있는 이미지",
+    "elements_ko": [
+     "바닥",
+     "벽"
+    ],
+    "gt_count": 3,
+    "gt_ids": [
+     31349,
+     31638,
+     31654
+    ],
+    "ids5": [
+     28762,
+     31417,
+     28765,
+     31491,
+     31638
+    ],
+    "ids10": [
+     28762,
+     31417,
+     28765,
+     31491,
+     31638,
+     31380,
+     28705,
+     31514,
+     31657,
+     28755
+    ],
+    "p5": 0.2,
+    "p10": 0.1,
+    "elapsed_s": 7.72,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "바닥|floor": [
+        "바닥",
+        "floor"
+       ],
+       "벽|wall": [
+        "벽",
+        "wall"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "바닥|floor": [
+        "바닥",
+        "floor"
+       ],
+       "벽|wall": [
+        "벽",
+        "wall"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.09502911567687988
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5682196319103241
+      },
+      "fts": {
+       "present": true,
+       "score": 0.7764972195424875
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.934
+      }
+     }
+    }
+   },
+   {
+    "query": "배관, 조명가 함께 있는 이미지",
+    "elements_ko": [
+     "배관",
+     "조명"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     28711,
+     31317
+    ],
+    "ids5": [
+     28713,
+     28787,
+     31317,
+     28711,
+     28716
+    ],
+    "ids10": [
+     28713,
+     28787,
+     31317,
+     28711,
+     28716,
+     31148,
+     31149,
+     31324,
+     28777,
+     31407
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 7.15,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 3,
+      "matched": 3,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "배관|pipes": [
+        "배관",
+        "pipes"
+       ],
+       "조명|lighting": [
+        "조명",
+        "lighting"
+       ],
+       "fixtures": [
+        "fixtures"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [
+       "fixtures"
+      ],
+      "object_matches": {
+       "배관|pipes": [
+        "배관"
+       ],
+       "조명|lighting": [
+        "조명",
+        "lighting"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.10402315855026245
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.550337165594101
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "레일, 문가 함께 있는 이미지",
+    "elements_ko": [
+     "레일",
+     "문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     28906,
+     28908
+    ],
+    "ids5": [
+     28908,
+     28906,
+     28904,
+     28786,
+     31585
+    ],
+    "ids10": [
+     28908,
+     28906,
+     28904,
+     28786,
+     31585,
+     50686,
+     46765,
+     31620,
+     50685,
+     31344
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 6.89,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "레일|rail": [
+        "레일",
+        "rail"
+       ],
+       "문|gate": [
+        "문",
+        "gate"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "레일|rail": [
+        "레일",
+        "rail"
+       ],
+       "문|gate": [
+        "문",
+        "gate"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.08803439140319824
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5054171085357666
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "사진 프레임, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "사진 프레임",
+     "커튼"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31085,
+     31210
+    ],
+    "ids5": [
+     31085,
+     31210,
+     31141,
+     31119,
+     31511
+    ],
+    "ids10": [
+     31085,
+     31210,
+     31141,
+     31119,
+     31511,
+     31139,
+     31464,
+     31150,
+     31144,
+     31319
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 7.35,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ],
+       "프레임|frame": [
+        "프레임",
+        "frame"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ],
+       "프레임|frame": [
+        "프레임",
+        "frame"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.08279842138290405
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6038912534713745
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9306793042254144
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "등, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "등",
+     "창문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31144,
+     31346
+    ],
+    "ids5": [
+     31503,
+     31144,
+     31330,
+     31343,
+     31346
+    ],
+    "ids10": [
+     31503,
+     31144,
+     31330,
+     31343,
+     31346,
+     31221,
+     28907,
+     31124,
+     31341,
+     31452
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 6.79,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "창문|window": [
+        "창문",
+        "window"
+       ],
+       "등|door": [
+        "door"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "창문|window": [
+        "창문",
+        "window"
+       ],
+       "등|door": [
+        "door"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.09719610214233398
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5831524431705475
+      },
+      "fts": {
+       "present": true,
+       "score": 0.16665767226409167
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "수납장, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "수납장",
+     "창문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31144,
+     31467
+    ],
+    "ids5": [
+     31144,
+     31560,
+     31467,
+     39066,
+     31194
+    ],
+    "ids10": [
+     31144,
+     31560,
+     31467,
+     39066,
+     31194,
+     31280,
+     31214,
+     31444,
+     31598,
+     31189
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 7.12,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "수납장|cabinet": [
+        "수납장",
+        "cabinet"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "수납장|cabinet": [
+        "수납장",
+        "cabinet"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.07546716928482056
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5808902680873871
+      },
+      "fts": {
+       "present": true,
+       "score": 0.96869849736277
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9508
+      }
+     }
+    }
+   },
+   {
+    "query": "벽, 책장가 함께 있는 이미지",
+    "elements_ko": [
+     "벽",
+     "책장"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31162,
+     31478
+    ],
+    "ids5": [
+     31380,
+     31162,
+     31090,
+     31478,
+     31630
+    ],
+    "ids10": [
+     31380,
+     31162,
+     31090,
+     31478,
+     31630,
+     31255,
+     58106,
+     31211,
+     31177,
+     58180
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 6.81,
+    "top_evidence_score": 5.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 4,
+      "matched": 2,
+      "missing": [
+       "bookcase",
+       "book rack"
+      ],
+      "match_ratio": 0.5,
+      "matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "책장|bookshelf": [
+        "책장",
+        "bookshelf"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [
+       "bookcase",
+       "book rack"
+      ],
+      "object_matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "책장|bookshelf": [
+        "책장",
+        "bookshelf"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1279558539390564
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6899916231632233
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9190984654030769
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "병, 상자가 함께 있는 이미지",
+    "elements_ko": [
+     "병",
+     "상자"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31569
+    ],
+    "ids5": [
+     31571,
+     31568,
+     31569,
+     31573,
+     31579
+    ],
+    "ids10": [
+     31571,
+     31568,
+     31569,
+     31573,
+     31579,
+     31567,
+     31179,
+     31453,
+     31583,
+     31580
+    ],
+    "p5": 0.2,
+    "p10": 0.2,
+    "elapsed_s": 7.04,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "병|bottle": [
+        "병",
+        "bottle"
+       ],
+       "상자|box": [
+        "상자",
+        "box"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "병|bottle": [
+        "병",
+        "bottle"
+       ],
+       "상자|box": [
+        "상자",
+        "box"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.024212777614593506
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5950860679149628
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9943345631887149
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "병, 선반가 함께 있는 이미지",
+    "elements_ko": [
+     "병",
+     "선반"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31577
+    ],
+    "ids5": [
+     31571,
+     31600,
+     31601,
+     31568,
+     31567
+    ],
+    "ids10": [
+     31571,
+     31600,
+     31601,
+     31568,
+     31567,
+     31577,
+     31189,
+     31573,
+     31579,
+     31184
+    ],
+    "p5": 0.0,
+    "p10": 0.1,
+    "elapsed_s": 7.1,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "병|bottle": [
+        "병",
+        "bottle"
+       ],
+       "선반|shelf": [
+        "선반",
+        "shelf"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "병|bottle": [
+        "병",
+        "bottle"
+       ],
+       "선반|shelf": [
+        "선반",
+        "shelf"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.13675445318222046
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6451976299285889
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "병, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "병",
+     "창문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31569
+    ],
+    "ids5": [
+     31189,
+     31184,
+     31569,
+     31179,
+     58242
+    ],
+    "ids10": [
+     31189,
+     31184,
+     31569,
+     31179,
+     58242,
+     31185,
+     31598,
+     28701,
+     31571,
+     33757
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 7.75,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "병|bottle": [
+        "병"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "병|bottle": [
+        "병"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.13084936141967773
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5167959332466125
+      },
+      "fts": {
+       "present": true,
+       "score": 0.696287444167146
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "상자, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "상자",
+     "창문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31569
+    ],
+    "ids5": [
+     31569,
+     31179,
+     31378,
+     31221,
+     31280
+    ],
+    "ids10": [
+     31569,
+     31179,
+     31378,
+     31221,
+     31280,
+     31183,
+     28701,
+     31503,
+     31560,
+     28696
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 7.34,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "상자|box": [
+        "상자",
+        "box"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "상자|box": [
+        "상자",
+        "box"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.005852878093719482
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.3950573801994324
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9321879056791883
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "상자, 초콜릿가 함께 있는 이미지",
+    "elements_ko": [
+     "상자",
+     "초콜릿"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31183
+    ],
+    "ids5": [
+     31182,
+     31179,
+     31183,
+     31244,
+     31486
+    ],
+    "ids10": [
+     31182,
+     31179,
+     31183,
+     31244,
+     31486,
+     31579,
+     31247,
+     31573,
+     31571,
+     31067
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 6.63,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "상자|box": [
+        "box"
+       ],
+       "초콜릿|chocolate": [
+        "초콜릿"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "상자|box": [
+        "box"
+       ],
+       "초콜릿|chocolate": [
+        "초콜릿"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.08208322525024414
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6139730513095856
+      },
+      "fts": {
+       "present": true,
+       "score": 0.3807870220818949
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "식물, 의자가 함께 있는 이미지",
+    "elements_ko": [
+     "식물",
+     "의자"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31267,
+     31346
+    ],
+    "ids5": [
+     31267,
+     31346,
+     31612,
+     51881,
+     31224
+    ],
+    "ids10": [
+     31267,
+     31346,
+     31612,
+     51881,
+     31224,
+     31223,
+     53468,
+     31585,
+     41215,
+     28912
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 6.71,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "식물|plant": [
+        "식물",
+        "plant"
+       ],
+       "의자|chair": [
+        "의자",
+        "chair"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "식물|plant": [
+        "식물",
+        "plant"
+       ],
+       "의자|chair": [
+        "의자",
+        "chair"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.04460710287094116
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5252549648284912
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9358154899904881
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "의자, 테이블가 함께 있는 이미지",
+    "elements_ko": [
+     "의자",
+     "테이블"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31267,
+     31387
+    ],
+    "ids5": [
+     31591,
+     31267,
+     31387,
+     31645,
+     31505
+    ],
+    "ids10": [
+     31591,
+     31267,
+     31387,
+     31645,
+     31505,
+     31506,
+     31223,
+     31412,
+     31100,
+     31224
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 6.61,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "의자|chair": [
+        "의자",
+        "chair"
+       ],
+       "테이블|table": [
+        "테이블",
+        "table"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "의자|chair": [
+        "의자",
+        "chair"
+       ],
+       "테이블|table": [
+        "테이블",
+        "table"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.07524144649505615
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5812838971614838
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9508
+      }
+     }
+    }
+   },
+   {
+    "query": "버튼, 조명가 함께 있는 이미지",
+    "elements_ko": [
+     "버튼",
+     "조명"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31285,
+     31451
+    ],
+    "ids5": [
+     31451,
+     31285,
+     31315,
+     31313,
+     31324
+    ],
+    "ids10": [
+     31451,
+     31285,
+     31315,
+     31313,
+     31324,
+     28707,
+     28735,
+     28743,
+     31594,
+     28787
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 6.45,
+    "top_evidence_score": 8.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 3,
+      "matched": 3,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "버튼|button": [
+        "버튼",
+        "button"
+       ],
+       "조명|lighting": [
+        "조명"
+       ],
+       "light": [
+        "light"
+       ]
+      },
+      "object_matched": 3,
+      "object_missing": [],
+      "object_matches": {
+       "버튼|button": [
+        "버튼",
+        "button"
+       ],
+       "조명|lighting": [
+        "조명"
+       ],
+       "light": [
+        "light"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.056818604469299316
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5195999443531036
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "버튼, 화면가 함께 있는 이미지",
+    "elements_ko": [
+     "버튼",
+     "화면"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31285,
+     31451
+    ],
+    "ids5": [
+     31285,
+     47887,
+     31451,
+     41808,
+     48978
+    ],
+    "ids10": [
+     31285,
+     47887,
+     31451,
+     41808,
+     48978,
+     32396,
+     58102,
+     48253,
+     31449,
+     31106
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 6.93,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "버튼|button": [
+        "버튼",
+        "button"
+       ],
+       "화면|screen": [
+        "화면",
+        "screen"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "버튼|button": [
+        "버튼",
+        "button"
+       ],
+       "화면|screen": [
+        "화면",
+        "screen"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.0901607871055603
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.4795485734939575
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9604572815456665
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "조명, 화면가 함께 있는 이미지",
+    "elements_ko": [
+     "조명",
+     "화면"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31285,
+     31451
+    ],
+    "ids5": [
+     31285,
+     31451,
+     31651,
+     49252,
+     48734
+    ],
+    "ids10": [
+     31285,
+     31451,
+     31651,
+     49252,
+     48734,
+     48958,
+     48959,
+     48798,
+     31315,
+     28743
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 7.24,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "조명|lighting": [
+        "조명"
+       ],
+       "화면|screen": [
+        "화면",
+        "screen"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "조명|lighting": [
+        "조명"
+       ],
+       "화면|screen": [
+        "화면",
+        "screen"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.08552408218383789
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5155524015426636
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9511185532700027
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "조명, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "조명",
+     "커튼"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31317,
+     31323
+    ],
+    "ids5": [
+     31323,
+     31315,
+     31313,
+     31324,
+     31594
+    ],
+    "ids10": [
+     31323,
+     31315,
+     31313,
+     31324,
+     31594,
+     31316,
+     31317,
+     31661,
+     31511,
+     31311
+    ],
+    "p5": 0.2,
+    "p10": 0.2,
+    "elapsed_s": 6.73,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "조명|lighting": [
+        "조명"
+       ],
+       "커튼|curtains": [
+        "커튼",
+        "curtains"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "조명|lighting": [
+        "조명"
+       ],
+       "커튼|curtains": [
+        "커튼"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1256391406059265
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6347525715827942
+      },
+      "fts": {
+       "present": true,
+       "score": 0.8894188174342731
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   }
+  ],
+  "no_guard": [
+   {
+    "query": "벽, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "벽",
+     "커튼"
+    ],
+    "gt_count": 5,
+    "gt_ids": [
+     31141,
+     31144,
+     31349,
+     31638,
+     31639
+    ],
+    "ids5": [
+     31477,
+     31578,
+     31511,
+     31144,
+     31139
+    ],
+    "ids10": [
+     31477,
+     31578,
+     31511,
+     31144,
+     31139,
+     31141,
+     31481,
+     31187,
+     31638,
+     31195
+    ],
+    "p5": 0.2,
+    "p10": 0.3,
+    "elapsed_s": 2.71,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.16992110013961792
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6955426037311554
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9007883419954873
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "창문, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "창문",
+     "커튼"
+    ],
+    "gt_count": 5,
+    "gt_ids": [
+     31141,
+     31144,
+     31325,
+     31346,
+     31349
+    ],
+    "ids5": [
+     31477,
+     31511,
+     31481,
+     31144,
+     31325
+    ],
+    "ids10": [
+     31477,
+     31511,
+     31481,
+     31144,
+     31325,
+     31142,
+     31141,
+     31349,
+     31578,
+     31085
+    ],
+    "p5": 0.4,
+    "p10": 0.4,
+    "elapsed_s": 2.68,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "창문|window": [
+        "창문",
+        "window"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "창문|window": [
+        "창문",
+        "window"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1424127221107483
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6894003748893738
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9651339306471967
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "문, 벽가 함께 있는 이미지",
+    "elements_ko": [
+     "문",
+     "벽"
+    ],
+    "gt_count": 4,
+    "gt_ids": [
+     31303,
+     31552,
+     31639,
+     31654
+    ],
+    "ids5": [
+     31504,
+     31199,
+     31248,
+     31559,
+     31089
+    ],
+    "ids10": [
+     31504,
+     31199,
+     31248,
+     31559,
+     31089,
+     31330,
+     31491,
+     31503,
+     31212,
+     31529
+    ],
+    "p5": 0.0,
+    "p10": 0.0,
+    "elapsed_s": 2.79,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "문|door": [
+        "문",
+        "door"
+       ],
+       "벽|wall": [
+        "벽",
+        "wall"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "문|door": [
+        "문",
+        "door"
+       ],
+       "벽|wall": [
+        "벽",
+        "wall"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1256614327430725
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6202252209186554
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "벽, 천장가 함께 있는 이미지",
+    "elements_ko": [
+     "벽",
+     "천장"
+    ],
+    "gt_count": 3,
+    "gt_ids": [
+     30625,
+     31162,
+     31322
+    ],
+    "ids5": [
+     30625,
+     31212,
+     31322,
+     31341,
+     28713
+    ],
+    "ids10": [
+     30625,
+     31212,
+     31322,
+     31341,
+     28713,
+     31344,
+     31377,
+     31162,
+     31529,
+     31527
+    ],
+    "p5": 0.4,
+    "p10": 0.3,
+    "elapsed_s": 2.89,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "천장|ceiling": [
+        "천장",
+        "ceiling"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "천장|ceiling": [
+        "천장",
+        "ceiling"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.12871390581130981
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5287858247756958
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9247356104218791
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "벽, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "벽",
+     "창문"
+    ],
+    "gt_count": 3,
+    "gt_ids": [
+     31141,
+     31144,
+     31349
+    ],
+    "ids5": [
+     31477,
+     31481,
+     31521,
+     31503,
+     31144
+    ],
+    "ids10": [
+     31477,
+     31481,
+     31521,
+     31503,
+     31144,
+     31522,
+     31141,
+     28907,
+     31511,
+     31474
+    ],
+    "p5": 0.2,
+    "p10": 0.2,
+    "elapsed_s": 2.78,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.13927680253982544
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6377921402454376
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9264494230404278
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "등, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "등",
+     "커튼"
+    ],
+    "gt_count": 3,
+    "gt_ids": [
+     31144,
+     31326,
+     31346
+    ],
+    "ids5": [
+     31661,
+     31144,
+     31346,
+     31326,
+     31321
+    ],
+    "ids10": [
+     31661,
+     31144,
+     31346,
+     31326,
+     31321,
+     31323,
+     34212,
+     31477,
+     31529,
+     31511
+    ],
+    "p5": 0.6,
+    "p10": 0.3,
+    "elapsed_s": 2.71,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 3,
+      "matched": 3,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "등|lamp": [
+        "등",
+        "lamp"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ],
+       "light": [
+        "light"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [
+       "light"
+      ],
+      "object_matches": {
+       "등|lamp": [
+        "등"
+       ],
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1338980793952942
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6484926342964172
+      },
+      "fts": {
+       "present": true,
+       "score": 0.549741662331833
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "바닥, 벽가 함께 있는 이미지",
+    "elements_ko": [
+     "바닥",
+     "벽"
+    ],
+    "gt_count": 3,
+    "gt_ids": [
+     31349,
+     31638,
+     31654
+    ],
+    "ids5": [
+     28762,
+     31417,
+     28765,
+     31491,
+     31638
+    ],
+    "ids10": [
+     28762,
+     31417,
+     28765,
+     31491,
+     31638,
+     31380,
+     28705,
+     31514,
+     31657,
+     28755
+    ],
+    "p5": 0.2,
+    "p10": 0.1,
+    "elapsed_s": 2.87,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "바닥|floor": [
+        "바닥",
+        "floor"
+       ],
+       "벽|wall": [
+        "벽",
+        "wall"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "바닥|floor": [
+        "바닥",
+        "floor"
+       ],
+       "벽|wall": [
+        "벽",
+        "wall"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.09502911567687988
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5682196319103241
+      },
+      "fts": {
+       "present": true,
+       "score": 0.7764972195424875
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.934
+      }
+     }
+    }
+   },
+   {
+    "query": "배관, 조명가 함께 있는 이미지",
+    "elements_ko": [
+     "배관",
+     "조명"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     28711,
+     31317
+    ],
+    "ids5": [
+     28713,
+     28787,
+     31317,
+     28711,
+     28716
+    ],
+    "ids10": [
+     28713,
+     28787,
+     31317,
+     28711,
+     28716,
+     31148,
+     31149,
+     31324,
+     28777,
+     31407
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.62,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 3,
+      "matched": 3,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "배관|pipes": [
+        "배관",
+        "pipes"
+       ],
+       "조명|lighting": [
+        "조명",
+        "lighting"
+       ],
+       "fixtures": [
+        "fixtures"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [
+       "fixtures"
+      ],
+      "object_matches": {
+       "배관|pipes": [
+        "배관"
+       ],
+       "조명|lighting": [
+        "조명",
+        "lighting"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.10402315855026245
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.550337165594101
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "레일, 문가 함께 있는 이미지",
+    "elements_ko": [
+     "레일",
+     "문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     28906,
+     28908
+    ],
+    "ids5": [
+     28908,
+     28906,
+     28904,
+     28786,
+     31585
+    ],
+    "ids10": [
+     28908,
+     28906,
+     28904,
+     28786,
+     31585,
+     50686,
+     46765,
+     31620,
+     50685,
+     31344
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.63,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "레일|rail": [
+        "레일",
+        "rail"
+       ],
+       "문|gate": [
+        "문",
+        "gate"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "레일|rail": [
+        "레일",
+        "rail"
+       ],
+       "문|gate": [
+        "문",
+        "gate"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.08803439140319824
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5054171085357666
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "사진 프레임, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "사진 프레임",
+     "커튼"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31085,
+     31210
+    ],
+    "ids5": [
+     31085,
+     31210,
+     31141,
+     31119,
+     31511
+    ],
+    "ids10": [
+     31085,
+     31210,
+     31141,
+     31119,
+     31511,
+     31139,
+     31464,
+     31150,
+     31144,
+     31319
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.67,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ],
+       "프레임|frame": [
+        "프레임",
+        "frame"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "커튼|curtain": [
+        "커튼",
+        "curtain"
+       ],
+       "프레임|frame": [
+        "프레임",
+        "frame"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.08279842138290405
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6038912534713745
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9306793042254144
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "등, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "등",
+     "창문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31144,
+     31346
+    ],
+    "ids5": [
+     31503,
+     31144,
+     31330,
+     31343,
+     31346
+    ],
+    "ids10": [
+     31503,
+     31144,
+     31330,
+     31343,
+     31346,
+     31221,
+     28907,
+     31124,
+     31341,
+     31452
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.73,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "창문|window": [
+        "창문",
+        "window"
+       ],
+       "등|door": [
+        "door"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "창문|window": [
+        "창문",
+        "window"
+       ],
+       "등|door": [
+        "door"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.09719610214233398
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5831524431705475
+      },
+      "fts": {
+       "present": true,
+       "score": 0.16665767226409167
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "수납장, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "수납장",
+     "창문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31144,
+     31467
+    ],
+    "ids5": [
+     31144,
+     31560,
+     31467,
+     39066,
+     31194
+    ],
+    "ids10": [
+     31144,
+     31560,
+     31467,
+     39066,
+     31194,
+     31280,
+     31214,
+     31444,
+     31598,
+     31189
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.73,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "수납장|cabinet": [
+        "수납장",
+        "cabinet"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "수납장|cabinet": [
+        "수납장",
+        "cabinet"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.07546716928482056
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5808902680873871
+      },
+      "fts": {
+       "present": true,
+       "score": 0.96869849736277
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9508
+      }
+     }
+    }
+   },
+   {
+    "query": "벽, 책장가 함께 있는 이미지",
+    "elements_ko": [
+     "벽",
+     "책장"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31162,
+     31478
+    ],
+    "ids5": [
+     31380,
+     31162,
+     31090,
+     31478,
+     31630
+    ],
+    "ids10": [
+     31380,
+     31162,
+     31090,
+     31478,
+     31630,
+     31255,
+     58106,
+     31211,
+     31177,
+     58180
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.65,
+    "top_evidence_score": 5.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 4,
+      "matched": 2,
+      "missing": [
+       "bookcase",
+       "book rack"
+      ],
+      "match_ratio": 0.5,
+      "matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "책장|bookshelf": [
+        "책장",
+        "bookshelf"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [
+       "bookcase",
+       "book rack"
+      ],
+      "object_matches": {
+       "벽|wall": [
+        "벽",
+        "wall"
+       ],
+       "책장|bookshelf": [
+        "책장",
+        "bookshelf"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1279558539390564
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6899916231632233
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9190984654030769
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "병, 상자가 함께 있는 이미지",
+    "elements_ko": [
+     "병",
+     "상자"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31569
+    ],
+    "ids5": [
+     31571,
+     31568,
+     31569,
+     31573,
+     31579
+    ],
+    "ids10": [
+     31571,
+     31568,
+     31569,
+     31573,
+     31579,
+     31567,
+     31179,
+     31453,
+     31583,
+     31580
+    ],
+    "p5": 0.2,
+    "p10": 0.2,
+    "elapsed_s": 2.59,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "병|bottle": [
+        "병",
+        "bottle"
+       ],
+       "상자|box": [
+        "상자",
+        "box"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "병|bottle": [
+        "병",
+        "bottle"
+       ],
+       "상자|box": [
+        "상자",
+        "box"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.024212777614593506
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5950860679149628
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9943345631887149
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "병, 선반가 함께 있는 이미지",
+    "elements_ko": [
+     "병",
+     "선반"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31577
+    ],
+    "ids5": [
+     31571,
+     31600,
+     31601,
+     31568,
+     31567
+    ],
+    "ids10": [
+     31571,
+     31600,
+     31601,
+     31568,
+     31567,
+     31577,
+     31189,
+     31573,
+     31579,
+     31184
+    ],
+    "p5": 0.0,
+    "p10": 0.1,
+    "elapsed_s": 2.63,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "병|bottle": [
+        "병",
+        "bottle"
+       ],
+       "선반|shelf": [
+        "선반",
+        "shelf"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "병|bottle": [
+        "병",
+        "bottle"
+       ],
+       "선반|shelf": [
+        "선반",
+        "shelf"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.13675445318222046
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6451976299285889
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "병, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "병",
+     "창문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31569
+    ],
+    "ids5": [
+     31189,
+     31184,
+     31569,
+     31179,
+     58242
+    ],
+    "ids10": [
+     31189,
+     31184,
+     31569,
+     31179,
+     58242,
+     31185,
+     31598,
+     28701,
+     31571,
+     33757
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.89,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "병|bottle": [
+        "병"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "병|bottle": [
+        "병"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.13084936141967773
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5167959332466125
+      },
+      "fts": {
+       "present": true,
+       "score": 0.696287444167146
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "상자, 창문가 함께 있는 이미지",
+    "elements_ko": [
+     "상자",
+     "창문"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31569
+    ],
+    "ids5": [
+     31569,
+     31179,
+     31378,
+     31221,
+     31280
+    ],
+    "ids10": [
+     31569,
+     31179,
+     31378,
+     31221,
+     31280,
+     31183,
+     28701,
+     31503,
+     31560,
+     28696
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.85,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "상자|box": [
+        "상자",
+        "box"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "상자|box": [
+        "상자",
+        "box"
+       ],
+       "창문|window": [
+        "창문",
+        "window"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.005852878093719482
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.3950573801994324
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9321879056791883
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "상자, 초콜릿가 함께 있는 이미지",
+    "elements_ko": [
+     "상자",
+     "초콜릿"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31179,
+     31183
+    ],
+    "ids5": [
+     31182,
+     31179,
+     31183,
+     31244,
+     31486
+    ],
+    "ids10": [
+     31182,
+     31179,
+     31183,
+     31244,
+     31486,
+     31579,
+     31247,
+     31573,
+     31571,
+     31067
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.58,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "상자|box": [
+        "box"
+       ],
+       "초콜릿|chocolate": [
+        "초콜릿"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "상자|box": [
+        "box"
+       ],
+       "초콜릿|chocolate": [
+        "초콜릿"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.08208322525024414
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6139730513095856
+      },
+      "fts": {
+       "present": true,
+       "score": 0.3807870220818949
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "식물, 의자가 함께 있는 이미지",
+    "elements_ko": [
+     "식물",
+     "의자"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31267,
+     31346
+    ],
+    "ids5": [
+     31267,
+     31346,
+     31612,
+     51881,
+     31224
+    ],
+    "ids10": [
+     31267,
+     31346,
+     31612,
+     51881,
+     31224,
+     31223,
+     53468,
+     31585,
+     41215,
+     28912
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.66,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "식물|plant": [
+        "식물",
+        "plant"
+       ],
+       "의자|chair": [
+        "의자",
+        "chair"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "식물|plant": [
+        "식물",
+        "plant"
+       ],
+       "의자|chair": [
+        "의자",
+        "chair"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.04460710287094116
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5252549648284912
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9358154899904881
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "의자, 테이블가 함께 있는 이미지",
+    "elements_ko": [
+     "의자",
+     "테이블"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31267,
+     31387
+    ],
+    "ids5": [
+     31591,
+     31267,
+     31387,
+     31645,
+     31505
+    ],
+    "ids10": [
+     31591,
+     31267,
+     31387,
+     31645,
+     31505,
+     31506,
+     31223,
+     31412,
+     31100,
+     31224
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.65,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "의자|chair": [
+        "의자",
+        "chair"
+       ],
+       "테이블|table": [
+        "테이블",
+        "table"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "의자|chair": [
+        "의자",
+        "chair"
+       ],
+       "테이블|table": [
+        "테이블",
+        "table"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.07524144649505615
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5812838971614838
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9508
+      }
+     }
+    }
+   },
+   {
+    "query": "버튼, 조명가 함께 있는 이미지",
+    "elements_ko": [
+     "버튼",
+     "조명"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31285,
+     31451
+    ],
+    "ids5": [
+     31451,
+     31285,
+     31315,
+     31313,
+     31324
+    ],
+    "ids10": [
+     31451,
+     31285,
+     31315,
+     31313,
+     31324,
+     28707,
+     28735,
+     28743,
+     31594,
+     28787
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 2.71,
+    "top_evidence_score": 8.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 3,
+      "matched": 3,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "버튼|button": [
+        "버튼",
+        "button"
+       ],
+       "조명|lighting": [
+        "조명"
+       ],
+       "light": [
+        "light"
+       ]
+      },
+      "object_matched": 3,
+      "object_missing": [],
+      "object_matches": {
+       "버튼|button": [
+        "버튼",
+        "button"
+       ],
+       "조명|lighting": [
+        "조명"
+       ],
+       "light": [
+        "light"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.056818604469299316
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5195999443531036
+      },
+      "fts": {
+       "present": true,
+       "score": 1.0
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "버튼, 화면가 함께 있는 이미지",
+    "elements_ko": [
+     "버튼",
+     "화면"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31285,
+     31451
+    ],
+    "ids5": [
+     31285,
+     47887,
+     31451,
+     41808,
+     48978
+    ],
+    "ids10": [
+     31285,
+     47887,
+     31451,
+     41808,
+     48978,
+     32396,
+     58102,
+     48253,
+     31449,
+     31106
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 3.13,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "버튼|button": [
+        "버튼",
+        "button"
+       ],
+       "화면|screen": [
+        "화면",
+        "screen"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "버튼|button": [
+        "버튼",
+        "button"
+       ],
+       "화면|screen": [
+        "화면",
+        "screen"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.0901607871055603
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.4795485734939575
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9604572815456665
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "조명, 화면가 함께 있는 이미지",
+    "elements_ko": [
+     "조명",
+     "화면"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31285,
+     31451
+    ],
+    "ids5": [
+     31285,
+     31451,
+     31651,
+     49252,
+     48734
+    ],
+    "ids10": [
+     31285,
+     31451,
+     31651,
+     49252,
+     48734,
+     48958,
+     48959,
+     48798,
+     31315,
+     28743
+    ],
+    "p5": 0.4,
+    "p10": 0.2,
+    "elapsed_s": 3.26,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "조명|lighting": [
+        "조명"
+       ],
+       "화면|screen": [
+        "화면",
+        "screen"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "조명|lighting": [
+        "조명"
+       ],
+       "화면|screen": [
+        "화면",
+        "screen"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.08552408218383789
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.5155524015426636
+      },
+      "fts": {
+       "present": true,
+       "score": 0.9511185532700027
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   },
+   {
+    "query": "조명, 커튼가 함께 있는 이미지",
+    "elements_ko": [
+     "조명",
+     "커튼"
+    ],
+    "gt_count": 2,
+    "gt_ids": [
+     31317,
+     31323
+    ],
+    "ids5": [
+     31323,
+     31315,
+     31313,
+     31324,
+     31594
+    ],
+    "ids10": [
+     31323,
+     31315,
+     31313,
+     31324,
+     31594,
+     31316,
+     31317,
+     31661,
+     31511,
+     31311
+    ],
+    "p5": 0.2,
+    "p10": 0.2,
+    "elapsed_s": 2.6,
+    "top_evidence_score": 6.0,
+    "top_evidence_matrix": {
+     "conditions": {
+      "total": 2,
+      "matched": 2,
+      "missing": [],
+      "match_ratio": 1.0,
+      "matches": {
+       "조명|lighting": [
+        "조명"
+       ],
+       "커튼|curtains": [
+        "커튼",
+        "curtains"
+       ]
+      },
+      "object_matched": 2,
+      "object_missing": [],
+      "object_matches": {
+       "조명|lighting": [
+        "조명"
+       ],
+       "커튼|curtains": [
+        "커튼"
+       ]
+      }
+     },
+     "axes": {
+      "visual": {
+       "present": true,
+       "score": 0.1256391406059265
+      },
+      "text_vec": {
+       "present": true,
+       "score": 0.6347525715827942
+      },
+      "fts": {
+       "present": true,
+       "score": 0.8894188174342731
+      },
+      "spatial": {
+       "present": false,
+       "score": null
+      },
+      "metadata": {
+       "present": true,
+       "score": 0.9485
+      }
+     }
+    }
+   }
+  ]
+ }
+}

@@ -1,7 +1,7 @@
 """Diagnose decomposer scope extraction against frozen_30_v1.
 
 For each query, runs the same scope resolution chain as
-SqliteVectorSearch.search_triaxis (decompose -> plan filter -> relax ->
+SqliteVectorSearch.triaxis_search (decompose -> plan filter -> relax ->
 query hint) and reports:
   - what scope the decomposer extracted
   - how many files each resolution stage matched
