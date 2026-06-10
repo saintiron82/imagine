@@ -424,10 +424,15 @@ class WorkerIPCController:
                     import traceback
                     _emit_log(f"[BATCH-CRASH] {batch_err}", "error")
                     _emit_log(f"[BATCH-CRASH] {traceback.format_exc()}", "error")
-                    # Fail all jobs in this batch so server releases them
+                    # Fail all tasks in this batch so server releases them
                     for j in jobs:
                         try:
-                            daemon.uploader.fail_job(j["job_id"], f"Batch crash: {batch_err}")
+                            daemon._report_task_phase(
+                                j.get("task_id") or j["job_id"],
+                                daemon.processing_mode,
+                                False,
+                                f"Batch crash: {batch_err}",
+                            )
                         except Exception:
                             pass
 

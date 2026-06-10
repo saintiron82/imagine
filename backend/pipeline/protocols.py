@@ -28,12 +28,12 @@ class PhaseItem:
     """
     A single file unit flowing through V/VV/MV phases.
 
-    Created by Suppliers (Local/WebDAV/JobQueue) and consumed by PhaseRunner.
-    After processing, temp resources are cleaned up.
+    Created by Suppliers (local pipeline / server file_tasks) and consumed
+    by PhaseRunner. After processing, temp resources are cleaned up.
     """
 
     # Identity
-    job_id: Any = None                       # job_queue.id (server/worker), None (local)
+    job_id: Any = None                       # file_tasks.id (server/worker), None (local)
     file_id: Optional[int] = None            # files.id in DB
     file_path: str = ""                      # local path to process (may be temp)
     canonical_path: Optional[str] = None     # DB-stored path (e.g. webdav://nas-1/...)

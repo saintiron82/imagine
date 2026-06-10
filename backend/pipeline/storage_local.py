@@ -14,7 +14,7 @@ from backend.pipeline.protocols import PhaseItem, StorageBackend
 
 logger = logging.getLogger("pipeline.storage_local")
 
-# Fields that submit_vision() accepts (same mapping as storage_direct.py)
+# Fields that submit_vision() accepts
 _VISION_FIELD_MAP = {
     "caption": "mc_caption",
     "tags": "ai_tags",
