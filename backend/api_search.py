@@ -24,10 +24,6 @@ import traceback
 from pathlib import Path
 from typing import List
 
-# Force UTF-8 stdout/stdin for multilingual support (JP, KR, CN, etc.)
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
-sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
-
 # Suppress tqdm/transformers progress bars that pollute stdout
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
@@ -417,8 +413,25 @@ def run_oneshot():
     print(json.dumps(result, ensure_ascii=False))
 
 
-if __name__ == "__main__":
+def _setup_stdio():
+    """Force UTF-8 stdout/stdin for multilingual support (JP, KR, CN, etc.).
+
+    Entry-point only: must not run at import time — server/test code imports
+    format_result() and replacing sys.stdout there hijacks the host process.
+    """
+    if hasattr(sys.stdout, 'buffer'):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+    if hasattr(sys.stdin, 'buffer'):
+        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
+
+
+def main():
+    _setup_stdio()
     if "--daemon" in sys.argv:
         run_daemon()
     else:
         run_oneshot()
+
+
+if __name__ == "__main__":
+    main()

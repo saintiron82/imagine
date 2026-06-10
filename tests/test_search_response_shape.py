@@ -1,40 +1,9 @@
 """Phase A: search endpoint returns confidence + empty mode."""
 from __future__ import annotations
 
-import sys
-import types
-
-# Preserve pytest's captured stdout/stderr before importing the search router.
-# backend.api_search (transitive import) rewraps sys.stdout at import time for
-# UTF-8 IPC, which breaks pytest's fd-level capture if we don't snapshot first.
-_ORIG_STDOUT = sys.stdout
-_ORIG_STDERR = sys.stderr
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-# Stub the optional pyjwt dependency so importing the auth deps tree
-# doesn't fail if pyjwt isn't installed at test time.
-sys.modules.setdefault(
-    "jwt",
-    types.SimpleNamespace(
-        ExpiredSignatureError=Exception,
-        InvalidTokenError=Exception,
-        decode=lambda *args, **kwargs: {},
-        encode=lambda *args, **kwargs: "",
-    ),
-)
-
-# Trigger the search router import now so backend.api_search's stdout rewrap
-# happens up-front, then restore pytest's capture handles before any test runs.
-# Keep a reference to the wrapper api_search created so its underlying buffer
-# isn't garbage-collected (which would close pytest's capture tempfile).
-from backend.server.routers import search as _search_router_preload  # noqa: F401
-_API_SEARCH_STDOUT_KEEPALIVE = sys.stdout  # keep wrapper alive
-_API_SEARCH_STDIN_KEEPALIVE = sys.stdin
-sys.stdout = _ORIG_STDOUT
-sys.stderr = _ORIG_STDERR
 
 
 class _FakeSearcher:
