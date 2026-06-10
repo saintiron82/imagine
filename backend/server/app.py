@@ -225,9 +225,9 @@ def _activate_server(app_instance):
         """)
         pending = cursor.fetchone()[0]
         if pending > 0:
-            from backend.server.embedded_worker import start_worker
-            result = start_worker(server_url="", access_token="")
-            _log(f"Phase 6: Embedded worker started ({pending} pending tasks) {_time.perf_counter()-t1:.2f}s")
+            from backend.server.local_worker import start_worker
+            result = start_worker()
+            _log(f"Phase 6: Local worker started ({pending} pending tasks) {_time.perf_counter()-t1:.2f}s")
         else:
             _log(f"Phase 6: No pending tasks — worker standby {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
@@ -276,14 +276,14 @@ def _activate_server(app_instance):
 async def shutdown():
     logger.info("Imagine Server shutting down...")
     # Legacy pools removed (Analysis Job System v1)
-    # Embedded worker shutdown
+    # Local worker shutdown
     try:
-        from backend.server.embedded_worker import get_status as _ew_status, stop_worker as _ew_stop
-        if _ew_status()["running"]:
-            _ew_stop()
-            logger.info("Embedded worker stopped")
+        from backend.server.local_worker import get_status as _lw_status, stop_worker as _lw_stop
+        if _lw_status()["running"]:
+            _lw_stop()
+            logger.info("Local worker stopped")
     except Exception as e:
-        logger.warning(f"Embedded worker shutdown failed: {e}")
+        logger.warning(f"Local worker shutdown failed: {e}")
     if hasattr(app.state, "heartbeat_watchdog") and app.state.heartbeat_watchdog:
         if hasattr(app.state.heartbeat_watchdog, "_stop_event"):
             app.state.heartbeat_watchdog._stop_event.set()

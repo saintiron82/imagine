@@ -17,7 +17,6 @@ from backend.server.auth.schemas import (
     UserResponse, UserUpdateRequest,
     MemberResponse, MemberRoleUpdate,
 )
-from backend.server.auth.jwt import create_access_token, create_refresh_token, hash_refresh_token
 
 logger = logging.getLogger(__name__)
 
@@ -303,52 +302,41 @@ def activate_member(
     return {"success": True}
 
 
-# ── Embedded Worker Control ──────────────────────────────────
+# ── Local Worker Control ─────────────────────────────────────
 
 @router.post("/worker/start")
-def start_embedded_worker(
-    request: Request,
+def start_local_worker(
     admin: dict = Depends(require_admin),
 ):
-    """Start the embedded worker (admin only).
+    """Start the server machine's local worker process (admin only).
 
-    Creates a long-lived JWT token for the worker thread and starts it.
-    The worker uses HTTP loopback to claim/complete jobs from this server.
+    The worker runs as a separate process and connects over localhost HTTP,
+    identical to an external worker. Token minting is handled internally.
     """
-    from backend.server.embedded_worker import start_worker
+    from backend.server.local_worker import start_worker
 
-    # Create a long-lived token for the worker (24h)
-    worker_token = create_access_token(
-        admin["id"], admin["username"], admin["role"],
-        expires_minutes=1440,
-    )
-    worker_refresh = create_refresh_token()
-
-    # Determine server URL (loopback)
-    server_url = str(request.base_url).rstrip("/")
-
-    result = start_worker(server_url, worker_token, worker_refresh)
+    result = start_worker()
     if result.get("success"):
-        logger.info(f"Admin {admin['username']} started embedded worker")
+        logger.info(f"Admin {admin['username']} started local worker")
     return result
 
 
 @router.post("/worker/stop")
-def stop_embedded_worker(
+def stop_local_worker(
     admin: dict = Depends(require_admin),
 ):
-    """Stop the embedded worker (admin only)."""
-    from backend.server.embedded_worker import stop_worker
+    """Stop the local worker process (admin only)."""
+    from backend.server.local_worker import stop_worker
 
     result = stop_worker()
-    logger.info(f"Admin {admin['username']} stopped embedded worker")
+    logger.info(f"Admin {admin['username']} stopped local worker")
     return result
 
 
 @router.get("/worker/status")
-def get_embedded_worker_status(
+def get_local_worker_status(
     _user: dict = Depends(get_current_user),
 ):
-    """Get embedded worker status (any authenticated user)."""
-    from backend.server.embedded_worker import get_status
+    """Get local worker status (any authenticated user)."""
+    from backend.server.local_worker import get_status
     return get_status()

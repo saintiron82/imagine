@@ -109,17 +109,15 @@ def _save_vision_fields_for_file(db: SQLiteDB, file_id: int, body: dict) -> bool
 
 
 def _auto_start_worker():
-    """Start embedded worker if not already running (called on new job creation)."""
+    """Start the local worker if not already running (called on new job creation)."""
     try:
-        from backend.server.embedded_worker import _daemon
-        # Already running — skip
-        if _daemon and _daemon.is_running():
+        from backend.server.local_worker import get_status, start_worker
+        if get_status()["running"]:
             return
-        from backend.server.embedded_worker import start_worker
-        start_worker(server_url="", access_token="")
-        logger.info("Embedded worker auto-started (new analysis job created)")
+        start_worker()
+        logger.info("Local worker auto-started (new analysis job created)")
     except Exception as e:
-        logger.warning(f"Embedded worker auto-start failed: {e}")
+        logger.warning(f"Local worker auto-start failed: {e}")
 
 
 # ── Models ───────────────────────────────────────────────────

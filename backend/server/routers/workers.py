@@ -963,30 +963,8 @@ def admin_list_workers(
             "launcher": row[21],
         })
 
-    # BUG-005: override embedded worker's data from live memory
-    # (heartbeat may be blocked during long MC batch)
-    try:
-        from backend.server.embedded_worker import get_status as _ew_status
-        ew = _ew_status()
-        if ew.get("running"):
-            for w in workers:
-                if w["worker_name"] == "embedded":
-                    w["status"] = "online"  # force online if running
-                    w["current_phase"] = ew.get("current_phase") or w["current_phase"]
-                    w["current_file"] = ew.get("current_file") or w["current_file"]
-                    if ew.get("batch_capacity"):
-                        w["batch_capacity"] = ew["batch_capacity"]
-                    if ew.get("phase_counts"):
-                        w["phase_counts"] = ew["phase_counts"]
-                    if ew.get("phase_throughput"):
-                        if not w.get("resources"):
-                            w["resources"] = {}
-                        w["resources"]["phase_throughput"] = ew["phase_throughput"]
-                    if ew.get("throughput") and ew["throughput"] > 0:
-                        w["throughput"] = ew["throughput"]
-                    break
-    except Exception:
-        pass
+    # Local worker reports via normal HTTP heartbeats like external workers —
+    # no live-memory override needed (was BUG-005 for the in-process embedded worker).
 
     return {
         "workers": workers,
@@ -1119,59 +1097,53 @@ def admin_update_auto_processing(
     if req.batch_size is not None:
         cfg.save_user_setting("server.auto_processing.batch_size", req.batch_size)
     if req.verbose_log is not None:
+        # Worker reads worker.verbose_log from config at startup
         cfg.save_user_setting("worker.verbose_log", req.verbose_log)
-        # Apply to running embedded worker immediately
-        try:
-            import backend.server.embedded_worker as ew_module
-            if ew_module._worker_daemon:
-                ew_module._worker_daemon.verbose_log = req.verbose_log
-        except Exception:
-            pass
 
     # Scheduler handles mode assignment — no global mode switching needed
 
-    # Start/stop embedded worker
-    # Note: start is handled by _activate_server Phase 6 (on login).
-    # This API only handles STOP (user explicitly disables).
-    if req.enabled is not None and not req.enabled:
-        _stop_embedded_worker()
+    # Start/stop local worker
+    if req.enabled is not None:
+        if req.enabled:
+            _start_local_worker(None)  # no-op if already running
+        else:
+            _stop_local_worker()
 
     logger.info(f"Admin updated auto_processing: enabled={req.enabled}, mode={req.mode}, rest={req.rest_after_batch_s}s")
     return {"ok": True}
 
 
-# ── Embedded Worker ──────────────────────────────────────────
+# ── Local Worker ─────────────────────────────────────────────
 
-def _start_embedded_worker(app):
-    """Start the embedded worker using LocalTransport (no HTTP needed)."""
-    from backend.server.embedded_worker import start_worker, get_status
+def _start_local_worker(app):
+    """Start the server machine's local worker process."""
+    from backend.server.local_worker import start_worker, get_status
 
     if get_status()["running"]:
         return
 
-    # server_url and access_token are unused by LocalTransport but kept for API compat
-    result = start_worker(server_url="", access_token="")
+    result = start_worker()
     if result.get("success"):
-        logger.info("Embedded worker started (LocalTransport)")
+        logger.info("Local worker started")
     else:
-        logger.warning(f"Embedded worker start failed: {result.get('error')}")
+        logger.warning(f"Local worker start failed: {result.get('error')}")
 
 
-def _stop_embedded_worker():
-    """Stop the embedded worker if running."""
-    from backend.server.embedded_worker import stop_worker, get_status
+def _stop_local_worker():
+    """Stop the local worker if running."""
+    from backend.server.local_worker import stop_worker, get_status
 
     if get_status()["running"]:
         result = stop_worker()
-        logger.info(f"Embedded worker stopped: {result}")
+        logger.info(f"Local worker stopped: {result}")
 
 
 @router.get("/admin/workers/embedded-worker")
 def admin_get_embedded_worker(
     admin: dict = Depends(require_admin),
 ):
-    """Get embedded worker status and config."""
-    from backend.server.embedded_worker import get_status
+    """Get local worker status and config."""
+    from backend.server.local_worker import get_status
     from backend.utils.config import get_config
 
     cfg = get_config()
@@ -1188,8 +1160,8 @@ def admin_update_embedded_worker(
     request: Request,
     admin: dict = Depends(require_admin),
 ):
-    """Enable or disable the embedded worker."""
-    from backend.server.embedded_worker import get_status
+    """Enable or disable the local worker."""
+    from backend.server.local_worker import get_status
     from backend.utils.config import get_config
 
     cfg = get_config()
@@ -1198,10 +1170,10 @@ def admin_update_embedded_worker(
         cfg._set_dotted("server.embedded_worker.enabled", req.enabled)
         # Start handled by _activate_server. Only stop here.
         if not req.enabled:
-            _stop_embedded_worker()
+            _stop_local_worker()
 
     status = get_status()
-    logger.info(f"Admin updated embedded_worker: enabled={req.enabled}, running={status['running']}")
+    logger.info(f"Admin updated local worker: enabled={req.enabled}, running={status['running']}")
     return {"ok": True, **status}
 
 

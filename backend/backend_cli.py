@@ -53,6 +53,12 @@ def cmd_worker_ipc(args):
     worker_main()
 
 
+def cmd_worker(args):
+    """Headless worker daemon (same daemon as external workers)."""
+    from backend.worker.cli import main as headless_main
+    sys.exit(headless_main(args.worker_args))
+
+
 def cmd_search_daemon(args):
     """Search daemon — persistent process with model caching."""
     sys.argv = ['api_search.py', '--daemon']
@@ -83,6 +89,8 @@ def cmd_pipeline(args):
 def cmd_server(args):
     """FastAPI server."""
     import uvicorn
+    # Let the local-worker supervisor know the actual bound port
+    os.environ["IMAGINE_SELF_PORT"] = str(args.port)
     uvicorn.run(
         'backend.server.app:app',
         host=args.host,
@@ -223,6 +231,11 @@ def main():
     # Worker IPC
     sub.add_parser('worker-ipc', help='Worker IPC bridge')
 
+    # Headless worker daemon (used by the server's local-worker supervisor)
+    p = sub.add_parser('worker', help='Headless worker daemon')
+    p.add_argument('worker_args', nargs=argparse.REMAINDER,
+                   help='Arguments passed through to backend.worker.cli')
+
     # Search Daemon
     sub.add_parser('search-daemon', help='Search daemon')
 
@@ -302,6 +315,7 @@ def main():
     # Dispatch to handler
     handlers = {
         'worker-ipc': cmd_worker_ipc,
+        'worker': cmd_worker,
         'search-daemon': cmd_search_daemon,
         'pipeline': cmd_pipeline,
         'pipeline.ingest_engine': cmd_pipeline,
