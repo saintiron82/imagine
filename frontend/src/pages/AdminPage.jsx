@@ -15,10 +15,8 @@ import ToolsPanel from '../components/admin/ToolsPanel';
 import ConnectionInfoPanel from '../components/admin/ConnectionInfoPanel';
 import SearchFeedbackPanel from '../components/admin/SearchFeedbackPanel';
 
-// Re-export panels used by other pages (e.g. FactoryPage)
+// Re-export panels used by other pages (e.g. AnalysisPage)
 export { default as WorkersPanel } from '../components/admin/WorkersPanel';
-export { default as DashboardPanel } from '../components/admin/DashboardPanel';
-export { default as DiscoverPanel } from '../components/admin/DiscoverPanel';
 
 export default function AdminPage() {
   const { t } = useLocale();

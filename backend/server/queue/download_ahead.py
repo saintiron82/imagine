@@ -47,11 +47,6 @@ def register_webdav_source(source_config: dict):
         logger.info(f"WebDAV source registered: {source_id}")
 
 
-def unregister_webdav_source(source_id: str):
-    """Remove a WebDAV source config."""
-    with _sources_lock:
-        _webdav_sources.pop(source_id, None)
-
 
 def get_webdav_source(source_id: str) -> Optional[dict]:
     """Get a registered WebDAV source config."""

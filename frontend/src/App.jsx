@@ -8,8 +8,6 @@ import LoginPageV2 from './pages/LoginPageV2';
 import AdminPage from './pages/AdminPage';
 import SettingsPage from './pages/SettingsPage';
 import ArchivingPage from './pages/ArchivingPage';
-import FactoryPage from './pages/FactoryPage';
-import WorkerPage from './pages/WorkerPage';
 import AnalysisPage from './pages/AnalysisPage';
 import DownloadPage from './pages/DownloadPage';
 import AppDownloadBanner from './components/AppDownloadBanner';
@@ -1708,8 +1706,7 @@ function App() {
             batchInfo={processProgress.batchInfo}
             fileStep={fileStep}
             onStop={handleStopProcess}
-            isWorkerProcessing={false && appMode === 'client'}
-                                    serverQueueStats={serverQueueStats}
+            serverQueueStats={serverQueueStats}
           />
         </div>
       </div>
