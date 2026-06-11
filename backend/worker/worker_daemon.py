@@ -650,6 +650,8 @@ class WorkerDaemon:
                             "task_id": t["task_id"],  # new system ID
                             "analysis_job_id": t.get("job_id"),
                             "analysis_profile": t.get("analysis_profile"),
+                            # MV: MC text inlined by server (avoids per-file GET /files/{id}/mc)
+                            "vision_data": t.get("vision_data") or {},
                         })
                     logger.info(f"{self._log_prefix} Claimed {len(jobs)} {server_phase} tasks (new API)")
                     return jobs
