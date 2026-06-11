@@ -327,24 +327,6 @@ def _get_global_processing_mode() -> str:
         return "auto"
 
 
-def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
-    """워커 resources_json에서 GPU 정보를 읽어 processing_mode 자동 결정.
-
-    서버의 현재 활성 tier를 기준으로 워커가 VLM을 실행할 수 있는지 판단한다.
-
-    Returns:
-        "mc" or "vv", or None if detection fails
-    """
-    try:
-        from backend.utils.gpu_detect import determine_worker_mode
-        from backend.utils.tier_config import get_active_tier
-        server_tier, _ = get_active_tier()
-        return determine_worker_mode(resources, server_tier)
-    except Exception as e:
-        logger.warning(f"Auto mode detection failed: {e}")
-        return None
-
-
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     """No-op in new architecture. Scheduler handles all assignment.
 
