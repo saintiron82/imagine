@@ -110,14 +110,23 @@ class FileTaskParsePool(BaseAheadPool):
 
         cursor = self.db.conn.cursor()
         try:
+            # Job-fair interleave (see claim_tasks) — parse feeds every
+            # downstream phase, so fairness must start here.
             cursor.execute("""
-                SELECT ft.id, ft.file_id, ft.file_path
-                FROM file_tasks ft
-                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
-                WHERE aj.status = 'active'
-                  AND ft.download_status IN ('done', 'n/a')
-                  AND ft.parse_status = 'pending'
-                ORDER BY ft.priority DESC, ft.created_at ASC
+                SELECT id, file_id, file_path FROM (
+                    SELECT ft.id, ft.file_id, ft.file_path,
+                           ft.priority, ft.created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ft.analysis_job_id
+                               ORDER BY ft.created_at ASC
+                           ) AS job_rn
+                    FROM file_tasks ft
+                    JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                    WHERE aj.status = 'active'
+                      AND ft.download_status IN ('done', 'n/a')
+                      AND ft.parse_status = 'pending'
+                )
+                ORDER BY priority DESC, job_rn ASC, created_at ASC
                 LIMIT ?
             """, (capacity,))
             rows = cursor.fetchall()

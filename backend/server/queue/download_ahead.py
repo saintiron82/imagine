@@ -493,13 +493,20 @@ class DownloadAheadPool(BaseAheadPool):
         # Query file_tasks for pending WebDAV downloads
         try:
             cursor.execute(
-                """SELECT ft.id, ft.file_id, ft.file_path
-                   FROM file_tasks ft
-                   JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
-                   WHERE aj.status = 'active'
-                     AND ft.download_status = 'pending'
-                     AND ft.file_path LIKE 'webdav://%'
-                   ORDER BY ft.priority DESC, ft.created_at ASC
+                """SELECT id, file_id, file_path FROM (
+                       SELECT ft.id, ft.file_id, ft.file_path,
+                              ft.priority, ft.created_at,
+                              ROW_NUMBER() OVER (
+                                  PARTITION BY ft.analysis_job_id
+                                  ORDER BY ft.created_at ASC
+                              ) AS job_rn
+                       FROM file_tasks ft
+                       JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                       WHERE aj.status = 'active'
+                         AND ft.download_status = 'pending'
+                         AND ft.file_path LIKE 'webdav://%'
+                   )
+                   ORDER BY priority DESC, job_rn ASC, created_at ASC
                    LIMIT ?""",
                 (self._max_files,),
             )

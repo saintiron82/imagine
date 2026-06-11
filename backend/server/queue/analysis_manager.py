@@ -590,14 +590,24 @@ class AnalysisJobManager:
             cursor.execute("BEGIN IMMEDIATE")
 
             # Find claimable tasks (only from active jobs)
+            # Job-fair interleave: ROW_NUMBER per job so a large job cannot
+            # starve a small one (round-robin across active jobs). Explicit
+            # priority still trumps fairness.
             cursor.execute(f"""
-                SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id,
-                       aj.analysis_profile_json
-                FROM file_tasks ft
-                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
-                WHERE aj.status = 'active'
-                  AND {where}
-                ORDER BY ft.priority DESC, ft.created_at ASC
+                SELECT id, file_id, file_path, analysis_job_id, analysis_profile_json
+                FROM (
+                    SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id,
+                           aj.analysis_profile_json, ft.priority, ft.created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ft.analysis_job_id
+                               ORDER BY ft.created_at ASC
+                           ) AS job_rn
+                    FROM file_tasks ft
+                    JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                    WHERE aj.status = 'active'
+                      AND {where}
+                )
+                ORDER BY priority DESC, job_rn ASC, created_at ASC
                 LIMIT ?
             """, (count,))
             rows = cursor.fetchall()
