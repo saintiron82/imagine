@@ -622,6 +622,14 @@ def migrate_derivations(db):
             PRIMARY KEY (phase, model_version)
         )
     """)
+    # M3: cache-hit tracking on the per-job ledger
+    if db._table_exists("file_tasks"):
+        for col in ("mc_cache_hit", "vv_cache_hit", "mv_cache_hit"):
+            try:
+                db.conn.execute(f"SELECT {col} FROM file_tasks LIMIT 1")
+            except Exception:
+                db.conn.execute(
+                    f"ALTER TABLE file_tasks ADD COLUMN {col} INTEGER DEFAULT 0")
     db.conn.commit()
 
 
