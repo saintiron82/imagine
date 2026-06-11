@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v8</title>
+<title>Imagine UI 재구축 목업 v9</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -101,6 +101,27 @@ main{flex:1;overflow:auto}
 .phases span b{font-weight:600}
 .p-dl b{color:var(--amber)} .p-pa b{color:var(--cyan)} .p-mc b{color:var(--purple)} .p-vv b{color:#93c5fd} .p-mv b{color:var(--emerald)}
 .jobs{display:flex;flex-direction:column;gap:10px}
+.jrow{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px 14px}
+.jrow .nm{font-weight:600;font-size:12.5px;min-width:170px}
+.jrow .bar{max-width:280px}
+.jrow .cnt{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--dim);white-space:nowrap}
+.jrow .acts2{margin-left:auto;display:flex;gap:6px}
+.jrow .acts2 button{font-size:10.5px;padding:3px 10px;border-radius:5px;border:1px solid var(--line);color:var(--dim)}
+.jrow .acts2 button:hover{color:var(--text)}
+.jrow.waiting{opacity:.75}
+.live{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:14px 16px;margin-top:16px}
+.live-head{display:flex;align-items:center;gap:10px;font-size:12.5px;font-weight:700;margin-bottom:10px}
+.live-head .rate{margin-left:auto;font-weight:400;font-size:11px;color:var(--emerald);font-family:ui-monospace,monospace}
+.flow{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}
+.fl-item{border-radius:6px;overflow:hidden;border:1px solid var(--line2)}
+.fl-item .ph{height:52px}
+.fl-item .fn{font-size:9px;color:var(--faint);padding:2px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--panel2)}
+.fl-item.busy{border-color:rgba(59,130,246,.5)}
+.fl-item.busy .ph{animation:pulse 1.4s infinite}
+.fl-item.busy .fn{color:#93c5fd}
+.plain-fail{margin-top:12px;font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:8px}
+.plain-fail .n{color:var(--red);font-weight:700}
+.plain-fail button{color:#93c5fd;font-size:11px;text-decoration:underline}
 .jgroup{font-size:11px;color:var(--faint);font-weight:700;margin:14px 0 2px;display:flex;align-items:center;gap:8px}
 .jgroup::after{content:'';flex:1;height:1px;background:var(--line2)}
 .pstrip{display:flex;gap:3px;margin-top:8px}
@@ -255,7 +276,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v8</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v9</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 라이브러리">라이브러리</button>
@@ -324,86 +345,53 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
   </aside>
   <div class="lib-main">
     <div class="sec-title">분석 리스트 <span class="sub">등록 순이 아니라 작업 간 공정 배분으로 처리</span></div>
-    <div class="summary" data-mock-id="library/summary" data-mock-name="전체 진행 요약">
+    <div class="summary" data-mock-id="library/summary" data-mock-name="요약 (용어 없음)">
       <div class="sum-row">
-        <span class="big">2,560</span><span class="of">/ 3,800</span>
+        <span class="big">2,560</span><span class="of">/ 3,800 장 분석됨</span>
         <div class="bar"><i style="width:67%"></i></div>
         <span style="font-family:ui-monospace,monospace;color:#93c5fd;font-weight:700">67%</span>
       </div>
-      <div class="phases" data-mock-id="library/summary/phases" data-mock-name="단계별 진행 (파이프라인 순서)">
-        <span class="p-dl">DL <b>3,800</b>/3,800</span>
-        <span class="p-pa">파싱 <b>3,640</b>/3,800</span>
-        <span class="p-mc">MC <b>2,710</b>/3,800</span>
-        <span class="p-vv">VV <b>3,205</b>/3,800</span>
-        <span class="p-mv">MV <b>2,560</b>/3,800</span>
-        <span style="margin-left:auto;color:var(--emerald)">14.2 장/분 · ETA ~1h 27m · 분석기 3대</span>
+      <div style="margin-top:8px;font-size:11.5px;color:var(--dim)" data-mock-id="library/summary/line" data-mock-name="상태 한 줄 (사람 말)">
+        지금 <b style="color:var(--emerald)">분당 14.2장</b>씩 처리 중 · 분석기 <b>3대</b> 참여
       </div>
     </div>
-    <div class="jobs" data-mock-id="library/jobs" data-mock-name="분석 리스트 (상태 그룹)">
-
-      <div class="jgroup">진행 중 · 2</div>
-
-      <div class="job open" data-mock-id="library/jobs/card[active]" data-mock-name="잡 카드(진행 — 펼침 상태)">
-        <div class="head" onclick="this.parentNode.classList.toggle('open')" style="cursor:pointer">
-          <span class="st run"></span><span class="nm">NAS / 캐릭터 (하위 포함)</span>
-          <span class="pct">1,820 / 3,100 · 59%</span><span class="chev">▸</span>
-        </div>
-        <div class="pstrip" data-mock-id="library/jobs/card[active]/phases" data-mock-name="파이프라인 위치 스트립">
-          <div class="pseg"><div class="pl"><span>DL</span><span>100%</span></div><div class="pb"><i style="width:100%;background:var(--amber)"></i></div></div>
-          <div class="pseg"><div class="pl"><span>파싱</span><span>96%</span></div><div class="pb"><i style="width:96%;background:var(--cyan)"></i></div></div>
-          <div class="pseg"><div class="pl"><span>MC</span><span>61%</span></div><div class="pb"><i style="width:61%;background:var(--purple)"></i></div></div>
-          <div class="pseg"><div class="pl"><span>VV</span><span>83%</span></div><div class="pb"><i style="width:83%;background:#3b82f6"></i></div></div>
-          <div class="pseg"><div class="pl"><span>MV</span><span>59%</span></div><div class="pb"><i style="width:59%;background:var(--emerald)"></i></div></div>
-        </div>
-        <div class="avail" data-mock-id="library/jobs/card[active]/now" data-mock-name="현재 처리 상태 요약">
-          현재: <b style="color:var(--purple)">MC 진행 중</b> · 남은 MC <b>1,210</b> · 파싱 잔여 124 — 병목 단계: MC
-        </div>
-        <div class="jexp" data-mock-id="library/jobs/card[active]/detail" data-mock-name="펼침 상세">
-          <div class="krow">
-            <span>속도 <b>14.2장/분</b></span><span>ETA <b>~1h 27m</b></span>
-            <span>캐시 적중 <b style="color:var(--emerald)">312</b> (계산 생략)</span>
-            <span>등록 <b>성철 · 14:02</b></span><span>분석기 <b>3대 참여</b></span>
-          </div>
-          <div class="flist" data-mock-id="library/jobs/card[active]/failures" data-mock-name="실패 목록 + 사유">
-            <div style="font-size:10.5px;color:var(--red);font-weight:700;margin-bottom:4px">실패 3건</div>
-            <div class="fitem"><span class="fcode">[PARSE_FAILED]</span> boss_raid_concept.psb — 지원하지 않는 압축 <span class="perma">영구</span></div>
-            <div class="fitem"><span class="fcode">[MC]</span> npc_villager_044.psd — VLM 타임아웃 (재시도 1/3)</div>
-            <div class="fitem"><span class="fcode">[MC]</span> npc_villager_071.psd — VLM 타임아웃 (재시도 1/3)</div>
-            <div style="margin-top:6px;display:flex;gap:6px">
-              <button style="font-size:10px;border:1px solid var(--line);border-radius:4px;padding:2px 10px;color:#93c5fd">실패 재시도</button>
-              <button style="font-size:10px;border:1px solid var(--line);border-radius:4px;padding:2px 10px;color:var(--dim)">영구 실패 확인 처리</button>
-            </div>
-          </div>
-        </div>
-        <div class="acts"><button>일시정지</button><button>취소</button></div>
+    <div class="jobs" data-mock-id="library/jobs" data-mock-name="분석 리스트 (얇은 행 — 용어/ETA/완료 없음)">
+      <div class="jrow" data-mock-id="library/jobs/row[active]" data-mock-name="작업 행(진행)">
+        <span class="st run"></span><span class="nm">NAS / 캐릭터</span>
+        <div class="bar"><i style="width:59%;background:var(--blue)"></i></div>
+        <span class="cnt">1,820 / 3,100</span>
+        <span class="plain-fail" style="margin:0"><span class="n">실패 3</span><button>보기</button></span>
+        <div class="acts2"><button>일시정지</button><button>취소</button></div>
       </div>
-
-      <div class="job" data-mock-id="library/jobs/card[wave]" data-mock-name="잡 카드(재처리 파도 — 접힘)">
-        <div class="head" onclick="this.parentNode.classList.toggle('open')" style="cursor:pointer">
-          <span class="st run"></span><span class="nm">재처리 파도: VV → siglip2-v2</span>
-          <span class="pct">410 / 700 · 59%</span><span class="chev">▸</span>
-        </div>
-        <div class="pstrip">
-          <div class="pseg"><div class="pl"><span>VV</span><span>59%</span></div><div class="pb"><i style="width:59%;background:var(--purple)"></i></div></div>
-        </div>
-        <div class="avail">기존 결과를 유지한 채 파일별로 새 모델 결과로 교체 — 중단 없음</div>
-        <div class="acts"><button>일시정지</button><button>취소</button></div>
+      <div class="jrow" data-mock-id="library/jobs/row[wave]" data-mock-name="작업 행(재분석)">
+        <span class="st run"></span><span class="nm">배경 다시 분석</span>
+        <div class="bar"><i style="width:59%;background:var(--purple)"></i></div>
+        <span class="cnt">410 / 700</span>
+        <div class="acts2"><button>일시정지</button><button>취소</button></div>
       </div>
-
-      <div class="jgroup">대기 · 1</div>
-
-      <div class="job" data-mock-id="library/jobs/card[queued]" data-mock-name="잡 카드(대기)">
-        <div class="head"><span class="st" style="background:var(--faint)"></span><span class="nm">신규 컨셉 2026-06</span><span class="pct" style="color:var(--faint)">0 / 412 · 대기</span></div>
-        <div class="avail" style="color:var(--faint)">기존 작업과 교차 배분 — 예상 시작 ~3분 내</div>
-        <div class="acts"><button data-mock-id="library/jobs/card[queued]/priority" data-mock-name="우선 처리 (priority)">⚡ 우선 처리</button><button>취소</button></div>
+      <div class="jrow waiting" data-mock-id="library/jobs/row[queued]" data-mock-name="작업 행(대기)">
+        <span class="st" style="background:var(--faint)"></span><span class="nm">신규 컨셉 2026-06</span>
+        <span class="cnt">412장 · 대기</span>
+        <div class="acts2"><button>⚡ 우선 처리</button><button>취소</button></div>
       </div>
+    </div>
 
-      <div class="jgroup">완료 · 1</div>
-
-      <div class="job" data-mock-id="library/jobs/card[done]" data-mock-name="잡 카드(완료)">
-        <div class="head"><span class="st done"></span><span class="nm">로컬 / 컨셉아트</span><span class="pct" style="color:var(--emerald)">698 / 700 · 완료</span></div>
-        <div class="fail-line">실패 2건 — 손상된 PSD (RETRY_EXHAUSTED)<button>상세</button><button>확인 처리</button></div>
-        <div class="acts"><button>상세</button><button>보관 (목록에서 제거)</button></div>
+    <div class="live" data-mock-id="library/live" data-mock-name="지금 처리 중 — 작업큐 내용 모니터 (화면의 주인공)">
+      <div class="live-head">지금 처리 중 <span class="rate">분당 14.2장</span></div>
+      <div class="flow" data-mock-id="library/live/flow" data-mock-name="처리 흐름 (좌측=처리 중, 나머지=방금 완료)">
+        <div class="fl-item busy"><div class="ph" style="background:linear-gradient(140deg,#1e3a5f,#2d4a73)"></div><div class="fn">knight_v3.psd</div></div>
+        <div class="fl-item busy"><div class="ph" style="background:linear-gradient(140deg,#33272b,#4a3a40)"></div><div class="fn">npc_smith.psd</div></div>
+        <div class="fl-item busy"><div class="ph" style="background:linear-gradient(140deg,#27344a,#3a4a66)"></div><div class="fn">bg_forest_07.psd</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#1d3146,#28455e)"></div><div class="fn">armor_silver.png</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#2a2a3e,#3c3c5c)"></div><div class="fn">guard_set.psd</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#1e3a4a,#2a5468)"></div><div class="fn">tex_stone.png</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#3a2a3e,#503a56)"></div><div class="fn">villager_12.psd</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#2e3a2a,#465640)"></div><div class="fn">prop_chest.psd</div></div>
+      </div>
+      <div class="plain-fail" data-mock-id="library/live/fail" data-mock-name="실패 — 사람 말 사유">
+        <span class="n">실패 3건</span>
+        <span>그림 파일이 손상되어 읽을 수 없음 1 · 분석 시간 초과(자동 재시도 중) 2</span>
+        <button>자세히</button>
       </div>
     </div>
   </div>
