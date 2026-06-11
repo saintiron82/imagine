@@ -607,33 +607,33 @@ function toggleRole(){
 }
 
 /* ── +추가 플로우 ── */
-function openAdd(){document.getElementById('addOverlay').classList.add('open');addStep(1);}
+function openAdd(){
+  document.getElementById('addOverlay').classList.add('open');
+  navStack = []; _render(1);
+}
 function closeAdd(){document.getElementById('addOverlay').classList.remove('open')}
-let curStep = 1;
-function _backBtn(){
-  // 1단계와 완료(4단계)에선 뒤로 숨김
-  document.getElementById('mBack').classList.toggle('hide', curStep===1 || curStep===4);
-}
-function addStep(n){
-  curStep = n;
-  document.getElementById('step1b').style.display='none';
+/* 뒤로 = 실제로 지나온 길의 역순 (이력 스택) — 로컬 진입은 NAS 화면을
+   거치지 않았으므로 뒤로도 NAS 화면을 보여주지 않는다 */
+let curView = 1;          // 1 | '1b' | 2 | 3 | 4
+let navStack = [];        // 지나온 화면들
+const BAR = {1:1, '1b':1, 2:2, 3:3, 4:4};   // 화면 → 진행 바 단계
+
+function _render(v){
+  curView = v;
+  document.getElementById('step1b').style.display = (v==='1b'?'':'none');
   [1,2,3,4].forEach(i=>{
-    document.getElementById('step'+i).style.display = (i===n?'':'none');
-    document.getElementById('s'+i).classList.toggle('on', i<=n);
+    document.getElementById('step'+i).style.display = (v===i?'':'none');
+    document.getElementById('s'+i).classList.toggle('on', i<=BAR[v]);
   });
-  _backBtn();
+  // 시작점이거나 등록 완료면 뒤로 숨김
+  document.getElementById('mBack').classList.toggle('hide', navStack.length===0 || v===4);
 }
-function showNas(){
-  curStep = '1b';
-  [1,2,3,4].forEach(i=>document.getElementById('step'+i).style.display='none');
-  document.getElementById('step1b').style.display='';
-  document.getElementById('s1').classList.add('on');
-  _backBtn();
-}
-function goBack(){
-  const prev = {'1b':()=>addStep(1), 2:showNas, 3:()=>addStep(2)}[curStep];
-  if(prev) prev();
-}
+function navTo(v){ navStack.push(curView); _render(v); }
+function goBack(){ if(navStack.length) _render(navStack.pop()); }
+
+/* 기존 호출명 유지 (전진은 전부 navTo) */
+function addStep(n){ navTo(n); }
+function showNas(){ navTo('1b'); }
 document.querySelectorAll('.tchip').forEach(c=>c.onclick=()=>c.classList.toggle('on'));
 document.querySelectorAll('.btn-node').forEach(n=>n.onclick=()=>{
   document.querySelectorAll('.btn-node').forEach(x=>x.classList.remove('sel'));
