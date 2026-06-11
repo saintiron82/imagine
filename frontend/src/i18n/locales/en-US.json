@@ -1038,5 +1038,6 @@
   "search.axis_mv": "Strong meaning match",
   "search.axis_fts": "Keyword match",
   "admin.worker_blocked_title": "Blocked workers (cannot reconnect)",
-  "admin.worker_unblock": "Unblock"
+  "admin.worker_unblock": "Unblock",
+  "search.mc_pending": "Analyzing"
 }

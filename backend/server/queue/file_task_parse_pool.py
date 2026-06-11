@@ -110,14 +110,23 @@ class FileTaskParsePool(BaseAheadPool):
 
         cursor = self.db.conn.cursor()
         try:
+            # Job-fair interleave (see claim_tasks) — parse feeds every
+            # downstream phase, so fairness must start here.
             cursor.execute("""
-                SELECT ft.id, ft.file_id, ft.file_path
-                FROM file_tasks ft
-                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
-                WHERE aj.status = 'active'
-                  AND ft.download_status IN ('done', 'n/a')
-                  AND ft.parse_status = 'pending'
-                ORDER BY ft.priority DESC, ft.created_at ASC
+                SELECT id, file_id, file_path FROM (
+                    SELECT ft.id, ft.file_id, ft.file_path,
+                           ft.priority, ft.created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ft.analysis_job_id
+                               ORDER BY ft.created_at ASC
+                           ) AS job_rn
+                    FROM file_tasks ft
+                    JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                    WHERE aj.status = 'active'
+                      AND ft.download_status IN ('done', 'n/a')
+                      AND ft.parse_status = 'pending'
+                )
+                ORDER BY priority DESC, job_rn ASC, created_at ASC
                 LIMIT ?
             """, (capacity,))
             rows = cursor.fetchall()
@@ -287,6 +296,16 @@ class FileTaskParsePool(BaseAheadPool):
                     logger.warning(f"FileTaskParse: thumbnail copy failed: {e}")
                     server_thumb_path = None
 
+                # Clean temp-located fallback thumbnails (and their dirs)
+                import tempfile as _tf
+                try:
+                    if str(src_thumb).startswith(_tf.gettempdir()):
+                        src_thumb.unlink(missing_ok=True)
+                        if src_thumb.parent.name.startswith("imagine_fallback_thumb_"):
+                            src_thumb.parent.rmdir()
+                except OSError:
+                    pass
+
         # 7. Upsert metadata to files table
         meta_dict = meta_to_dict(meta)
         canonical = file_path if is_webdav else str(file_p)
@@ -343,11 +362,16 @@ class FileTaskParsePool(BaseAheadPool):
             img = PILImage.open(file_p)
             img = img.convert("RGB")
 
-            # Generate thumbnail
+            # Generate thumbnail in a temp dir — never next to the user's
+            # original (it would leave *_thumb.png residue in their asset
+            # folder). The server copy in _parse_single_task step 6 is the
+            # persistent location; the temp source is cleaned after copy.
+            import tempfile
             thumb_size = (512, 512)
             thumb = img.copy()
             thumb.thumbnail(thumb_size, PILImage.LANCZOS)
-            thumb_path = file_p.parent / f"{file_p.stem}_thumb.png"
+            thumb_dir = Path(tempfile.mkdtemp(prefix="imagine_fallback_thumb_"))
+            thumb_path = thumb_dir / f"{file_p.stem}_thumb.png"
             thumb.save(str(thumb_path), "PNG")
 
             # P08: lowercase canonical format
