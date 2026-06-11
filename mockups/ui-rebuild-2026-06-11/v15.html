@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v14</title>
+<title>Imagine UI 재구축 목업 v15</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -188,6 +188,22 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 .row-act .danger:hover{color:var(--red);border-color:var(--red)}
 .blocked{background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.25);border-radius:6px;padding:8px 12px;display:flex;align-items:center;gap:10px;font-size:11.5px;margin-top:10px}
 .blocked .unb{margin-left:auto;font-size:10.5px;border:1px solid var(--line);padding:2px 10px;border-radius:4px;color:var(--dim)}
+.bottleneck{background:rgba(192,132,252,.07);border:1px solid rgba(192,132,252,.35);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px}
+.bottleneck b{color:var(--purple)}
+.bottleneck .why{color:var(--dim);font-size:11px;margin-top:3px}
+.valve.bn{border-color:rgba(192,132,252,.5);background:rgba(192,132,252,.06)}
+.valve .rate{font-size:9px;color:var(--emerald);font-family:ui-monospace,monospace}
+.valve .bn-tag{font-size:8.5px;font-weight:700;color:var(--purple);border:1px solid rgba(192,132,252,.4);border-radius:3px;padding:0 4px;margin-left:3px}
+.cap{font-family:ui-monospace,monospace;font-size:11px}
+.cap .cur{font-weight:700}
+.cap .max{color:var(--faint)}
+.cap .note{display:block;font-size:9px;color:var(--faint)}
+.cap.full .cur{color:var(--emerald)}
+.cap.idle .cur{color:var(--faint)}
+.util{width:60px}
+.util .ub{height:5px;background:var(--line2);border-radius:99px;overflow:hidden}
+.util .ub i{display:block;height:100%;background:var(--emerald);border-radius:99px}
+.util .ut{font-size:9px;color:var(--faint);font-family:ui-monospace,monospace}
 .kpis{display:flex;gap:10px}
 .kpi{flex:1;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:10px 12px}
 .kpi .v{font-size:18px;font-weight:700;font-family:ui-monospace,monospace}
@@ -281,7 +297,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v14</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v15</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
@@ -462,36 +478,44 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <div id="adm-workers">
       <div class="panel" data-mock-id="admin/workers/policy" data-mock-name="자동 분석 정책 (유일한 토글 위치)">
         <h4>자동 분석 <span class="hint">서버 전역 정책 — 이 토글은 여기 한 곳에만 있습니다</span><span class="toggle" data-mock-id="admin/workers/policy/toggle" data-mock-name="자동 분석 토글"></span></h4>
-        <div class="valves" data-mock-id="admin/workers/valves" data-mock-name="단계 밸브 (파이프라인 순서)">
-          <div class="valve"><div class="ph">DL</div><div class="n">3,800/3,800</div><span class="sw on">ON</span></div>
-          <div class="valve"><div class="ph">파싱</div><div class="n">3,640/3,800</div><span class="sw on">ON</span></div>
-          <div class="valve"><div class="ph">MC</div><div class="n">2,710/3,800</div><span class="sw on">ON</span></div>
-          <div class="valve"><div class="ph">VV</div><div class="n">3,205/3,800</div><span class="sw on">ON</span></div>
-          <div class="valve"><div class="ph">MV</div><div class="n">2,560/3,800</div><span class="sw on">ON</span></div>
+        <div class="bottleneck" data-mock-id="admin/bottleneck" data-mock-name="병목 진단 (명시)">
+          현재 병목: <b>MC</b> — 대기 1,090장 · 클러스터 MC 처리력 <b>분당 88.9장</b> (이 단계가 전체 완료 속도를 결정)
+          <div class="why">이유: MC 가능 분석기 2대뿐 (지민-MacBook은 VRAM 8GB로 불가) · VV·MV는 처리력 여유 — MC 산출을 기다리는 중</div>
+        </div>
+        <div class="valves" data-mock-id="admin/workers/valves" data-mock-name="단계 밸브 + 단계별 처리율">
+          <div class="valve"><div class="ph">DL</div><div class="n">3,800/3,800</div><div class="rate">완료</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">파싱</div><div class="n">3,640/3,800</div><div class="rate">149/분</div><span class="sw on">ON</span></div>
+          <div class="valve bn" data-mock-id="admin/valves/mc" data-mock-name="밸브: MC (병목 표시)"><div class="ph">MC<span class="bn-tag">병목</span></div><div class="n">2,710/3,800</div><div class="rate">88.9/분</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">VV</div><div class="n">3,205/3,800</div><div class="rate">156/분 가능</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">MV</div><div class="n">2,560/3,800</div><div class="rate">115/분 가능</div><span class="sw on">ON</span></div>
         </div>
       </div>
       <div class="panel" data-mock-id="admin/workers/table" data-mock-name="분석기 테이블">
         <h4>분석기 <span class="hint">3대 온라인 — 정지=이번 세션 종료(재시작 가능) · 차단=재접속 거부</span></h4>
         <table>
-          <tr><th>이름</th><th>MC</th><th>VV</th><th>MV</th><th>배치</th><th style="text-align:right">제어</th></tr>
-          <tr data-mock-id="admin/workers/row[server-local]" data-mock-name="분석기 행(서버 로컬)">
-            <td><b>이 서버</b><div style="font-size:10px;color:var(--faint)">자동 · server-local</div></td>
-            <td class="mono" style="color:var(--purple)">842 <span style="color:var(--emerald)">7.9/m</span></td>
-            <td class="mono">—</td><td class="mono">—</td><td class="mono">12</td>
+          <tr><th>이름</th><th>MC <span style="font-weight:400">현재/능력</span></th><th>VV <span style="font-weight:400">현재/능력</span></th><th>MV <span style="font-weight:400">현재/능력</span></th><th>발휘율</th><th style="text-align:right">제어</th></tr>
+          <tr data-mock-id="admin/workers/row[server-local]" data-mock-name="분석기 행(이 서버 — 능력 만재)">
+            <td><b>이 서버</b><div style="font-size:10px;color:var(--faint)">자동 · server-local · 벤치 A</div></td>
+            <td><span class="cap full"><span class="cur">7.9</span><span class="max"> / 7.9</span><span class="note">만재 — 더 못 냄</span></span></td>
+            <td><span class="cap idle"><span class="cur">0</span><span class="max"> / 95</span><span class="note">MC에 배정됨</span></span></td>
+            <td><span class="cap idle"><span class="cur">0</span><span class="max"> / 130</span><span class="note">MC에 배정됨</span></span></td>
+            <td><div class="util"><div class="ub"><i style="width:100%"></i></div><div class="ut">100%</div></div></td>
             <td><div class="row-act"><button>정지</button></div></td>
           </tr>
-          <tr data-mock-id="admin/workers/row[macbook]" data-mock-name="분석기 행(멤버 제공)">
-            <td><b>지민-MacBook</b><div style="font-size:10px;color:var(--faint)">client · electron</div></td>
-            <td class="mono">✕</td>
-            <td class="mono" style="color:#93c5fd">1,205 <span style="color:var(--emerald)">78/m</span></td>
-            <td class="mono" style="color:var(--emerald)">980 <span style="color:var(--emerald)">115/m</span></td>
-            <td class="mono">50</td>
+          <tr data-mock-id="admin/workers/row[macbook]" data-mock-name="분석기 행(MC 불가 사유 명시)">
+            <td><b>지민-MacBook</b><div style="font-size:10px;color:var(--faint)">client · electron · 벤치 B</div></td>
+            <td><span class="cap"><span class="cur" style="color:var(--red)">✕ 불가</span><span class="note">VRAM 8GB &lt; 필요 12GB</span></span></td>
+            <td><span class="cap full"><span class="cur">78</span><span class="max"> / 78</span><span class="note">만재</span></span></td>
+            <td><span class="cap"><span class="cur">37</span><span class="max"> / 115</span><span class="note">VV와 교대 중</span></span></td>
+            <td><div class="util"><div class="ub"><i style="width:96%"></i></div><div class="ut">96%</div></div></td>
             <td><div class="row-act"><button>정지</button><button class="danger">차단</button></div></td>
           </tr>
-          <tr data-mock-id="admin/workers/row[gpu]" data-mock-name="분석기 행(고성능, MC 핀)">
-            <td><b>gpu-box-01</b><div style="font-size:10px;color:var(--faint)">headless · cli · <span style="color:var(--amber)">MC 핀</span></div></td>
-            <td class="mono" style="color:var(--purple)">2,140 <span style="color:var(--emerald)">81/m</span></td>
-            <td class="mono">—</td><td class="mono">—</td><td class="mono">50</td>
+          <tr data-mock-id="admin/workers/row[gpu]" data-mock-name="분석기 행(핀의 기회비용 명시)">
+            <td><b>gpu-box-01</b><div style="font-size:10px;color:var(--faint)">headless · cli · <span style="color:var(--amber)">MC 핀</span> · 벤치 S</div></td>
+            <td><span class="cap full"><span class="cur">81</span><span class="max"> / 81</span><span class="note">만재 (병목 단계 전담)</span></span></td>
+            <td><span class="cap idle"><span class="cur">0</span><span class="max"> / 210</span><span class="note">핀으로 미사용</span></span></td>
+            <td><span class="cap idle"><span class="cur">0</span><span class="max"> / 300</span><span class="note">핀으로 미사용</span></span></td>
+            <td><div class="util"><div class="ub"><i style="width:100%"></i></div><div class="ut">100%</div></div></td>
             <td><div class="row-act"><button>핀 해제</button><button>정지</button><button class="danger">차단</button></div></td>
           </tr>
         </table>
@@ -688,10 +712,10 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 <div class="insp-hint" id="inspHint">Ctrl 누른 채 hover/클릭 = 요소 ID 확인/복사</div>
 
 <script>
-/* 로드 자가증명: 이 줄이 실행되면 배지가 초록색 'v14 · JS OK'로 바뀐다 */
+/* 로드 자가증명: 이 줄이 실행되면 배지가 초록색 'v15 · JS OK'로 바뀐다 */
 (function(){
   const b = document.querySelector('[data-mock-id="shell/version"]');
-  if(b){ b.textContent = 'v14 · JS OK'; b.style.color = '#34d399'; b.style.borderColor = 'rgba(52,211,153,.5)'; }
+  if(b){ b.textContent = 'v15 · JS OK'; b.style.color = '#34d399'; b.style.borderColor = 'rgba(52,211,153,.5)'; }
 })();
 
 /* ── 탭 ── */
