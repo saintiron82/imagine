@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v18</title>
+<title>Imagine UI 재구축 목업 v19</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -313,7 +313,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v18</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v19</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
@@ -357,13 +357,47 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       ⚡<div><div class="t">우리팀 라이브러리</div><div class="d">192.168.0.5:8000 · 마지막 접속 어제 — 바로 접속</div></div>
     </button>
     <div class="start-div">또는</div>
-    <button class="start-opt" data-mock-id="start/create-server" data-mock-name="서버 만들기 (운영자 온보딩: 이름·서버 비밀번호→도메인)">
-      🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">팀의 라이브러리 서버 생성 — 이름·서버 비밀번호 → 도메인 선택</div></div>
+    <button class="start-opt" onclick="startCreate(1)" data-mock-id="start/create-server" data-mock-name="서버 만들기 (운영자 온보딩 진입)">
+      🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">팀의 라이브러리 서버 생성 — 3단계, 1분</div></div>
     </button>
     <button class="start-opt" data-mock-id="start/join-server" data-mock-name="다른 서버 접속">
       🔗<div><div class="t">초대 코드로 팀 서버 가입</div><div class="d">운영자에게 받은 코드 입력 — 같은 네트워크면 서버 자동 발견</div></div>
     </button>
     <div style="font-size:10px;color:var(--faint);text-align:center;margin-top:10px" data-mock-id="start/note" data-mock-name="정책: 재방문 자동 접속">다음부터는 로그인하면 마지막 서버로 자동 접속됩니다</div>
+  </div>
+
+  <!-- 서버 만들기 1/3: 이름 + 서버 비밀번호 -->
+  <div class="start-card" id="create1" style="display:none" data-mock-id="start/create/step1" data-mock-name="서버 만들기 1/3: 이름·비밀번호">
+    <div class="lg" style="font-size:14px">서버 만들기 <span style="font-size:10px;color:var(--faint)">1 / 3</span></div>
+    <div class="tag">이 컴퓨터가 팀의 라이브러리 서버가 됩니다</div>
+    <input value="우리팀 라이브러리" data-mock-id="start/create/name" data-mock-name="그룹 이름 (Firebase 레지스트리 중복 체크)">
+    <div style="font-size:10px;color:var(--emerald);margin:-4px 0 8px 2px">✓ 사용 가능한 이름</div>
+    <input type="password" placeholder="서버 관리 비밀번호" value="········">
+    <div style="font-size:10px;color:var(--faint);margin:-4px 0 8px 2px">서버 초기화 등 관리 작업에만 사용 — 멤버 가입은 초대 코드로</div>
+    <button class="pri-w" onclick="startCreate(2)">다음</button>
+  </div>
+
+  <!-- 서버 만들기 2/3: 도메인 -->
+  <div class="start-card" id="create2" style="display:none" data-mock-id="start/create/step2" data-mock-name="서버 만들기 2/3: 도메인 (최초 선택의 제자리)">
+    <div class="lg" style="font-size:14px">무엇을 보관하나요? <span style="font-size:10px;color:var(--faint)">2 / 3</span></div>
+    <div class="tag">분류·태그 기준이 됩니다 — 나중에 설정 &gt; 서버에서 변경 가능</div>
+    <button class="start-opt" onclick="startCreate(3)" style="border-color:var(--blue)">🎮<div><div class="t">게임 에셋</div><div class="d">캐릭터·배경·UI·이펙트·아이콘 …</div></div></button>
+    <button class="start-opt" onclick="startCreate(3)">🎨<div><div class="t">일반 일러스트/디자인</div><div class="d">일러스트·사진·시안·레퍼런스</div></div></button>
+    <button class="start-opt" onclick="startCreate(3)">📐<div><div class="t">기본</div><div class="d">범용 분류 — 가장 단순</div></div></button>
+  </div>
+
+  <!-- 서버 만들기 3/3: 완료 + 첫 초대 -->
+  <div class="start-card" id="create3" style="display:none" data-mock-id="start/create/step3" data-mock-name="서버 만들기 3/3: 완료 + 첫 초대 코드">
+    <div class="done-box">
+      <div class="ic">🖥️✅</div>
+      <h3 style="margin-top:6px">서버가 켜졌습니다</h3>
+      <p>우리팀 라이브러리 · LAN 192.168.0.5:8000<br>팀원에게 줄 <b>첫 초대 코드</b>가 준비됐습니다</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:10px 0;justify-content:center">
+      <span class="mono" style="font-family:ui-monospace,monospace;font-weight:700;letter-spacing:.05em">KX7M-2QPD-9RTF</span>
+      <button style="font-size:10.5px;color:#93c5fd" data-mock-id="start/create/copy-code" data-mock-name="첫 초대 코드 복사">복사</button>
+    </div>
+    <button class="pri-w" onclick="go('search')" data-mock-id="start/create/finish" data-mock-name="시작하기 → 첫 화면(검색) + 폴더 추가 유도">시작하기 — 첫 폴더를 추가해 보세요</button>
   </div>
 </section>
 
@@ -787,16 +821,15 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 <div class="insp-hint" id="inspHint">Ctrl 누른 채 hover/클릭 = 요소 ID 확인/복사</div>
 
 <script>
-function startStep2(){
-  document.getElementById('start1').style.display='none';
-  document.getElementById('start2').style.display='';
+const START_CARDS = ['start1','start2','create1','create2','create3'];
+function _startShow(id){
+  START_CARDS.forEach(c=>document.getElementById(c).style.display = (c===id?'':'none'));
 }
+function startStep2(){ _startShow('start2'); }
+function startCreate(n){ _startShow('create'+n); }
 /* ── 탭 ── */
 function go(id){
-  if(id==='start'){
-    document.getElementById('start1').style.display='';
-    document.getElementById('start2').style.display='none';
-  }
+  if(id==='start'){ _startShow('start1'); }
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('scr-'+id).classList.add('active');
   document.querySelectorAll('[data-scr]').forEach(b=>b.classList.toggle('active', b.dataset.scr===id));
