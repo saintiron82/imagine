@@ -589,7 +589,7 @@ export default function WorkersPanel() {
                 <tr key={w.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
                   <td className="px-3 py-2">
                     <div className="text-xs font-medium text-white">
-                      {w.worker_name === '__builtin__' || w.worker_name === 'embedded'
+                      {w.origin === 'server-local'
                         ? t('admin.worker_builtin_label') : w.worker_name}
                     </div>
                     <div className="text-[10px] text-gray-500">{w.hostname}</div>
