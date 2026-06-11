@@ -566,68 +566,11 @@ def worker_heartbeat(
         except Exception as e:
             logger.debug(f"Speed update skipped: {e}")
 
-    # Dynamic mode is handled by _decide_worker_mode() — no auto-detect override needed.
-    # processing_mode_override is ONLY for admin manual pinning.
-    pool_needs_recalc = False
-    if False and req.resources and not mode_override:  # DISABLED: was overriding dynamic scheduling
-        detected_mode = _auto_detect_mode_from_resources(req.resources)
-        if detected_mode:
-            cursor.execute(
-                "UPDATE worker_sessions SET processing_mode_override = ? WHERE id = ?",
-                (detected_mode, req.session_id)
-            )
-            db.conn.commit()
-            mode_override = detected_mode
-            pool_needs_recalc = True
-            logger.info(
-                f"Worker session {req.session_id} auto-detected mode: {detected_mode} "
-                f"(VRAM={req.resources.get('gpu_memory_total_gb', 0):.1f}GB)"
-            )
-
-    if pool_needs_recalc:
-        _recalculate_server_pools(request.app, db)
-
-    # Determine effective processing mode:
-    # - mc global → ALL workers get mc
-    # - auto global → workers get their auto-detected mode (mc/vv/mv)
-    global_mode = _get_global_processing_mode()
-
-    mode_reason = None
-    queue_snapshot = None
-
-    if global_mode == "mc":
-        processing_mode = "mc"
-        mode_reason = "global_mode=mc"
-        effective_batch = batch_override or batch_capacity
-    elif mode_override:
-        processing_mode = mode_override
-        mode_reason = f"admin_override={mode_override}"
-        effective_batch = batch_override or batch_capacity
-    else:
-        # Dynamic mode for external workers: decide from file_tasks
-        try:
-            cursor.execute("""
-                SELECT
-                    SUM(CASE WHEN parse_status='done' AND mc_status='pending' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN parse_status='done' AND vv_status='pending' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN mc_status='done' AND mv_status='pending' THEN 1 ELSE 0 END)
-                FROM file_tasks ft
-                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
-                WHERE aj.status = 'active'
-            """)
-            r = cursor.fetchone()
-            mc_p, vv_p, mv_p = (r[0] or 0), (r[1] or 0), (r[2] or 0)
-            if mc_p + vv_p + mv_p > 0:
-                cands = {"mc": mc_p, "vv": vv_p, "mv": mv_p}
-                processing_mode = max(cands, key=cands.get)
-                mode_reason = f"file_tasks({cands})"
-            else:
-                processing_mode = "mc"
-                mode_reason = "idle_default"
-        except Exception:
-            processing_mode = "mc"
-            mode_reason = "fallback (decision error)"
-        effective_batch = batch_override or batch_capacity
+    # Phase assignment is decided at claim time by the scheduler
+    # (pressure × speed). The heartbeat no longer re-derives a mode from
+    # file_tasks on every beat — it only delivers commands and a
+    # resource-aware batch hint.
+    effective_batch = batch_override or batch_capacity
 
     # Resource-aware batch_hint: throttle down based on worker resource pressure
     throttle = resources_data.get("throttle_level", "normal") if resources_data else "normal"
@@ -640,18 +583,12 @@ def worker_heartbeat(
     else:
         resource_batch_hint = effective_batch
 
-    resp = {
+    return {
         "ok": True,
         "command": pending_cmd,
         "pool_hint": resource_batch_hint * 2,
         "batch_hint": resource_batch_hint,
-        "processing_mode": processing_mode,
     }
-    if mode_reason:
-        resp["mode_reason"] = mode_reason
-    if queue_snapshot:
-        resp["queue_snapshot"] = queue_snapshot
-    return resp
 
 
 @router.post("/workers/disconnect")
