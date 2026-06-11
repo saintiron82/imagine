@@ -11,8 +11,10 @@ No retired queue-manager dependency.
 import json
 import logging
 import shutil
+import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
@@ -42,37 +44,57 @@ class FileTaskParsePool(BaseAheadPool):
         self._download_pool = download_pool
         self._parsed_count = 0
         self._failed_count = 0
-        self._recovery_counter = 0
+        self._stats_lock = threading.Lock()
+        self._last_retry_check = time.monotonic()
+        # Parallel parse workers — SQLiteDB connections are thread-local,
+        # so each worker thread reads/writes through its own connection.
+        self._parse_workers = max(1, int(self._get_config_value(
+            "server.parse_ahead.parse_workers", 3) or 3))
+        self._executor = ThreadPoolExecutor(
+            max_workers=self._parse_workers,
+            thread_name_prefix="parse",
+        )
+        self._futures = set()
 
     def _unload_models(self):
         """No models to unload — parse is CPU-only."""
         pass
 
     def _loop(self):
-        """Main loop: find parseable tasks, parse sequentially."""
+        """Main loop: keep the parse worker pool fed (pipelined, no batch barrier)."""
         poll_interval = self._get_config_value(
             "server.parse_ahead.poll_interval_s", 2
         )
 
         while self._running:
             try:
-                parsed = self._parse_batch()
+                # Drain finished futures
+                self._futures = {f for f in self._futures if not f.done()}
 
-                if parsed == 0:
-                    time.sleep(poll_interval)
+                submitted = self._submit_tasks()
+
+                if submitted == 0:
+                    # Nothing new: idle-poll if drained, short wait if working
+                    time.sleep(poll_interval if not self._futures else 0.2)
 
                 # Periodic recovery: reset failed tasks back to pending
-                self._recovery_counter += 1
-                if self._recovery_counter >= 150:  # every ~5 min at 2s poll
+                now = time.monotonic()
+                if now - self._last_retry_check >= 300:
                     self._retry_failed()
-                    self._recovery_counter = 0
+                    self._last_retry_check = now
 
             except Exception as e:
                 logger.error(f"FileTaskParsePool loop error: {e}")
                 time.sleep(5)
 
-    def _parse_batch(self) -> int:
-        """Find and parse pending tasks. Returns count parsed."""
+        # Let in-flight parses finish and commit their status updates
+        self._executor.shutdown(wait=True)
+
+    def _submit_tasks(self) -> int:
+        """Claim pending tasks up to free worker capacity and submit them.
+
+        Returns the number of tasks submitted.
+        """
         # Check if parse is paused
         try:
             from backend.server.routers.analysis import get_paused_phases
@@ -81,8 +103,12 @@ class FileTaskParsePool(BaseAheadPool):
         except Exception:
             pass
 
-        cursor = self.db.conn.cursor()
+        # Keep up to 2× workers in flight so threads never starve between claims
+        capacity = self._parse_workers * 2 - len(self._futures)
+        if capacity <= 0:
+            return 0
 
+        cursor = self.db.conn.cursor()
         try:
             cursor.execute("""
                 SELECT ft.id, ft.file_id, ft.file_path
@@ -92,8 +118,8 @@ class FileTaskParsePool(BaseAheadPool):
                   AND ft.download_status IN ('done', 'n/a')
                   AND ft.parse_status = 'pending'
                 ORDER BY ft.priority DESC, ft.created_at ASC
-                LIMIT 10
-            """)
+                LIMIT ?
+            """, (capacity,))
             rows = cursor.fetchall()
         except Exception as e:
             logger.warning(f"FileTaskParsePool: query failed: {e}")
@@ -102,7 +128,7 @@ class FileTaskParsePool(BaseAheadPool):
         if not rows:
             return 0
 
-        parsed = 0
+        submitted = 0
         for task_id, file_id, file_path in rows:
             if not self._running:
                 break
@@ -118,11 +144,28 @@ class FileTaskParsePool(BaseAheadPool):
                 continue  # another thread/process claimed it
             self.db.conn.commit()
 
-            t_start = time.perf_counter()
-            error = self._parse_single_task(task_id, file_id, file_path)
-            elapsed = time.perf_counter() - t_start
+            self._futures.add(
+                self._executor.submit(self._process_task, task_id, file_id, file_path)
+            )
+            submitted += 1
 
-            # Update file_tasks
+        return submitted
+
+    def _process_task(self, task_id: int, file_id: int, file_path: str):
+        """Parse one claimed task and record its outcome.
+
+        Runs in an executor thread — all DB access goes through this
+        thread's own connection (SQLiteDB is thread-local).
+        """
+        cursor = self.db.conn.cursor()
+        t_start = time.perf_counter()
+        try:
+            error = self._parse_single_task(task_id, file_id, file_path)
+        except Exception as e:
+            error = f"unexpected: {e}"
+        elapsed = time.perf_counter() - t_start
+
+        try:
             if not error:
                 cursor.execute("""
                     UPDATE file_tasks
@@ -133,8 +176,8 @@ class FileTaskParsePool(BaseAheadPool):
                     WHERE id = ?
                 """, (_now(), round(elapsed, 3), _now(), task_id))
                 self.db.conn.commit()
-                self._parsed_count += 1
-                parsed += 1
+                with self._stats_lock:
+                    self._parsed_count += 1
                 logger.info(
                     f"FileTaskParse: task {task_id} OK "
                     f"({Path(file_path).name}, {elapsed:.1f}s)"
@@ -156,9 +199,14 @@ class FileTaskParsePool(BaseAheadPool):
                     WHERE id = ?
                 """, (_now(), round(elapsed, 3), err_msg, _now(), task_id))
                 self.db.conn.commit()
-                self._failed_count += 1
-
-        return parsed
+                with self._stats_lock:
+                    self._failed_count += 1
+        except Exception as e:
+            logger.error(f"FileTaskParse: status update failed for task {task_id}: {e}")
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
 
     def _parse_single_task(
         self, task_id: int, file_id: int, file_path: str
