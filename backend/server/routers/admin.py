@@ -302,6 +302,29 @@ def activate_member(
     return {"success": True}
 
 
+# ── Reprocessing Waves (CAS M4) ──────────────────────────────
+
+@router.post("/waves/{phase}")
+def create_reprocessing_wave(
+    phase: str,
+    dry_run: bool = False,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Create a model-version reprocessing wave (mc waves include mv).
+
+    dry_run=true returns the candidate count without creating the job."""
+    from backend.server.queue.waves import create_wave_job
+
+    result = create_wave_job(db, phase, dry_run=dry_run,
+                             created_by=admin.get("id"))
+    if result.get("success") and not dry_run and result.get("job_id"):
+        logger.info(
+            f"Admin {admin['username']} created {phase} wave "
+            f"(job={result['job_id']}, files={result['candidates']})")
+    return result
+
+
 # ── Content-hash Backfill (CAS M2) ───────────────────────────
 
 @router.post("/backfill-hashes")

@@ -148,6 +148,10 @@ class CompletePhaseRequest(BaseModel):
     elapsed_s: Optional[float] = None  # actual processing time (worker-measured)
 
 
+class CompleteBatchRequest(BaseModel):
+    results: list[CompletePhaseRequest]
+
+
 class RetryRequest(BaseModel):
     phase: Optional[str] = None  # None = retry all phases
 
@@ -682,6 +686,41 @@ def complete_task_phase(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True}
+
+
+@router.post("/api/v1/tasks/complete-batch")
+def complete_task_phases_batch(
+    req: CompleteBatchRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Batched phase-completion reports (max 50) — one HTTP round trip for
+    a burst of results instead of one per file (high-throughput workers).
+
+    Items are processed independently: a bad item is reported in `errors`
+    without failing the rest.
+    """
+    if len(req.results) > 50:
+        raise HTTPException(status_code=400, detail="Batch too large (max 50)")
+    mgr = _get_manager(db)
+    accepted = 0
+    errors = []
+    for item in req.results:
+        try:
+            _require_task_assignment(db, user, item.task_id, item.phase)
+            mgr.complete_task_phase(
+                task_id=item.task_id,
+                phase=item.phase,
+                success=item.success,
+                error_message=item.error_message,
+                elapsed_s=item.elapsed_s,
+            )
+            accepted += 1
+        except HTTPException as exc:
+            errors.append({"task_id": item.task_id, "error": exc.detail})
+        except ValueError as exc:
+            errors.append({"task_id": item.task_id, "error": str(exc)})
+    return {"success": True, "accepted": accepted, "errors": errors}
 
 
 # ── Phase Pause Control ─────────────────────────────────────

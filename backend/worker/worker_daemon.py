@@ -197,6 +197,10 @@ class WorkerDaemon:
         self._total_failed = 0
         self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
         self._last_claim_diag = None  # Last empty-claim diagnostic from server
+        # Batched completion reports (one HTTP per ~10 results, not per file)
+        self._report_buffer = []
+        self._report_lock = threading.Lock()
+        self._batch_report_supported = True  # flips off on 404 (older server)
         self._batch_throughput = 0.0  # files/min from last completed batch
         self._phase_throughput = {"mc": 0.0, "vv": 0.0, "mv": 0.0}  # per-phase speed (persists across mode switches)
         self._current_job_id = None
@@ -601,6 +605,7 @@ class WorkerDaemon:
 
     def _disconnect_session(self):
         """Notify server of graceful disconnect."""
+        self._flush_reports()  # deliver pending reports before the session closes
         if not self.session_id:
             return
         try:
@@ -676,30 +681,77 @@ class WorkerDaemon:
         except Exception:
             pass
 
+    REPORT_FLUSH_SIZE = 10      # flush when this many results are buffered
+    REPORT_BUFFER_CAP = 200     # drop-oldest beyond this (network outage)
+
     def _report_task_phase(self, task_id: int, phase: str, success: bool,
                            error: str = None, elapsed_s: float = None):
-        """Report phase completion."""
+        """Report phase completion (buffered — see _flush_reports)."""
         if not task_id:
             return
         if self.transport:
             self.transport.report_complete(task_id, phase, success, error, elapsed_s)
             return
-        try:
-            payload = {
-                "task_id": task_id,
-                "phase": phase,
-                "success": success,
-                "error_message": error,
-            }
-            if elapsed_s is not None:
-                payload["elapsed_s"] = round(elapsed_s, 3)
-            self._authed_request(
-                "post",
-                f"{self.server_url}/api/v1/tasks/complete",
-                json=payload,
-            )
-        except Exception as e:
-            logger.debug(f"Task phase report failed: {e}")
+        payload = {
+            "task_id": task_id,
+            "phase": phase,
+            "success": success,
+            "error_message": error,
+        }
+        if elapsed_s is not None:
+            payload["elapsed_s"] = round(elapsed_s, 3)
+
+        with self._report_lock:
+            self._report_buffer.append(payload)
+            if len(self._report_buffer) > self.REPORT_BUFFER_CAP:
+                dropped = len(self._report_buffer) - self.REPORT_BUFFER_CAP
+                del self._report_buffer[:dropped]
+                logger.warning(f"Report buffer overflow — dropped {dropped} oldest")
+            should_flush = len(self._report_buffer) >= self.REPORT_FLUSH_SIZE
+        if should_flush:
+            self._flush_reports()
+
+    def _flush_reports(self):
+        """Send buffered completion reports in batches of ≤50.
+
+        Falls back to per-item posts when the server lacks the batch
+        endpoint (404). On network failure, items stay buffered for the
+        next flush — tasks are eventually reclaimed by heartbeat timeout
+        if the worker dies with a non-empty buffer.
+        """
+        while True:
+            with self._report_lock:
+                if not self._report_buffer:
+                    return
+                batch = self._report_buffer[:50]
+
+            try:
+                if self._batch_report_supported:
+                    resp = self._authed_request(
+                        "post",
+                        f"{self.server_url}/api/v1/tasks/complete-batch",
+                        json={"results": batch},
+                    )
+                    if resp.status_code == 404:
+                        self._batch_report_supported = False
+                        logger.info("Server lacks complete-batch — per-item reports")
+                        continue
+                    if resp.status_code != 200:
+                        logger.debug(f"Batch report failed: HTTP {resp.status_code}")
+                        return  # keep buffered, retry on next flush
+                else:
+                    for item in batch:
+                        self._authed_request(
+                            "post",
+                            f"{self.server_url}/api/v1/tasks/complete",
+                            json=item,
+                        )
+            except Exception as e:
+                logger.debug(f"Task phase report failed: {e}")
+                return  # keep buffered
+
+            with self._report_lock:
+                del self._report_buffer[:len(batch)]
 
     def claim_jobs(self) -> list:
         """Claim jobs using configured batch size (used by worker_ipc loop)."""
@@ -1070,14 +1122,18 @@ class WorkerDaemon:
         Returns:
             List of (job_id, success) tuples.
         """
-        if self.processing_mode == "mc":
-            return self._process_batch_mc(jobs, progress_callback)
+        try:
+            if self.processing_mode == "mc":
+                return self._process_batch_mc(jobs, progress_callback)
 
-        if self.processing_mode == "vv":
-            return self._process_batch_vv_only(jobs, progress_callback)
+            if self.processing_mode == "vv":
+                return self._process_batch_vv_only(jobs, progress_callback)
 
-        if self.processing_mode == "mv":
-            return self._process_batch_mv_only(jobs, progress_callback)
+            if self.processing_mode == "mv":
+                return self._process_batch_mv_only(jobs, progress_callback)
+        finally:
+            # Batch boundary: deliver whatever is buffered before idling
+            self._flush_reports()
 
         # Workers only ever receive mc/vv/mv from the scheduler.
         # (Parse/Download are server-side pools; the old full-pipeline
