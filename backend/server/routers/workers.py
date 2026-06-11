@@ -126,6 +126,7 @@ class HeartbeatRequest(BaseModel):
     worker_state: Optional[str] = None    # active/idle/resting
     phase_counts: Optional[dict] = None  # {"mc": N, "vv": N, "mv": N}
     batch_throughput: Optional[float] = None  # Worker-measured files/min (actual)
+    phase_throughput: Optional[dict] = None  # {"mc": f/m, "vv": f/m, "mv": f/m} measured per phase
 
 
 class DisconnectRequest(BaseModel):
@@ -519,6 +520,8 @@ def worker_heartbeat(
         resources_data["phase_counts"] = req.phase_counts
     if req.batch_throughput is not None:
         resources_data["batch_throughput"] = req.batch_throughput
+    if req.phase_throughput:
+        resources_data["phase_throughput"] = req.phase_throughput
     # Track phase_job_count: increment by delta of jobs_completed since last heartbeat
     cursor.execute(
         "SELECT jobs_completed FROM worker_sessions WHERE id = ?",
@@ -546,6 +549,22 @@ def worker_heartbeat(
          delta, req.session_id)
     )
     db.conn.commit()
+
+    # Feed measured per-phase throughput into the scheduler speed profile
+    # (EMA-smoothed). This is what warms up cold-start workers (batch grows
+    # past COLD_START_BATCH) and keeps benchmarked speeds current.
+    if req.phase_throughput:
+        try:
+            scheduler = getattr(request.app.state, "scheduler", None)
+            if scheduler is None:
+                from backend.server.queue.scheduler import WorkerScheduler
+                scheduler = WorkerScheduler(db)
+            for _phase in ("mc", "vv", "mv"):
+                _fpm = req.phase_throughput.get(_phase)
+                if _fpm and _fpm > 0:
+                    scheduler.update_speed(req.session_id, _phase, float(_fpm))
+        except Exception as e:
+            logger.debug(f"Speed update skipped: {e}")
 
     # Dynamic mode is handled by _decide_worker_mode() — no auto-detect override needed.
     # processing_mode_override is ONLY for admin manual pinning.
