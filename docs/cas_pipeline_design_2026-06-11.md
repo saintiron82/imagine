@@ -227,6 +227,27 @@ MAX_BATCH           = {"mc": 50,  "vv": 200, "mv": 200}  # 현행 200/500/500에
 
 VRAM이 3모델 동시 상주 가능한 노드에 "한 파일 전 phase" 모드를 배정하는 안. **이번 구현 범위에서 제외**하고, 전제 데이터를 먼저 확보한다: phase_elapsed_s 축적분으로 모델 스위칭 비용이 전체의 5%를 넘는지 측정 → 넘을 때만 설계 착수. (6.2가 시행되면 스위칭 빈도 자체가 줄어 필요성이 더 낮아질 것으로 예상.)
 
+### 6.4 복수 고성능 워커 (N대 동시 연결)
+
+설계 전체가 워커별 특수 케이스 없이 **합산 기반**이므로 N대로 자연 확장된다:
+
+- **배정**: time-to-drain의 분모가 Σ(실측 속도)라, 괴물 N대는 MC 잔량이 클 때 전원 MC에 붙고(MC=연산의 86%), 꼬리에서 안정성 계수에 의해 시차를 두고 VV/MV로 이탈한다. N대 전용 로직 없음.
+- **claim**: BEGIN IMMEDIATE 직렬화 + 작은 배치(§6.2)로 N대 동시 claim 경합은 밀리초 비용. 이중 배정 구조적 불가.
+- **수집**: 결과 배칭(§10)이 합산 처리량을 흡수 (N×600건/분 → 배치 커밋 N×30회/분).
+
+**유일한 N-제약은 공급 천장**: 파싱은 서버 한 대의 CPU에 갇혀 있어
+(`clamp(…, cpu_count−2)`), Σ수요가 서버 파싱 한계를 넘으면 충전 중 버퍼가
+실시간 고갈된다. 대응 순서:
+
+1. **사전 적재 깊이가 1차 답** — §9.2의 ready 조건은 의도적으로 "충전 중
+   공급 기여 0" 가정의 최악 케이스 공식이다. 백로그가 임대 시간 전체를
+   덮으면 공급 천장은 무관해진다.
+2. **다운로드 dedup(§4.3)이 수요 자체를 줄인다** — 재인덱싱·파도에서 특히.
+3. **(미래 탈출구) shared_fs 파싱 분산**: NAS가 워커에도 마운트된 환경
+   (storage_mode=shared_fs)에서는 파싱을 워커로 내릴 수 있다 — 원본 이동
+   없이 분산 가능한 유일한 케이스. 본 설계 범위 밖, 천장이 실측으로
+   확인될 때만 착수.
+
 ---
 
 ## 7. 공급 자동 스케일 (요구 1)
@@ -289,7 +310,8 @@ CREATE TABLE IF NOT EXISTS sprint_plan (
         CHECK (state IN ('staging','ready','charging','draining','done','cancelled')),
     target_phase TEXT NOT NULL DEFAULT 'mc',
     rental_minutes INTEGER NOT NULL,         -- 운영자 입력
-    expected_fpm REAL NOT NULL,              -- 운영자 입력 or 과거 벤치마크
+    expected_fpm REAL NOT NULL,              -- 투입 예정 GPU **함대 합산** 속도
+                                             -- (N대면 Σ — 운영자 입력 or 과거 벤치마크 합)
     created_at TEXT, updated_at TEXT
 );
 ```
@@ -302,6 +324,8 @@ backlog_min   = backlog / expected_fpm                          # "괴물 N분�
 staging_eta   = (목표 backlog - 현재) / parse 실측 fpm
 drain_eta     = backlog / (현재 charging 워커들의 mc_speed 합)   # charging 중
 ready 조건    = backlog_min ≥ rental_minutes × 1.1              # 10% 여유
+# 주: 의도적 최악 케이스 — 충전 중 파싱 공급 기여를 0으로 가정한다.
+# 복수 괴물(Σ수요 > 서버 파싱 천장)에서도 이 조건이면 유휴 0이 보장된다.
 draining 전이 = drain_eta ≤ 15분 → 알림 (StatusBar/토스트 + 로그)
 ```
 
