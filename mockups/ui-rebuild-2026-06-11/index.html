@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 — 2026-06-11</title>
+<title>Imagine UI 재구축 목업 v8</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -255,7 +255,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine</div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v8</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 라이브러리">라이브러리</button>
@@ -323,7 +323,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     </div>
   </aside>
   <div class="lib-main">
-    <div class="sec-title">분석 리스트 <span class="sub">등록 순이 아니라 작업 간 공정 배분으로 처리 · 파싱되는 대로 검색에 나타남</span></div>
+    <div class="sec-title">분석 리스트 <span class="sub">등록 순이 아니라 작업 간 공정 배분으로 처리</span></div>
     <div class="summary" data-mock-id="library/summary" data-mock-name="전체 진행 요약">
       <div class="sum-row">
         <span class="big">2,560</span><span class="of">/ 3,800</span>
@@ -355,9 +355,8 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
           <div class="pseg"><div class="pl"><span>VV</span><span>83%</span></div><div class="pb"><i style="width:83%;background:#3b82f6"></i></div></div>
           <div class="pseg"><div class="pl"><span>MV</span><span>59%</span></div><div class="pb"><i style="width:59%;background:var(--emerald)"></i></div></div>
         </div>
-        <div class="avail" data-mock-id="library/jobs/card[active]/avail" data-mock-name="지금 검색 가능 (점진 가용성)">
-          🔍 지금 검색 가능 <b>2,975건</b> (파싱 완료분 — MC 미완은 "분석 대기" 표시)
-          <button class="golink" onclick="go('search')">이 작업 결과 검색 →</button>
+        <div class="avail" data-mock-id="library/jobs/card[active]/now" data-mock-name="현재 처리 상태 요약">
+          현재: <b style="color:var(--purple)">MC 진행 중</b> · 남은 MC <b>1,210</b> · 파싱 잔여 124 — 병목 단계: MC
         </div>
         <div class="jexp" data-mock-id="library/jobs/card[active]/detail" data-mock-name="펼침 상세">
           <div class="krow">
@@ -387,7 +386,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
         <div class="pstrip">
           <div class="pseg"><div class="pl"><span>VV</span><span>59%</span></div><div class="pb"><i style="width:59%;background:var(--purple)"></i></div></div>
         </div>
-        <div class="avail">구 결과로 검색 계속 서빙 중 — 파일별로 끝나는 즉시 새 모델로 교체</div>
+        <div class="avail">기존 결과를 유지한 채 파일별로 새 모델 결과로 교체 — 중단 없음</div>
         <div class="acts"><button>일시정지</button><button>취소</button></div>
       </div>
 
@@ -395,7 +394,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
       <div class="job" data-mock-id="library/jobs/card[queued]" data-mock-name="잡 카드(대기)">
         <div class="head"><span class="st" style="background:var(--faint)"></span><span class="nm">신규 컨셉 2026-06</span><span class="pct" style="color:var(--faint)">0 / 412 · 대기</span></div>
-        <div class="avail" style="color:var(--faint)">기존 작업과 교차 배분 — 예상 시작 ~3분 내 · 예상 검색 가능 시작 ~10분 내</div>
+        <div class="avail" style="color:var(--faint)">기존 작업과 교차 배분 — 예상 시작 ~3분 내</div>
         <div class="acts"><button data-mock-id="library/jobs/card[queued]/priority" data-mock-name="우선 처리 (priority)">⚡ 우선 처리</button><button>취소</button></div>
       </div>
 
@@ -404,7 +403,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       <div class="job" data-mock-id="library/jobs/card[done]" data-mock-name="잡 카드(완료)">
         <div class="head"><span class="st done"></span><span class="nm">로컬 / 컨셉아트</span><span class="pct" style="color:var(--emerald)">698 / 700 · 완료</span></div>
         <div class="fail-line">실패 2건 — 손상된 PSD (RETRY_EXHAUSTED)<button>상세</button><button>확인 처리</button></div>
-        <div class="acts"><button onclick="go('search')">검색에서 보기</button><button>보관 (목록에서 제거)</button></div>
+        <div class="acts"><button>상세</button><button>보관 (목록에서 제거)</button></div>
       </div>
     </div>
   </div>
