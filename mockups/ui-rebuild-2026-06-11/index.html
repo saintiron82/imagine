@@ -164,7 +164,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 /* ── +추가 모달 ─────────────────── */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
 .overlay.open{display:flex}
-.modal{width:560px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+.modal{width:680px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
 .modal h3{font-size:14px;margin-bottom:4px}
 .steps{display:flex;gap:6px;margin:10px 0 16px}
 .steps i{flex:1;height:3px;border-radius:99px;background:var(--line2)}
@@ -181,6 +181,21 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 .m-acts .sec{color:var(--dim);padding:8px 12px}
 .done-box{text-align:center;padding:10px 0}
 .done-box .ic{font-size:30px}
+.browse-wrap{display:flex;gap:10px;height:320px}
+.btree{width:185px;flex-shrink:0;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:8px;overflow:auto;font-size:12px}
+.btn-node{display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.btn-node:hover{background:rgba(255,255,255,.05)}
+.btn-node.sel{background:rgba(59,130,246,.12);color:#93c5fd}
+.btn-node .tw{color:var(--faint);width:9px;font-size:10px}
+.bt-1{padding-left:18px}.bt-2{padding-left:32px}
+.bpane{flex:1;display:flex;flex-direction:column;min-width:0}
+.nas-item{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:8px;padding:11px 13px;margin-bottom:8px}
+.nas-item .t{font-weight:600;font-size:12.5px}.nas-item .d{font-size:11px;color:var(--faint)}
+.nas-item .browse{margin-left:auto;background:var(--blue-d);color:#fff;font-size:11.5px;font-weight:600;padding:5px 14px;border-radius:6px}
+.nas-form{border:1px dashed var(--line);border-radius:8px;padding:12px;margin-top:4px}
+.nas-form .fr{display:flex;gap:8px;margin-bottom:8px}
+.nas-form input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:7px 10px;color:var(--text);font-size:12px}
+.nas-form .test-ok{font-size:11px;color:var(--emerald)}
 .crumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);margin-bottom:10px}
 .crumb b{color:var(--text)} .crumb .sep{color:var(--faint)}
 .crumb button{color:#93c5fd;font-size:12px}
@@ -441,50 +456,81 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <div id="step1">
       <p style="font-size:11px;color:var(--faint);margin-bottom:10px" data-mock-id="add/principle" data-mock-name="원칙: 폴더 지정형">분석은 <b style="color:var(--text)">폴더 단위</b>로 지정합니다 — 파일을 하나씩 다루지 않습니다</p>
       <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[local]" data-mock-name="소스: 로컬 폴더">💻<div><div class="t">로컬 폴더</div><div class="d">이 컴퓨터에서 폴더 선택 (드래그&드롭 가능)</div></div></div>
-      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[nas]" data-mock-name="소스: NAS">🌐<div><div class="t">NAS 폴더</div><div class="d">synology-main · 연결됨 — 또는 새 NAS 연결…</div></div></div>
+      <div class="src-opt" onclick="showNas()" data-mock-id="add/source[nas]" data-mock-name="소스: NAS (→ NAS 지정 단계)">🌐<div><div class="t">NAS 폴더</div><div class="d">등록된 NAS에서 탐색 — 또는 새 NAS 연결</div></div></div>
       <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[existing]" data-mock-name="소스: 기존 소스 다시 분석">♻️<div><div class="t">기존 소스 다시 분석</div><div class="d">로컬/컨셉아트 — 재구축 필요 <span style="color:var(--red)">●</span></div></div></div>
       <div class="m-acts"><button class="sec" onclick="closeAdd()">취소</button></div>
     </div>
 
+    <!-- 1b단계: NAS 지정 — 등록된 NAS 선택 또는 새 연결 -->
+    <div id="step1b" style="display:none" data-mock-id="add/nas" data-mock-name="NAS 지정 단계">
+      <div class="nas-item" data-mock-id="add/nas/item[synology]" data-mock-name="등록된 NAS">
+        🌐<div><div class="t">synology-main</div><div class="d">https://nas.local:5006 · 연결됨 · 폴더 4개 사용 중</div></div>
+        <button class="browse" onclick="addStep(2)">탐색</button>
+      </div>
+      <div class="nas-form" data-mock-id="add/nas/new" data-mock-name="새 NAS 연결 폼">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px">＋ 새 NAS 연결</div>
+        <div class="fr"><input placeholder="주소 — 예: https://nas.local:5006 (WebDAV)"></div>
+        <div class="fr"><input placeholder="계정"><input type="password" placeholder="비밀번호"></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="sec" style="border:1px solid var(--line);border-radius:6px;padding:5px 14px;font-size:11.5px">연결 테스트</button>
+          <span class="test-ok">✓ 연결 성공 — 8개 공유 폴더 발견</span>
+        </div>
+      </div>
+      <div class="m-acts"><button class="sec" onclick="addStep(1)">← 뒤로</button></div>
+    </div>
+
     <!-- 2단계: 폴더 탐색 — 타이핑 없음, 미리보기로 고른다 -->
     <div id="step2" style="display:none">
-      <div class="crumb" data-mock-id="add/browser/crumb" data-mock-name="브레드크럼 (클릭 이동)">
-        <button>NAS</button><span class="sep">▸</span><button>작업분</button><span class="sep">▸</span><b>2026</b>
-      </div>
-      <div class="fgrid" data-mock-id="add/browser/grid" data-mock-name="폴더 미리보기 그리드">
-        <div class="fcard sel" data-mock-id="add/browser/card[concept]" data-mock-name="폴더 카드(선택됨 · 미분석 · 미리보기 없음)">
-          <div class="mosaic noprev">📁</div>
-          <div class="fname">신규 컨셉 2026-06</div>
-          <div class="finfo">412개 파일 <span class="ftag new">미분석</span></div>
+      <div class="browse-wrap">
+        <div class="btree" data-mock-id="add/browser/tree" data-mock-name="폴더 구조 트리">
+          <div class="btn-node"><span class="tw">▾</span>🌐 synology-main</div>
+          <div class="btn-node bt-1"><span class="tw">▾</span>📁 작업분</div>
+          <div class="btn-node bt-2 sel" data-mock-id="add/browser/tree/node[2026]" data-mock-name="트리: 선택된 폴더"><span class="tw">▾</span>📁 2026</div>
+          <div class="btn-node bt-2"><span class="tw">▸</span>📁 2025</div>
+          <div class="btn-node bt-1"><span class="tw">▸</span>📁 원화</div>
+          <div class="btn-node bt-1"><span class="tw">▸</span>📁 외주수령분</div>
         </div>
-        <div class="fcard" data-mock-id="add/browser/card[chars]" data-mock-name="폴더 카드(분석됨 → NAS여도 썸네일 미리보기)">
-          <div class="mosaic">
-            <div style="background:linear-gradient(140deg,#1e3a5f,#2d4a73)"></div>
-            <div style="background:linear-gradient(140deg,#33272b,#4a3a40)"></div>
-            <div style="background:linear-gradient(140deg,#1d3146,#28455e)"></div>
-            <div style="background:linear-gradient(140deg,#2a2a3e,#3c3c5c)"></div>
+        <div class="bpane">
+          <div class="crumb" data-mock-id="add/browser/crumb" data-mock-name="브레드크럼">
+            <button>synology-main</button><span class="sep">▸</span><button>작업분</button><span class="sep">▸</span><b>2026</b>
+            <span style="margin-left:auto;font-size:10.5px;color:var(--faint)">하위 폴더 5개 — 더블클릭으로 진입</span>
           </div>
-          <div class="fname">캐릭터</div>
-          <div class="finfo">3,100개 <span class="ftag done">분석됨 98%</span></div>
-        </div>
-        <div class="fcard" data-mock-id="add/browser/card[bg]" data-mock-name="폴더 카드(일부 분석 → 부분 미리보기)">
-          <div class="mosaic">
-            <div style="background:linear-gradient(140deg,#1e3a4a,#2a5468)"></div>
-            <div style="background:linear-gradient(140deg,#27344a,#3a4a66)"></div>
-            <div></div><div></div>
+          <div class="fgrid" style="max-height:none;flex:1" data-mock-id="add/browser/grid" data-mock-name="내부 폴더 미리보기 그리드">
+            <div class="fcard sel" data-mock-id="add/browser/card[concept]" data-mock-name="폴더 카드(선택됨 · 미분석)">
+              <div class="mosaic noprev">📁</div>
+              <div class="fname">신규 컨셉 2026-06</div>
+              <div class="finfo">412개 파일 <span class="ftag new">미분석</span></div>
+            </div>
+            <div class="fcard" data-mock-id="add/browser/card[chars]" data-mock-name="폴더 카드(분석됨 → NAS여도 썸네일 미리보기)">
+              <div class="mosaic">
+                <div style="background:linear-gradient(140deg,#1e3a5f,#2d4a73)"></div>
+                <div style="background:linear-gradient(140deg,#33272b,#4a3a40)"></div>
+                <div style="background:linear-gradient(140deg,#1d3146,#28455e)"></div>
+                <div style="background:linear-gradient(140deg,#2a2a3e,#3c3c5c)"></div>
+              </div>
+              <div class="fname">캐릭터</div>
+              <div class="finfo">3,100개 <span class="ftag done">분석됨 98%</span></div>
+            </div>
+            <div class="fcard" data-mock-id="add/browser/card[bg]" data-mock-name="폴더 카드(일부 분석 → 부분 모자이크)">
+              <div class="mosaic">
+                <div style="background:linear-gradient(140deg,#1e3a4a,#2a5468)"></div>
+                <div style="background:linear-gradient(140deg,#27344a,#3a4a66)"></div>
+                <div></div><div></div>
+              </div>
+              <div class="fname">배경</div>
+              <div class="finfo">880개 <span class="ftag done">분석 41%</span></div>
+            </div>
+            <div class="fcard"><div class="mosaic noprev">📁</div><div class="fname">레퍼런스</div><div class="finfo">96개 <span class="ftag new">미분석</span></div></div>
+            <div class="fcard"><div class="mosaic noprev">📁</div><div class="fname">폐기예정</div><div class="finfo">12개</div></div>
           </div>
-          <div class="fname">배경</div>
-          <div class="finfo">880개 <span class="ftag done">분석 41%</span></div>
         </div>
-        <div class="fcard"><div class="mosaic noprev">📁</div><div class="fname">레퍼런스</div><div class="finfo">96개 <span class="ftag new">미분석</span></div></div>
-        <div class="fcard"><div class="mosaic noprev">📁</div><div class="fname">폐기예정</div><div class="finfo">12개</div></div>
       </div>
       <div class="pick-bar" data-mock-id="add/browser/pickbar" data-mock-name="선택 바 (이름 자동, 옵션 인라인)">
         <span class="sel-name">📁 신규 컨셉 2026-06</span>
         <label class="chk" style="font-size:11.5px"><input type="checkbox" checked> 하위 포함</label>
         <label class="chk" style="font-size:11.5px"><input type="checkbox" checked> 새 파일 자동 분석</label>
         <span style="flex:1"></span>
-        <button class="sec" onclick="addStep(1)">←</button>
+        <button class="sec" onclick="showNas()">←</button>
         <button class="sec" onclick="addStep(3)">세부 옵션</button>
         <button class="pri" onclick="addStep(4)" data-mock-id="add/start-default" data-mock-name="기본값으로 분석 시작">분석 시작</button>
       </div>
@@ -554,12 +600,22 @@ function toggleRole(){
 function openAdd(){document.getElementById('addOverlay').classList.add('open');addStep(1)}
 function closeAdd(){document.getElementById('addOverlay').classList.remove('open')}
 function addStep(n){
+  document.getElementById('step1b').style.display='none';
   [1,2,3,4].forEach(i=>{
     document.getElementById('step'+i).style.display = (i===n?'':'none');
     document.getElementById('s'+i).classList.toggle('on', i<=n);
   });
 }
+function showNas(){
+  [1,2,3,4].forEach(i=>document.getElementById('step'+i).style.display='none');
+  document.getElementById('step1b').style.display='';
+  document.getElementById('s1').classList.add('on');
+}
 document.querySelectorAll('.tchip').forEach(c=>c.onclick=()=>c.classList.toggle('on'));
+document.querySelectorAll('.btn-node').forEach(n=>n.onclick=()=>{
+  document.querySelectorAll('.btn-node').forEach(x=>x.classList.remove('sel'));
+  n.classList.add('sel');
+});
 document.querySelectorAll('.fcard').forEach(c=>c.onclick=()=>{
   document.querySelectorAll('.fcard').forEach(x=>x.classList.remove('sel'));
   c.classList.add('sel');
