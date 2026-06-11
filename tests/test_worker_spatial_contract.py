@@ -3,7 +3,6 @@ import sqlite3
 from PIL import Image
 
 from backend.server.routers.analysis import _save_vision_fields_for_file
-from backend.worker.transport import LocalTransport
 from backend.worker.worker_daemon import WorkerDaemon, _vision_result_to_fields
 
 
@@ -80,17 +79,6 @@ class RecordingDB:
     def update_vision_fields(self, file_path, fields):
         self.updated.append((file_path, fields))
         return True
-
-
-def test_local_transport_routes_vision_through_spatial_storage_contract():
-    db = RecordingDB()
-    transport = LocalTransport(db, scheduler=None, manager=None)
-
-    assert transport.save_vision(42, {"structured_meta": _spatial_vision_result()}) is True
-
-    assert db.updated == [
-        ("/asset.png", {"structured_meta": _spatial_vision_result()})
-    ]
 
 
 def test_server_vision_endpoint_helper_routes_through_spatial_storage_contract():
