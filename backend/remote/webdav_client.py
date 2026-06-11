@@ -265,6 +265,41 @@ class WebDAVClient:
                 tmp_path.unlink()
             return False
 
+    def read_range(self, remote_path: str, start: int, end: int) -> Optional[bytes]:
+        """Read an inclusive byte range via HTTP Range.
+
+        Tolerates servers that ignore Range (200 instead of 206) by
+        streaming and reading only the needed bytes. Returns None on error.
+        """
+        url = self._url(remote_path)
+        want = end - start + 1
+        try:
+            resp = self.session.get(
+                url, stream=True, timeout=self.timeout,
+                headers={"Range": f"bytes={start}-{end}"},
+            )
+            resp.raise_for_status()
+            if resp.status_code == 206:
+                data = resp.content
+                return data[:want]
+            # Range ignored (200): stream-skip to offset, read what we need
+            buf = b""
+            skipped = 0
+            for chunk in resp.iter_content(chunk_size=65536):
+                if skipped + len(chunk) <= start:
+                    skipped += len(chunk)
+                    continue
+                begin = max(0, start - skipped)
+                buf += chunk[begin:]
+                skipped += len(chunk)
+                if len(buf) >= want:
+                    break
+            resp.close()
+            return buf[:want]
+        except Exception as e:
+            logger.warning(f"Range read failed for {remote_path}: {e}")
+            return None
+
     def close(self):
         """Close the HTTP session."""
         self.session.close()

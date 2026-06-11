@@ -302,6 +302,37 @@ def activate_member(
     return {"success": True}
 
 
+# ── Content-hash Backfill (CAS M2) ───────────────────────────
+
+@router.post("/backfill-hashes")
+def start_hash_backfill(admin: dict = Depends(require_admin)):
+    """Backfill files.content_hash via local reads / WebDAV Range reads.
+
+    Pre-burn preparation: ~16KB transfer per remote file (boundary hash),
+    no full re-download. Runs as a background thread."""
+    from backend.server.deps import get_db
+    from backend.server.queue.hash_backfill import start_backfill
+
+    result = start_backfill(get_db)
+    if result.get("success"):
+        logger.info(f"Admin {admin['username']} started hash backfill")
+    return result
+
+
+@router.get("/backfill-hashes")
+def get_hash_backfill_status(_user: dict = Depends(get_current_user)):
+    from backend.server.queue.hash_backfill import get_status
+    return get_status()
+
+
+@router.delete("/backfill-hashes")
+def stop_hash_backfill(admin: dict = Depends(require_admin)):
+    from backend.server.queue.hash_backfill import stop_backfill
+    stop_backfill()
+    logger.info(f"Admin {admin['username']} stopped hash backfill")
+    return {"success": True}
+
+
 # ── Local Worker Control ─────────────────────────────────────
 
 @router.post("/worker/start")
