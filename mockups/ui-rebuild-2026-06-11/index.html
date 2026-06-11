@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v9</title>
+<title>Imagine UI 재구축 목업 v10</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -276,10 +276,11 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v9</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v10</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
-    <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 라이브러리">라이브러리</button>
+    <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 라이브러리 (소스)">라이브러리</button>
+    <button data-scr="analysis" class="admin-only" data-mock-id="shell/nav/item[analysis]" data-mock-name="탭: 분석 (작업)">분석</button>
   </nav>
   <div class="spacer"></div>
   <button class="btn-add admin-only" onclick="openAdd()" data-mock-id="shell/action[add]" data-mock-name="전역 주 액션: + 추가">＋ 추가</button>
@@ -344,6 +345,37 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     </div>
   </aside>
   <div class="lib-main">
+    <div class="sec-title">소스 현황 <span class="sub">등록된 폴더와 분석 상태</span></div>
+    <div class="jobs" data-mock-id="library/source-overview" data-mock-name="소스 개요 (폴더 중심)">
+      <div class="jrow" data-mock-id="library/source-overview/row[chars]" data-mock-name="소스 행(처리 중)">
+        <span class="cov a" style="width:9px;height:9px"></span><span class="nm">🌐 NAS / 캐릭터</span>
+        <div class="bar"><i style="width:67%"></i></div>
+        <span class="cnt">2,560 / 3,800 장</span>
+        <span style="font-size:10.5px;color:var(--faint)">자동 분석 ON</span>
+        <div class="acts2"><button>동기화</button><button>다시 분석…</button></div>
+      </div>
+      <div class="jrow" data-mock-id="library/source-overview/row[bg]" data-mock-name="소스 행(완료)">
+        <span class="cov g" style="width:9px;height:9px"></span><span class="nm">🌐 NAS / 배경</span>
+        <div class="bar"><i style="width:100%"></i></div>
+        <span class="cnt">880 / 880 장</span>
+        <span style="font-size:10.5px;color:var(--faint)">자동 분석 ON · 동기화 3일 전</span>
+        <div class="acts2"><button>동기화</button><button>다시 분석…</button></div>
+      </div>
+      <div class="jrow" data-mock-id="library/source-overview/row[local]" data-mock-name="소스 행(점검 필요)">
+        <span class="cov r" style="width:9px;height:9px"></span><span class="nm">💻 로컬 / 컨셉아트</span>
+        <div class="bar"><i style="width:99%;background:var(--amber)"></i></div>
+        <span class="cnt">698 / 700 장</span>
+        <span style="font-size:10.5px;color:var(--amber)">다시 분석 필요</span>
+        <div class="acts2"><button>다시 분석…</button><button class="danger">제거</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 분석 (작업 큐) ══ -->
+<section class="screen" id="scr-analysis" data-mock-id="screen/analysis" data-mock-name="분석 화면 (작업 전용)">
+  <div style="max-width:880px;margin:0 auto;padding:20px 24px">
+
     <div class="sec-title">분석 리스트 <span class="sub">등록 순이 아니라 작업 간 공정 배분으로 처리</span></div>
     <div class="summary" data-mock-id="library/summary" data-mock-name="요약 (용어 없음)">
       <div class="sum-row">
@@ -394,6 +426,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
         <button>자세히</button>
       </div>
     </div>
+  </div>
   </div>
 </section>
 
@@ -626,7 +659,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
         <p>412개 파일 · <b>진행 중인 작업 2개와 공정하게 배분</b>되어 처리됩니다<br>
         캐시 적중분은 즉시 완료 · <b>파싱되는 대로 검색에 나타납니다</b></p>
       </div>
-      <div class="m-acts"><button class="sec" onclick="closeAdd()">닫기</button><button class="pri" onclick="closeAdd();go('library')">라이브러리에서 보기</button></div>
+      <div class="m-acts"><button class="sec" onclick="closeAdd()">닫기</button><button class="pri" onclick="closeAdd();go('analysis')">분석에서 보기</button></div>
     </div>
   </div>
 </div>
