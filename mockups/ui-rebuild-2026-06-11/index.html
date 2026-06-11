@@ -101,6 +101,25 @@ main{flex:1;overflow:auto}
 .phases span b{font-weight:600}
 .p-dl b{color:var(--amber)} .p-pa b{color:var(--cyan)} .p-mc b{color:var(--purple)} .p-vv b{color:#93c5fd} .p-mv b{color:var(--emerald)}
 .jobs{display:flex;flex-direction:column;gap:10px}
+.jgroup{font-size:11px;color:var(--faint);font-weight:700;margin:14px 0 2px;display:flex;align-items:center;gap:8px}
+.jgroup::after{content:'';flex:1;height:1px;background:var(--line2)}
+.pstrip{display:flex;gap:3px;margin-top:8px}
+.pseg{flex:1}
+.pseg .pl{font-size:9px;color:var(--faint);font-weight:700;margin-bottom:2px;display:flex;justify-content:space-between}
+.pseg .pb{height:4px;background:var(--line2);border-radius:99px;overflow:hidden}
+.pseg .pb i{display:block;height:100%;border-radius:99px}
+.avail{display:flex;align-items:center;gap:8px;font-size:11px;margin-top:8px;color:var(--dim)}
+.avail b{color:var(--emerald)}
+.avail .golink{color:#93c5fd;text-decoration:underline;font-size:11px}
+.jexp{margin-top:10px;border-top:1px solid var(--line2);padding-top:10px;font-size:11px}
+.jexp .krow{display:flex;gap:18px;color:var(--dim);font-family:ui-monospace,monospace;flex-wrap:wrap}
+.jexp .krow b{color:var(--text)}
+.flist{margin-top:8px;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:8px 10px}
+.fitem{display:flex;gap:8px;align-items:center;padding:2px 0;font-size:10.5px;color:var(--dim)}
+.fitem .fcode{color:var(--red);font-family:ui-monospace,monospace;flex-shrink:0}
+.fitem .perma{color:var(--red);font-weight:700;font-size:9px;border:1px solid rgba(248,113,113,.4);padding:0 4px;border-radius:3px}
+.chev{color:var(--faint);transition:transform .15s;margin-left:4px}
+.job.open .chev{transform:rotate(90deg)}
 .job{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:12px 14px}
 .job .head{display:flex;align-items:center;gap:10px}
 .job .head .nm{font-weight:600;font-size:12.5px;flex:1}
@@ -320,27 +339,72 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
         <span style="margin-left:auto;color:var(--emerald)">14.2 장/분 · ETA ~1h 27m · 분석기 3대</span>
       </div>
     </div>
-    <div class="jobs" data-mock-id="library/jobs" data-mock-name="잡 카드 목록">
-      <div class="job" data-mock-id="library/jobs/card[active]" data-mock-name="잡 카드(진행 중)">
-        <div class="head"><span class="st run"></span><span class="nm">NAS / 캐릭터 (하위 포함)</span><span class="pct">1,820 / 3,100 · 59%</span></div>
-        <div class="bar"><i style="width:59%;background:var(--blue)"></i></div>
-        <div class="sub"><span>시작 14:02</span><span>캐시 적중 312건 (계산 생략)</span></div>
+    <div class="jobs" data-mock-id="library/jobs" data-mock-name="분석 리스트 (상태 그룹)">
+
+      <div class="jgroup">진행 중 · 2</div>
+
+      <div class="job open" data-mock-id="library/jobs/card[active]" data-mock-name="잡 카드(진행 — 펼침 상태)">
+        <div class="head" onclick="this.parentNode.classList.toggle('open')" style="cursor:pointer">
+          <span class="st run"></span><span class="nm">NAS / 캐릭터 (하위 포함)</span>
+          <span class="pct">1,820 / 3,100 · 59%</span><span class="chev">▸</span>
+        </div>
+        <div class="pstrip" data-mock-id="library/jobs/card[active]/phases" data-mock-name="파이프라인 위치 스트립">
+          <div class="pseg"><div class="pl"><span>DL</span><span>100%</span></div><div class="pb"><i style="width:100%;background:var(--amber)"></i></div></div>
+          <div class="pseg"><div class="pl"><span>파싱</span><span>96%</span></div><div class="pb"><i style="width:96%;background:var(--cyan)"></i></div></div>
+          <div class="pseg"><div class="pl"><span>MC</span><span>61%</span></div><div class="pb"><i style="width:61%;background:var(--purple)"></i></div></div>
+          <div class="pseg"><div class="pl"><span>VV</span><span>83%</span></div><div class="pb"><i style="width:83%;background:#3b82f6"></i></div></div>
+          <div class="pseg"><div class="pl"><span>MV</span><span>59%</span></div><div class="pb"><i style="width:59%;background:var(--emerald)"></i></div></div>
+        </div>
+        <div class="avail" data-mock-id="library/jobs/card[active]/avail" data-mock-name="지금 검색 가능 (점진 가용성)">
+          🔍 지금 검색 가능 <b>2,975건</b> (파싱 완료분 — MC 미완은 "분석 대기" 표시)
+          <button class="golink" onclick="go('search')">이 작업 결과 검색 →</button>
+        </div>
+        <div class="jexp" data-mock-id="library/jobs/card[active]/detail" data-mock-name="펼침 상세">
+          <div class="krow">
+            <span>속도 <b>14.2장/분</b></span><span>ETA <b>~1h 27m</b></span>
+            <span>캐시 적중 <b style="color:var(--emerald)">312</b> (계산 생략)</span>
+            <span>등록 <b>성철 · 14:02</b></span><span>분석기 <b>3대 참여</b></span>
+          </div>
+          <div class="flist" data-mock-id="library/jobs/card[active]/failures" data-mock-name="실패 목록 + 사유">
+            <div style="font-size:10.5px;color:var(--red);font-weight:700;margin-bottom:4px">실패 3건</div>
+            <div class="fitem"><span class="fcode">[PARSE_FAILED]</span> boss_raid_concept.psb — 지원하지 않는 압축 <span class="perma">영구</span></div>
+            <div class="fitem"><span class="fcode">[MC]</span> npc_villager_044.psd — VLM 타임아웃 (재시도 1/3)</div>
+            <div class="fitem"><span class="fcode">[MC]</span> npc_villager_071.psd — VLM 타임아웃 (재시도 1/3)</div>
+            <div style="margin-top:6px;display:flex;gap:6px">
+              <button style="font-size:10px;border:1px solid var(--line);border-radius:4px;padding:2px 10px;color:#93c5fd">실패 재시도</button>
+              <button style="font-size:10px;border:1px solid var(--line);border-radius:4px;padding:2px 10px;color:var(--dim)">영구 실패 확인 처리</button>
+            </div>
+          </div>
+        </div>
         <div class="acts"><button>일시정지</button><button>취소</button></div>
       </div>
-      <div class="job" data-mock-id="library/jobs/card[wave]" data-mock-name="잡 카드(재처리 파도)">
-        <div class="head"><span class="st run"></span><span class="nm">재처리 파도: VV → siglip2-v2</span><span class="pct">410 / 700 · 59%</span></div>
-        <div class="bar"><i style="width:59%;background:var(--purple)"></i></div>
-        <div class="sub"><span>모델 교체 재임베딩 — 구 결과로 검색 계속 서빙 중</span></div>
+
+      <div class="job" data-mock-id="library/jobs/card[wave]" data-mock-name="잡 카드(재처리 파도 — 접힘)">
+        <div class="head" onclick="this.parentNode.classList.toggle('open')" style="cursor:pointer">
+          <span class="st run"></span><span class="nm">재처리 파도: VV → siglip2-v2</span>
+          <span class="pct">410 / 700 · 59%</span><span class="chev">▸</span>
+        </div>
+        <div class="pstrip">
+          <div class="pseg"><div class="pl"><span>VV</span><span>59%</span></div><div class="pb"><i style="width:59%;background:var(--purple)"></i></div></div>
+        </div>
+        <div class="avail">구 결과로 검색 계속 서빙 중 — 파일별로 끝나는 즉시 새 모델로 교체</div>
         <div class="acts"><button>일시정지</button><button>취소</button></div>
       </div>
-      <div class="job" data-mock-id="library/jobs/card[queued]" data-mock-name="잡 카드(방금 등록 — 대기)">
+
+      <div class="jgroup">대기 · 1</div>
+
+      <div class="job" data-mock-id="library/jobs/card[queued]" data-mock-name="잡 카드(대기)">
         <div class="head"><span class="st" style="background:var(--faint)"></span><span class="nm">신규 컨셉 2026-06</span><span class="pct" style="color:var(--faint)">0 / 412 · 대기</span></div>
-        <div class="sub"><span>방금 등록 — 기존 작업과 교차 배분으로 곧 시작</span></div>
-        <div class="acts"><button>우선 처리</button><button>취소</button></div>
+        <div class="avail" style="color:var(--faint)">기존 작업과 교차 배분 — 예상 시작 ~3분 내 · 예상 검색 가능 시작 ~10분 내</div>
+        <div class="acts"><button data-mock-id="library/jobs/card[queued]/priority" data-mock-name="우선 처리 (priority)">⚡ 우선 처리</button><button>취소</button></div>
       </div>
-      <div class="job" data-mock-id="library/jobs/card[failed]" data-mock-name="잡 카드(완료+실패 잔여)">
-        <div class="head"><span class="st done"></span><span class="nm">로컬 / 컨셉아트</span><span class="pct">698 / 700 · 완료</span></div>
-        <div class="fail-line">실패 2건 — 손상된 PSD (RETRY_EXHAUSTED)<button>상세</button><button>재시도</button><button>확인 처리</button></div>
+
+      <div class="jgroup">완료 · 1</div>
+
+      <div class="job" data-mock-id="library/jobs/card[done]" data-mock-name="잡 카드(완료)">
+        <div class="head"><span class="st done"></span><span class="nm">로컬 / 컨셉아트</span><span class="pct" style="color:var(--emerald)">698 / 700 · 완료</span></div>
+        <div class="fail-line">실패 2건 — 손상된 PSD (RETRY_EXHAUSTED)<button>상세</button><button>확인 처리</button></div>
+        <div class="acts"><button onclick="go('search')">검색에서 보기</button><button>보관 (목록에서 제거)</button></div>
       </div>
     </div>
   </div>
