@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v25</title>
+<title>Imagine UI 재구축 목업 v26</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -313,7 +313,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v25</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v26</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
@@ -346,24 +346,21 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <input placeholder="이메일" value="saintiron82@gmail.com" data-mock-id="start/email" data-mock-name="이메일">
     <input type="password" placeholder="비밀번호" value="········">
     <button class="pri-w" onclick="startStep2()" data-mock-id="start/login" data-mock-name="로그인 → 서버 선택(처음) 또는 자동 접속(재방문)">로그인</button>
-    <div style="font-size:10.5px;color:var(--faint);text-align:center;margin-top:8px">계정이 없나요? <span style="color:#93c5fd;cursor:pointer">가입</span></div>
+    <div style="font-size:10.5px;color:var(--faint);text-align:center;margin-top:8px" data-mock-id="start/signup-note" data-mock-name="가입은 홈페이지에서 (계정의 집)">계정이 없나요? <span style="color:#93c5fd;cursor:pointer">imagine.app에서 가입</span> — 초대 수락·구매도 거기서</div>
   </div>
 
   <!-- 2단계: 서버 선택 (처음/서버 이력 없음일 때만) -->
-  <div class="start-card" id="start2" style="display:none" data-mock-id="start/step2" data-mock-name="2단계: 서버 선택 (질문: 어디에 붙을 거냐)">
-    <div class="lg" style="font-size:14px">어디에 연결할까요?</div>
-    <div class="tag">saintiron82@gmail.com 로 로그인됨</div>
-    <button class="start-opt" onclick="go('search')" data-mock-id="start/recent" data-mock-name="최근 서버 (재방문자는 이 단계 생략하고 자동 접속)">
-      ⚡<div><div class="t">우리팀 라이브러리</div><div class="d">192.168.0.5:8000 · 마지막 접속 어제 — 바로 접속</div></div>
+  <div class="start-card" id="start2" style="display:none" data-mock-id="start/step2" data-mock-name="2단계: 내 서버 (멤버십 기반 자동 표시)">
+    <div class="lg" style="font-size:14px">내 서버</div>
+    <div class="tag">saintiron82@gmail.com — 멤버인 서버가 자동으로 표시됩니다</div>
+    <button class="start-opt" onclick="go('search')" data-mock-id="start/server[mine]" data-mock-name="멤버인 서버 (수락은 이미 웹에서 끝남)">
+      ⚡<div><div class="t">우리팀 라이브러리</div><div class="d">운영자 · 마지막 접속 어제 — 바로 접속</div></div>
     </button>
     <div class="start-div">또는</div>
-    <button class="start-opt" onclick="startCreate(1)" data-mock-id="start/create-server" data-mock-name="서버 만들기 (운영자 온보딩 진입)">
-      🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">팀의 라이브러리 서버 생성 — 3단계, 1분</div></div>
+    <button class="start-opt" onclick="startCreate(1)" data-mock-id="start/create-server" data-mock-name="서버 만들기 (계정 라이선스 자동 사용)">
+      🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">계정에 <b style="color:#93c5fd">스튜디오 플랜</b> 보유 — 키 입력 불필요</div></div>
     </button>
-    <button class="start-opt" data-mock-id="start/join-server" data-mock-name="다른 서버 접속">
-      📧<div><div class="t">초대 받으셨나요?</div><div class="d">받은 메일의 [팀 참여하기]를 누르면 여기로 자동 연결됩니다</div></div>
-    </button>
-    <div style="font-size:10px;color:var(--faint);text-align:center;margin-top:10px" data-mock-id="start/note" data-mock-name="정책: 재방문 자동 접속">다음부터는 로그인하면 마지막 서버로 자동 접속됩니다</div>
+    <div style="font-size:10px;color:var(--faint);text-align:center;margin-top:10px" data-mock-id="start/invite-note" data-mock-name="초대는 웹에서 수락됨">팀 초대를 받았다면 메일 링크에서 수락하세요 — 수락 후 로그인하면 여기 나타납니다</div>
   </div>
 
   <!-- 서버 만들기 1/3: 이름 + 서버 비밀번호 -->
@@ -373,9 +370,10 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <input value="우리팀 라이브러리" data-mock-id="start/create/name" data-mock-name="그룹 이름 (Firebase 레지스트리 중복 체크)">
     <div style="font-size:10px;color:var(--emerald);margin:-4px 0 8px 2px">✓ 사용 가능한 이름</div>
     <input type="password" placeholder="서버 관리 비밀번호" value="········">
-    <div style="font-size:10px;color:var(--faint);margin:-4px 0 8px 2px">서버 초기화 등 관리 작업에만 사용 — 멤버 가입은 초대 코드로</div>
-    <input placeholder="라이선스 키" value="IMGN-STUD-7K2M-XXXX" data-mock-id="start/create/license" data-mock-name="라이선스 키 (구매분) 또는 체험">
-    <div style="font-size:10px;color:var(--faint);margin:-4px 0 8px 2px">키가 없나요? <span style="color:#93c5fd;cursor:pointer">14일 체험으로 시작</span> — 멤버 3명·분석기 2대</div>
+    <div style="font-size:10px;color:var(--faint);margin:-4px 0 8px 2px">서버 초기화 등 관리 작업에만 사용 — 멤버는 이메일 초대로</div>
+    <div style="display:flex;align-items:center;gap:8px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.3);border-radius:7px;padding:9px 12px;margin-bottom:8px;font-size:11.5px" data-mock-id="start/create/license-auto" data-mock-name="계정 라이선스 자동 사용 (키 타이핑 없음)">
+      ✓ <b>스튜디오 플랜</b> 사용 — 좌석 10 · 분석기 5 <span style="color:var(--faint)">(계정 구매분, 키 입력 불필요)</span>
+    </div>
     <button class="pri-w" onclick="startCreate(2)">다음</button>
   </div>
 
