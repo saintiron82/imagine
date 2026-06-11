@@ -181,6 +181,7 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
     signal.signal(signal.SIGTERM, _handle_stop)
 
     try:
+        from backend.worker.schedule import is_active_now
         from backend.worker.worker_state import WorkerState
 
         while not stop_requested:
@@ -190,7 +191,7 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
                 break
 
             daemon._state_machine.update(
-                is_scheduled_active=True,
+                is_scheduled_active=is_active_now(),
                 throttle_level=daemon._check_throttle(),
                 has_pending_jobs=True,
             )
@@ -201,7 +202,7 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
             jobs = daemon.claim_jobs()
             if not jobs:
                 daemon._state_machine.update(
-                    is_scheduled_active=True,
+                    is_scheduled_active=is_active_now(),
                     throttle_level=daemon._check_throttle(),
                     has_pending_jobs=False,
                 )

@@ -28,6 +28,12 @@ WORKER_USERNAME = "local-worker"
 _proc: subprocess.Popen | None = None
 _start_lock = threading.Lock()
 _last_error: str | None = None
+_intentional_stop = False
+_restart_times: list[float] = []  # crash-restart timestamps (rate limit)
+
+# Crash restart policy: at most MAX_RESTARTS within RESTART_WINDOW_S
+MAX_RESTARTS = 3
+RESTART_WINDOW_S = 600
 
 
 def _worker_name() -> str:
@@ -122,15 +128,44 @@ def _pump_output(proc: subprocess.Popen):
         pass
 
 
+def _monitor(proc: subprocess.Popen):
+    """Restart the worker if it crashes (nonzero exit, not admin-commanded).
+
+    Clean exit (code 0) covers both admin stop/block via heartbeat command
+    and schedule-idle shutdowns — those must NOT restart.
+    """
+    import time as _time
+    code = proc.wait()
+    if _intentional_stop or code == 0 or proc is not _proc:
+        return
+
+    now = _time.monotonic()
+    _restart_times.append(now)
+    recent = [t for t in _restart_times if now - t < RESTART_WINDOW_S]
+    _restart_times[:] = recent
+    if len(recent) > MAX_RESTARTS:
+        logger.error(
+            f"Local worker crashed (exit={code}) — restart limit reached "
+            f"({MAX_RESTARTS}/{RESTART_WINDOW_S}s), giving up"
+        )
+        return
+
+    logger.warning(f"Local worker crashed (exit={code}) — restarting ({len(recent)}/{MAX_RESTARTS})")
+    _time.sleep(2)
+    if not _intentional_stop:
+        start_worker()
+
+
 def start_worker() -> dict:
     """Spawn the local worker process if not already running."""
-    global _proc, _last_error
+    global _proc, _last_error, _intentional_stop
 
     if not _start_lock.acquire(blocking=False):
         return {"success": False, "error": "Start in progress"}
     try:
         if _proc is not None and _proc.poll() is None:
             return {"success": False, "error": "Worker already running"}
+        _intentional_stop = False
 
         from backend.server.deps import get_db
         db = get_db()
@@ -153,6 +188,7 @@ def start_worker() -> dict:
             text=True,
         )
         threading.Thread(target=_pump_output, args=(_proc,), daemon=True).start()
+        threading.Thread(target=_monitor, args=(_proc,), daemon=True).start()
         _last_error = None
         logger.info(f"Local worker spawned (pid={_proc.pid}, name={_worker_name()})")
         return {"success": True, "pid": _proc.pid}
@@ -166,7 +202,8 @@ def start_worker() -> dict:
 
 def stop_worker() -> dict:
     """Terminate the local worker process (SIGTERM → kill)."""
-    global _proc
+    global _proc, _intentional_stop
+    _intentional_stop = True
     if _proc is None or _proc.poll() is not None:
         _proc = None
         return {"success": True, "message": "Not running"}
