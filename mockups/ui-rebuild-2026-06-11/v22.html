@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v21</title>
+<title>Imagine UI 재구축 목업 v22</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -313,7 +313,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v21</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v22</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
@@ -374,6 +374,8 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <div style="font-size:10px;color:var(--emerald);margin:-4px 0 8px 2px">✓ 사용 가능한 이름</div>
     <input type="password" placeholder="서버 관리 비밀번호" value="········">
     <div style="font-size:10px;color:var(--faint);margin:-4px 0 8px 2px">서버 초기화 등 관리 작업에만 사용 — 멤버 가입은 초대 코드로</div>
+    <input placeholder="라이선스 키" value="IMGN-STUD-7K2M-XXXX" data-mock-id="start/create/license" data-mock-name="라이선스 키 (구매분) 또는 체험">
+    <div style="font-size:10px;color:var(--faint);margin:-4px 0 8px 2px">키가 없나요? <span style="color:#93c5fd;cursor:pointer">14일 체험으로 시작</span> — 멤버 3명·분석기 2대</div>
     <button class="pri-w" onclick="startCreate(2)">다음</button>
   </div>
 
@@ -624,10 +626,20 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       </div>
     </div>
     <div id="adm-members" style="display:none">
+      <div class="panel" data-mock-id="admin/plan" data-mock-name="플랜 (과금·한도의 단일 표면)">
+        <h4>플랜 <span class="hint">서버 단위 라이선스 — 한도는 여기서 옴</span></h4>
+        <div class="kpis">
+          <div class="kpi"><div class="v" style="color:#93c5fd">스튜디오</div><div class="k">연 라이선스 · 2027-06-12 만료</div></div>
+          <div class="kpi"><div class="v">3 <span style="color:var(--faint);font-size:12px">/ 10</span></div><div class="k">멤버</div></div>
+          <div class="kpi"><div class="v">3 <span style="color:var(--faint);font-size:12px">/ 5</span></div><div class="k">분석기</div></div>
+          <div class="kpi" style="display:flex;align-items:center;justify-content:center"><button style="background:var(--blue-d);color:#fff;font-weight:600;font-size:11.5px;padding:7px 16px;border-radius:6px" data-mock-id="admin/plan/renew" data-mock-name="갱신/업그레이드">갱신 / 업그레이드</button></div>
+        </div>
+        <div style="font-size:10px;color:var(--faint);margin-top:8px" data-mock-id="admin/plan/privacy" data-mock-name="보고 범위 명시 (신뢰 원칙)">사용 현황 보고: 멤버·분석기 수, 월 분석량 — 수치만 전송되며 파일 내용·이름은 절대 포함되지 않습니다</div>
+      </div>
       <div class="panel" data-mock-id="admin/members/policy" data-mock-name="가입 정책 — 초대 코드가 유일한 입장 경로">
         <h4>가입 정책 <span class="hint">초대 코드로만 가입 가능 · 계정(신원)은 Firebase가 관리</span></h4>
         <div class="kpis" style="margin-bottom:10px">
-          <div class="kpi"><div class="v">3 / 10</div><div class="k">멤버 / 인원 상한</div></div>
+          <div class="kpi"><div class="v">3 / 10</div><div class="k">멤버 / 플랜 한도 — 도달 시 발급 차단</div></div>
           <div class="kpi"><div class="v" style="color:var(--emerald)">1</div><div class="k">활성 초대 코드</div></div>
           <div class="kpi" style="flex:2;display:flex;align-items:center;gap:10px">
             <button style="background:var(--blue-d);color:#fff;font-weight:600;font-size:11.5px;padding:7px 14px;border-radius:6px" data-mock-id="admin/members/new-code" data-mock-name="초대 코드 발급">＋ 초대 코드 발급</button>
