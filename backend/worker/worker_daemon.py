@@ -620,37 +620,42 @@ class WorkerDaemon:
         if count <= 0:
             return []
 
-        # Try new /api/v1/tasks/claim first
-        phase = self.processing_mode
-        if phase in ("mc", "vv", "mv", "parse", "download"):
-            try:
-                resp = self._authed_request(
-                    "post",
-                    f"{self.server_url}/api/v1/tasks/claim",
-                    json={"phase": phase, "worker_id": self.session_id or 0, "count": count},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    tasks = data.get("tasks", [])
-                    if tasks:
-                        # Convert API tasks to the worker batch format.
-                        jobs = []
-                        for t in tasks:
-                            jobs.append({
-                                "job_id": t["task_id"],
-                                "file_id": t["file_id"],
-                                "file_path": t["file_path"],
-                                "task_id": t["task_id"],  # new system ID
-                                "analysis_job_id": t.get("job_id"),
-                                "analysis_profile": t.get("analysis_profile"),
-                            })
-                        logger.info(f"{self._log_prefix} Claimed {len(jobs)} {phase} tasks (new API)")
-                        return jobs
-            except Exception as e:
-                logger.warning(f"Task claim failed: {e}")
-                return []
+        # Server scheduler is authoritative: it decides phase + count
+        # (pressure × speed). The phase in the claim response MUST be
+        # applied to processing_mode so the batch runs the right pipeline.
+        try:
+            resp = self._authed_request(
+                "post",
+                f"{self.server_url}/api/v1/tasks/claim",
+                json={"worker_id": self.session_id or 0},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                tasks = data.get("tasks", [])
+                server_phase = data.get("phase")
+                if tasks and server_phase in ("mc", "vv", "mv"):
+                    if server_phase != self.processing_mode:
+                        logger.info(
+                            f"{self._log_prefix} [MODE] {self.processing_mode} → "
+                            f"{server_phase} (server-assigned via claim)"
+                        )
+                    self.processing_mode = server_phase
+                    # Convert API tasks to the worker batch format.
+                    jobs = []
+                    for t in tasks:
+                        jobs.append({
+                            "job_id": t["task_id"],
+                            "file_id": t["file_id"],
+                            "file_path": t["file_path"],
+                            "task_id": t["task_id"],  # new system ID
+                            "analysis_job_id": t.get("job_id"),
+                            "analysis_profile": t.get("analysis_profile"),
+                        })
+                    logger.info(f"{self._log_prefix} Claimed {len(jobs)} {server_phase} tasks (new API)")
+                    return jobs
+        except Exception as e:
+            logger.warning(f"Task claim failed: {e}")
 
-        # No valid phase — nothing to claim
         return []
 
     def _report_task_start(self, task_id: int, phase: str):

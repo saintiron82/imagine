@@ -885,7 +885,6 @@
   "members.no_members": "멤버가 없습니다",
   "members.cannot_change_self": "자신의 계정은 변경할 수 없습니다",
   "admin.tab_members": "멤버",
-
   "webdav.title": "WebDAV 소스",
   "webdav.desc": "WebDAV로 원격 폴더에 연결합니다. 파일은 서버에 유지되며 메타데이터와 썸네일만 로컬에 저장됩니다.",
   "webdav.add": "WebDAV 추가",
@@ -911,7 +910,6 @@
   "webdav.use_current_folder": "이 폴더 사용",
   "sidebar.add_local_folder": "로컬 폴더...",
   "sidebar.add_nas_connection": "+ NAS 연결 추가...",
-
   "tab.settings": "설정",
   "settings.section_general": "일반",
   "settings.section_pipeline": "AI 파이프라인",
@@ -959,7 +957,6 @@
   "admin.dash_preview": "미리보기만",
   "admin.dash_cache": "다운로드 공간",
   "admin.dash_cleanup": "정리",
-
   "history.title": "처리 이력",
   "history.sessions": "세션",
   "history.session_name": "이름",
@@ -986,7 +983,6 @@
   "history.col_finished": "완료",
   "history.col_retries": "재시도",
   "history.col_error": "에러",
-
   "admin.tab_tools": "도구",
   "admin.tools_title": "도구",
   "admin.tools_repair_parse_title": "파싱 데이터 리페어",
@@ -997,7 +993,6 @@
   "admin.tools_repair_parse_success_unit": "건 성공",
   "admin.tools_repair_parse_failed": "실패",
   "admin.tools_repair_parse_skipped": "스킵 (WebDAV)",
-
   "admin.tab_connection": "연결",
   "connection.title": "서버 연결 정보",
   "connection.current_address": "현재 서버 주소",
@@ -1041,5 +1036,7 @@
   "admin.search_feedback_empty": "아직 누적된 피드백이 없습니다.",
   "search.axis_vv": "VV 강함",
   "search.axis_mv": "의미 일치",
-  "search.axis_fts": "키워드 일치"
+  "search.axis_fts": "키워드 일치",
+  "admin.worker_blocked_title": "차단된 워커 (재접속 불가)",
+  "admin.worker_unblock": "차단 해제"
 }

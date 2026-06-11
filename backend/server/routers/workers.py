@@ -365,6 +365,18 @@ def worker_connect(
     now = _utcnow_sql()
     cursor = db.conn.cursor()
 
+    # Durable block: a worker blocked by admin stays blocked across
+    # reconnects until an admin unblocks it.
+    cursor.execute(
+        """SELECT 1 FROM worker_sessions
+           WHERE user_id = ? AND worker_name = ? AND status = 'blocked'
+           LIMIT 1""",
+        (user["id"], req.worker_name),
+    )
+    if cursor.fetchone():
+        logger.warning(f"Rejected connect from blocked worker: {req.worker_name} (user={user['username']})")
+        raise HTTPException(status_code=403, detail="Worker is blocked by admin")
+
     # Mark any stale sessions from this user as offline
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
@@ -644,9 +656,11 @@ def worker_disconnect(
     mgr = AnalysisJobManager(db)
     reclaimed = mgr.reclaim_worker_tasks(req.session_id)
 
+    # Preserve 'blocked' — the worker's own disconnect (e.g. on receiving the
+    # block command) must not lift an admin block.
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
-           WHERE id = ? AND user_id = ?""",
+           WHERE id = ? AND user_id = ? AND status != 'blocked'""",
         (now, req.session_id, user["id"])
     )
     db.conn.commit()
@@ -911,6 +925,36 @@ def admin_block_worker(
     _recalculate_server_pools(request.app, db)
 
     return {"ok": True, "reclaimed": reclaimed}
+
+
+@router.post("/admin/workers/{session_id}/unblock")
+def admin_unblock_worker(
+    session_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Unblock a worker session so it can reconnect (admin only)."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """UPDATE worker_sessions
+           SET status = 'offline', pending_command = NULL
+           WHERE id = ? AND status = 'blocked'""",
+        (session_id,)
+    )
+    if cursor.rowcount == 0:
+        db.conn.commit()  # release WAL write lock from 0-row UPDATE
+        raise HTTPException(status_code=404, detail="Blocked session not found")
+    db.conn.commit()
+    logger.info(f"Admin unblocked worker session {session_id}")
+    audit_log.record(
+        db,
+        "worker_unblocked",
+        actor_user_id=admin.get("id"),
+        actor_username=admin.get("username"),
+        target_kind="worker_session",
+        target_id=session_id,
+    )
+    return {"ok": True}
 
 
 @router.patch("/admin/workers/{session_id}/config")
