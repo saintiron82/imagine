@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Imagine UI 재구축 목업 — 2026-06-11</title>
+<style>
+:root{
+  --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
+  --text:#e5e7eb; --dim:#9ca3af; --faint:#6b7280;
+  --blue:#3b82f6; --blue-d:#2563eb; --emerald:#34d399; --emerald-d:#059669;
+  --amber:#fbbf24; --red:#f87171; --purple:#c084fc; --cyan:#67e8f9;
+  --radius:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:13px/1.5 -apple-system,'Apple SD Gothic Neo','Pretendard',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+
+/* ── 셸 ─────────────────────────── */
+.topbar{height:52px;background:var(--panel2);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 16px;gap:8px;flex-shrink:0}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;margin-right:16px}
+.logo .dot{width:10px;height:10px;border-radius:3px;background:var(--blue)}
+.nav{display:flex;gap:4px}
+.nav button{padding:7px 14px;border-radius:6px;color:var(--dim);font-weight:500}
+.nav button:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.nav button.active{color:#fff;background:var(--panel)}
+.spacer{flex:1}
+.btn-add{display:flex;align-items:center;gap:6px;background:var(--blue-d);color:#fff;font-weight:600;padding:7px 16px;border-radius:6px}
+.btn-add:hover{background:var(--blue)}
+.right-nav{display:flex;gap:4px;margin-left:12px}
+.right-nav button{padding:7px 12px;border-radius:6px;color:var(--dim)}
+.right-nav button.active{color:#fff;background:var(--panel)}
+.role-chip{margin-left:14px;font-size:11px;color:var(--faint);border:1px dashed var(--line);padding:4px 10px;border-radius:99px;cursor:pointer}
+.role-chip b{color:var(--amber)}
+
+main{flex:1;overflow:auto}
+.screen{display:none;height:100%}
+.screen.active{display:block}
+
+.badge{display:inline-block;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700}
+.b-vv{background:rgba(59,130,246,.15);color:#93c5fd;border:1px solid rgba(59,130,246,.3)}
+.b-mv{background:rgba(192,132,252,.15);color:var(--purple);border:1px solid rgba(192,132,252,.3)}
+.b-fts{background:rgba(251,191,36,.12);color:var(--amber);border:1px solid rgba(251,191,36,.3)}
+.b-wait{background:rgba(251,191,36,.18);color:var(--amber)}
+.b-ok{background:rgba(52,211,153,.15);color:var(--emerald)}
+.b-fail{background:rgba(248,113,113,.15);color:var(--red)}
+
+/* ── 검색 ────────────────────────── */
+#scr-search{display:flex;flex-direction:column}
+#scr-search.active{display:flex}
+.search-head{padding:20px 24px 12px;border-bottom:1px solid var(--line2)}
+.search-bar{display:flex;gap:8px;max-width:760px}
+.search-bar input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px}
+.search-bar .go{background:var(--blue-d);border-radius:8px;padding:0 18px;color:#fff;font-weight:600}
+.chips{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.chip{font-size:11px;background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:3px 10px;color:var(--dim)}
+.chip.on{border-color:var(--blue);color:#93c5fd}
+.results{flex:1;overflow:auto;padding:18px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;align-content:start}
+.card{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);overflow:hidden}
+.thumb{height:120px;position:relative;display:flex;align-items:flex-end;padding:8px}
+.thumb .badges{display:flex;gap:4px}
+.score{position:absolute;top:6px;right:8px;font-size:10px;font-family:ui-monospace,monospace;color:rgba(255,255,255,.85);background:rgba(0,0,0,.45);padding:1px 6px;border-radius:4px}
+.card .meta{padding:8px 10px}
+.card .name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .cap{font-size:10px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+
+/* ── 라이브러리 ──────────────────── */
+#scr-library.active{display:flex}
+.lib-side{width:280px;border-right:1px solid var(--line);background:var(--panel2);padding:14px;overflow:auto;flex-shrink:0}
+.lib-side h3{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.lib-side h3 button{color:var(--blue);font-size:11px}
+.tree{font-size:12.5px}
+.tnode{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:5px;cursor:pointer}
+.tnode:hover{background:rgba(255,255,255,.04)}
+.tnode .tw{color:var(--faint);width:10px}
+.tnode .ic{width:14px}
+.tnode .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tnode .cov{width:8px;height:8px;border-radius:99px;flex-shrink:0}
+.cov.g{background:var(--emerald)} .cov.a{background:var(--amber);animation:pulse 1.6s infinite} .cov.r{background:var(--red);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.4}}
+.lvl1{padding-left:24px}
+.lib-main{flex:1;overflow:auto;padding:20px 24px}
+.sec-title{font-size:13px;font-weight:700;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.sec-title .sub{font-weight:400;font-size:11px;color:var(--faint)}
+.summary{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
+.sum-row{display:flex;align-items:center;gap:12px}
+.sum-row .big{font-size:22px;font-weight:700;font-family:ui-monospace,monospace;color:var(--emerald)}
+.sum-row .of{color:var(--faint)}
+.bar{flex:1;height:8px;background:var(--line2);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--emerald);border-radius:99px}
+.phases{display:flex;gap:18px;margin-top:10px;font-size:11px;font-family:ui-monospace,monospace}
+.phases span b{font-weight:600}
+.p-dl b{color:var(--amber)} .p-pa b{color:var(--cyan)} .p-mc b{color:var(--purple)} .p-vv b{color:#93c5fd} .p-mv b{color:var(--emerald)}
+.jobs{display:flex;flex-direction:column;gap:10px}
+.job{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:12px 14px}
+.job .head{display:flex;align-items:center;gap:10px}
+.job .head .nm{font-weight:600;font-size:12.5px;flex:1}
+.job .head .pct{font-family:ui-monospace,monospace;font-size:12px;color:#93c5fd}
+.job .head .st{width:7px;height:7px;border-radius:99px}
+.st.run{background:var(--blue);animation:pulse 1.6s infinite}.st.done{background:var(--emerald)}
+.job .sub{font-size:11px;color:var(--faint);margin-top:4px;display:flex;gap:14px;align-items:center}
+.job .bar{margin-top:8px}
+.job .acts{display:flex;gap:6px;margin-top:8px}
+.job .acts button{font-size:10.5px;padding:3px 10px;border-radius:5px;border:1px solid var(--line);color:var(--dim)}
+.job .acts button:hover{color:var(--text);border-color:var(--faint)}
+.fail-line{font-size:11px;color:var(--red);margin-top:6px}
+.fail-line button{color:#93c5fd;margin-left:8px;font-size:11px;text-decoration:underline}
+.empty{color:var(--faint);text-align:center;padding:40px 0;font-size:12px}
+
+/* ── 관리 ───────────────────────── */
+#scr-admin.active{display:flex}
+.adm-side{width:190px;border-right:1px solid var(--line);background:var(--panel2);padding:14px 10px;flex-shrink:0}
+.adm-side button{display:block;width:100%;text-align:left;padding:8px 12px;border-radius:6px;color:var(--dim);font-size:12.5px;margin-bottom:2px}
+.adm-side button.active{background:var(--panel);color:#fff}
+.adm-main{flex:1;overflow:auto;padding:20px 24px}
+.panel{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px}
+.panel h4{font-size:12.5px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.panel h4 .hint{font-weight:400;font-size:10.5px;color:var(--faint)}
+.toggle{width:38px;height:20px;border-radius:99px;background:var(--emerald-d);position:relative;flex-shrink:0;cursor:pointer;margin-left:auto}
+.toggle::after{content:'';position:absolute;width:16px;height:16px;border-radius:99px;background:#fff;top:2px;right:2px}
+.toggle.off{background:var(--line)} .toggle.off::after{right:auto;left:2px}
+.valves{display:flex;gap:8px}
+.valve{flex:1;text-align:center;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:8px 4px}
+.valve .ph{font-size:10px;color:var(--faint);font-weight:700}
+.valve .n{font-family:ui-monospace,monospace;font-size:12px;margin:3px 0}
+.valve .sw{font-size:9px;font-weight:700;padding:1px 8px;border-radius:4px;cursor:pointer}
+.sw.on{background:rgba(52,211,153,.15);color:var(--emerald)} .sw.off{background:rgba(248,113,113,.15);color:var(--red)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{font-size:10.5px;color:var(--faint);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line2)}
+td{padding:8px;border-bottom:1px solid var(--line2)}
+td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
+.row-act{display:flex;gap:4px;justify-content:flex-end}
+.row-act button{font-size:10px;padding:2px 9px;border-radius:4px;border:1px solid var(--line);color:var(--dim)}
+.row-act .danger:hover{color:var(--red);border-color:var(--red)}
+.blocked{background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.25);border-radius:6px;padding:8px 12px;display:flex;align-items:center;gap:10px;font-size:11.5px;margin-top:10px}
+.blocked .unb{margin-left:auto;font-size:10.5px;border:1px solid var(--line);padding:2px 10px;border-radius:4px;color:var(--dim)}
+.kpis{display:flex;gap:10px}
+.kpi{flex:1;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:10px 12px}
+.kpi .v{font-size:18px;font-weight:700;font-family:ui-monospace,monospace}
+.kpi .k{font-size:10.5px;color:var(--faint);margin-top:2px}
+
+/* ── 설정 ───────────────────────── */
+#scr-settings .wrap{max-width:680px;margin:0 auto;padding:24px}
+.scope{margin-bottom:22px}
+.scope>h3{font-size:13px;margin-bottom:2px}
+.scope>p{font-size:11px;color:var(--faint);margin-bottom:10px}
+.srow{background:var(--panel);border:1px solid var(--line2);display:flex;align-items:center;padding:11px 14px;gap:12px}
+.srow:first-of-type{border-radius:8px 8px 0 0}.srow:last-of-type{border-radius:0 0 8px 8px}
+.srow+.srow{border-top:none}
+.srow .lab{flex:1}.srow .lab .d{font-size:10.5px;color:var(--faint)}
+.srow select,.srow input[type=text]{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:5px;padding:4px 8px;font-size:12px}
+.scope-tag{font-size:9.5px;font-weight:700;padding:1px 7px;border-radius:4px;vertical-align:2px;margin-left:6px}
+.t-me{background:rgba(59,130,246,.15);color:#93c5fd}.t-pc{background:rgba(103,232,249,.12);color:var(--cyan)}.t-srv{background:rgba(248,113,113,.13);color:var(--red)}
+
+/* ── +추가 모달 ─────────────────── */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
+.overlay.open{display:flex}
+.modal{width:460px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+.modal h3{font-size:14px;margin-bottom:4px}
+.steps{display:flex;gap:6px;margin:10px 0 16px}
+.steps i{flex:1;height:3px;border-radius:99px;background:var(--line2)}
+.steps i.on{background:var(--blue)}
+.src-opt{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer}
+.src-opt:hover{border-color:var(--blue)}
+.src-opt .t{font-weight:600;font-size:12.5px}.src-opt .d{font-size:11px;color:var(--faint)}
+.frow{margin-bottom:12px}
+.frow label{display:block;font-size:11px;color:var(--dim);margin-bottom:4px}
+.frow input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;color:var(--text)}
+.frow .chk{display:flex;align-items:center;gap:8px;font-size:12px}
+.m-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.m-acts .pri{background:var(--blue-d);color:#fff;font-weight:600;padding:8px 18px;border-radius:6px}
+.m-acts .sec{color:var(--dim);padding:8px 12px}
+.done-box{text-align:center;padding:10px 0}
+.done-box .ic{font-size:30px}
+.done-box p{font-size:12px;color:var(--dim);margin-top:6px}
+.done-box p b{color:var(--emerald)}
+
+/* ── 인스펙터 ───────────────────── */
+.insp-hint{position:fixed;right:12px;bottom:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:10.5px;color:var(--faint);z-index:99}
+.insp-outline{outline:1.5px solid var(--amber)!important;outline-offset:-1px}
+.insp-tip{position:fixed;background:#000;border:1px solid var(--amber);color:var(--amber);font:10.5px ui-monospace,monospace;padding:3px 8px;border-radius:5px;z-index:100;pointer-events:none}
+.user-hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<!-- ══ 셸 ══ -->
+<header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine</div>
+  <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
+    <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
+    <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 라이브러리">라이브러리</button>
+  </nav>
+  <div class="spacer"></div>
+  <button class="btn-add admin-only" onclick="openAdd()" data-mock-id="shell/action[add]" data-mock-name="전역 주 액션: + 추가">＋ 추가</button>
+  <div class="right-nav">
+    <button data-scr="admin" class="admin-only" data-mock-id="shell/nav/item[admin]" data-mock-name="탭: 관리">관리</button>
+    <button data-scr="settings" data-mock-id="shell/nav/item[settings]" data-mock-name="탭: 설정">설정</button>
+  </div>
+  <button class="role-chip" onclick="toggleRole()" data-mock-id="shell/demo[role-toggle]" data-mock-name="데모: 역할 전환">데모 · 역할: <b id="roleName">운영자</b> (클릭 전환)</button>
+</header>
+
+<main>
+<!-- ══ 검색 ══ -->
+<section class="screen active" id="scr-search" data-mock-id="screen/search" data-mock-name="검색 화면">
+  <div class="search-head">
+    <div class="search-bar" data-mock-id="search/bar" data-mock-name="검색 바">
+      <input value="푸른 갑옷을 입은 기사 일러스트" data-mock-id="search/bar/input" data-mock-name="검색 입력">
+      <button class="go">검색</button>
+    </div>
+    <div class="chips" data-mock-id="search/refine" data-mock-name="범위/정제 칩">
+      <span class="chip on">의미: 기사, 갑옷</span>
+      <span class="chip on">색: 푸른</span>
+      <span class="chip">유형: 캐릭터</span>
+      <span class="chip">+ 조건 추가</span>
+    </div>
+  </div>
+  <div class="results" data-mock-id="search/results" data-mock-name="결과 그리드">
+    <div class="card" data-mock-id="search/results/card[1]" data-mock-name="결과 카드(정상)">
+      <div class="thumb" style="background:linear-gradient(140deg,#1e3a5f,#2d4a73)"><span class="score">0.84</span><span class="badges"><span class="badge b-vv">VV</span><span class="badge b-mv">MV</span></span></div>
+      <div class="meta"><div class="name">knight_armor_v3.psd</div><div class="cap">푸른 판금 갑옷의 기사, 정면 입상</div></div>
+    </div>
+    <div class="card" data-mock-id="search/results/card[2]" data-mock-name="결과 카드(분석 대기 — 점진 가용성)">
+      <div class="thumb" style="background:linear-gradient(140deg,#27344a,#3a4a66)"><span class="score">0.71</span><span class="badges"><span class="badge b-wait">분석 대기</span><span class="badge b-vv">VV</span></span></div>
+      <div class="meta"><div class="name">new_knight_concept.psd</div><div class="cap" style="color:var(--amber)">방금 추가됨 — 캡션 생성 중</div></div>
+    </div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(140deg,#1d3146,#28455e)"><span class="score">0.69</span><span class="badges"><span class="badge b-mv">MV</span></span></div><div class="meta"><div class="name">paladin_sketch.png</div><div class="cap">은빛 갑옷 성기사 스케치</div></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(140deg,#33272b,#4a3a40)"><span class="score">0.66</span><span class="badges"><span class="badge b-fts">FTS</span></span></div><div class="meta"><div class="name">기사단_로고_final.psd</div><div class="cap">레이어명 일치: knight_emblem</div></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(140deg,#1e3a4a,#2a5468)"><span class="score">0.63</span><span class="badges"><span class="badge b-vv">VV</span></span></div><div class="meta"><div class="name">armor_texture_02.png</div><div class="cap">청색 금속 질감 타일</div></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(140deg,#2a2a3e,#3c3c5c)"><span class="score">0.61</span><span class="badges"><span class="badge b-vv">VV</span><span class="badge b-mv">MV</span></span></div><div class="meta"><div class="name">guard_npc_set.psd</div><div class="cap">경비병 NPC 3종 세트</div></div></div>
+  </div>
+</section>
+
+<!-- ══ 라이브러리 (구 아카이빙+분석 통합) ══ -->
+<section class="screen" id="scr-library" data-mock-id="screen/library" data-mock-name="라이브러리 화면">
+  <aside class="lib-side" data-mock-id="library/sources" data-mock-name="소스/폴더 패널">
+    <h3>소스 <button onclick="openAdd()">+ 추가</button></h3>
+    <div class="tree">
+      <div class="tnode" data-mock-id="library/sources/node[nas-characters]" data-mock-name="폴더(NAS, 처리중)"><span class="tw">▾</span><span class="ic">🌐</span><span class="nm">NAS / 캐릭터</span><span class="cov a" title="1,240/3,800 남음"></span></div>
+      <div class="tnode lvl1"><span class="tw">▸</span><span class="ic">📁</span><span class="nm">주인공</span><span class="cov g"></span></div>
+      <div class="tnode lvl1"><span class="tw">▸</span><span class="ic">📁</span><span class="nm">NPC</span><span class="cov a"></span></div>
+      <div class="tnode" data-mock-id="library/sources/node[nas-bg]" data-mock-name="폴더(완료)"><span class="tw">▸</span><span class="ic">🌐</span><span class="nm">NAS / 배경</span><span class="cov g" title="완료"></span></div>
+      <div class="tnode" data-mock-id="library/sources/node[local]" data-mock-name="폴더(로컬, 재구축 필요)"><span class="tw">▸</span><span class="ic">💻</span><span class="nm">로컬 / 컨셉아트</span><span class="cov r" title="재구축 필요 (FTS)"></span></div>
+    </div>
+  </aside>
+  <div class="lib-main">
+    <div class="sec-title">처리 현황 <span class="sub">파싱되는 대로 검색에 나타납니다</span></div>
+    <div class="summary" data-mock-id="library/summary" data-mock-name="전체 진행 요약">
+      <div class="sum-row">
+        <span class="big">2,560</span><span class="of">/ 3,800</span>
+        <div class="bar"><i style="width:67%"></i></div>
+        <span style="font-family:ui-monospace,monospace;color:#93c5fd;font-weight:700">67%</span>
+      </div>
+      <div class="phases" data-mock-id="library/summary/phases" data-mock-name="단계별 진행 (파이프라인 순서)">
+        <span class="p-dl">DL <b>3,800</b>/3,800</span>
+        <span class="p-pa">파싱 <b>3,640</b>/3,800</span>
+        <span class="p-mc">MC <b>2,710</b>/3,800</span>
+        <span class="p-vv">VV <b>3,205</b>/3,800</span>
+        <span class="p-mv">MV <b>2,560</b>/3,800</span>
+        <span style="margin-left:auto;color:var(--emerald)">14.2 장/분 · ETA ~1h 27m · 분석기 3대</span>
+      </div>
+    </div>
+    <div class="jobs" data-mock-id="library/jobs" data-mock-name="잡 카드 목록">
+      <div class="job" data-mock-id="library/jobs/card[active]" data-mock-name="잡 카드(진행 중)">
+        <div class="head"><span class="st run"></span><span class="nm">NAS / 캐릭터 (하위 포함)</span><span class="pct">1,820 / 3,100 · 59%</span></div>
+        <div class="bar"><i style="width:59%;background:var(--blue)"></i></div>
+        <div class="sub"><span>시작 14:02</span><span>캐시 적중 312건 (계산 생략)</span></div>
+        <div class="acts"><button>일시정지</button><button>취소</button></div>
+      </div>
+      <div class="job" data-mock-id="library/jobs/card[wave]" data-mock-name="잡 카드(재처리 파도)">
+        <div class="head"><span class="st run"></span><span class="nm">재처리 파도: VV → siglip2-v2</span><span class="pct">410 / 700 · 59%</span></div>
+        <div class="bar"><i style="width:59%;background:var(--purple)"></i></div>
+        <div class="sub"><span>모델 교체 재임베딩 — 구 결과로 검색 계속 서빙 중</span></div>
+        <div class="acts"><button>일시정지</button><button>취소</button></div>
+      </div>
+      <div class="job" data-mock-id="library/jobs/card[failed]" data-mock-name="잡 카드(완료+실패 잔여)">
+        <div class="head"><span class="st done"></span><span class="nm">로컬 / 컨셉아트</span><span class="pct">698 / 700 · 완료</span></div>
+        <div class="fail-line">실패 2건 — 손상된 PSD (RETRY_EXHAUSTED)<button>상세</button><button>재시도</button><button>확인 처리</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 관리 ══ -->
+<section class="screen" id="scr-admin" data-mock-id="screen/admin" data-mock-name="관리 화면">
+  <aside class="adm-side" data-mock-id="admin/subnav" data-mock-name="관리 서브내비">
+    <button class="active" data-adm="workers">분석기</button>
+    <button data-adm="members">멤버</button>
+    <button data-adm="tools">서버 도구</button>
+  </aside>
+  <div class="adm-main">
+    <div id="adm-workers">
+      <div class="panel" data-mock-id="admin/workers/policy" data-mock-name="자동 분석 정책 (유일한 토글 위치)">
+        <h4>자동 분석 <span class="hint">서버 전역 정책 — 이 토글은 여기 한 곳에만 있습니다</span><span class="toggle" data-mock-id="admin/workers/policy/toggle" data-mock-name="자동 분석 토글"></span></h4>
+        <div class="valves" data-mock-id="admin/workers/valves" data-mock-name="단계 밸브 (파이프라인 순서)">
+          <div class="valve"><div class="ph">DL</div><div class="n">3,800/3,800</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">파싱</div><div class="n">3,640/3,800</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">MC</div><div class="n">2,710/3,800</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">VV</div><div class="n">3,205/3,800</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">MV</div><div class="n">2,560/3,800</div><span class="sw on">ON</span></div>
+        </div>
+      </div>
+      <div class="panel" data-mock-id="admin/workers/table" data-mock-name="분석기 테이블">
+        <h4>분석기 <span class="hint">3대 온라인 — 정지=이번 세션 종료(재시작 가능) · 차단=재접속 거부</span></h4>
+        <table>
+          <tr><th>이름</th><th>MC</th><th>VV</th><th>MV</th><th>배치</th><th style="text-align:right">제어</th></tr>
+          <tr data-mock-id="admin/workers/row[server-local]" data-mock-name="분석기 행(서버 로컬)">
+            <td><b>이 서버</b><div style="font-size:10px;color:var(--faint)">자동 · server-local</div></td>
+            <td class="mono" style="color:var(--purple)">842 <span style="color:var(--emerald)">7.9/m</span></td>
+            <td class="mono">—</td><td class="mono">—</td><td class="mono">12</td>
+            <td><div class="row-act"><button>정지</button></div></td>
+          </tr>
+          <tr data-mock-id="admin/workers/row[macbook]" data-mock-name="분석기 행(멤버 제공)">
+            <td><b>지민-MacBook</b><div style="font-size:10px;color:var(--faint)">client · electron</div></td>
+            <td class="mono">✕</td>
+            <td class="mono" style="color:#93c5fd">1,205 <span style="color:var(--emerald)">78/m</span></td>
+            <td class="mono" style="color:var(--emerald)">980 <span style="color:var(--emerald)">115/m</span></td>
+            <td class="mono">50</td>
+            <td><div class="row-act"><button>정지</button><button class="danger">차단</button></div></td>
+          </tr>
+          <tr data-mock-id="admin/workers/row[gpu]" data-mock-name="분석기 행(고성능, MC 핀)">
+            <td><b>gpu-box-01</b><div style="font-size:10px;color:var(--faint)">headless · cli · <span style="color:var(--amber)">MC 핀</span></div></td>
+            <td class="mono" style="color:var(--purple)">2,140 <span style="color:var(--emerald)">81/m</span></td>
+            <td class="mono">—</td><td class="mono">—</td><td class="mono">50</td>
+            <td><div class="row-act"><button>핀 해제</button><button>정지</button><button class="danger">차단</button></div></td>
+          </tr>
+        </table>
+        <div class="blocked" data-mock-id="admin/workers/blocked" data-mock-name="차단된 분석기">
+          ⛔ <b>old-laptop</b> <span style="color:var(--faint)">— 차단됨 (재접속 불가)</span>
+          <button class="unb">차단 해제</button>
+        </div>
+      </div>
+      <div class="panel" data-mock-id="admin/workers/cache" data-mock-name="파생물 캐시/백필 카드">
+        <h4>파생물 캐시 <span class="hint">같은 내용은 다시 계산하지 않습니다</span></h4>
+        <div class="kpis">
+          <div class="kpi"><div class="v" style="color:var(--emerald)">312</div><div class="k">이번 잡 캐시 적중</div></div>
+          <div class="kpi"><div class="v">17,726</div><div class="k">해시 보유 / 17,726 (백필 완료)</div></div>
+          <div class="kpi"><div class="v" style="color:#93c5fd">3</div><div class="k">활성 모델 버전</div></div>
+          <div class="kpi" data-mock-id="admin/workers/cache/wave" data-mock-name="파도 시작 카드"><div class="v" style="color:var(--purple)">파도 ▸</div><div class="k">모델 교체 재처리 시작</div></div>
+        </div>
+      </div>
+    </div>
+    <div id="adm-members" style="display:none">
+      <div class="panel"><h4>멤버</h4>
+        <table>
+          <tr><th>이름</th><th>역할</th><th>마지막 접속</th><th style="text-align:right"></th></tr>
+          <tr><td>성철</td><td><span class="badge b-fail" style="background:rgba(192,132,252,.15);color:var(--purple)">운영자</span></td><td class="mono">방금</td><td></td></tr>
+          <tr><td>지민</td><td><span class="badge b-ok">사용자</span></td><td class="mono">2시간 전</td><td><div class="row-act"><button>역할</button><button class="danger">비활성</button></div></td></tr>
+        </table>
+      </div>
+    </div>
+    <div id="adm-tools" style="display:none">
+      <div class="panel"><h4>서버 도구 <span class="hint">DB·정합성·연결 — 구 헤더 DB 메뉴가 여기로</span></h4>
+        <table>
+          <tr><td>정합성 감사</td><td style="color:var(--faint);font-size:11px">미완성/잔여 작업 검사·복구</td><td><div class="row-act"><button>실행</button></div></td></tr>
+          <tr><td>해시 백필</td><td style="color:var(--faint);font-size:11px">파생물 캐시 자격 부여 (~16KB/파일)</td><td><div class="row-act"><button>실행</button></div></td></tr>
+          <tr><td>DB 내보내기 / 가져오기</td><td></td><td><div class="row-act"><button>내보내기</button><button>가져오기</button></div></td></tr>
+          <tr><td style="color:var(--red)">DB 초기화</td><td style="color:var(--faint);font-size:11px">비밀번호 확인 필요</td><td><div class="row-act"><button class="danger">초기화…</button></div></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 설정 (3스코프) ══ -->
+<section class="screen" id="scr-settings" data-mock-id="screen/settings" data-mock-name="설정 화면">
+  <div class="wrap">
+    <div class="scope" data-mock-id="settings/scope[me]" data-mock-name="설정: 나">
+      <h3>나 <span class="scope-tag t-me">나에게만 적용</span></h3>
+      <p>이 계정의 화면 표시 방식</p>
+      <div class="srow"><div class="lab">언어</div><select><option>한국어</option><option>English</option></select></div>
+      <div class="srow"><div class="lab">그리드 밀도<div class="d">검색 결과 카드 크기</div></div><select><option>기본</option><option>조밀</option></select></div>
+    </div>
+    <div class="scope" data-mock-id="settings/scope[machine]" data-mock-name="설정: 이 컴퓨터">
+      <h3>이 컴퓨터 <span class="scope-tag t-pc">이 머신의 기여</span></h3>
+      <p>이 컴퓨터가 분석에 참여하는 방식 — 누구나 자기 머신을 제공할 수 있습니다</p>
+      <div class="srow"><div class="lab">분석 참여<div class="d">내 컴퓨터를 분석기로 제공</div></div><span class="toggle"></span></div>
+      <div class="srow"><div class="lab">활동 시간<div class="d">이 시간에만 분석 (예: 야간)</div></div><input type="text" value="22:00 – 07:00" style="width:120px"></div>
+      <div class="srow"><div class="lab">AI 모델 등급<div class="d">VRAM에 따라 자동 감지</div></div><select><option>자동 (pro)</option><option>standard</option></select></div>
+      <div class="srow"><div class="lab">벤치마크<div class="d">마지막: S등급 · MC 7.9/m</div></div><div class="row-act"><button>다시 측정</button></div></div>
+    </div>
+    <div class="scope admin-only" data-mock-id="settings/scope[server]" data-mock-name="설정: 서버 (운영자만)">
+      <h3>서버 <span class="scope-tag t-srv">전원에게 적용 · 운영자</span></h3>
+      <p>이 라이브러리를 쓰는 모두에게 영향을 주는 정책</p>
+      <div class="srow"><div class="lab">분석 도메인<div class="d">게임 에셋 — 분류·태그 기준</div></div><div class="row-act"><button>변경…</button></div></div>
+      <div class="srow"><div class="lab">자동 분석 정책<div class="d">관리 &gt; 분석기에서 제어</div></div><div class="row-act"><button onclick="go('admin')">이동 →</button></div></div>
+      <div class="srow"><div class="lab">LAN 공개<div class="d">같은 네트워크에서 접속 허용</div></div><span class="toggle"></span></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ══ +추가 모달 ══ -->
+<div class="overlay" id="addOverlay" data-mock-id="add/overlay" data-mock-name="+추가 플로우">
+  <div class="modal">
+    <h3>분석에 추가</h3>
+    <div class="steps"><i class="on" id="s1"></i><i id="s2"></i><i id="s3"></i></div>
+
+    <div id="step1">
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[local]" data-mock-name="소스: 로컬 폴더">💻<div><div class="t">로컬 폴더</div><div class="d">이 컴퓨터에서 폴더 선택 (드래그&드롭 가능)</div></div></div>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[nas]" data-mock-name="소스: NAS">🌐<div><div class="t">NAS (WebDAV)</div><div class="d">synology-main · 연결됨</div></div></div>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[new-nas]" data-mock-name="소스: 새 NAS 연결">＋<div><div class="t">새 NAS 연결…</div></div></div>
+      <div class="m-acts"><button class="sec" onclick="closeAdd()">취소</button></div>
+    </div>
+
+    <div id="step2" style="display:none">
+      <div class="frow"><label>선택한 폴더</label><input type="text" value="NAS / 신규 컨셉 2026-06" readonly></div>
+      <div class="frow"><label>작업 이름</label><input type="text" value="신규 컨셉 2026-06"></div>
+      <div class="frow"><div class="chk"><input type="checkbox" checked id="c1"><label for="c1" style="margin:0">하위 폴더 포함 (412개 파일)</label></div></div>
+      <div class="m-acts"><button class="sec" onclick="addStep(1)">← 뒤로</button><button class="pri" onclick="addStep(3)">분석 시작</button></div>
+    </div>
+
+    <div id="step3" style="display:none">
+      <div class="done-box" data-mock-id="add/done" data-mock-name="시작됨 — 점진 가용성 안내">
+        <div class="ic">✅</div>
+        <h3 style="margin-top:6px">분석이 시작됐습니다</h3>
+        <p>412개 파일 · 캐시 적중 시 즉시 완료<br><b>파싱되는 대로 검색에 나타납니다</b> — 캡션은 "분석 대기" 배지로 표시</p>
+      </div>
+      <div class="m-acts"><button class="sec" onclick="closeAdd()">닫기</button><button class="pri" onclick="closeAdd();go('library')">라이브러리에서 보기</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="insp-hint" id="inspHint">Ctrl 누른 채 hover/클릭 = 요소 ID 확인/복사</div>
+
+<script>
+/* ── 탭 ── */
+function go(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('scr-'+id).classList.add('active');
+  document.querySelectorAll('[data-scr]').forEach(b=>b.classList.toggle('active', b.dataset.scr===id));
+}
+document.querySelectorAll('[data-scr]').forEach(b=>b.onclick=()=>go(b.dataset.scr));
+
+/* ── 관리 서브탭 ── */
+document.querySelectorAll('[data-adm]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-adm]').forEach(x=>x.classList.toggle('active',x===b));
+  ['workers','members','tools'].forEach(k=>document.getElementById('adm-'+k).style.display = (k===b.dataset.adm?'':'none'));
+});
+
+/* ── 역할 전환 데모 ── */
+let admin=true;
+function toggleRole(){
+  admin=!admin;
+  document.getElementById('roleName').textContent = admin?'운영자':'일반 사용자';
+  document.querySelectorAll('.admin-only').forEach(el=>el.classList.toggle('user-hidden',!admin));
+  if(!admin) go('search');
+}
+
+/* ── +추가 플로우 ── */
+function openAdd(){document.getElementById('addOverlay').classList.add('open');addStep(1)}
+function closeAdd(){document.getElementById('addOverlay').classList.remove('open')}
+function addStep(n){
+  [1,2,3].forEach(i=>{
+    document.getElementById('step'+i).style.display = (i===n?'':'none');
+    document.getElementById('s'+i).classList.toggle('on', i<=n);
+  });
+}
+document.getElementById('addOverlay').addEventListener('click',e=>{if(e.target.id==='addOverlay')closeAdd()});
+
+/* ── 인스펙터 (목업 전용) ── */
+let inspOn=false, tip=null, cur=null;
+function clearInsp(){ if(cur){cur.classList.remove('insp-outline');cur=null} if(tip){tip.remove();tip=null} }
+addEventListener('keydown',e=>{ if(e.key==='Control')inspOn=true; if(e.key==='Escape'){inspOn=false;clearInsp()} });
+addEventListener('keyup',e=>{ if(e.key==='Control'){inspOn=false;clearInsp()} });
+addEventListener('mousemove',e=>{
+  if(!inspOn){return}
+  const t=e.target.closest('[data-mock-id]');
+  if(t!==cur){ clearInsp(); if(t){ cur=t; t.classList.add('insp-outline');
+    tip=document.createElement('div'); tip.className='insp-tip';
+    tip.textContent=t.dataset.mockName+'  —  '+t.dataset.mockId;
+    document.body.appendChild(tip); } }
+  if(tip){ tip.style.left=Math.min(e.clientX+12, innerWidth-tip.offsetWidth-8)+'px'; tip.style.top=(e.clientY+14)+'px'; }
+});
+addEventListener('click',e=>{
+  if(!inspOn)return;
+  const t=e.target.closest('[data-mock-id]'); if(!t)return;
+  e.preventDefault(); e.stopPropagation();
+  navigator.clipboard?.writeText(t.dataset.mockName+'  -  '+t.dataset.mockId);
+  const h=document.getElementById('inspHint'); h.textContent='복사됨: '+t.dataset.mockId;
+  setTimeout(()=>h.textContent='Ctrl 누른 채 hover/클릭 = 요소 ID 확인/복사',1500);
+},true);
+</script>
+</body>
+</html>
