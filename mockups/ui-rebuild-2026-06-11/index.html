@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v10</title>
+<title>Imagine UI 재구축 목업 v11</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -276,10 +276,10 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v10</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v11</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
-    <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 라이브러리 (소스)">라이브러리</button>
+    <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
     <button data-scr="analysis" class="admin-only" data-mock-id="shell/nav/item[analysis]" data-mock-name="탭: 분석 (작업)">분석</button>
   </nav>
   <div class="spacer"></div>
@@ -324,8 +324,8 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 라이브러리 (구 아카이빙+분석 통합) ══ -->
 <section class="screen" id="scr-library" data-mock-id="screen/library" data-mock-name="라이브러리 화면">
-  <aside class="lib-side" data-mock-id="library/sources" data-mock-name="소스/폴더 패널">
-    <h3>소스 <button onclick="openAdd()">+ 추가</button></h3>
+  <aside class="lib-side" data-mock-id="library/sources" data-mock-name="폴더 패널">
+    <h3>폴더 <button onclick="openAdd()">+ 추가</button></h3>
     <div class="tree">
       <div class="tnode" data-mock-id="library/sources/node[nas-characters]" data-mock-name="폴더(NAS, 처리중)"><span class="tw">▾</span><span class="ic">🌐</span><span class="nm">NAS / 캐릭터</span><span class="cov a" title="1,240/3,800 남음"></span></div>
       <div class="tnode lvl1"><span class="tw">▸</span><span class="ic">📁</span><span class="nm">주인공</span><span class="cov g"></span></div>
@@ -333,35 +333,35 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       <div class="tnode" data-mock-id="library/sources/node[nas-bg]" data-mock-name="폴더(완료)"><span class="tw">▸</span><span class="ic">🌐</span><span class="nm">NAS / 배경</span><span class="cov g" title="완료"></span></div>
       <div class="tnode" data-mock-id="library/sources/node[local]" data-mock-name="폴더(로컬, 재구축 필요)"><span class="tw">▸</span><span class="ic">💻</span><span class="nm">로컬 / 컨셉아트</span><span class="cov r" title="재구축 필요 (FTS)"></span></div>
     </div>
-    <div class="src-detail" data-mock-id="library/source-detail" data-mock-name="소스 속성 카드 (선택: NAS/캐릭터)">
-      <div class="sd-head">🌐 NAS / 캐릭터 <span class="sd-sub">소스 속성</span></div>
-      <div class="sd-row"><span>새 파일 자동 분석</span><span class="toggle" style="transform:scale(.85)" data-mock-id="library/source-detail/auto" data-mock-name="소스 속성: 자동 분석 (구 auto_scan)"></span></div>
+    <div class="src-detail" data-mock-id="library/source-detail" data-mock-name="폴더 속성 카드 (선택: NAS/캐릭터)">
+      <div class="sd-head">🌐 NAS / 캐릭터 <span class="sd-sub">폴더 속성</span></div>
+      <div class="sd-row"><span>새 파일 자동 분석</span><span class="toggle" style="transform:scale(.85)" data-mock-id="library/source-detail/auto" data-mock-name="폴더 속성: 자동 분석"></span></div>
       <div class="sd-row"><span>마지막 동기화</span><span class="sd-val">3일 전 · 이동 2건 감지</span></div>
       <div class="sd-acts">
-        <button data-mock-id="library/source-detail/sync" data-mock-name="소스 액션: 동기화">동기화</button>
-        <button data-mock-id="library/source-detail/reanalyze" data-mock-name="소스 액션: 다시 분석…">다시 분석…</button>
+        <button data-mock-id="library/source-detail/sync" data-mock-name="폴더 액션: 동기화">동기화</button>
+        <button data-mock-id="library/source-detail/reanalyze" data-mock-name="폴더 액션: 다시 분석…">다시 분석…</button>
         <button class="danger">제거</button>
       </div>
     </div>
   </aside>
   <div class="lib-main">
-    <div class="sec-title">소스 현황 <span class="sub">등록된 폴더와 분석 상태</span></div>
-    <div class="jobs" data-mock-id="library/source-overview" data-mock-name="소스 개요 (폴더 중심)">
-      <div class="jrow" data-mock-id="library/source-overview/row[chars]" data-mock-name="소스 행(처리 중)">
+    <div class="sec-title">폴더 현황 <span class="sub">등록된 폴더가 얼마나 분석됐는지</span></div>
+    <div class="jobs" data-mock-id="library/source-overview" data-mock-name="폴더 현황 행">
+      <div class="jrow" data-mock-id="library/source-overview/row[chars]" data-mock-name="폴더 행(처리 중)">
         <span class="cov a" style="width:9px;height:9px"></span><span class="nm">🌐 NAS / 캐릭터</span>
         <div class="bar"><i style="width:67%"></i></div>
         <span class="cnt">2,560 / 3,800 장</span>
         <span style="font-size:10.5px;color:var(--faint)">자동 분석 ON</span>
         <div class="acts2"><button>동기화</button><button>다시 분석…</button></div>
       </div>
-      <div class="jrow" data-mock-id="library/source-overview/row[bg]" data-mock-name="소스 행(완료)">
+      <div class="jrow" data-mock-id="library/source-overview/row[bg]" data-mock-name="폴더 행(완료)">
         <span class="cov g" style="width:9px;height:9px"></span><span class="nm">🌐 NAS / 배경</span>
         <div class="bar"><i style="width:100%"></i></div>
         <span class="cnt">880 / 880 장</span>
         <span style="font-size:10.5px;color:var(--faint)">자동 분석 ON · 동기화 3일 전</span>
         <div class="acts2"><button>동기화</button><button>다시 분석…</button></div>
       </div>
-      <div class="jrow" data-mock-id="library/source-overview/row[local]" data-mock-name="소스 행(점검 필요)">
+      <div class="jrow" data-mock-id="library/source-overview/row[local]" data-mock-name="폴더 행(점검 필요)">
         <span class="cov r" style="width:9px;height:9px"></span><span class="nm">💻 로컬 / 컨셉아트</span>
         <div class="bar"><i style="width:99%;background:var(--amber)"></i></div>
         <span class="cnt">698 / 700 장</span>
@@ -551,9 +551,9 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <!-- 1단계: 소스 (파일 단위 포함 — 현행 4개 진입점 흡수) -->
     <div id="step1">
       <p style="font-size:11px;color:var(--faint);margin-bottom:10px" data-mock-id="add/principle" data-mock-name="원칙: 폴더 지정형">분석은 <b style="color:var(--text)">폴더 단위</b>로 지정합니다 — 파일을 하나씩 다루지 않습니다</p>
-      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[local]" data-mock-name="소스: 로컬 폴더">💻<div><div class="t">로컬 폴더</div><div class="d">이 컴퓨터에서 폴더 선택 (드래그&드롭 가능)</div></div></div>
-      <div class="src-opt" onclick="showNas()" data-mock-id="add/source[nas]" data-mock-name="소스: NAS (→ NAS 지정 단계)">🌐<div><div class="t">NAS 폴더</div><div class="d">등록된 NAS에서 탐색 — 또는 새 NAS 연결</div></div></div>
-      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[existing]" data-mock-name="소스: 기존 소스 다시 분석">♻️<div><div class="t">기존 소스 다시 분석</div><div class="d">로컬/컨셉아트 — 재구축 필요 <span style="color:var(--red)">●</span></div></div></div>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[local]" data-mock-name="추가: 내 컴퓨터 폴더">💻<div><div class="t">내 컴퓨터의 폴더</div><div class="d">이 컴퓨터에서 폴더 선택 (드래그&드롭 가능)</div></div></div>
+      <div class="src-opt" onclick="showNas()" data-mock-id="add/source[nas]" data-mock-name="추가: NAS 폴더">🌐<div><div class="t">NAS 폴더</div><div class="d">등록된 NAS에서 탐색 — 또는 새 NAS 연결</div></div></div>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[existing]" data-mock-name="추가: 등록된 폴더 다시 분석">♻️<div><div class="t">등록된 폴더 다시 분석</div><div class="d">로컬/컨셉아트 — 다시 분석 필요 <span style="color:var(--red)">●</span></div></div></div>
       <div class="m-acts"><button class="sec" onclick="closeAdd()">취소</button></div>
     </div>
 
