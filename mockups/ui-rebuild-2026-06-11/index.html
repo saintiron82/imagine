@@ -79,6 +79,15 @@ main{flex:1;overflow:auto}
 .cov.g{background:var(--emerald)} .cov.a{background:var(--amber);animation:pulse 1.6s infinite} .cov.r{background:var(--red);animation:pulse 1.2s infinite}
 @keyframes pulse{50%{opacity:.4}}
 .lvl1{padding-left:24px}
+.src-detail{margin-top:14px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px 12px}
+.sd-head{font-size:12px;font-weight:700;margin-bottom:8px}
+.sd-head .sd-sub{font-weight:400;font-size:10px;color:var(--faint);margin-left:6px}
+.sd-row{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--dim);padding:4px 0}
+.sd-val{color:var(--faint);font-size:10.5px}
+.sd-acts{display:flex;gap:5px;margin-top:8px}
+.sd-acts button{font-size:10.5px;border:1px solid var(--line);border-radius:5px;padding:3px 10px;color:var(--dim)}
+.sd-acts button:hover{color:var(--text)}
+.sd-acts .danger:hover{color:var(--red);border-color:var(--red)}
 .lib-main{flex:1;overflow:auto;padding:20px 24px}
 .sec-title{font-size:13px;font-weight:700;margin:0 0 10px;display:flex;align-items:center;gap:8px}
 .sec-title .sub{font-weight:400;font-size:11px;color:var(--faint)}
@@ -172,6 +181,11 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 .m-acts .sec{color:var(--dim);padding:8px 12px}
 .done-box{text-align:center;padding:10px 0}
 .done-box .ic{font-size:30px}
+.type-grid{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+.tchip{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:3px 11px;color:var(--dim);cursor:pointer}
+.tchip.on{border-color:var(--blue);color:#93c5fd;background:rgba(59,130,246,.1)}
+.radio{display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 0;cursor:pointer;color:var(--dim)}
+.radio b{color:var(--text);font-weight:600}
 .done-box p{font-size:12px;color:var(--dim);margin-top:6px}
 .done-box p b{color:var(--emerald)}
 
@@ -241,6 +255,16 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       <div class="tnode lvl1"><span class="tw">▸</span><span class="ic">📁</span><span class="nm">NPC</span><span class="cov a"></span></div>
       <div class="tnode" data-mock-id="library/sources/node[nas-bg]" data-mock-name="폴더(완료)"><span class="tw">▸</span><span class="ic">🌐</span><span class="nm">NAS / 배경</span><span class="cov g" title="완료"></span></div>
       <div class="tnode" data-mock-id="library/sources/node[local]" data-mock-name="폴더(로컬, 재구축 필요)"><span class="tw">▸</span><span class="ic">💻</span><span class="nm">로컬 / 컨셉아트</span><span class="cov r" title="재구축 필요 (FTS)"></span></div>
+    </div>
+    <div class="src-detail" data-mock-id="library/source-detail" data-mock-name="소스 속성 카드 (선택: NAS/캐릭터)">
+      <div class="sd-head">🌐 NAS / 캐릭터 <span class="sd-sub">소스 속성</span></div>
+      <div class="sd-row"><span>새 파일 자동 분석</span><span class="toggle" style="transform:scale(.85)" data-mock-id="library/source-detail/auto" data-mock-name="소스 속성: 자동 분석 (구 auto_scan)"></span></div>
+      <div class="sd-row"><span>마지막 동기화</span><span class="sd-val">3일 전 · 이동 2건 감지</span></div>
+      <div class="sd-acts">
+        <button data-mock-id="library/source-detail/sync" data-mock-name="소스 액션: 동기화">동기화</button>
+        <button data-mock-id="library/source-detail/reanalyze" data-mock-name="소스 액션: 다시 분석…">다시 분석…</button>
+        <button class="danger">제거</button>
+      </div>
     </div>
   </aside>
   <div class="lib-main">
@@ -394,23 +418,54 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 <div class="overlay" id="addOverlay" data-mock-id="add/overlay" data-mock-name="+추가 플로우">
   <div class="modal">
     <h3>분석에 추가</h3>
-    <div class="steps"><i class="on" id="s1"></i><i id="s2"></i><i id="s3"></i></div>
+    <div class="steps"><i class="on" id="s1"></i><i id="s2"></i><i id="s3"></i><i id="s4"></i></div>
 
+    <!-- 1단계: 소스 (파일 단위 포함 — 현행 4개 진입점 흡수) -->
     <div id="step1">
       <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[local]" data-mock-name="소스: 로컬 폴더">💻<div><div class="t">로컬 폴더</div><div class="d">이 컴퓨터에서 폴더 선택 (드래그&드롭 가능)</div></div></div>
-      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[nas]" data-mock-name="소스: NAS">🌐<div><div class="t">NAS (WebDAV)</div><div class="d">synology-main · 연결됨</div></div></div>
-      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[new-nas]" data-mock-name="소스: 새 NAS 연결">＋<div><div class="t">새 NAS 연결…</div></div></div>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[nas]" data-mock-name="소스: NAS">🌐<div><div class="t">NAS 폴더</div><div class="d">synology-main · 연결됨 — 또는 새 NAS 연결…</div></div></div>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[files]" data-mock-name="소스: 파일 직접 선택">🖼️<div><div class="t">파일 직접 선택</div><div class="d">폴더 전체가 아니라 특정 파일 몇 개만</div></div></div>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[existing]" data-mock-name="소스: 기존 소스 다시 분석">♻️<div><div class="t">기존 소스 다시 분석</div><div class="d">로컬/컨셉아트 — 재구축 필요 <span style="color:var(--red)">●</span></div></div></div>
       <div class="m-acts"><button class="sec" onclick="closeAdd()">취소</button></div>
     </div>
 
+    <!-- 2단계: 기본 설정 — 여기서 바로 시작 가능 (2클릭 완주) -->
     <div id="step2" style="display:none">
       <div class="frow"><label>선택한 폴더</label><input type="text" value="NAS / 신규 컨셉 2026-06" readonly></div>
       <div class="frow"><label>작업 이름</label><input type="text" value="신규 컨셉 2026-06"></div>
-      <div class="frow"><div class="chk"><input type="checkbox" checked id="c1"><label for="c1" style="margin:0">하위 폴더 포함 (412개 파일)</label></div></div>
-      <div class="m-acts"><button class="sec" onclick="addStep(1)">← 뒤로</button><button class="pri" onclick="addStep(3)">분석 시작</button></div>
+      <div class="frow"><div class="chk"><input type="checkbox" checked id="c1"><label for="c1" style="margin:0">하위 폴더 포함 <b>(412개 파일)</b></label></div></div>
+      <div class="frow"><div class="chk" data-mock-id="add/opt[auto]" data-mock-name="옵션: 새 파일 자동 분석 (소스 속성)"><input type="checkbox" checked id="c2"><label for="c2" style="margin:0">앞으로 이 폴더의 새 파일 자동 분석</label></div></div>
+      <div class="m-acts">
+        <button class="sec" onclick="addStep(1)">← 뒤로</button>
+        <button class="sec" onclick="addStep(3)" data-mock-id="add/more" data-mock-name="세부 옵션으로 (점진 공개)">세부 옵션</button>
+        <button class="pri" onclick="addStep(4)" data-mock-id="add/start-default" data-mock-name="기본값으로 분석 시작">분석 시작</button>
+      </div>
     </div>
 
+    <!-- 3단계: 세부 (선택적) — 프로파일 + 모드 + 우선순위 -->
     <div id="step3" style="display:none">
+      <div class="frow" data-mock-id="add/profile" data-mock-name="분석 프로파일 (폴더명 추천 보존)">
+        <label>이 폴더에 주로 들어있는 것 <span style="color:var(--cyan)">— 폴더명에서 '컨셉' 감지 → 추천 적용됨</span></label>
+        <div class="type-grid">
+          <span class="tchip on">일러스트 ★</span><span class="tchip on">캐릭터</span><span class="tchip">배경/BG</span><span class="tchip">소품</span><span class="tchip">이펙트</span><span class="tchip">UI</span><span class="tchip">아이콘</span><span class="tchip">텍스처</span>
+        </div>
+        <div style="font-size:10px;color:var(--faint);margin-top:4px">★ = 대표 유형 · 분류 정확도를 높입니다</div>
+      </div>
+      <div class="frow" data-mock-id="add/mode" data-mock-name="분석 모드 (신규/전체/파도 통합)">
+        <label>범위</label>
+        <label class="radio"><input type="radio" name="md" checked> <b>새 파일만</b> — 이미 분석된 파일은 건너뜀 (캐시 활용)</label>
+        <label class="radio"><input type="radio" name="md"> <b>전체 다시 분석</b> — 결과를 새로 덮어씀</label>
+        <label class="radio"><input type="radio" name="md"> <b>모델 파도</b> — 새 모델 버전 기준 재처리 <span style="color:var(--faint)">(관리>파생물 캐시와 동일)</span></label>
+      </div>
+      <div class="frow"><div class="chk" data-mock-id="add/opt[priority]" data-mock-name="옵션: 우선 처리"><input type="checkbox" id="c3"><label for="c3" style="margin:0">⚡ 우선 처리 — 다른 작업보다 먼저</label></div></div>
+      <div class="m-acts">
+        <button class="sec" onclick="addStep(2)">← 뒤로</button>
+        <button class="pri" onclick="addStep(4)">분석 시작</button>
+      </div>
+    </div>
+
+    <!-- 4단계: 시작됨 -->
+    <div id="step4" style="display:none">
       <div class="done-box" data-mock-id="add/done" data-mock-name="시작됨 — 점진 가용성 안내">
         <div class="ic">✅</div>
         <h3 style="margin-top:6px">분석이 시작됐습니다</h3>
@@ -451,11 +506,12 @@ function toggleRole(){
 function openAdd(){document.getElementById('addOverlay').classList.add('open');addStep(1)}
 function closeAdd(){document.getElementById('addOverlay').classList.remove('open')}
 function addStep(n){
-  [1,2,3].forEach(i=>{
+  [1,2,3,4].forEach(i=>{
     document.getElementById('step'+i).style.display = (i===n?'':'none');
     document.getElementById('s'+i).classList.toggle('on', i<=n);
   });
 }
+document.querySelectorAll('.tchip').forEach(c=>c.onclick=()=>c.classList.toggle('on'));
 document.getElementById('addOverlay').addEventListener('click',e=>{if(e.target.id==='addOverlay')closeAdd()});
 
 /* ── 인스펙터 (목업 전용) ── */
