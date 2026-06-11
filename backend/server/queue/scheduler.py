@@ -273,6 +273,16 @@ class WorkerScheduler:
             capable["mc"] = mc_p
         # mc_speed == 0 → tried and failed → MC excluded
 
+        # 5.5 Admin pin: restrict this worker to the pinned phase.
+        # ("mc_only" is a legacy alias for "mc"; "full"/None = no pin)
+        pin = {"mc_only": "mc", "full": None}.get(
+            profile.get("mode_override"), profile.get("mode_override"))
+        if pin in ("mc", "vv", "mv"):
+            capable = {k: v for k, v in capable.items() if k == pin}
+            if not capable:
+                # pinned to a phase this worker cannot do (or no pending)
+                return {"phase": None, "count": 0}
+
         # 6. Algorithm E' — pressure × speed_factor selection
         phase = self._pick_best_phase(
             capable, workers_on, current_phase, profile
@@ -427,7 +437,7 @@ class WorkerScheduler:
         cursor.execute("""
             SELECT mc_capable, mc_speed, vv_speed, mv_speed,
                    gpu_name, vram_gb, gpu_class, current_phase,
-                   resources_json
+                   resources_json, processing_mode_override
             FROM worker_sessions WHERE id = ?
         """, (session_id,))
         row = cursor.fetchone()
@@ -452,6 +462,7 @@ class WorkerScheduler:
             "gpu_class": row[6] or "cpu",
             "current_phase": row[7],
             "throttle": throttle,
+            "mode_override": row[9],
         }
 
     def get_status(self) -> dict:
