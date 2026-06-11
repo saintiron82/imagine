@@ -209,6 +209,13 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
                 time.sleep(cfg.poll_interval)
                 continue
 
+            # Prefetch thumbnails in background threads so the GPU batch
+            # never waits on serial HTTP downloads (same as the Electron path).
+            try:
+                daemon._prefetch_downloads(jobs)
+            except Exception:
+                pass
+
             results = daemon.process_batch_phased(jobs)
             ok = sum(1 for item in results if len(item) > 1 and item[1])
             print(f"[worker] batch complete: {ok}/{len(jobs)} ok", flush=True)

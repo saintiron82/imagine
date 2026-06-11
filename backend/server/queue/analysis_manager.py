@@ -658,6 +658,35 @@ class AnalysisJobManager:
             if profile:
                 task["analysis_profile"] = profile
             tasks.append(task)
+
+        # MV needs the MC text per file — inline it in the claim response so
+        # workers don't make one GET /files/{id}/mc round trip per file.
+        if phase == "mv" and tasks:
+            file_ids = [t["file_id"] for t in tasks]
+            placeholders = ",".join("?" * len(file_ids))
+            cursor.execute(f"""
+                SELECT id, mc_caption, ai_tags, image_type, scene_type, art_style
+                FROM files WHERE id IN ({placeholders})
+            """, file_ids)
+            mc_by_id = {}
+            for fr in cursor.fetchall():
+                ai_tags = fr[2]
+                if isinstance(ai_tags, str):
+                    try:
+                        ai_tags = _json.loads(ai_tags)
+                    except Exception:
+                        ai_tags = []
+                mc_by_id[fr[0]] = {
+                    "mc_caption": fr[1] or "",
+                    "ai_tags": ai_tags or [],
+                    "image_type": fr[3] or "",
+                    "scene_type": fr[4] or "",
+                    "art_style": fr[5] or "",
+                }
+            for t in tasks:
+                if t["file_id"] in mc_by_id:
+                    t["vision_data"] = mc_by_id[t["file_id"]]
+
         return tasks
 
     def start_task_phase(self, task_id: int, phase: str):

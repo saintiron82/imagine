@@ -364,9 +364,14 @@ class WorkerScheduler:
             if n == 0 and pending > 0:
                 p *= 1.5
 
-            # MV completion bonus: each MV done = 1 file fully complete
+            # MV completion bonus: each MV done = 1 file fully complete.
+            # Capped — an unbounded pending×10 bonus let any large MV backlog
+            # outweigh MC pressure for every worker (strong GPUs included),
+            # causing cluster-wide mode flapping. The cap keeps the intent
+            # ("drain MVs when otherwise comparable / near the MC tail")
+            # without overriding a large MC backlog.
             if phase == "mv":
-                p += pending * 10
+                p += min(pending, 50) * 10
 
             pressure[phase] = p
 
