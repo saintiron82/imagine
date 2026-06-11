@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v13</title>
+<title>Imagine UI 재구축 목업 v14</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -119,6 +119,11 @@ main{flex:1;overflow:auto}
 .fl-item.busy{border-color:rgba(59,130,246,.5)}
 .fl-item.busy .ph{animation:pulse 1.4s infinite}
 .fl-item.busy .fn{color:#93c5fd}
+.an-strip{display:flex;gap:8px;margin:14px 0 0}
+.an-card{flex:1;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:9px 12px;display:flex;align-items:center;gap:9px}
+.an-card .nm2{font-size:12px;font-weight:600}
+.an-card .sub2{font-size:10px;color:var(--faint)}
+.an-card .rate2{margin-left:auto;font-family:ui-monospace,monospace;font-size:12px;color:var(--emerald);font-weight:700}
 .plain-fail{margin-top:12px;font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:8px}
 .plain-fail .n{color:var(--red);font-weight:700}
 .plain-fail button{color:#93c5fd;font-size:11px;text-decoration:underline}
@@ -276,7 +281,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v13</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v14</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
@@ -383,8 +388,25 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
         <div class="bar"><i style="width:67%"></i></div>
         <span style="font-family:ui-monospace,monospace;color:#93c5fd;font-weight:700">67%</span>
       </div>
-      <div style="margin-top:8px;font-size:11.5px;color:var(--dim)" data-mock-id="library/summary/line" data-mock-name="상태 한 줄 (사람 말)">
+      <div style="margin-top:8px;font-size:11.5px;color:var(--dim)" data-mock-id="analysis/summary/line" data-mock-name="상태 한 줄 (사람 말)">
         지금 <b style="color:var(--emerald)">분당 14.2장</b>씩 처리 중 · 분석기 <b>3대</b> 참여
+      </div>
+      <div class="an-strip" data-mock-id="analysis/analyzers" data-mock-name="분석기 현황 (간이 — 상세·제어는 관리)">
+        <div class="an-card" data-mock-id="analysis/analyzers/card[server]" data-mock-name="분석기(이 서버)">
+          <span class="st run"></span><div><div class="nm2">이 서버</div><div class="sub2">knight_v3.psd 처리 중</div></div>
+          <span class="rate2">7.9장/분</span>
+        </div>
+        <div class="an-card" data-mock-id="analysis/analyzers/card[macbook]" data-mock-name="분석기(멤버 제공)">
+          <span class="st run"></span><div><div class="nm2">지민-MacBook</div><div class="sub2">bg_forest_07.psd 처리 중</div></div>
+          <span class="rate2">78장/분</span>
+        </div>
+        <div class="an-card" data-mock-id="analysis/analyzers/card[gpu]" data-mock-name="분석기(고성능)">
+          <span class="st run"></span><div><div class="nm2">gpu-box-01</div><div class="sub2">npc_smith.psd 처리 중</div></div>
+          <span class="rate2">81장/분</span>
+        </div>
+        <button class="an-card" onclick="go('admin')" style="flex:0 0 auto;cursor:pointer" data-mock-id="analysis/analyzers/more" data-mock-name="관리로 이동">
+          <span class="sub2">상세·제어 →</span>
+        </button>
       </div>
     </div>
     <div class="jobs" data-mock-id="library/jobs" data-mock-name="분석 리스트 (얇은 행 — 용어/ETA/완료 없음)">
