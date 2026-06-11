@@ -1,0 +1,18 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch();
+const p = await b.newPage();
+const errors = [];
+p.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+p.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
+await p.goto('file:///Users/saintiron/Projects/Imagine/mockups/ui-rebuild-2026-06-11/v13.html');
+await p.click('button[data-scr="library"]');
+await p.waitForTimeout(300);
+await p.screenshot({ path: '/tmp/click_library.png' });
+const libVisible = await p.isVisible('#scr-library');
+await p.click('button[data-scr="analysis"]');
+await p.waitForTimeout(300);
+await p.screenshot({ path: '/tmp/click_analysis.png' });
+const anaVisible = await p.isVisible('#scr-analysis');
+console.log('library visible:', libVisible, '| analysis visible:', anaVisible);
+console.log('JS errors:', errors.length ? errors : '없음');
+await b.close();
