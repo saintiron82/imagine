@@ -176,6 +176,10 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 .frow label{display:block;font-size:11px;color:var(--dim);margin-bottom:4px}
 .frow input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;color:var(--text)}
 .frow .chk{display:flex;align-items:center;gap:8px;font-size:12px}
+.m-head{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+.m-back{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);color:var(--dim);font-size:14px;flex-shrink:0}
+.m-back:hover{color:var(--text);border-color:var(--faint)}
+.m-back.hide{visibility:hidden}
 .m-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .m-acts .pri{background:var(--blue-d);color:#fff;font-weight:600;padding:8px 18px;border-radius:6px}
 .m-acts .sec{color:var(--dim);padding:8px 12px}
@@ -454,7 +458,10 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 <!-- ══ +추가 모달 ══ -->
 <div class="overlay" id="addOverlay" data-mock-id="add/overlay" data-mock-name="+추가 플로우">
   <div class="modal">
-    <h3>분석 작업 등록</h3>
+    <div class="m-head">
+      <button class="m-back" id="mBack" onclick="goBack()" data-mock-id="add/back" data-mock-name="뒤로 (항상 좌상단 한 곳)">←</button>
+      <h3>분석 작업 등록</h3>
+    </div>
     <div class="steps"><i class="on" id="s1"></i><i id="s2"></i><i id="s3"></i><i id="s4"></i></div>
 
     <!-- 1단계: 소스 (파일 단위 포함 — 현행 4개 진입점 흡수) -->
@@ -481,7 +488,6 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
           <span class="test-ok">✓ 연결 성공 — 8개 공유 폴더 발견</span>
         </div>
       </div>
-      <div class="m-acts"><button class="sec" onclick="addStep(1)">← 뒤로</button></div>
     </div>
 
     <!-- 2단계: 폴더 탐색 — 타이핑 없음, 미리보기로 고른다 -->
@@ -535,7 +541,6 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
         <label class="chk" style="font-size:11.5px"><input type="checkbox" checked> 하위 포함</label>
         <label class="chk" style="font-size:11.5px"><input type="checkbox" checked> 새 파일 자동 분석</label>
         <span style="flex:1"></span>
-        <button class="sec" onclick="showNas()">←</button>
         <button class="sec" onclick="addStep(3)">세부 옵션</button>
         <button class="pri" onclick="addStep(4)" data-mock-id="add/register-default" data-mock-name="기본값으로 작업 등록">작업 등록</button>
       </div>
@@ -558,7 +563,6 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       </div>
       <div class="frow"><div class="chk" data-mock-id="add/opt[priority]" data-mock-name="옵션: 우선 처리"><input type="checkbox" id="c3"><label for="c3" style="margin:0">⚡ 우선 처리 — 다른 작업보다 먼저</label></div></div>
       <div class="m-acts">
-        <button class="sec" onclick="addStep(2)">← 뒤로</button>
         <button class="pri" onclick="addStep(4)">작업 등록</button>
       </div>
     </div>
@@ -603,19 +607,32 @@ function toggleRole(){
 }
 
 /* ── +추가 플로우 ── */
-function openAdd(){document.getElementById('addOverlay').classList.add('open');addStep(1)}
+function openAdd(){document.getElementById('addOverlay').classList.add('open');addStep(1);}
 function closeAdd(){document.getElementById('addOverlay').classList.remove('open')}
+let curStep = 1;
+function _backBtn(){
+  // 1단계와 완료(4단계)에선 뒤로 숨김
+  document.getElementById('mBack').classList.toggle('hide', curStep===1 || curStep===4);
+}
 function addStep(n){
+  curStep = n;
   document.getElementById('step1b').style.display='none';
   [1,2,3,4].forEach(i=>{
     document.getElementById('step'+i).style.display = (i===n?'':'none');
     document.getElementById('s'+i).classList.toggle('on', i<=n);
   });
+  _backBtn();
 }
 function showNas(){
+  curStep = '1b';
   [1,2,3,4].forEach(i=>document.getElementById('step'+i).style.display='none');
   document.getElementById('step1b').style.display='';
   document.getElementById('s1').classList.add('on');
+  _backBtn();
+}
+function goBack(){
+  const prev = {'1b':()=>addStep(1), 2:showNas, 3:()=>addStep(2)}[curStep];
+  if(prev) prev();
 }
 document.querySelectorAll('.tchip').forEach(c=>c.onclick=()=>c.classList.toggle('on'));
 document.querySelectorAll('.btn-node').forEach(n=>n.onclick=()=>{
