@@ -422,9 +422,9 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
     <!-- 1단계: 소스 (파일 단위 포함 — 현행 4개 진입점 흡수) -->
     <div id="step1">
+      <p style="font-size:11px;color:var(--faint);margin-bottom:10px" data-mock-id="add/principle" data-mock-name="원칙: 폴더 지정형">분석은 <b style="color:var(--text)">폴더 단위</b>로 지정합니다 — 파일을 하나씩 다루지 않습니다</p>
       <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[local]" data-mock-name="소스: 로컬 폴더">💻<div><div class="t">로컬 폴더</div><div class="d">이 컴퓨터에서 폴더 선택 (드래그&드롭 가능)</div></div></div>
       <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[nas]" data-mock-name="소스: NAS">🌐<div><div class="t">NAS 폴더</div><div class="d">synology-main · 연결됨 — 또는 새 NAS 연결…</div></div></div>
-      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[files]" data-mock-name="소스: 파일 직접 선택">🖼️<div><div class="t">파일 직접 선택</div><div class="d">폴더 전체가 아니라 특정 파일 몇 개만</div></div></div>
       <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[existing]" data-mock-name="소스: 기존 소스 다시 분석">♻️<div><div class="t">기존 소스 다시 분석</div><div class="d">로컬/컨셉아트 — 재구축 필요 <span style="color:var(--red)">●</span></div></div></div>
       <div class="m-acts"><button class="sec" onclick="closeAdd()">취소</button></div>
     </div>
