@@ -580,6 +580,10 @@ async def save_vv_vector(
     # Upsert into vec_files
     cursor.execute("DELETE FROM vec_files WHERE file_id = ?", (file_id,))
     cursor.execute("INSERT INTO vec_files (file_id, embedding) VALUES (?, ?)", (file_id, blob))
+    # CAS M1 shadow write — same transaction as the primary save
+    from backend.server.queue.derivations import record_derivation
+    record_derivation(db, file_id, "vv", vector_blob=blob,
+                      created_by=user.get("username"))
     db.conn.commit()
     return {"success": True}
 
@@ -602,6 +606,10 @@ async def save_mv_vector(
     cursor = db.conn.cursor()
     cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (file_id,))
     cursor.execute("INSERT INTO vec_text (file_id, embedding) VALUES (?, ?)", (file_id, blob))
+    # CAS M1 shadow write — same transaction as the primary save
+    from backend.server.queue.derivations import record_derivation
+    record_derivation(db, file_id, "mv", vector_blob=blob,
+                      created_by=user.get("username"))
     db.conn.commit()
     return {"success": True}
 
@@ -618,6 +626,13 @@ async def save_vision_fields(
     body = await request.json()
     if not _save_vision_fields_for_file(db, file_id, body):
         raise HTTPException(status_code=404, detail="File not found")
+
+    # CAS M1 shadow write — the raw vision payload is the MC derivation
+    import json as _json
+    from backend.server.queue.derivations import record_derivation
+    record_derivation(db, file_id, "mc", result_json=_json.dumps(body),
+                      created_by=user.get("username"))
+    db.conn.commit()
 
     return {"success": True}
 
