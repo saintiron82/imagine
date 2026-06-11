@@ -164,7 +164,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 /* ── +추가 모달 ─────────────────── */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
 .overlay.open{display:flex}
-.modal{width:460px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+.modal{width:560px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
 .modal h3{font-size:14px;margin-bottom:4px}
 .steps{display:flex;gap:6px;margin:10px 0 16px}
 .steps i{flex:1;height:3px;border-radius:99px;background:var(--line2)}
@@ -181,6 +181,23 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 .m-acts .sec{color:var(--dim);padding:8px 12px}
 .done-box{text-align:center;padding:10px 0}
 .done-box .ic{font-size:30px}
+.crumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);margin-bottom:10px}
+.crumb b{color:var(--text)} .crumb .sep{color:var(--faint)}
+.crumb button{color:#93c5fd;font-size:12px}
+.fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:300px;overflow:auto;padding-right:2px}
+.fcard{border:1px solid var(--line);border-radius:8px;padding:8px;cursor:pointer;background:var(--panel2)}
+.fcard:hover{border-color:var(--faint)}
+.fcard.sel{border-color:var(--blue);background:rgba(59,130,246,.08)}
+.mosaic{display:grid;grid-template-columns:1fr 1fr;gap:2px;border-radius:5px;overflow:hidden;height:74px;margin-bottom:6px}
+.mosaic div{background:var(--line2)}
+.mosaic.noprev{display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:20px}
+.fcard .fname{font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fcard .finfo{font-size:10px;color:var(--faint);margin-top:1px;display:flex;align-items:center;gap:5px}
+.ftag{font-size:9px;font-weight:700;padding:0 5px;border-radius:3px}
+.ftag.done{background:rgba(52,211,153,.15);color:var(--emerald)}
+.ftag.new{background:rgba(59,130,246,.13);color:#93c5fd}
+.pick-bar{display:flex;align-items:center;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line2);font-size:12px}
+.pick-bar .sel-name{font-weight:600}
 .type-grid{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
 .tchip{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:3px 11px;color:var(--dim);cursor:pointer}
 .tchip.on{border-color:var(--blue);color:#93c5fd;background:rgba(59,130,246,.1)}
@@ -429,15 +446,46 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       <div class="m-acts"><button class="sec" onclick="closeAdd()">취소</button></div>
     </div>
 
-    <!-- 2단계: 기본 설정 — 여기서 바로 시작 가능 (2클릭 완주) -->
+    <!-- 2단계: 폴더 탐색 — 타이핑 없음, 미리보기로 고른다 -->
     <div id="step2" style="display:none">
-      <div class="frow"><label>선택한 폴더</label><input type="text" value="NAS / 신규 컨셉 2026-06" readonly></div>
-      <div class="frow"><label>작업 이름</label><input type="text" value="신규 컨셉 2026-06"></div>
-      <div class="frow"><div class="chk"><input type="checkbox" checked id="c1"><label for="c1" style="margin:0">하위 폴더 포함 <b>(412개 파일)</b></label></div></div>
-      <div class="frow"><div class="chk" data-mock-id="add/opt[auto]" data-mock-name="옵션: 새 파일 자동 분석 (소스 속성)"><input type="checkbox" checked id="c2"><label for="c2" style="margin:0">앞으로 이 폴더의 새 파일 자동 분석</label></div></div>
-      <div class="m-acts">
-        <button class="sec" onclick="addStep(1)">← 뒤로</button>
-        <button class="sec" onclick="addStep(3)" data-mock-id="add/more" data-mock-name="세부 옵션으로 (점진 공개)">세부 옵션</button>
+      <div class="crumb" data-mock-id="add/browser/crumb" data-mock-name="브레드크럼 (클릭 이동)">
+        <button>NAS</button><span class="sep">▸</span><button>작업분</button><span class="sep">▸</span><b>2026</b>
+      </div>
+      <div class="fgrid" data-mock-id="add/browser/grid" data-mock-name="폴더 미리보기 그리드">
+        <div class="fcard sel" data-mock-id="add/browser/card[concept]" data-mock-name="폴더 카드(선택됨 · 미분석 · 미리보기 없음)">
+          <div class="mosaic noprev">📁</div>
+          <div class="fname">신규 컨셉 2026-06</div>
+          <div class="finfo">412개 파일 <span class="ftag new">미분석</span></div>
+        </div>
+        <div class="fcard" data-mock-id="add/browser/card[chars]" data-mock-name="폴더 카드(분석됨 → NAS여도 썸네일 미리보기)">
+          <div class="mosaic">
+            <div style="background:linear-gradient(140deg,#1e3a5f,#2d4a73)"></div>
+            <div style="background:linear-gradient(140deg,#33272b,#4a3a40)"></div>
+            <div style="background:linear-gradient(140deg,#1d3146,#28455e)"></div>
+            <div style="background:linear-gradient(140deg,#2a2a3e,#3c3c5c)"></div>
+          </div>
+          <div class="fname">캐릭터</div>
+          <div class="finfo">3,100개 <span class="ftag done">분석됨 98%</span></div>
+        </div>
+        <div class="fcard" data-mock-id="add/browser/card[bg]" data-mock-name="폴더 카드(일부 분석 → 부분 미리보기)">
+          <div class="mosaic">
+            <div style="background:linear-gradient(140deg,#1e3a4a,#2a5468)"></div>
+            <div style="background:linear-gradient(140deg,#27344a,#3a4a66)"></div>
+            <div></div><div></div>
+          </div>
+          <div class="fname">배경</div>
+          <div class="finfo">880개 <span class="ftag done">분석 41%</span></div>
+        </div>
+        <div class="fcard"><div class="mosaic noprev">📁</div><div class="fname">레퍼런스</div><div class="finfo">96개 <span class="ftag new">미분석</span></div></div>
+        <div class="fcard"><div class="mosaic noprev">📁</div><div class="fname">폐기예정</div><div class="finfo">12개</div></div>
+      </div>
+      <div class="pick-bar" data-mock-id="add/browser/pickbar" data-mock-name="선택 바 (이름 자동, 옵션 인라인)">
+        <span class="sel-name">📁 신규 컨셉 2026-06</span>
+        <label class="chk" style="font-size:11.5px"><input type="checkbox" checked> 하위 포함</label>
+        <label class="chk" style="font-size:11.5px"><input type="checkbox" checked> 새 파일 자동 분석</label>
+        <span style="flex:1"></span>
+        <button class="sec" onclick="addStep(1)">←</button>
+        <button class="sec" onclick="addStep(3)">세부 옵션</button>
         <button class="pri" onclick="addStep(4)" data-mock-id="add/start-default" data-mock-name="기본값으로 분석 시작">분석 시작</button>
       </div>
     </div>
@@ -512,6 +560,12 @@ function addStep(n){
   });
 }
 document.querySelectorAll('.tchip').forEach(c=>c.onclick=()=>c.classList.toggle('on'));
+document.querySelectorAll('.fcard').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('.fcard').forEach(x=>x.classList.remove('sel'));
+  c.classList.add('sel');
+  const nm=c.querySelector('.fname')?.textContent;
+  const sn=document.querySelector('.pick-bar .sel-name'); if(sn&&nm)sn.textContent='📁 '+nm;
+});
 document.getElementById('addOverlay').addEventListener('click',e=>{if(e.target.id==='addOverlay')closeAdd()});
 
 /* ── 인스펙터 (목업 전용) ── */
