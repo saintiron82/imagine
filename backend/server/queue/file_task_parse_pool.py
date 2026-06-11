@@ -343,7 +343,34 @@ class FileTaskParsePool(BaseAheadPool):
             except Exception as e:
                 logger.warning(f"FileTaskParse: thumbnail_url update failed: {e}")
 
-        # 8. Release download buffer slot (WebDAV only)
+        # 8. CAS M3: materialize cached derivations — phases already
+        # computed for identical content skip the workers entirely.
+        try:
+            from backend.server.queue.derivations import apply_cache_hits
+            applied = apply_cache_hits(
+                self.db, task_id, stored_file_id, meta.content_hash)
+            self.db.conn.commit()
+            if applied:
+                logger.info(
+                    f"FileTaskParse: cache hit {applied} for {file_p.name}")
+                if set(applied) >= {"mc", "vv", "mv"}:
+                    # Fully served from cache — close out the job if done
+                    from backend.server.queue.analysis_manager import AnalysisJobManager
+                    cursor = self.db.conn.cursor()
+                    cursor.execute(
+                        "SELECT analysis_job_id FROM file_tasks WHERE id = ?",
+                        (task_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        AnalysisJobManager(self.db)._check_job_completion(row[0])
+        except Exception as e:
+            logger.warning(f"FileTaskParse: cache-hit application failed: {e}")
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+
+        # 9. Release download buffer slot (WebDAV only)
         if is_webdav and self._download_pool:
             self._download_pool.release_slot(file_id)
 
