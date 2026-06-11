@@ -355,14 +355,10 @@ class FileTaskParsePool(BaseAheadPool):
                     f"FileTaskParse: cache hit {applied} for {file_p.name}")
                 if set(applied) >= {"mc", "vv", "mv"}:
                     # Fully served from cache — close out the job if done
+                    # (_check_job_completion takes the TASK id and resolves
+                    # the job itself)
                     from backend.server.queue.analysis_manager import AnalysisJobManager
-                    cursor = self.db.conn.cursor()
-                    cursor.execute(
-                        "SELECT analysis_job_id FROM file_tasks WHERE id = ?",
-                        (task_id,))
-                    row = cursor.fetchone()
-                    if row:
-                        AnalysisJobManager(self.db)._check_job_completion(row[0])
+                    AnalysisJobManager(self.db)._check_job_completion(task_id)
         except Exception as e:
             logger.warning(f"FileTaskParse: cache-hit application failed: {e}")
             try:
