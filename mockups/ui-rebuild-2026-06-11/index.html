@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v20</title>
+<title>Imagine UI 재구축 목업 v21</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -313,7 +313,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v20</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v21</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
@@ -361,7 +361,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">팀의 라이브러리 서버 생성 — 3단계, 1분</div></div>
     </button>
     <button class="start-opt" data-mock-id="start/join-server" data-mock-name="다른 서버 접속">
-      🔗<div><div class="t">초대 코드로 팀 서버 가입</div><div class="d">코드만 입력하면 서버를 자동으로 찾습니다 — 주소 불필요</div></div>
+      🔗<div><div class="t">초대 코드로 팀 서버 가입</div><div class="d">코드 입력 → 서버 자동 연결 · 초대 링크로 열었다면 자동 입력됨</div></div>
     </button>
     <div style="font-size:10px;color:var(--faint);text-align:center;margin-top:10px" data-mock-id="start/note" data-mock-name="정책: 재방문 자동 접속">다음부터는 로그인하면 마지막 서버로 자동 접속됩니다</div>
   </div>
@@ -395,7 +395,8 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     </div>
     <div style="display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:10px 0;justify-content:center">
       <span class="mono" style="font-family:ui-monospace,monospace;font-weight:700;letter-spacing:.05em">KX7M-2QPD-9RTF</span>
-      <button style="font-size:10.5px;color:#93c5fd" data-mock-id="start/create/copy-code" data-mock-name="첫 초대 코드 복사">복사</button>
+      <button style="font-size:10.5px;color:#93c5fd" data-mock-id="start/create/copy-code" data-mock-name="코드 복사">코드</button>
+      <button style="font-size:10.5px;color:#93c5fd" data-mock-id="start/create/copy-link" data-mock-name="초대 링크 복사 (설치+가입 원클릭)">링크</button>
     </div>
     <button class="pri-w" onclick="go('search')" data-mock-id="start/create/finish" data-mock-name="시작하기 → 첫 화면(검색) + 폴더 추가 유도">시작하기 — 첫 폴더를 추가해 보세요</button>
   </div>
@@ -630,13 +631,16 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
           <div class="kpi"><div class="v" style="color:var(--emerald)">1</div><div class="k">활성 초대 코드</div></div>
           <div class="kpi" style="flex:2;display:flex;align-items:center;gap:10px">
             <button style="background:var(--blue-d);color:#fff;font-weight:600;font-size:11.5px;padding:7px 14px;border-radius:6px" data-mock-id="admin/members/new-code" data-mock-name="초대 코드 발급">＋ 초대 코드 발급</button>
-            <span style="font-size:10.5px;color:var(--faint)">사용 횟수·만료 지정 가능</span>
+            <span style="font-size:10.5px;color:var(--faint)">횟수·만료 지정 — 발송 없음, 코드나 링크를 복사해 아무 채널로 전달</span>
           </div>
         </div>
         <table data-mock-id="admin/members/codes" data-mock-name="활성 초대 코드 목록">
           <tr><th>코드</th><th>사용</th><th>만료</th><th style="text-align:right"></th></tr>
           <tr>
-            <td class="mono">KX7M-2QPD-9RTF <button style="font-size:9.5px;color:#93c5fd;margin-left:6px">복사</button></td>
+            <td class="mono">KX7M-2QPD-9RTF
+              <button style="font-size:9.5px;color:#93c5fd;margin-left:6px" data-mock-id="admin/members/copy-code" data-mock-name="코드 복사 (메신저에 붙여넣기)">코드 복사</button>
+              <button style="font-size:9.5px;color:#93c5fd;margin-left:4px" data-mock-id="admin/members/copy-link" data-mock-name="초대 링크 복사 (미설치자: 다운로드→자동 가입)">링크 복사</button>
+            </td>
             <td class="mono">1 / 3</td><td class="mono">7일 후</td>
             <td><div class="row-act"><button class="danger" data-mock-id="admin/members/revoke" data-mock-name="코드 회수 (즉시 무효)">회수</button></div></td>
           </tr>
