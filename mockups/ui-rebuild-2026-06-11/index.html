@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v16</title>
+<title>Imagine UI 재구축 목업 v17</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -313,7 +313,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v16</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v17</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
@@ -333,23 +333,33 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 </header>
 
 <main>
-<!-- ══ 시작 (로그인/온보딩) ══ -->
-<section class="screen" id="scr-start" data-mock-id="screen/start" data-mock-name="시작 화면 (로그인/온보딩)">
-  <div class="start-card" data-mock-id="start/card" data-mock-name="시작 카드">
+<!-- ══ 시작 (로그인 → 서버 선택, 단계 분리) ══ -->
+<section class="screen" id="scr-start" data-mock-id="screen/start" data-mock-name="시작 화면">
+  <!-- 1단계: 신원 -->
+  <div class="start-card" id="start1" data-mock-id="start/step1" data-mock-name="1단계: 로그인 (질문: 너는 누구냐)">
     <div class="lg"><span class="dot"></span>Imagine</div>
     <div class="tag">내 에셋을 자연어로 찾는 검색</div>
-    <input placeholder="이메일" value="saintiron82@gmail.com" data-mock-id="start/email" data-mock-name="계정: 이메일">
+    <input placeholder="이메일" value="saintiron82@gmail.com" data-mock-id="start/email" data-mock-name="이메일">
     <input type="password" placeholder="비밀번호" value="········">
-    <button class="pri-w" onclick="go('search')" data-mock-id="start/login" data-mock-name="로그인 (성공 시 마지막 사용 서버로 자동 접속)">로그인</button>
+    <button class="pri-w" onclick="startStep2()" data-mock-id="start/login" data-mock-name="로그인 → 서버 선택(처음) 또는 자동 접속(재방문)">로그인</button>
     <div style="font-size:10.5px;color:var(--faint);text-align:center;margin-top:8px">계정이 없나요? <span style="color:#93c5fd;cursor:pointer">가입</span></div>
-    <div class="start-div">처음이라면</div>
-    <button class="start-opt" data-mock-id="start/create-server" data-mock-name="경로: 서버 만들기 (운영자)">
-      🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">팀의 라이브러리 서버 생성 — 이름·서버 비밀번호 설정 → 도메인 선택</div></div>
+  </div>
+
+  <!-- 2단계: 서버 선택 (처음/서버 이력 없음일 때만) -->
+  <div class="start-card" id="start2" style="display:none" data-mock-id="start/step2" data-mock-name="2단계: 서버 선택 (질문: 어디에 붙을 거냐)">
+    <div class="lg" style="font-size:14px">어디에 연결할까요?</div>
+    <div class="tag">saintiron82@gmail.com 로 로그인됨</div>
+    <button class="start-opt" onclick="go('search')" data-mock-id="start/recent" data-mock-name="최근 서버 (재방문자는 이 단계 생략하고 자동 접속)">
+      ⚡<div><div class="t">우리팀 라이브러리</div><div class="d">192.168.0.5:8000 · 마지막 접속 어제 — 바로 접속</div></div>
     </button>
-    <button class="start-opt" data-mock-id="start/join-server" data-mock-name="경로: 서버 접속 (일반 사용자)">
-      🔗<div><div class="t">팀 서버에 접속</div><div class="d">같은 네트워크에서 자동 발견 — 또는 주소 입력 + 서버 비밀번호</div></div>
+    <div class="start-div">또는</div>
+    <button class="start-opt" data-mock-id="start/create-server" data-mock-name="서버 만들기 (운영자 온보딩: 이름·서버 비밀번호→도메인)">
+      🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">팀의 라이브러리 서버 생성 — 이름·서버 비밀번호 → 도메인 선택</div></div>
     </button>
-    <div style="font-size:10px;color:var(--faint);text-align:center;margin-top:10px" data-mock-id="start/note" data-mock-name="자동 재접속 정책">로그인하면 마지막 서버·역할로 자동 접속됩니다 — 이 화면은 처음/로그아웃 시에만</div>
+    <button class="start-opt" data-mock-id="start/join-server" data-mock-name="다른 서버 접속">
+      🔗<div><div class="t">팀 서버에 접속</div><div class="d">같은 네트워크에서 자동 발견 — 또는 주소 + 서버 비밀번호</div></div>
+    </button>
+    <div style="font-size:10px;color:var(--faint);text-align:center;margin-top:10px" data-mock-id="start/note" data-mock-name="정책: 재방문 자동 접속">다음부터는 로그인하면 마지막 서버로 자동 접속됩니다</div>
   </div>
 </section>
 
@@ -752,8 +762,16 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 <div class="insp-hint" id="inspHint">Ctrl 누른 채 hover/클릭 = 요소 ID 확인/복사</div>
 
 <script>
+function startStep2(){
+  document.getElementById('start1').style.display='none';
+  document.getElementById('start2').style.display='';
+}
 /* ── 탭 ── */
 function go(id){
+  if(id==='start'){
+    document.getElementById('start1').style.display='';
+    document.getElementById('start2').style.display='none';
+  }
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('scr-'+id).classList.add('active');
   document.querySelectorAll('[data-scr]').forEach(b=>b.classList.toggle('active', b.dataset.scr===id));
