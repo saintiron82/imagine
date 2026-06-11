@@ -2,7 +2,7 @@
 WorkerScheduler — central task assignment for Analysis Job System v1.
 
 Implements Algorithm E' (Pressure-based scheduling):
-- GPU class detection (strong/weak/embedded/cpu)
+- GPU class detection (strong/weak/cpu)
 - Per-phase pressure = (pending / (workers_on + 1)) × phase_weight
 - MC penalty by GPU class (cpu can't, weak penalized)
 - Phase stability (don't switch if current phase has work — minimize model load)
@@ -32,7 +32,6 @@ PHASE_TIME = {"mc": 8, "vv": 0.5, "mv": 0.25}
 # None = cannot do MC at all
 MC_PENALTY = {
     "strong": 1.0,     # Full speed MC
-    "embedded": 1.0,   # Server-local, same as strong
     "weak": 2.0,       # Can do MC but slower → penalized
     # "cpu": None      # Cannot do MC (not in dict → excluded)
 }
@@ -61,7 +60,7 @@ class WorkerScheduler:
     """Central scheduler — decides phase + batch size for each worker.
 
     Algorithm E' (pressure-based):
-    1. Classify worker GPU (strong/weak/embedded/cpu)
+    1. Classify worker GPU (strong/weak/cpu)
     2. Calculate pressure per phase: (pending / (workers_on + 1)) × time_weight
     3. Apply MC penalty by GPU class
     4. Phase sticky: stay in current phase unless another has 2× pressure
@@ -83,7 +82,7 @@ class WorkerScheduler:
             "mv_speed": "REAL",
             "gpu_name": "TEXT",
             "vram_gb": "REAL",
-            "gpu_class": "TEXT",   # strong/weak/embedded/cpu
+            "gpu_class": "TEXT",   # strong/weak/cpu
         }
         for col, typedef in columns.items():
             try:
@@ -165,7 +164,7 @@ class WorkerScheduler:
             )
 
     def _classify_gpu(self, gpu: str, vram_gb: float, is_metal: bool) -> str:
-        """Classify GPU into: embedded, strong, weak, cpu."""
+        """Classify GPU into: strong, weak, cpu."""
         if not gpu and vram_gb == 0:
             return "cpu"
 

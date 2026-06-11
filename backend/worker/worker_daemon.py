@@ -128,7 +128,7 @@ try:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 except ValueError:
-    # signal only works in main thread — skip when imported from embedded worker
+    # signal only works in main thread — skip when imported as a library
     pass
 
 
@@ -162,8 +162,8 @@ class WorkerDaemon:
     """Headless worker that processes jobs from the Imagine server.
 
     Supports two transport modes:
-    - transport=None (default): HTTP-based, for external workers
-    - transport=LocalTransport: direct DB calls, for embedded worker
+    - transport=None (default): direct HTTP to the server
+    - transport=RelayTransport: WebSocket via the AWS control relay
     """
 
     def __init__(self, transport=None, origin: str = "headless", launcher: str = "cli"):
@@ -244,7 +244,7 @@ class WorkerDaemon:
     # ── Dual-Thread Start/Stop ────────────────────────────────
 
     def start(self):
-        """Start IO + Analysis threads. Both embedded and external use this."""
+        """Start IO + Analysis threads."""
         self._shutdown = False
         self._io_thread = threading.Thread(target=self._io_loop, daemon=True, name="worker-io")
         self._analysis_thread = threading.Thread(target=self._analysis_loop, daemon=True, name="worker-analysis")
@@ -275,10 +275,8 @@ class WorkerDaemon:
     def _io_loop(self):
         """IO thread: heartbeat, result upload, batch prefetch."""
         heartbeat_interval = 5
-        # Embedded worker holds a direct DB handle via LocalTransport; any
-        # leaked implicit transaction would wedge the entire process with
-        # "database is locked". Every iteration must end with an explicit
-        # rollback as a safety net (CLAUDE.md SQLite rule).
+        # If a transport ever exposes a direct DB handle, end every iteration
+        # with an explicit rollback as a safety net (CLAUDE.md SQLite rule).
         local_db = getattr(self.transport, "db", None)
         while not self._shutdown:
             try:
@@ -433,8 +431,7 @@ class WorkerDaemon:
     def set_tokens(self, access_token: str, refresh_token: str = None) -> bool:
         """Inject existing JWT tokens (skip login, reuse session from Electron).
 
-        Empty token is allowed only for non-HTTP transports such as the
-        embedded LocalTransport path.
+        Empty token is allowed only for non-HTTP transports (e.g. relay).
         """
         self.access_token = access_token or ""
         self.refresh_token = refresh_token
@@ -475,10 +472,10 @@ class WorkerDaemon:
 
     def _authed_request(self, method: str, url: str, **kwargs):
         """Make request with automatic token refresh on 401.
-        Embedded worker (transport set) should not call this — log and skip.
+        Custom transports (relay) should not call this — log and skip.
         """
         if self.transport:
-            logger.debug(f"[SKIP-HTTP] {method.upper()} {url} (using LocalTransport)")
+            logger.debug(f"[SKIP-HTTP] {method.upper()} {url} (custom transport)")
             # Return a fake 200 response to avoid crashes in HTTP-only call sites.
             import types
             fake = types.SimpleNamespace(status_code=200, text='{}', json=lambda: {})
@@ -575,9 +572,8 @@ class WorkerDaemon:
             )
             if resp.status_code == 200:
                 data = resp.json()
-                # Embedded worker (__builtin__) decides its own batch size per-phase.
-                # Only external workers take batch_hint from server.
-                if data.get("batch_hint") and self.worker_name != "__builtin__":
+                # Batch size follows the server's hint (scheduler-decided).
+                if data.get("batch_hint"):
                     old_cap = self.batch_capacity
                     self.batch_capacity = data["batch_hint"]
                     if old_cap != self.batch_capacity:
@@ -747,7 +743,7 @@ class WorkerDaemon:
         """Get thumbnail path for a pre-parsed job."""
         file_id = job.get("file_id")
 
-        # LocalTransport: read directly from DB/filesystem
+        # Custom transport (e.g. relay): delegate
         if self.transport:
             return self.transport.get_thumbnail(file_id)
 

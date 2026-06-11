@@ -57,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--launcher",
         default=os.getenv("IMAGINE_WORKER_LAUNCHER", "cli"),
-        choices=("cli", "service", "cloud"),
+        choices=("cli", "service", "cloud", "server"),
     )
     parser.add_argument("--poll-interval", type=int, default=5)
     # Relay-mode env / args
@@ -102,6 +102,7 @@ def load_headless_config(argv: list[str] | None = None) -> HeadlessWorkerConfig:
         access_token=args.access_token,
         refresh_token=args.refresh_token,
         worker_name=args.worker_name or f"{socket.gethostname()}-headless",
+        origin="server-local" if args.launcher == "server" else "headless",
         launcher=args.launcher,
         poll_interval=args.poll_interval,
         connect_mode=args.connect_mode,
@@ -151,6 +152,15 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
             except Exception:
                 pass
         return 0
+
+    if cfg.launcher == "server":
+        # Server-supervised local worker: exit when the server process dies
+        # (stdin pipe closes) so no residual worker outlives the server.
+        try:
+            from backend.utils.parent_watchdog import start_parent_watchdog
+            start_parent_watchdog()
+        except Exception:
+            pass
 
     daemon = WorkerDaemon(origin=cfg.origin, launcher=cfg.launcher)
     daemon.worker_name = cfg.worker_name

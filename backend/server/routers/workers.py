@@ -352,89 +352,6 @@ def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     pass
 
 
-# ── Builtin worker virtual session ──────────────────────────
-
-BUILTIN_WORKER_NAME = "embedded"
-
-
-def _ensure_builtin_worker_session(db: "SQLiteDB") -> int:
-    """Create or reactivate the virtual builtin worker session.
-
-    Returns the session_id.
-    """
-    now = _utcnow_sql()
-    cursor = db.conn.cursor()
-
-    # Check if already online
-    cursor.execute(
-        "SELECT id FROM worker_sessions WHERE worker_name = ? AND status = 'online'",
-        (BUILTIN_WORKER_NAME,),
-    )
-    row = cursor.fetchone()
-    if row:
-        return row[0]
-
-    # Try reactivating existing offline session
-    cursor.execute(
-        """UPDATE worker_sessions
-           SET status = 'online', last_heartbeat = ?, disconnected_at = NULL
-           WHERE worker_name = ? AND status = 'offline'""",
-        (now, BUILTIN_WORKER_NAME),
-    )
-    if cursor.rowcount > 0:
-        db.conn.commit()
-        cursor.execute(
-            "SELECT id FROM worker_sessions WHERE worker_name = ? AND status = 'online'",
-            (BUILTIN_WORKER_NAME,),
-        )
-        row = cursor.fetchone()
-        logger.info(f"Builtin worker session reactivated (id={row[0]})")
-        return row[0]
-    else:
-        db.conn.commit()  # Release WAL write lock from 0-row UPDATE
-
-    # Create new session — find the first admin user_id dynamically
-    batch_size = 5
-    try:
-        from backend.utils.config import get_config
-        batch_size = get_config().get("server.auto_processing.batch_size", 5)
-    except Exception:
-        pass
-
-    # Find an admin user_id (not hardcoded to 1)
-    cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
-    admin_row = cursor.fetchone()
-    admin_user_id = admin_row[0] if admin_row else 1
-
-    cursor.execute(
-        """INSERT INTO worker_sessions
-           (user_id, worker_name, hostname, batch_capacity, status,
-            processing_mode_override, connected_at, last_heartbeat)
-           VALUES (?, ?, 'server (built-in)', ?, 'online', NULL, ?, ?)""",
-        (admin_user_id, BUILTIN_WORKER_NAME, batch_size, now, now),
-    )
-    session_id = cursor.lastrowid
-    db.conn.commit()
-    logger.info(f"Builtin worker session created (id={session_id})")
-    return session_id
-
-
-def _deactivate_builtin_worker_session(db: "SQLiteDB"):
-    """Mark builtin worker session as offline."""
-    now = _utcnow_sql()
-    cursor = db.conn.cursor()
-    cursor.execute(
-        """UPDATE worker_sessions
-           SET status = 'offline', disconnected_at = ?,
-               current_job_id = NULL, current_file = NULL, current_phase = NULL
-           WHERE worker_name = ? AND status = 'online'""",
-        (now, BUILTIN_WORKER_NAME),
-    )
-    if cursor.rowcount > 0:
-        logger.info("Builtin worker session deactivated")
-    db.conn.commit()  # Always commit to release WAL write lock
-
-
 # ── Worker → Server endpoints ────────────────────────────────
 
 @router.post("/workers/connect")
@@ -445,15 +362,6 @@ def worker_connect(
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Register a new worker session."""
-    # Reject external workers when builtin_worker mode is active
-    global_mode = _get_global_processing_mode()
-    if global_mode == "builtin_worker":
-        logger.warning(f"Rejected worker connect from {req.worker_name}: builtin_worker mode active")
-        raise HTTPException(
-            status_code=409,
-            detail="Server is in built-in worker mode. External workers are not accepted."
-        )
-
     now = _utcnow_sql()
     cursor = db.conn.cursor()
 
@@ -649,44 +557,14 @@ def worker_heartbeat(
         _recalculate_server_pools(request.app, db)
 
     # Determine effective processing mode:
-    # - builtin_worker → stop external workers
     # - mc global → ALL workers get mc
     # - auto global → workers get their auto-detected mode (mc/vv/mv)
     global_mode = _get_global_processing_mode()
 
-    # In builtin_worker mode, tell external workers to stop
-    if global_mode == "builtin_worker":
-        # Check if this is an external worker (not the built-in one)
-        cursor.execute(
-            "SELECT worker_name FROM worker_sessions WHERE id = ?",
-            (req.session_id,)
-        )
-        name_row = cursor.fetchone()
-        if name_row and name_row[0] != BUILTIN_WORKER_NAME:
-            logger.info(f"Sending stop to external worker session {req.session_id}: builtin_worker mode active")
-            return {
-                "ok": True,
-                "command": "stop",
-                "pool_hint": 0,
-                "batch_hint": 0,
-                "processing_mode": "mc",
-            }
-
     mode_reason = None
     queue_snapshot = None
 
-    # Check if this is the embedded worker
-    cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
-    wn_row = cursor.fetchone()
-    is_builtin = wn_row and wn_row[0] == BUILTIN_WORKER_NAME
-
-    if is_builtin:
-        # Embedded worker decides its own mode from file_tasks — heartbeat is report-only.
-        # Just echo back current_phase from the worker's heartbeat.
-        processing_mode = req.current_phase or "mc"
-        mode_reason = "self_managed"
-        effective_batch = 0  # Not used — embedded worker sets its own batch size
-    elif global_mode == "mc":
+    if global_mode == "mc":
         processing_mode = "mc"
         mode_reason = "global_mode=mc"
         effective_batch = batch_override or batch_capacity
@@ -963,30 +841,8 @@ def admin_list_workers(
             "launcher": row[21],
         })
 
-    # BUG-005: override embedded worker's data from live memory
-    # (heartbeat may be blocked during long MC batch)
-    try:
-        from backend.server.embedded_worker import get_status as _ew_status
-        ew = _ew_status()
-        if ew.get("running"):
-            for w in workers:
-                if w["worker_name"] == "embedded":
-                    w["status"] = "online"  # force online if running
-                    w["current_phase"] = ew.get("current_phase") or w["current_phase"]
-                    w["current_file"] = ew.get("current_file") or w["current_file"]
-                    if ew.get("batch_capacity"):
-                        w["batch_capacity"] = ew["batch_capacity"]
-                    if ew.get("phase_counts"):
-                        w["phase_counts"] = ew["phase_counts"]
-                    if ew.get("phase_throughput"):
-                        if not w.get("resources"):
-                            w["resources"] = {}
-                        w["resources"]["phase_throughput"] = ew["phase_throughput"]
-                    if ew.get("throughput") and ew["throughput"] > 0:
-                        w["throughput"] = ew["throughput"]
-                    break
-    except Exception:
-        pass
+    # Local worker reports via normal HTTP heartbeats like external workers —
+    # no live-memory override needed (was BUG-005 for the in-process embedded worker).
 
     return {
         "workers": workers,
@@ -1119,59 +975,53 @@ def admin_update_auto_processing(
     if req.batch_size is not None:
         cfg.save_user_setting("server.auto_processing.batch_size", req.batch_size)
     if req.verbose_log is not None:
+        # Worker reads worker.verbose_log from config at startup
         cfg.save_user_setting("worker.verbose_log", req.verbose_log)
-        # Apply to running embedded worker immediately
-        try:
-            import backend.server.embedded_worker as ew_module
-            if ew_module._worker_daemon:
-                ew_module._worker_daemon.verbose_log = req.verbose_log
-        except Exception:
-            pass
 
     # Scheduler handles mode assignment — no global mode switching needed
 
-    # Start/stop embedded worker
-    # Note: start is handled by _activate_server Phase 6 (on login).
-    # This API only handles STOP (user explicitly disables).
-    if req.enabled is not None and not req.enabled:
-        _stop_embedded_worker()
+    # Start/stop local worker
+    if req.enabled is not None:
+        if req.enabled:
+            _start_local_worker(None)  # no-op if already running
+        else:
+            _stop_local_worker()
 
     logger.info(f"Admin updated auto_processing: enabled={req.enabled}, mode={req.mode}, rest={req.rest_after_batch_s}s")
     return {"ok": True}
 
 
-# ── Embedded Worker ──────────────────────────────────────────
+# ── Local Worker ─────────────────────────────────────────────
 
-def _start_embedded_worker(app):
-    """Start the embedded worker using LocalTransport (no HTTP needed)."""
-    from backend.server.embedded_worker import start_worker, get_status
+def _start_local_worker(app):
+    """Start the server machine's local worker process."""
+    from backend.server.local_worker import start_worker, get_status
 
     if get_status()["running"]:
         return
 
-    # server_url and access_token are unused by LocalTransport but kept for API compat
-    result = start_worker(server_url="", access_token="")
+    result = start_worker()
     if result.get("success"):
-        logger.info("Embedded worker started (LocalTransport)")
+        logger.info("Local worker started")
     else:
-        logger.warning(f"Embedded worker start failed: {result.get('error')}")
+        logger.warning(f"Local worker start failed: {result.get('error')}")
 
 
-def _stop_embedded_worker():
-    """Stop the embedded worker if running."""
-    from backend.server.embedded_worker import stop_worker, get_status
+def _stop_local_worker():
+    """Stop the local worker if running."""
+    from backend.server.local_worker import stop_worker, get_status
 
     if get_status()["running"]:
         result = stop_worker()
-        logger.info(f"Embedded worker stopped: {result}")
+        logger.info(f"Local worker stopped: {result}")
 
 
 @router.get("/admin/workers/embedded-worker")
 def admin_get_embedded_worker(
     admin: dict = Depends(require_admin),
 ):
-    """Get embedded worker status and config."""
-    from backend.server.embedded_worker import get_status
+    """Get local worker status and config."""
+    from backend.server.local_worker import get_status
     from backend.utils.config import get_config
 
     cfg = get_config()
@@ -1188,8 +1038,8 @@ def admin_update_embedded_worker(
     request: Request,
     admin: dict = Depends(require_admin),
 ):
-    """Enable or disable the embedded worker."""
-    from backend.server.embedded_worker import get_status
+    """Enable or disable the local worker."""
+    from backend.server.local_worker import get_status
     from backend.utils.config import get_config
 
     cfg = get_config()
@@ -1198,10 +1048,10 @@ def admin_update_embedded_worker(
         cfg._set_dotted("server.embedded_worker.enabled", req.enabled)
         # Start handled by _activate_server. Only stop here.
         if not req.enabled:
-            _stop_embedded_worker()
+            _stop_local_worker()
 
     status = get_status()
-    logger.info(f"Admin updated embedded_worker: enabled={req.enabled}, running={status['running']}")
+    logger.info(f"Admin updated local worker: enabled={req.enabled}, running={status['running']}")
     return {"ok": True, **status}
 
 
