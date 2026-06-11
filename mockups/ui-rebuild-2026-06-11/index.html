@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Imagine UI 재구축 목업 v19</title>
+<title>Imagine UI 재구축 목업 v20</title>
 <style>
 :root{
   --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
@@ -313,7 +313,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
 
 <!-- ══ 셸 ══ -->
 <header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
-  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v19</span></div>
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v20</span></div>
   <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
     <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
     <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
@@ -326,7 +326,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <button data-scr="settings" data-mock-id="shell/nav/item[settings]" data-mock-name="탭: 설정">설정</button>
   </div>
   <button class="srv-chip admin-only" onclick="go('admin')" data-mock-id="shell/server-status" data-mock-name="서버 상태 칩 (클릭→관리)">
-    <span class="sd"></span>서버 켜짐 · LAN 192.168.0.5:8000
+    <span class="sd"></span>서버 온라인 · 외부 접속 연결됨
   </button>
   <button class="role-chip" onclick="toggleRole()" data-mock-id="shell/demo[role-toggle]" data-mock-name="데모: 역할 전환">데모 · 역할: <b id="roleName">운영자</b> (클릭 전환)</button>
   <button class="role-chip" onclick="go('start')" data-mock-id="shell/demo[start]" data-mock-name="데모: 시작 화면 보기">시작 화면</button>
@@ -361,7 +361,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
       🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">팀의 라이브러리 서버 생성 — 3단계, 1분</div></div>
     </button>
     <button class="start-opt" data-mock-id="start/join-server" data-mock-name="다른 서버 접속">
-      🔗<div><div class="t">초대 코드로 팀 서버 가입</div><div class="d">운영자에게 받은 코드 입력 — 같은 네트워크면 서버 자동 발견</div></div>
+      🔗<div><div class="t">초대 코드로 팀 서버 가입</div><div class="d">코드만 입력하면 서버를 자동으로 찾습니다 — 주소 불필요</div></div>
     </button>
     <div style="font-size:10px;color:var(--faint);text-align:center;margin-top:10px" data-mock-id="start/note" data-mock-name="정책: 재방문 자동 접속">다음부터는 로그인하면 마지막 서버로 자동 접속됩니다</div>
   </div>
@@ -391,7 +391,7 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <div class="done-box">
       <div class="ic">🖥️✅</div>
       <h3 style="margin-top:6px">서버가 켜졌습니다</h3>
-      <p>우리팀 라이브러리 · LAN 192.168.0.5:8000<br>팀원에게 줄 <b>첫 초대 코드</b>가 준비됐습니다</p>
+      <p>우리팀 라이브러리 — 어디서나 접속됩니다<br><b>주소를 알릴 필요 없음</b> · 팀원에겐 초대 코드만 보내면 됩니다</p>
     </div>
     <div style="display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:10px 0;justify-content:center">
       <span class="mono" style="font-family:ui-monospace,monospace;font-weight:700;letter-spacing:.05em">KX7M-2QPD-9RTF</span>
@@ -655,6 +655,8 @@ td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
     <div id="adm-tools" style="display:none">
       <div class="panel"><h4>서버 도구 <span class="hint">DB·정합성·연결 — 구 헤더 DB 메뉴가 여기로</span></h4>
         <table>
+          <tr><td>외부 접속 (Cloudflare 터널)</td><td style="color:var(--emerald);font-size:11px">● 연결됨 — ourteam.imagine.app · 주소 공유 불필요</td><td><div class="row-act"><button>재연결</button></div></td></tr>
+          <tr><td>같은 네트워크 (LAN)</td><td style="color:var(--faint);font-size:11px">192.168.0.5:8000 · 빠른 경로 (자동 발견)</td><td></td></tr>
           <tr><td>정합성 감사</td><td style="color:var(--faint);font-size:11px">미완성/잔여 작업 검사·복구</td><td><div class="row-act"><button>실행</button></div></td></tr>
           <tr><td>해시 백필</td><td style="color:var(--faint);font-size:11px">파생물 캐시 자격 부여 (~16KB/파일)</td><td><div class="row-act"><button>실행</button></div></td></tr>
           <tr><td>DB 내보내기 / 가져오기</td><td></td><td><div class="row-act"><button>내보내기</button><button>가져오기</button></div></td></tr>
