@@ -395,7 +395,7 @@ POST /api/v1/tasks/complete-batch
 | **M1** | ✅ **완료 (2026-06-11, b8810a6)** — DDL(양 경로), get_model_version 단일 소스(도메인 내용 해시 자동 포함), 3개 저장 엔드포인트 shadow write | 낮음 | 테스트 7건, 전체 454 passed |
 | **M2** | 🔧 **도구 완료 (e736433)** — 미해시 14,156건 전부 WebDAV임을 실측, 경계 해시라 **Range 요청 16KB/파일(총 ~230MB)로 백필 가능**. POST /admin/backfill-hashes (백그라운드, 진행 status). **실행은 운영자 트리거 대기** | 낮음 | 동치성·스킵·E2E 테스트 8건 |
 | **M3** | ✅ **완료 (2026-06-11)** — lookup/materialize/apply_cache_hits + 파싱 풀 배선 + cache_hit 컬럼. **설계 외 정합성 규칙 추가: MV 히트는 MC 동시 히트 시에만** (MV는 MC 캡션의 함수). 차원 불일치 캐시는 안전 강등(워커 재계산) | 중간 | 테스트 4건 (실 파이프라인 중복 PNG E2E 포함) |
-| **M4** | 모델 레지스트리 활성 버전 + 파도 잡 생성기 | 중간 | 소형 파도 E2E |
+| **M4** | ✅ **완료 (2026-06-11, 10d24ff)** — waves.py + POST /admin/waves/{phase}?dry_run. mc 파도는 mv 동반 재계산, 활성 잡 중복 배제, 입력 요건 필터(썸네일/캡션). 결과 인제스트 배칭(complete-batch ≤50 + 워커 버퍼 10건/배치경계/disconnect flush, 404 폴백) 동반 구현 | 중간 | 테스트 13건 |
 | **M5** | rebuild 배지를 registry 조회로 단순화, 구버전 파생물 GC 정책(보존 1세대) | 낮음 | 기존 배지와 결과 동치 확인 |
 | **병행 A** | 스케줄러: time-to-drain + 배치 공식 (CAS 무관, 독립 배포 가능) | 중간 | 시뮬레이션 단위 테스트(워커 프로필 조합별 assign 분포) |
 | **병행 B** | 공급 자동 스케일 + 바이트 회계 + staging_manifest | 중간 | 재시작 생존 E2E, 대량 합성 파일 |
