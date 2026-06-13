@@ -157,6 +157,24 @@ def get_db_path() -> str:
     return str(PROJECT_ROOT / "imageparser.db")
 
 
+def get_browse_config() -> dict:
+    """Local-folder browse policy.
+
+    `allowed_roots` is an explicit whitelist of absolute directories the
+    /browse/local endpoint may enumerate. Empty by default → local browse is
+    DISABLED (exposing the server filesystem over HTTP is opt-in only).
+    Override roots with IMAGINE_BROWSE_ROOTS (os.pathsep-separated).
+    """
+    cfg = get_server_config()
+    browse = dict(cfg.get("browse", {}) or {})
+    roots = list(browse.get("allowed_roots", []) or [])
+    env_roots = os.getenv("IMAGINE_BROWSE_ROOTS")
+    if env_roots:
+        roots = [p for p in env_roots.split(os.pathsep) if p.strip()]
+    browse["allowed_roots"] = roots
+    return browse
+
+
 def get_relay_config() -> dict:
     """Phase 5: relay connector settings (env vars override config.yaml)."""
     try:

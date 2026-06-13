@@ -155,7 +155,7 @@ def _activate_server(app_instance):
     t1 = _time.perf_counter()
     try:
         from backend.server.queue.download_ahead import (
-            DownloadAheadPool, register_webdav_source,
+            DownloadAheadPool, register_webdav_source, load_persisted_sources,
         )
         app_instance.state.download_ahead = DownloadAheadPool(db)
         app_instance.state.download_ahead.start()
@@ -169,6 +169,8 @@ def _activate_server(app_instance):
                     n_sources += 1
             except Exception:
                 pass
+        # Runtime-registered sources (added via POST /api/v1/sources) survive restart.
+        n_sources += load_persisted_sources()
         _log(f"Phase 3a: DownloadAheadPool started ({n_sources} WebDAV sources) {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
         _log(f"Phase 3a FAILED: DownloadAheadPool: {e}")
@@ -323,6 +325,7 @@ from backend.server.routers.tools import router as tools_router
 from backend.server.routers.connection_info import router as connection_info_router
 from backend.server.routers.search_feedback import router as search_feedback_router
 from backend.server.routers.feedback_dashboard import router as feedback_dashboard_router
+from backend.server.routers.browse import router as browse_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -343,6 +346,7 @@ app.include_router(tools_router, prefix="/api/v1")
 app.include_router(connection_info_router, prefix="/api/v1")
 app.include_router(search_feedback_router, prefix="/api/v1")
 app.include_router(feedback_dashboard_router, prefix="/api/v1")
+app.include_router(browse_router, prefix="/api/v1")
 
 
 @app.post("/api/v1/server/activate")

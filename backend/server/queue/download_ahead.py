@@ -33,10 +33,63 @@ _webdav_sources: Dict[str, dict] = {}
 _sources_lock = threading.Lock()
 
 
-def register_webdav_source(source_config: dict):
+def _sources_file() -> "Path":
+    """Persistence path for runtime-registered WebDAV sources.
+
+    Override with IMAGINE_WEBDAV_SOURCES_FILE; defaults to project root.
+    Contains plaintext credentials (same trust model as IMAGINE_WEBDAV_SOURCES
+    env) — file is created 0600 and gitignored, never committed.
+    """
+    from pathlib import Path
+    import os as _os
+    override = _os.environ.get("IMAGINE_WEBDAV_SOURCES_FILE")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[3] / "webdav_sources.json"
+
+
+def _persist_sources() -> None:
+    """Write the current in-memory sources to disk (best-effort, 0600)."""
+    import os as _os
+    try:
+        with _sources_lock:
+            snapshot = list(_webdav_sources.values())
+        path = _sources_file()
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f, ensure_ascii=False)
+        try:
+            _os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        _os.replace(tmp, path)
+    except Exception as e:  # persistence is best-effort, never fatal
+        logger.warning(f"Failed to persist WebDAV sources: {e}")
+
+
+def load_persisted_sources() -> int:
+    """Load runtime-registered sources from disk at startup. Returns count."""
+    path = _sources_file()
+    if not path.exists():
+        return 0
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            sources = json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load persisted WebDAV sources: {e}")
+        return 0
+    n = 0
+    for src in sources or []:
+        register_webdav_source(src, persist=False)
+        n += 1
+    return n
+
+
+def register_webdav_source(source_config: dict, persist: bool = False):
     """Register a WebDAV source config for download-ahead access.
 
-    Called by server API when Electron adds/updates a source.
+    Called by server API when a source is added/updated. When persist=True,
+    the updated source set is written to disk so it survives restart.
     """
     source_id = source_config.get("id")
     if not source_id:
@@ -45,7 +98,23 @@ def register_webdav_source(source_config: dict):
     with _sources_lock:
         _webdav_sources[source_id] = source_config
         logger.info(f"WebDAV source registered: {source_id}")
+    if persist:
+        _persist_sources()
 
+
+def remove_webdav_source(source_id: str, persist: bool = True) -> bool:
+    """Remove a registered WebDAV source. Returns True if it existed."""
+    with _sources_lock:
+        existed = _webdav_sources.pop(source_id, None) is not None
+    if existed and persist:
+        _persist_sources()
+    return existed
+
+
+def list_webdav_sources() -> list:
+    """Return a copy of all registered WebDAV source configs."""
+    with _sources_lock:
+        return [dict(s) for s in _webdav_sources.values()]
 
 
 def get_webdav_source(source_id: str) -> Optional[dict]:

@@ -73,3 +73,6 @@ benchmarks/reviews/**/*backup*
 # Misc
 nul
 config.yaml
+
+# Runtime-registered WebDAV sources (plaintext creds — never commit)
+webdav_sources.json
