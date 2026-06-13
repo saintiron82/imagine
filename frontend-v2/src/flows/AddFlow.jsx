@@ -1,16 +1,26 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useFolders } from '../api/folders'
+import { useRegisterJob } from '../api/jobs'
 
 /**
  * + 추가 — 분석 작업 등록 플로우.
  * 원칙(확정): 폴더 지정형(파일 단위 없음) · 경로 타이핑 금지(시각 탐색) ·
  * 등록 의미론("시작"이 아니라 분석 리스트에 등록) · 뒤로 = 실제 지나온 길의
  * 역순(이력 스택) · 기본값 2클릭 완주 + 세부는 점진 공개.
+ *
+ * 백엔드 연동:
+ * - 등록 = POST /api/v1/discover/scan (실제 잡 생성)
+ * - 탐색 후보 = 서버가 아는 폴더(archive/folders). 미연결 시 데모 카드.
+ * - 한계: 서버에 폴더-브라우즈/NAS 소스 등록 HTTP API 가 없어, 한 번도 스캔된 적
+ *   없는 "신규 소스"의 시각 탐색은 아직 불가(백엔드 이슈로 분리). 경로 타이핑은
+ *   원칙상 금지이므로 임시 입력란을 두지 않는다 — 연결 시 "아는 폴더"에서 고른다.
  */
 const VIEWS = { SOURCE: 'source', NAS: 'nas', BROWSE: 'browse', DETAIL: 'detail', DONE: 'done' }
 const BAR = { source: 1, nas: 1, browse: 2, detail: 3, done: 4 }
 
-const FOLDER_CARDS = [
+// 데모(미연결) 폴더 카드
+const DEMO_CARDS = [
   { id: 'concept', name: '신규 컨셉 2026-06', info: '412개 파일', tag: ['new', '미분석'], mosaic: null },
   { id: 'chars', name: '캐릭터', info: '3,100개', tag: ['done', '분석됨 98%'], mosaic: ['#1e3a5f,#2d4a73', '#33272b,#4a3a40', '#1d3146,#28455e', '#2a2a3e,#3c3c5c'] },
   { id: 'bg', name: '배경', info: '880개', tag: ['done', '분석 41%'], mosaic: ['#1e3a4a,#2a5468', '#27344a,#3a4a66', null, null] },
@@ -18,11 +28,30 @@ const FOLDER_CARDS = [
   { id: 'trash', name: '폐기예정', info: '12개', tag: null, mosaic: null },
 ]
 
+function foldersToCards(folders) {
+  return folders.map(f => ({
+    id: f.path,
+    name: f.name,
+    path: f.path,
+    info: `${f.total.toLocaleString()}개`,
+    tag: f.fullyDone ? ['done', '완료'] : f.pct > 0 ? ['done', `분석 ${f.pct}%`] : ['new', '미분석'],
+    mosaic: null,
+  }))
+}
+
 export default function AddFlow({ onClose }) {
+  const { isDemo, folders } = useFolders()
+  const register = useRegisterJob()
+  const navigate = useNavigate()
+
   const [view, setView] = useState(VIEWS.SOURCE)
   const [stack, setStack] = useState([])
-  const [picked, setPicked] = useState('concept')
-  const navigate = useNavigate()
+  const [picked, setPicked] = useState('')
+  const [priority, setPriority] = useState(false)
+
+  const cards = isDemo ? DEMO_CARDS : foldersToCards(folders)
+  const effId = picked || cards[0]?.id || ''
+  const pickedCard = cards.find(c => c.id === effId) || null
 
   const navTo = v => { setStack(s => [...s, view]); setView(v) }
   const goBack = () => setStack(s => {
@@ -32,7 +61,15 @@ export default function AddFlow({ onClose }) {
   })
   const showBack = stack.length > 0 && view !== VIEWS.DONE
 
-  const pickedName = FOLDER_CARDS.find(c => c.id === picked)?.name
+  // 작업 등록: 연결 시 discover/scan, 데모는 그냥 완료 화면
+  const onRegister = () => {
+    if (isDemo || !pickedCard?.path) { navTo(VIEWS.DONE); return }
+    register.mutate(
+      { folderPath: pickedCard.path, priority, name: pickedCard.name },
+      { onSuccess: () => navTo(VIEWS.DONE) },
+    )
+  }
+  const registeredTotal = register.data?.total_files ?? pickedCard?.info?.replace(/[^0-9]/g, '') ?? '412'
 
   return (
     <div className="overlay open" onClick={e => { if (e.target.classList.contains('overlay')) onClose() }}>
@@ -57,7 +94,7 @@ export default function AddFlow({ onClose }) {
               🌐<div><div className="t">NAS 폴더</div><div className="d">등록된 NAS에서 탐색 — 또는 새 NAS 연결</div></div>
             </button>
             <button className="src-opt" onClick={() => navTo(VIEWS.BROWSE)}>
-              ♻️<div><div className="t">등록된 폴더 다시 분석</div><div className="d">로컬/컨셉아트 — 다시 분석 필요 <span style={{ color: 'var(--red)' }}>●</span></div></div>
+              ♻️<div><div className="t">등록된 폴더 다시 분석</div><div className="d">서버가 아는 폴더에서 선택</div></div>
             </button>
             <div className="m-acts"><button className="sec" onClick={onClose}>취소</button></div>
           </div>
@@ -75,6 +112,7 @@ export default function AddFlow({ onClose }) {
               <div className="fr"><input placeholder="계정" /><input type="password" placeholder="비밀번호" /></div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <button className="sec" style={{ border: '1px solid var(--line)', borderRadius: 6, padding: '5px 14px', fontSize: 11.5 }}>연결 테스트</button>
+                <span style={{ fontSize: 10, color: 'var(--faint)' }}>새 NAS 연결·탐색은 서버 지원 준비 중</span>
               </div>
             </div>
           </div>
@@ -82,6 +120,11 @@ export default function AddFlow({ onClose }) {
 
         {view === VIEWS.BROWSE && (
           <div>
+            {!isDemo && (
+              <p style={{ fontSize: 10.5, color: 'var(--faint)', margin: '0 0 8px' }}>
+                서버가 아는 폴더에서 선택 — 새 소스의 시각 탐색은 준비 중
+              </p>
+            )}
             <div className="browse-wrap">
               <div className="btree">
                 <div className="btn-node"><span className="tw">▾</span>🌐 synology-main</div>
@@ -94,11 +137,11 @@ export default function AddFlow({ onClose }) {
               <div className="bpane">
                 <div className="crumb">
                   <button>synology-main</button><span className="sep">▸</span><button>작업분</button><span className="sep">▸</span><b>2026</b>
-                  <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--faint)' }}>하위 폴더 5개</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--faint)' }}>{cards.length}개 폴더</span>
                 </div>
                 <div className="fgrid" style={{ maxHeight: 'none', flex: 1 }}>
-                  {FOLDER_CARDS.map(c => (
-                    <div key={c.id} className={`fcard ${picked === c.id ? 'sel' : ''}`} onClick={() => setPicked(c.id)}>
+                  {cards.map(c => (
+                    <div key={c.id} className={`fcard ${effId === c.id ? 'sel' : ''}`} onClick={() => setPicked(c.id)}>
                       {c.mosaic ? (
                         <div className="mosaic">
                           {c.mosaic.map((m, i) => (
@@ -112,16 +155,21 @@ export default function AddFlow({ onClose }) {
                       <div className="finfo">{c.info} {c.tag && <span className={`ftag ${c.tag[0]}`}>{c.tag[1]}</span>}</div>
                     </div>
                   ))}
+                  {cards.length === 0 && (
+                    <div style={{ fontSize: 11.5, color: 'var(--faint)', padding: 12 }}>아직 서버가 아는 폴더가 없습니다</div>
+                  )}
                 </div>
               </div>
             </div>
             <div className="pick-bar">
-              <span className="sel-name">📁 {pickedName}</span>
+              <span className="sel-name">📁 {pickedCard?.name || '폴더 선택'}</span>
               <label className="chk" style={{ fontSize: 11.5 }}><input type="checkbox" defaultChecked /> 하위 포함</label>
               <label className="chk" style={{ fontSize: 11.5 }}><input type="checkbox" defaultChecked /> 새 파일 자동 분석</label>
               <span style={{ flex: 1 }} />
               <button className="sec" onClick={() => navTo(VIEWS.DETAIL)}>세부 옵션</button>
-              <button className="pri" onClick={() => navTo(VIEWS.DONE)}>작업 등록</button>
+              <button className="pri" disabled={!pickedCard || register.isPending} onClick={onRegister}>
+                {register.isPending ? '등록 중…' : '작업 등록'}
+              </button>
             </div>
           </div>
         )}
@@ -140,10 +188,12 @@ export default function AddFlow({ onClose }) {
               <label className="radio"><input type="radio" name="md" /> <b>모델 파도</b> — 새 모델 버전 기준 재처리</label>
             </div>
             <div className="frow">
-              <label className="chk"><input type="checkbox" /> ⚡ 우선 처리 — 다른 작업보다 먼저</label>
+              <label className="chk"><input type="checkbox" checked={priority} onChange={e => setPriority(e.target.checked)} /> ⚡ 우선 처리 — 다른 작업보다 먼저</label>
             </div>
             <div className="m-acts">
-              <button className="pri" onClick={() => navTo(VIEWS.DONE)}>작업 등록</button>
+              <button className="pri" disabled={!pickedCard || register.isPending} onClick={onRegister}>
+                {register.isPending ? '등록 중…' : '작업 등록'}
+              </button>
             </div>
           </div>
         )}
@@ -153,7 +203,7 @@ export default function AddFlow({ onClose }) {
             <div className="done-box">
               <div className="ic">✅</div>
               <h3 style={{ marginTop: 6 }}>분석 리스트에 등록되었습니다</h3>
-              <p>412개 파일 · <b>진행 중인 작업 2개와 공정하게 배분</b>되어 처리됩니다<br />캐시 적중분은 즉시 완료 · <b>파싱되는 대로 검색에 나타납니다</b></p>
+              <p>{Number(registeredTotal).toLocaleString()}개 파일 · <b>진행 중인 작업과 공정하게 배분</b>되어 처리됩니다<br />캐시 적중분은 즉시 완료 · <b>파싱되는 대로 검색에 나타납니다</b></p>
             </div>
             <div className="m-acts">
               <button className="sec" onClick={onClose}>닫기</button>
