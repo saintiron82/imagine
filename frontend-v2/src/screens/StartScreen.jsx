@@ -62,9 +62,6 @@ export default function StartScreen() {
           <div style={{ fontSize: 10.5, color: 'var(--faint)', textAlign: 'center', marginTop: 8 }}>
             계정이 없나요? <span style={{ color: '#93c5fd', cursor: 'pointer' }}>imagine.app에서 가입</span> — 초대 수락·구매도 거기서
           </div>
-          <div style={{ textAlign: 'center', marginTop: 12 }}>
-            <span style={{ fontSize: 10.5, color: 'var(--faint)', cursor: 'pointer' }} onClick={() => navigate('/search')}>로그인 없이 데모로 둘러보기 →</span>
-          </div>
         </div>
       )}
 

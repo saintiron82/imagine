@@ -1,20 +1,29 @@
 import { useState } from 'react'
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, Navigate, useNavigate } from 'react-router-dom'
 import { useApp } from '../state/AppContext'
 import { useAuth } from '../state/AuthContext'
 import AddFlow from '../flows/AddFlow'
 
 /**
  * 앱 셸 — 상단 내비게이션 + 전역 [+ 추가] + 서버 상태 칩.
+ * 하드 인증 게이트: 미인증이면 어떤 화면도 렌더하지 않고 /start(로그인)로 보낸다.
  * 역할 게이팅: 일반 사용자에겐 폴더/분석/관리/+추가가 존재하지 않는 앱처럼 보인다.
  */
 export default function AppShell() {
   const { isOperator, toggleRole, role, server } = useApp()
-  const { connected, firebaseUser, serverName, signOutAll } = useAuth()
+  const { connected, checking, firebaseUser, serverName, signOutAll } = useAuth()
   const navigate = useNavigate()
   const [addOpen, setAddOpen] = useState(false)
 
   const tab = ({ isActive }) => (isActive ? 'active' : '')
+
+  // 하드 게이트: 저장된 세션 검증 중에는 빈 화면, 미인증이면 로그인으로 강제 이동.
+  if (checking) {
+    return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--faint)', fontSize: 13 }}>인증 확인 중…</div>
+  }
+  if (!connected) {
+    return <Navigate to="/start" replace />
+  }
 
   return (
     <>
