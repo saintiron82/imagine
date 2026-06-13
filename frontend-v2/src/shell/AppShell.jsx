@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useApp } from '../state/AppContext'
+import { useAuth } from '../state/AuthContext'
 import AddFlow from '../flows/AddFlow'
 
 /**
@@ -9,6 +10,7 @@ import AddFlow from '../flows/AddFlow'
  */
 export default function AppShell() {
   const { isOperator, toggleRole, role, server } = useApp()
+  const { connected, firebaseUser, serverName, signOutAll } = useAuth()
   const navigate = useNavigate()
   const [addOpen, setAddOpen] = useState(false)
 
@@ -33,8 +35,15 @@ export default function AppShell() {
         </div>
         {isOperator && server.online && (
           <button className="srv-chip" onClick={() => navigate('/admin')}>
-            <span className="sd" />서버 온라인{server.external ? ' · 외부 접속 연결됨' : ''}
+            <span className="sd" />{connected ? (serverName || '서버') : '서버'} 온라인{server.external ? ' · 외부 접속 연결됨' : ''}
           </button>
+        )}
+        {connected ? (
+          <button className="role-chip" title={firebaseUser?.email || ''} onClick={signOutAll}>
+            {firebaseUser?.email ? firebaseUser.email.split('@')[0] : '로그인됨'} · <b>로그아웃</b>
+          </button>
+        ) : (
+          <button className="role-chip" onClick={() => navigate('/start')}>로그인</button>
         )}
         <button className="role-chip" onClick={toggleRole}>
           데모 · 역할: <b>{role === 'operator' ? '운영자' : '일반 사용자'}</b>

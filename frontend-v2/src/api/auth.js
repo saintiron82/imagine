@@ -1,0 +1,164 @@
+/**
+ * Auth API — Firebase connect, refresh, me, server init/reset.
+ */
+
+import { apiClient, setTokens, clearTokens, getServerUrl } from './client';
+
+function buildInitHeaders(setupToken) {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = (setupToken || '').trim();
+  if (token) {
+    headers['X-Imagine-Setup-Token'] = token;
+  }
+  return headers;
+}
+
+export async function getMe() {
+  return apiClient.get('/api/v1/auth/me');
+}
+
+export function logout() {
+  clearTokens();
+}
+
+/**
+ * Test server connection (unauthenticated health check).
+ */
+export async function checkServerHealth() {
+  try {
+    const base = getServerUrl();
+    if (!base) return { ok: false, error: 'No server URL configured' };
+
+    const resp = await fetch(`${base}/api/v1/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      return { ok: true, version: data.version, serverName: data.server_name || null };
+    }
+    return { ok: false, error: `HTTP ${resp.status}` };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Get public server info (no auth required).
+ * Returns { group_name, initialized, version }.
+ */
+export async function getServerInfo(baseUrl) {
+  try {
+    const base = baseUrl || getServerUrl();
+    if (!base) return { ok: false, error: 'No server URL' };
+
+    const resp = await fetch(`${base}/api/v1/server/info`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      return { ok: true, ...data };
+    }
+    return { ok: false, error: `HTTP ${resp.status}` };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Initialize server (first-time setup).
+ */
+export async function initServer(baseUrl, {
+  group_name,
+  server_password,
+  admin_username,
+  admin_password,
+  firebase_uid,
+  firebase_email,
+  setupToken,
+  setup_token,
+}) {
+  const body = { group_name, server_password, admin_username, admin_password };
+  if (firebase_uid) body.firebase_uid = firebase_uid;
+  if (firebase_email) body.firebase_email = firebase_email;
+  const resp = await fetch(`${baseUrl}/api/v1/server/init`, {
+    method: 'POST',
+    headers: buildInitHeaders(setupToken || setup_token),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10000),
+  });
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error(`Server error (HTTP ${resp.status})`);
+  }
+  if (!resp.ok) {
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+  // Return first-run tokens; the caller stores them only after post-init work succeeds.
+  return data;
+}
+
+// ── Firebase Auth integration ───────────────────────────────
+
+/**
+ * Connect to server using Firebase ID Token + server password (2-layer auth).
+ * Server verifies both credentials and returns session JWT.
+ */
+export async function firebaseConnect(idToken, serverPassword) {
+  const data = await apiClient.post('/api/v1/auth/connect', {
+    firebase_id_token: idToken,
+    server_password: serverPassword,
+  });
+  if (data.access_token) {
+    setTokens(data.access_token, data.refresh_token);
+  }
+  return data;
+}
+
+/**
+ * Initialize server with Firebase Auth (Electron create group).
+ */
+export async function firebaseInitServer(baseUrl, { group_name, id_token, setupToken, setup_token }) {
+  const resp = await fetch(`${baseUrl}/api/v1/server/firebase-init`, {
+    method: 'POST',
+    headers: buildInitHeaders(setupToken || setup_token),
+    body: JSON.stringify({ group_name, id_token }),
+    signal: AbortSignal.timeout(10000),
+  });
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error(`Server error (HTTP ${resp.status})`);
+  }
+  if (!resp.ok) {
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+  return data;
+}
+
+/**
+ * Reset group (auth data). File data is preserved.
+ * Requires server password for security.
+ */
+export async function resetGroup(baseUrl, serverPassword) {
+  const resp = await fetch(`${baseUrl}/api/v1/server/reset-group`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ server_password: serverPassword }),
+    signal: AbortSignal.timeout(10000),
+  });
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error(`Server error (HTTP ${resp.status})`);
+  }
+  if (!resp.ok) {
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+  return data;
+}
