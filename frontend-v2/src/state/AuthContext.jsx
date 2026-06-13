@@ -1,8 +1,11 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { getAccessToken, setServerUrl, clearTokens } from '../api/client'
-import { onAuthStateChanged, getIdToken, signIn, signUp, signInWithGoogle, signOut as fbSignOut } from '../api/firebaseAuth'
 import { firebaseConnect, getMe } from '../api/auth'
 import { lookupGroup } from '../api/firebase'
+
+// Firebase SDK 는 무겁다 → 동적 import 로 별도 청크 분리(초기 로드 경량화).
+// firebaseAuth 가 firebaseApp(SDK init)을 끌어오므로 이 모듈만 lazy 하면 충분.
+const fb = () => import('../api/firebaseAuth')
 
 /**
  * 인증(2층): Firebase 신원 + 서버 JWT(/auth/connect).
@@ -23,12 +26,16 @@ export function AuthProvider({ children }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  // Firebase 인증 상태 관찰 (오프라인이면 user=null 로 resolve — 앱은 데모로 동작)
+  // Firebase 인증 상태 관찰 (동적 로드 — 오프라인이면 user=null 로 resolve)
   useEffect(() => {
     let unsub = () => {}
-    try { unsub = onAuthStateChanged(u => { setFirebaseUser(u); setAuthLoading(false) }) }
-    catch { setAuthLoading(false) }
-    return () => unsub()
+    let alive = true
+    fb().then(m => {
+      if (!alive) return
+      try { unsub = m.onAuthStateChanged(u => { setFirebaseUser(u); setAuthLoading(false) }) }
+      catch { setAuthLoading(false) }
+    }).catch(() => setAuthLoading(false))
+    return () => { alive = false; unsub() }
   }, [])
 
   // 토큰이 이미 있으면 connected 로 보고 me 로 검증(실패 시 해제)
@@ -37,9 +44,9 @@ export function AuthProvider({ children }) {
     getMe().then(() => setConnected(true)).catch(() => { clearTokens(); setConnected(false) })
   }, [])
 
-  const signInEmail = useCallback((email, pw) => signIn(email, pw), [])
-  const signUpEmail = useCallback((email, pw, name) => signUp(email, pw, name), [])
-  const signInGoogle = useCallback(() => signInWithGoogle(), [])
+  const signInEmail = useCallback(async (email, pw) => (await fb()).signIn(email, pw), [])
+  const signUpEmail = useCallback(async (email, pw, name) => (await fb()).signUp(email, pw, name), [])
+  const signInGoogle = useCallback(async () => (await fb()).signInWithGoogle(), [])
 
   /** 서버 연결: 그룹 조회 → URL 설정 → Firebase idToken → /auth/connect */
   const connectToServer = useCallback(async (groupName, serverPassword, directUrl) => {
@@ -52,7 +59,7 @@ export function AuthProvider({ children }) {
         url = group.url
       }
       setServerUrl(url)
-      const idToken = await getIdToken()
+      const idToken = await (await fb()).getIdToken()
       if (!idToken) throw new Error('먼저 로그인하세요')
       await firebaseConnect(idToken, serverPassword) // 성공 시 토큰 저장
       try { localStorage.setItem(SERVER_NAME_KEY, groupName) } catch {}
@@ -70,7 +77,7 @@ export function AuthProvider({ children }) {
   const disconnect = useCallback(() => { clearTokens(); setConnected(false) }, [])
   const signOutAll = useCallback(async () => {
     disconnect()
-    try { await fbSignOut() } catch {}
+    try { await (await fb()).signOut() } catch {}
   }, [disconnect])
 
   const value = {
