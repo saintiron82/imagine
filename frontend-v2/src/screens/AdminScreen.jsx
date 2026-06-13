@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useWorkers, useClusterValves, useWorkerControl } from '../api/admin'
+import { useConnectionInfo } from '../api/connection'
 
 /**
  * 관리 — 엔진룸. 기술 용어(MC/VV/MV)는 운영자 전용인 이 화면에만 허용된다.
@@ -169,9 +170,15 @@ function MembersPanel() {
 }
 
 function ToolsPanel() {
+  const { isDemo, external, lan } = useConnectionInfo()
+  const extDesc = external?.available
+    ? `● 연결됨 — ${external.url || '터널'} · 주소 공유 불필요`
+    : '○ 외부 접속 꺼짐 — 터널 미연결'
+  const lanDesc = lan?.available ? `${lan.url} · 빠른 경로 (자동 발견)` : 'LAN 경로 없음'
+
   const rows = [
-    ['외부 접속 (Cloudflare 터널)', '● 연결됨 — ourteam.imagine.app · 주소 공유 불필요', ['재연결'], 'var(--emerald)'],
-    ['같은 네트워크 (LAN)', '192.168.0.5:8000 · 빠른 경로 (자동 발견)', []],
+    ['외부 접속 (Cloudflare 터널)', extDesc, ['재연결'], external?.available ? 'var(--emerald)' : 'var(--faint)'],
+    ['같은 네트워크 (LAN)', lanDesc, []],
     ['정합성 감사', '미완성/잔여 작업 검사·복구', ['실행']],
     ['해시 백필', '파생물 캐시 자격 부여 (~16KB/파일)', ['실행']],
     ['DB 내보내기 / 가져오기', '', ['내보내기', '가져오기']],
@@ -179,7 +186,7 @@ function ToolsPanel() {
   ]
   return (
     <div className="panel">
-      <h4>서버 도구 <span className="hint">DB·정합성·연결 — 구 헤더 DB 메뉴가 여기로</span></h4>
+      <h4>서버 도구 <span className="hint">DB·정합성·연결 — 구 헤더 DB 메뉴가 여기로{isDemo && ' · ● 데모'}</span></h4>
       <table>
         <tbody>
           {rows.map(([name, desc, actions, color, danger]) => (
