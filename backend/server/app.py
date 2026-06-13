@@ -326,6 +326,7 @@ from backend.server.routers.connection_info import router as connection_info_rou
 from backend.server.routers.search_feedback import router as search_feedback_router
 from backend.server.routers.feedback_dashboard import router as feedback_dashboard_router
 from backend.server.routers.browse import router as browse_router
+from backend.server.routers.members import router as members_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -347,6 +348,7 @@ app.include_router(connection_info_router, prefix="/api/v1")
 app.include_router(search_feedback_router, prefix="/api/v1")
 app.include_router(feedback_dashboard_router, prefix="/api/v1")
 app.include_router(browse_router, prefix="/api/v1")
+app.include_router(members_router, prefix="/api/v1")
 
 
 @app.post("/api/v1/server/activate")
