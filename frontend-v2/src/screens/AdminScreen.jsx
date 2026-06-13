@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useWorkers, useClusterValves, useWorkerControl } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
+import { useMembersData, useMemberMutations } from '../api/members'
 
 /**
  * 관리 — 엔진룸. 기술 용어(MC/VV/MV)는 운영자 전용인 이 화면에만 허용된다.
@@ -107,41 +108,56 @@ function WorkersPanel() {
 }
 
 function MembersPanel() {
+  const { isDemo, members, invites, usage } = useMembersData()
+  const { invite, revoke, remove, deactivate } = useMemberMutations()
+  const [emails, setEmails] = useState('')
+  const canMutate = !isDemo
+
+  const sendInvites = () => {
+    const list = emails.split(',').map(s => s.trim()).filter(Boolean)
+    if (!list.length) return
+    invite.mutate({ emails: list }, { onSuccess: () => setEmails('') })
+  }
+  const inviteMsg = invite.data
+    ? `${invite.data.results.filter(r => r.ok).length}건 처리${invite.data.smtp_configured ? ' · 메일 발송' : ' · 링크 생성(메일 미설정)'}`
+    : invite.isPending ? '초대 중…' : null
+
   return (
     <>
-      <div style={{ margin: '0 0 12px', padding: '8px 12px', borderRadius: 6, fontSize: 11.5, background: 'rgba(251,191,36,.10)', border: '1px solid rgba(251,191,36,.25)', color: 'var(--amber)' }}>
-        ● 데모 — 멤버·플랜·초대는 인증 연동(IMGV2-9) 후 실데이터로 연결됩니다
-      </div>
       <div className="panel">
-        <h4>플랜 <span className="hint">서버 단위 라이선스 — 한도는 여기서 옴</span></h4>
+        <h4>플랜 <span className="hint">서버 단위 라이선스 — 한도는 여기서 옴{isDemo && ' · ● 데모'}</span></h4>
         <div className="kpis">
-          <div className="kpi"><div className="v" style={{ color: '#93c5fd' }}>스튜디오</div><div className="k">연 라이선스 · 2027-06-12 만료</div></div>
-          <div className="kpi"><div className="v">5 <span className="faint" style={{ fontSize: 12 }}>/ 10</span></div><div className="k">좌석 — 멤버 3 + 대기 초대 2</div></div>
-          <div className="kpi"><div className="v">3 <span className="faint" style={{ fontSize: 12 }}>/ 5</span></div><div className="k">분석기</div></div>
+          <div className="kpi"><div className="v" style={{ color: usage.expired ? 'var(--red)' : '#93c5fd' }}>{usage.expired ? '만료됨' : '활성'}</div><div className="k">{usage.expires_at ? `${usage.expires_at} 만료` : '만료 없음'}</div></div>
+          <div className="kpi"><div className="v">{usage.seats_used} <span className="faint" style={{ fontSize: 12 }}>/ {usage.seat_limit || '∞'}</span></div><div className="k">좌석 — 멤버 {usage.members} + 대기 초대 {usage.pending_invites}</div></div>
+          <div className="kpi"><div className="v" style={{ color: usage.smtp_configured ? 'var(--emerald)' : 'var(--faint)' }}>{usage.smtp_configured ? '메일 ON' : '메일 OFF'}</div><div className="k">초대 발송 방식</div></div>
           <div className="kpi" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <button style={{ background: 'var(--blue-d)', color: '#fff', fontWeight: 600, fontSize: 11.5, padding: '7px 16px', borderRadius: 6 }}>갱신 / 업그레이드</button>
           </div>
         </div>
-        <div style={{ fontSize: 10, color: 'var(--faint)', marginTop: 8 }}>사용 현황 보고: 멤버·분석기 수, 월 분석량 — 수치만 전송되며 파일 내용·이름은 절대 포함되지 않습니다</div>
-        <div style={{ fontSize: 10, color: 'var(--amber)', marginTop: 4 }}>만료 시 이 서버 접속이 차단됩니다 (로그인은 되어도 입장 불가) · 데이터는 보존되며 갱신 즉시 복귀</div>
+        <div style={{ fontSize: 10, color: 'var(--amber)', marginTop: 6 }}>만료 시 이 서버 접속이 차단됩니다 (로그인은 되어도 입장 불가) · 데이터는 보존되며 갱신 즉시 복귀</div>
       </div>
 
       <div className="panel">
-        <h4>초대 <span className="hint">이메일로 초대 → 메일의 링크로 수락 → 좌석 점유 · 초대는 그 이메일로만 수락 가능</span></h4>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <input placeholder="이메일 주소 — 쉼표로 여러 명" style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '8px 12px', color: 'var(--text)', fontSize: 12 }} />
-          <button style={{ background: 'var(--blue-d)', color: '#fff', fontWeight: 600, fontSize: 11.5, padding: '0 18px', borderRadius: 6 }}>초대 보내기</button>
+        <h4>초대 <span className="hint">이메일로 초대 → 링크 수락 → 좌석 점유 · 그 이메일로만 수락 가능{!usage.smtp_configured && ' · 메일 미설정 시 링크 수동 공유'}</span></h4>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <input placeholder="이메일 주소 — 쉼표로 여러 명" value={emails} onChange={e => setEmails(e.target.value)}
+            style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '8px 12px', color: 'var(--text)', fontSize: 12 }} />
+          <button onClick={sendInvites} disabled={!canMutate || invite.isPending || !emails.trim()}
+            style={{ background: 'var(--blue-d)', color: '#fff', fontWeight: 600, fontSize: 11.5, padding: '0 18px', borderRadius: 6, opacity: canMutate ? 1 : .5 }}>초대 보내기</button>
         </div>
+        {inviteMsg && <div style={{ fontSize: 10.5, color: 'var(--cyan)', marginBottom: 8 }}>{inviteMsg}</div>}
+        {isDemo && <div style={{ fontSize: 9.5, color: 'var(--faint)', marginBottom: 8 }}>서버 연결 시 실제 초대가 발송됩니다</div>}
         <table>
-          <thead><tr><th>대기 중 초대</th><th>보냄</th><th style={{ textAlign: 'right' }} /></tr></thead>
+          <thead><tr><th>대기 중 초대</th><th>역할</th><th style={{ textAlign: 'right' }} /></tr></thead>
           <tbody>
-            {[['minsu@studio.kr', '2일 전'], ['art-extern@partner.co', '5시간 전']].map(([email, when]) => (
-              <tr key={email}>
-                <td>{email} <span style={{ fontSize: 9, color: 'var(--amber)' }}>좌석 예약 중</span></td>
-                <td className="mono">{when}</td>
-                <td><div className="row-act"><button>재발송</button><button className="danger">취소</button></div></td>
+            {invites.map(iv => (
+              <tr key={iv.id}>
+                <td>{iv.email} <span style={{ fontSize: 9, color: 'var(--amber)' }}>좌석 예약 중</span></td>
+                <td className="mono">{iv.role}</td>
+                <td><div className="row-act"><button className="danger" disabled={!canMutate} onClick={() => revoke.mutate(iv.id)}>취소</button></div></td>
               </tr>
             ))}
+            {invites.length === 0 && <tr><td colSpan={3} style={{ color: 'var(--faint)' }}>대기 중 초대 없음</td></tr>}
           </tbody>
         </table>
       </div>
@@ -151,17 +167,22 @@ function MembersPanel() {
         <table>
           <thead><tr><th>이름</th><th>역할</th><th>가입 경로</th><th>마지막 접속</th><th style={{ textAlign: 'right' }} /></tr></thead>
           <tbody>
-            <tr>
-              <td>성철<div style={{ fontSize: 9.5, color: 'var(--faint)' }}>saintiron82@gmail.com</div></td>
-              <td><span className="badge" style={{ background: 'rgba(192,132,252,.15)', color: 'var(--purple)' }}>운영자</span></td>
-              <td className="mono" style={{ fontSize: 10 }}>서버 생성자</td><td className="mono">방금</td><td />
-            </tr>
-            <tr>
-              <td>지민<div style={{ fontSize: 9.5, color: 'var(--faint)' }}>jimin@studio.kr</div></td>
-              <td><span className="badge b-ok">사용자</span></td>
-              <td className="mono" style={{ fontSize: 10 }}>초대 수락</td><td className="mono">2시간 전</td>
-              <td><div className="row-act"><button>역할</button><button className="danger">비활성</button></div></td>
-            </tr>
+            {members.map(mb => (
+              <tr key={mb.id}>
+                <td>{mb.username}<div style={{ fontSize: 9.5, color: 'var(--faint)' }}>{mb.email}</div></td>
+                <td>{mb.role === 'admin'
+                  ? <span className="badge" style={{ background: 'rgba(192,132,252,.15)', color: 'var(--purple)' }}>운영자</span>
+                  : <span className="badge b-ok">{mb.is_active ? '사용자' : '비활성'}</span>}</td>
+                <td className="mono" style={{ fontSize: 10 }}>{mb.via === 'firebase' ? '초대/Firebase' : '비밀번호'}</td>
+                <td className="mono">{mb.last_login_at || '—'}</td>
+                <td>{mb.role !== 'admin' && (
+                  <div className="row-act">
+                    <button disabled={!canMutate} onClick={() => deactivate.mutate(mb.id)}>비활성</button>
+                    <button className="danger" disabled={!canMutate} onClick={() => remove.mutate(mb.id)}>제거</button>
+                  </div>
+                )}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
