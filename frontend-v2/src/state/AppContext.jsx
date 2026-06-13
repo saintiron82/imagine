@@ -1,4 +1,5 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useState, useEffect } from 'react'
+import { setUseLocalBackend } from '../services/bridge'
 
 /**
  * 앱 전역 상태 — 역할(운영자/사용자)과 서버 연결 상태.
@@ -14,6 +15,10 @@ export function AppProvider({ children }) {
     online: true,
     external: true, // Cloudflare 터널 연결 상태
   })
+
+  // v2 는 항상 웹/HTTP 모드 — bridge 는 IPC 가 아니라 서버 API(apiClient)를 탄다.
+  // (Electron IPC 경로는 구 앱 전용. v2 는 서버 접속만 가정한다.)
+  useEffect(() => { setUseLocalBackend(false) }, [])
 
   const value = {
     role,
