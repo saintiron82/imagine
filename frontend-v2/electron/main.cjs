@@ -67,6 +67,22 @@ async function createWindow() {
   })
   // 외부 링크는 기본 브라우저로
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
+
+  // dev 편의: IMAGINE_DEV_TOKEN 이 있으면 렌더러 localStorage 에 토큰을 1회 주입 →
+  // 로그인 없이 실데이터로 진입(개발 전용). 미설정 시 정상 로그인 화면.
+  if (isDev && process.env.IMAGINE_DEV_TOKEN) {
+    let seeded = false
+    win.webContents.on('did-finish-load', async () => {
+      if (seeded) return
+      seeded = true
+      const t = JSON.stringify(process.env.IMAGINE_DEV_TOKEN)
+      await win.webContents.executeJavaScript(
+        `localStorage.setItem('imagine-access-token', ${t}); localStorage.setItem('imagine-server-url','');`,
+      )
+      win.reload()
+    })
+  }
+
   if (isDev) await win.loadURL(DEV_URL)
   else await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   return win
