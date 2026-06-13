@@ -39,8 +39,13 @@ export async function signUp(email, password, displayName) {
  * @returns {Promise<import('firebase/auth').UserCredential>}
  */
 export async function signInWithGoogle() {
-  if (isElectron && window.electron?.auth?.googleOAuth) {
-    const { idToken } = await window.electron.auth.googleOAuth();
+  // 데스크톱(v2 Electron 셸): 시스템 OAuth 윈도로 id_token 획득 → credential 로그인.
+  // signInWithPopup 은 Electron 에서 popup-blocked 라 쓰지 않는다.
+  // window.imagineDesktop 만 노출(window.electron 아님) → isElectron 은 false 유지.
+  const desktopOAuth = (typeof window !== 'undefined')
+    && (window.imagineDesktop?.googleOAuth || window.electron?.auth?.googleOAuth);
+  if (desktopOAuth) {
+    const { idToken } = await desktopOAuth();
     const credential = GoogleAuthProvider.credential(idToken);
     return signInWithCredential(auth, credential);
   }

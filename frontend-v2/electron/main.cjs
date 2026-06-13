@@ -9,10 +9,11 @@
  * 백엔드는 stdin 파이프로 spawn — Electron 생존 동안 파이프가 열려 있어 parent-watchdog
  * 가 블록(정상), Electron 종료 시 파이프가 닫혀 백엔드가 깨끗이 종료된다.
  */
-const { app, BrowserWindow, shell } = require('electron')
+const { app, BrowserWindow, shell, ipcMain, session } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const http = require('http')
+const crypto = require('crypto')
 
 const isDev = !app.isPackaged
 const PORT = Number(process.env.IMAGINE_PORT || 8000)
@@ -63,7 +64,10 @@ async function createWindow() {
   const win = new BrowserWindow({
     width: 1440, height: 900, backgroundColor: '#0f1419',
     title: 'Imagine',
-    webPreferences: { contextIsolation: true, nodeIntegration: false }, // no preload → no window.electron
+    webPreferences: {
+      contextIsolation: true, nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'), // exposes window.imagineDesktop only (NOT window.electron)
+    },
   })
   // 외부 링크는 기본 브라우저로
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
@@ -99,3 +103,57 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 app.on('before-quit', killBackend)
 process.on('exit', killBackend)
+
+// ── Google OAuth (desktop) — signInWithPopup 은 Electron 에서 막히므로 시스템 OAuth
+//    윈도로 id_token 을 받아 렌더러에서 signInWithCredential. (구 셸 핸들러 이식) ──
+const AUTH_DOMAIN = 'imagine-b1e9c.firebaseapp.com'
+const FB_API_KEY = 'AIzaSyDgpwrJbQ8MYkP3NFAOrp-K8R3e8kaWpCc'
+
+ipcMain.handle('google-oauth', async () => {
+  // 1) Firebase auth handler 에서 Google client_id 추출
+  const clientId = await new Promise((resolve, reject) => {
+    const hidden = new BrowserWindow({ width: 0, height: 0, show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } })
+    let found = false
+    const to = setTimeout(() => { if (!found) { found = true; hidden.close(); reject(new Error('CLIENT_ID_TIMEOUT')) } }, 10000)
+    const grab = (event, url) => {
+      if (found) return
+      if (url.includes('accounts.google.com') && url.includes('client_id=')) {
+        event.preventDefault(); found = true; clearTimeout(to)
+        try { resolve(new URL(url).searchParams.get('client_id')) } catch (e) { reject(e) }
+        hidden.close()
+      }
+    }
+    hidden.webContents.on('will-redirect', grab)
+    hidden.webContents.on('will-navigate', grab)
+    hidden.loadURL(`https://${AUTH_DOMAIN}/__/auth/handler?apiKey=${FB_API_KEY}&authType=signInViaPopup&providerId=google.com&scopes=profile%20email&eventId=${Date.now()}`)
+  })
+
+  // 2) 보이는 Google OAuth 윈도(implicit flow → id_token in hash) → 캡처
+  const authSession = session.fromPartition('persist:google-auth')
+  return new Promise((resolve, reject) => {
+    const win = new BrowserWindow({ width: 460, height: 700, autoHideMenuBar: true, title: 'Google Sign-In', webPreferences: { nodeIntegration: false, contextIsolation: true, session: authSession } })
+    let settled = false
+    const finish = (idToken) => { if (settled) return; settled = true; resolve({ idToken }); try { win.close() } catch { /* noop */ } }
+    const checkUrl = (url) => {
+      if (settled || !url) return
+      try {
+        const u = new URL(url)
+        if (u.hash && u.hash.includes('id_token=')) { const t = new URLSearchParams(u.hash.slice(1)).get('id_token'); if (t) return finish(t) }
+        const qt = u.searchParams.get('id_token'); if (qt) finish(qt)
+      } catch { /* noop */ }
+    }
+    const tryHash = async () => {
+      if (settled) return
+      try { const h = await win.webContents.executeJavaScript('location.hash'); if (h && h.includes('id_token=')) { const t = new URLSearchParams(h.slice(1)).get('id_token'); if (t) finish(t) } } catch { /* noop */ }
+    }
+    win.webContents.on('will-redirect', (_, u) => checkUrl(u))
+    win.webContents.on('will-navigate', (_, u) => checkUrl(u))
+    win.webContents.on('did-navigate', (_, u) => checkUrl(u))
+    win.webContents.on('did-navigate-in-page', (_, u) => checkUrl(u))
+    win.webContents.on('did-finish-load', () => { checkUrl(win.webContents.getURL()); setTimeout(tryHash, 300); setTimeout(tryHash, 1000); setTimeout(tryHash, 3000) })
+    win.on('closed', () => { if (!settled) { settled = true; reject(new Error('AUTH_WINDOW_CLOSED')) } })
+    const nonce = crypto.randomBytes(16).toString('hex')
+    const redirectUri = `https://${AUTH_DOMAIN}/__/auth/handler`
+    win.loadURL(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=id_token&scope=openid%20email%20profile&nonce=${nonce}&prompt=select_account`)
+  })
+})
