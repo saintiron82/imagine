@@ -8,4 +8,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('imagineDesktop', {
   googleOAuth: () => ipcRenderer.invoke('google-oauth'),
+  // 서버는 독립·상주 프로세스 — 끄는 건 관리에서 명시적으로만.
+  stopServer: () => ipcRenderer.invoke('server-stop'),
+  serverStatus: () => ipcRenderer.invoke('server-status'),
 })

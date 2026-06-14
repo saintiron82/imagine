@@ -1,17 +1,21 @@
 /**
  * Imagine v2 — 얇은 Electron 셸 (자체, 기존 frontend/electron 과 무관).
  *
- * 역할: ① Python 백엔드(uvicorn)를 spawn(이미 떠 있으면 재사용) ② v2 렌더러 창 로드.
- * 의도적으로 window.electron 을 노출하지 않는다 → 렌더러의 isElectron=false →
- * v2 가 순수 HTTP 모드로 동작(이식된 IPC 분기는 휴면). "embedded/IPC 제거, HTTP
- * 일원화" 방향(project_worker_unification_decision)과 일치.
+ * 역할: ① Python 백엔드(서버)를 **분리·상주 프로세스**로 띄움(이미 떠 있으면 재사용)
+ *        ② v2 렌더러 창 로드.
  *
- * 백엔드는 stdin 파이프로 spawn — Electron 생존 동안 파이프가 열려 있어 parent-watchdog
- * 가 블록(정상), Electron 종료 시 파이프가 닫혀 백엔드가 깨끗이 종료된다.
+ * 핵심 모델(사용자 결정): 서버는 독립 서비스, 앱은 그 서버의 조종석.
+ * - 백엔드는 detached + unref 로 spawn → **창을 닫아도 서버는 계속 살아 팀에 서비스.**
+ *   (IMAGINE_NO_PARENT_WATCHDOG=1 로 부모-사망 워치독 비활성 — 부모 없이 살아야 함.)
+ * - 앱 종료 시 백엔드를 죽이지 않는다. 끄는 건 명시적 'server-stop'(관리 버튼)으로만.
+ * - PID 파일로 앱 재시작 후에도 끌 수 있게 추적.
+ * - window.electron 은 노출하지 않음(isElectron=false 유지) — Google OAuth·server-stop
+ *   은 window.imagineDesktop 네임스페이스로만.
  */
 const { app, BrowserWindow, shell, ipcMain, session } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
+const fs = require('fs')
 const http = require('http')
 const crypto = require('crypto')
 
@@ -19,6 +23,8 @@ const isDev = !app.isPackaged
 const PORT = Number(process.env.IMAGINE_PORT || 8000)
 const DEV_URL = process.env.IMAGINE_DEV_URL || 'http://localhost:9275'
 const projectRoot = path.resolve(__dirname, '..', '..') // frontend-v2/electron → repo root
+const PIDFILE = path.join(projectRoot, '.imagine_server.pid')
+const LOGFILE = path.join(projectRoot, 'imagine_server.log')
 let backendProc = null
 
 function healthOnce() {
@@ -37,27 +43,30 @@ async function waitHealth(timeoutMs = 40000) {
   return false
 }
 
+// 서버를 분리·상주 프로세스로 띄운다 — 앱(부모)이 죽어도 살아남는다.
 function spawnBackend() {
   const py = isDev
     ? path.join(projectRoot, '.venv', 'bin', 'python')
     : path.join(process.resourcesPath, 'python', process.platform === 'win32' ? 'python.exe' : 'python3')
-  console.log(`[electron] spawning backend: ${py} -m uvicorn (cwd=${projectRoot})`)
+  console.log(`[electron] starting independent backend: ${py} -m uvicorn (cwd=${projectRoot})`)
+  const out = fs.openSync(LOGFILE, 'a')
   backendProc = spawn(py, ['-m', 'uvicorn', 'backend.server.app:app', '--host', '127.0.0.1', '--port', String(PORT)], {
     cwd: projectRoot,
-    stdio: ['pipe', 'pipe', 'pipe'], // stdin open → parent-watchdog blocks; closes on quit → backend exits
-    env: { ...process.env, PYTHONPATH: projectRoot },
+    detached: true,                 // 부모 프로세스 그룹에서 분리
+    stdio: ['ignore', out, out],    // 로그 파일로 (창과 무관)
+    env: { ...process.env, PYTHONPATH: projectRoot, IMAGINE_NO_PARENT_WATCHDOG: '1' },
   })
-  backendProc.stdout.on('data', (d) => process.stdout.write(`[backend] ${d}`))
-  backendProc.stderr.on('data', (d) => process.stderr.write(`[backend] ${d}`))
-  backendProc.on('exit', (code) => console.log(`[electron] backend exited (${code})`))
+  try { fs.writeFileSync(PIDFILE, String(backendProc.pid)) } catch { /* noop */ }
+  backendProc.unref()               // 앱이 이 자식을 기다리지 않게 → 앱 종료해도 서버 생존
 }
 
-function killBackend() {
-  if (backendProc && !backendProc.killed) {
-    try { backendProc.stdin.end() } catch { /* noop */ }
-    try { backendProc.kill() } catch { /* noop */ }
-    backendProc = null
-  }
+// 명시적 서버 종료(관리 'server-stop' 에서만). PID 파일로 앱 재시작 후에도 끌 수 있음.
+function stopBackend() {
+  let pid = backendProc?.pid
+  if (!pid) { try { pid = Number(fs.readFileSync(PIDFILE, 'utf8').trim()) } catch { /* none */ } }
+  if (pid) { try { process.kill(pid) } catch { /* already gone */ } }
+  try { fs.unlinkSync(PIDFILE) } catch { /* noop */ }
+  backendProc = null
 }
 
 async function createWindow() {
@@ -101,8 +110,11 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
-app.on('before-quit', killBackend)
-process.on('exit', killBackend)
+// 앱 종료 시 백엔드를 죽이지 않는다 — 서버는 독립·상주(창 닫아도 팀에 계속 서비스).
+
+// 관리에서 명시적으로 서버를 끄거나 상태를 묻는 데스크톱 채널(window.imagineDesktop)
+ipcMain.handle('server-stop', async () => { stopBackend(); return { ok: true } })
+ipcMain.handle('server-status', async () => ({ running: await healthOnce(), desktop: true }))
 
 // ── Google OAuth (desktop) — signInWithPopup 은 Electron 에서 막히므로 시스템 OAuth
 //    윈도로 id_token 을 받아 렌더러에서 signInWithCredential. (구 셸 핸들러 이식) ──

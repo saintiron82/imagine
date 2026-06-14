@@ -45,6 +45,13 @@ def start_parent_watchdog(check_interval: float = 2.0, exit_code: int = 0):
         check_interval: Seconds between parent PID checks (layer 3 only).
         exit_code: Exit code when parent death is detected.
     """
+    # Detached/standalone server (started by the app as a persistent process,
+    # or run as a service): it must OUTLIVE any launcher. Skip the watchdog.
+    import os as _os
+    if _os.environ.get("IMAGINE_NO_PARENT_WATCHDOG", "").strip().lower() in {"1", "true", "yes", "on"}:
+        logger.info("Parent watchdog disabled (IMAGINE_NO_PARENT_WATCHDOG) — running as independent server")
+        return
+
     # Layer 1: Linux kernel-level death signal (instant, most reliable)
     _try_prctl()
 

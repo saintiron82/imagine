@@ -192,10 +192,17 @@ function MembersPanel() {
 
 function ToolsPanel() {
   const { disconnected, external, lan } = useConnectionInfo()
+  const desktop = typeof window !== 'undefined' && window.imagineDesktop // 데스크톱 셸에서만
   const extDesc = external?.available
     ? `● 연결됨 — ${external.url || '터널'} · 주소 공유 불필요`
     : '○ 외부 접속 꺼짐 — 터널 미연결'
   const lanDesc = lan?.available ? `${lan.url} · 빠른 경로 (자동 발견)` : 'LAN 경로 없음'
+
+  const stopServer = async () => {
+    if (!desktop) return
+    if (!confirm('이 컴퓨터의 서버를 끕니다.\n끄면 팀원도 접속할 수 없습니다. 계속할까요?')) return
+    try { await window.imagineDesktop.stopServer() } catch { /* noop */ }
+  }
 
   const rows = [
     ['외부 접속 (Cloudflare 터널)', extDesc, ['재연결'], external?.available ? 'var(--emerald)' : 'var(--faint)'],
@@ -206,19 +213,33 @@ function ToolsPanel() {
     ['DB 초기화', '비밀번호 확인 필요', ['초기화…'], 'var(--red)', true],
   ]
   return (
-    <div className="panel">
-      <h4>서버 도구 <span className="hint">DB·정합성·연결 — 구 헤더 DB 메뉴가 여기로{disconnected && ' · 연결 끊김'}</span></h4>
-      <table>
-        <tbody>
-          {rows.map(([name, desc, actions, color, danger]) => (
-            <tr key={name}>
-              <td style={danger ? { color: 'var(--red)' } : undefined}>{name}</td>
-              <td style={{ color: color || 'var(--faint)', fontSize: 11 }}>{desc}</td>
-              <td><div className="row-act">{actions.map(a => <button key={a} className={danger ? 'danger' : ''}>{a}</button>)}</div></td>
+    <>
+      {desktop && (
+        <div className="panel">
+          <h4>이 컴퓨터의 서버 <span className="hint">독립·상주 — 앱 창을 닫아도 팀에 계속 서비스합니다</span></h4>
+          <table><tbody>
+            <tr>
+              <td>서버 프로세스</td>
+              <td style={{ color: 'var(--emerald)', fontSize: 11 }}>● 실행 중 (상주) — 끄기 전까지 유지</td>
+              <td><div className="row-act"><button className="danger" onClick={stopServer}>서버 끄기</button></div></td>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </tbody></table>
+        </div>
+      )}
+      <div className="panel">
+        <h4>서버 도구 <span className="hint">DB·정합성·연결{disconnected && ' · 연결 끊김'}</span></h4>
+        <table>
+          <tbody>
+            {rows.map(([name, desc, actions, color, danger]) => (
+              <tr key={name}>
+                <td style={danger ? { color: 'var(--red)' } : undefined}>{name}</td>
+                <td style={{ color: color || 'var(--faint)', fontSize: 11 }}>{desc}</td>
+                <td><div className="row-act">{actions.map(a => <button key={a} className={danger ? 'danger' : ''}>{a}</button>)}</div></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   )
 }

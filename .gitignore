@@ -76,3 +76,7 @@ config.yaml
 
 # Runtime-registered WebDAV sources (plaintext creds — never commit)
 webdav_sources.json
+
+# 데스크톱 셸이 띄운 상주 서버 런타임 파일
+.imagine_server.pid
+imagine_server.log
