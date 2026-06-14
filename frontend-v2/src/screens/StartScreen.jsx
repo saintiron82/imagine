@@ -10,9 +10,10 @@ import { useAuth } from '../state/AuthContext'
 export default function StartScreen() {
   const navigate = useNavigate()
   const { firebaseUser, authLoading, connected, serverName, busy, error,
-    signInEmail, signInGoogle, connectToServer } = useAuth()
+    signInEmail, signInGoogle, connectToServer, createServer } = useAuth()
 
   const [step, setStep] = useState(1)
+  const [mode, setMode] = useState('connect') // step2: 'connect' | 'create'
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [localErr, setLocalErr] = useState('')
@@ -39,6 +40,10 @@ export default function StartScreen() {
     const r = await connectToServer(srvName.trim(), srvPw)
     if (r.ok) navigate('/search')
   }
+  const doCreate = async () => {
+    const r = await createServer(srvName.trim(), srvPw)
+    if (r.ok) navigate('/search')
+  }
 
   return (
     <section id="scr-start" className="screen active scr-center" style={{ height: '100vh' }}>
@@ -60,7 +65,7 @@ export default function StartScreen() {
         </div>
       )}
 
-      {step === 2 && (
+      {step === 2 && mode === 'connect' && (
         <div className="start-card">
           <div className="lg" style={{ fontSize: 14 }}>서버 접속</div>
           <div className="tag">{firebaseUser?.email ? `${firebaseUser.email} 로 로그인됨` : '서버 이름과 비밀번호로 접속'}</div>
@@ -68,9 +73,26 @@ export default function StartScreen() {
           <input type="password" placeholder="서버 비밀번호" value={srvPw} onChange={e => setSrvPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && doConnect()} />
           {error && <div style={{ fontSize: 10.5, color: 'var(--red)', marginBottom: 8 }}>{error}</div>}
           <button className="pri-w" disabled={busy || !srvName.trim() || !srvPw} onClick={doConnect}>{busy ? '접속 중…' : '접속'}</button>
-          <div style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'center', marginTop: 12 }}>
-            팀 초대를 받았다면 그 이메일로 로그인하면 자동으로 접속됩니다.<br />
-            새 서버 생성·구매는 <a href="https://imagine.app" target="_blank" rel="noreferrer" style={{ color: '#93c5fd' }}>imagine.app</a> 에서.
+          <div className="start-div">또는</div>
+          <button className="start-opt" onClick={() => { setMode('create') }}>
+            🖥️<div><div className="t">이 컴퓨터를 서버로 만들기</div><div className="d">이 PC가 팀의 라이브러리 서버가 됩니다</div></div>
+          </button>
+          <div style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'center', marginTop: 10 }}>
+            팀 초대를 받았다면 그 이메일로 로그인하면 자동으로 접속됩니다.
+          </div>
+        </div>
+      )}
+
+      {step === 2 && mode === 'create' && (
+        <div className="start-card">
+          <div className="lg" style={{ fontSize: 14 }}>이 컴퓨터를 서버로 만들기</div>
+          <div className="tag">이 PC가 팀의 라이브러리 서버가 됩니다 — 로그인한 계정이 운영자</div>
+          <input placeholder="서버 이름 — 팀원이 접속할 이름" value={srvName} onChange={e => setSrvName(e.target.value)} />
+          <input type="password" placeholder="서버 관리 비밀번호 — 접속·초기화에 사용" value={srvPw} onChange={e => setSrvPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && doCreate()} />
+          {error && <div style={{ fontSize: 10.5, color: 'var(--red)', marginBottom: 8 }}>{error}</div>}
+          <button className="pri-w" disabled={busy || !srvName.trim() || !srvPw} onClick={doCreate}>{busy ? '서버 생성 중…' : '서버 만들기'}</button>
+          <div style={{ textAlign: 'center', marginTop: 10 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--faint)', cursor: 'pointer' }} onClick={() => { setMode('connect') }}>← 기존 서버에 접속</span>
           </div>
         </div>
       )}

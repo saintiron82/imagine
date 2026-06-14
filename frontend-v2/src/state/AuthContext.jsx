@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { getAccessToken, setServerUrl, clearTokens } from '../api/client'
-import { firebaseConnect, getMe } from '../api/auth'
+import { getAccessToken, setServerUrl, setTokens, clearTokens } from '../api/client'
+import { firebaseConnect, getMe, initServer } from '../api/auth'
 import { lookupGroup } from '../api/firebase'
 
 // Firebase SDK 는 무겁다 → 동적 import 로 별도 청크 분리(초기 로드 경량화).
@@ -87,6 +87,38 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  /** 이 컴퓨터를 서버로 만들기 — 로컬 백엔드를 /server/init 으로 초기화(생성자=운영자).
+   * localhost(프록시 경유) 에서만 허용. 이미 초기화돼 있으면 409 → 접속을 안내. */
+  const createServer = useCallback(async (groupName, serverPassword) => {
+    setBusy(true); setError('')
+    try {
+      setServerUrl('') // 로컬 백엔드(same-origin /api)
+      const me = firebaseUser
+      const idToken = await (await fb()).getIdToken().catch(() => null)
+      if (!idToken || !me) throw new Error('먼저 로그인하세요')
+      const data = await initServer('', {
+        group_name: groupName,
+        server_password: serverPassword,
+        admin_username: (me.email ? me.email.split('@')[0] : (me.displayName || 'admin')).slice(0, 50),
+        admin_password: (crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`).slice(0, 40),
+        firebase_uid: me.uid,
+        firebase_email: me.email || '',
+      })
+      if (data?.access_token) setTokens(data.access_token, data.refresh_token)
+      try { localStorage.setItem(SERVER_NAME_KEY, groupName) } catch {}
+      setServerName(groupName); setRole('admin'); setConnected(true)
+      return { ok: true }
+    } catch (e) {
+      const msg = /already initialized|409/.test(e.message)
+        ? '이미 이 컴퓨터에 서버가 있습니다 — 접속을 사용하세요'
+        : (e.message || '서버 생성 실패')
+      setError(msg)
+      return { ok: false, error: msg }
+    } finally {
+      setBusy(false)
+    }
+  }, [firebaseUser])
+
   const disconnect = useCallback(() => { clearTokens(); setConnected(false); setRole('') }, [])
   const signOutAll = useCallback(async () => {
     disconnect()
@@ -96,7 +128,7 @@ export function AuthProvider({ children }) {
   const value = {
     firebaseUser, authLoading, connected, checking, role, serverName, busy, error,
     isOperator: role === 'admin',
-    signInEmail, signUpEmail, signInGoogle, connectToServer, disconnect, signOutAll,
+    signInEmail, signUpEmail, signInGoogle, connectToServer, createServer, disconnect, signOutAll,
   }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
