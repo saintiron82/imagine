@@ -6,7 +6,7 @@ import { useMembersData, useMemberMutations } from '../api/members'
 /**
  * 관리 — 엔진룸. 기술 용어(MC/VV/MV)는 운영자 전용인 이 화면에만 허용된다.
  * 분석기: 병목 진단 + 분석기별 실시간(admin/workers) + 정지/차단/차단해제.
- * 멤버/플랜: 인증 연동(IMGV2-9) 전까지 데모.
+ * 멤버/플랜: members/invites/usage 실데이터. 미연결 시 빈 상태(가짜 데이터 없음).
  */
 export default function AdminScreen() {
   const [tab, setTab] = useState('workers')
@@ -31,10 +31,10 @@ const ORIGIN_LABEL = (w) => [w.origin, w.launcher].filter(Boolean).join(' · ') 
 const PHASE_KR = { mc: 'MC', vv: 'VV', mv: 'MV', parse: '파싱', dl: 'DL' }
 
 function WorkersPanel() {
-  const { isDemo, workers, globalMode } = useWorkers()
+  const { disconnected, workers, globalMode } = useWorkers()
   const { valves, bottleneck, total } = useClusterValves()
   const { stop, block, unblock } = useWorkerControl()
-  const canControl = !isDemo
+  const canControl = !disconnected
 
   const online = workers.filter(w => w.status === 'online')
   const blocked = workers.filter(w => w.status === 'blocked')
@@ -42,7 +42,7 @@ function WorkersPanel() {
   return (
     <>
       <div className="panel">
-        <h4>자동 분석 <span className="hint">서버 전역 정책 · 현재 모드 {globalMode}{isDemo && ' · ● 데모'}</span><span className="toggle" /></h4>
+        <h4>자동 분석 <span className="hint">서버 전역 정책 · 현재 모드 {globalMode}{disconnected && ' · 연결 끊김'}</span><span className="toggle" /></h4>
         {bottleneck && bottleneck.pending > 0 ? (
           <div className="bottleneck">
             현재 병목: <b>{bottleneck.label}</b> — 대기 {bottleneck.pending.toLocaleString()}장 · 클러스터 처리력 <b>분당 {bottleneck.rate ?? 0}장</b> (이 단계가 전체 완료 속도를 결정)
@@ -70,7 +70,7 @@ function WorkersPanel() {
       </div>
 
       <div className="panel">
-        <h4>분석기 <span className="hint">{online.length}대 온라인 — 정지=이번 세션 종료(재시작 가능) · 차단=재접속 거부{isDemo && ' · ● 데모'}</span></h4>
+        <h4>분석기 <span className="hint">{online.length}대 온라인 — 정지=이번 세션 종료(재시작 가능) · 차단=재접속 거부{disconnected && ' · 연결 끊김'}</span></h4>
         <table>
           <thead>
             <tr><th>이름</th><th>상태</th><th>지금 처리 중</th><th>처리율</th><th>누적</th><th style={{ textAlign: 'right' }}>제어</th></tr>
@@ -108,10 +108,10 @@ function WorkersPanel() {
 }
 
 function MembersPanel() {
-  const { isDemo, members, invites, usage } = useMembersData()
+  const { disconnected, members, invites, usage } = useMembersData()
   const { invite, revoke, remove, deactivate } = useMemberMutations()
   const [emails, setEmails] = useState('')
-  const canMutate = !isDemo
+  const canMutate = !disconnected
 
   const sendInvites = () => {
     const list = emails.split(',').map(s => s.trim()).filter(Boolean)
@@ -125,7 +125,7 @@ function MembersPanel() {
   return (
     <>
       <div className="panel">
-        <h4>플랜 <span className="hint">서버 단위 라이선스 — 한도는 여기서 옴{isDemo && ' · ● 데모'}</span></h4>
+        <h4>플랜 <span className="hint">서버 단위 라이선스 — 한도는 여기서 옴{disconnected && ' · 연결 끊김'}</span></h4>
         <div className="kpis">
           <div className="kpi"><div className="v" style={{ color: usage.expired ? 'var(--red)' : '#93c5fd' }}>{usage.expired ? '만료됨' : '활성'}</div><div className="k">{usage.expires_at ? `${usage.expires_at} 만료` : '만료 없음'}</div></div>
           <div className="kpi"><div className="v">{usage.seats_used} <span className="faint" style={{ fontSize: 12 }}>/ {usage.seat_limit || '∞'}</span></div><div className="k">좌석 — 멤버 {usage.members} + 대기 초대 {usage.pending_invites}</div></div>
@@ -146,7 +146,7 @@ function MembersPanel() {
             style={{ background: 'var(--blue-d)', color: '#fff', fontWeight: 600, fontSize: 11.5, padding: '0 18px', borderRadius: 6, opacity: canMutate ? 1 : .5 }}>초대 보내기</button>
         </div>
         {inviteMsg && <div style={{ fontSize: 10.5, color: 'var(--cyan)', marginBottom: 8 }}>{inviteMsg}</div>}
-        {isDemo && <div style={{ fontSize: 9.5, color: 'var(--faint)', marginBottom: 8 }}>서버 연결 시 실제 초대가 발송됩니다</div>}
+        {disconnected && <div style={{ fontSize: 9.5, color: 'var(--faint)', marginBottom: 8 }}>서버 연결 시 실제 초대가 발송됩니다</div>}
         <table>
           <thead><tr><th>대기 중 초대</th><th>역할</th><th style={{ textAlign: 'right' }} /></tr></thead>
           <tbody>
@@ -191,7 +191,7 @@ function MembersPanel() {
 }
 
 function ToolsPanel() {
-  const { isDemo, external, lan } = useConnectionInfo()
+  const { disconnected, external, lan } = useConnectionInfo()
   const extDesc = external?.available
     ? `● 연결됨 — ${external.url || '터널'} · 주소 공유 불필요`
     : '○ 외부 접속 꺼짐 — 터널 미연결'
@@ -207,7 +207,7 @@ function ToolsPanel() {
   ]
   return (
     <div className="panel">
-      <h4>서버 도구 <span className="hint">DB·정합성·연결 — 구 헤더 DB 메뉴가 여기로{isDemo && ' · ● 데모'}</span></h4>
+      <h4>서버 도구 <span className="hint">DB·정합성·연결 — 구 헤더 DB 메뉴가 여기로{disconnected && ' · 연결 끊김'}</span></h4>
       <table>
         <tbody>
           {rows.map(([name, desc, actions, color, danger]) => (

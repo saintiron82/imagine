@@ -13,17 +13,10 @@ import { useSources, useSourceMutations, useBrowse } from '../api/browse'
  * - 등록 = POST /api/v1/discover/scan
  * - 신규 소스 시각 탐색 = /api/v1/browse/{webdav,local} (IMGV2-13) — 클릭 드릴다운
  * - 소스 관리 = /api/v1/sources (등록/테스트)
- * - "등록된 폴더 다시 분석" = archive/folders 카드(미연결 시 데모)
+ * - "등록된 폴더 다시 분석" = archive/folders 카드(미연결 시 빈 목록)
  */
 const VIEWS = { SOURCE: 'source', NAS: 'nas', LIVE: 'live', BROWSE: 'browse', DETAIL: 'detail', DONE: 'done' }
 const BAR = { source: 1, nas: 1, live: 2, browse: 2, detail: 3, done: 4 }
-
-const DEMO_CARDS = [
-  { id: 'concept', name: '신규 컨셉 2026-06', info: '412개 파일', tag: ['new', '미분석'], mosaic: null },
-  { id: 'chars', name: '캐릭터', info: '3,100개', tag: ['done', '분석됨 98%'], mosaic: ['#1e3a5f,#2d4a73', '#33272b,#4a3a40', '#1d3146,#28455e', '#2a2a3e,#3c3c5c'] },
-  { id: 'bg', name: '배경', info: '880개', tag: ['done', '분석 41%'], mosaic: ['#1e3a4a,#2a5468', '#27344a,#3a4a66', null, null] },
-  { id: 'ref', name: '레퍼런스', info: '96개', tag: ['new', '미분석'], mosaic: null },
-]
 
 function foldersToCards(folders) {
   return folders.map(f => ({
@@ -33,7 +26,7 @@ function foldersToCards(folders) {
 }
 
 export default function AddFlow({ onClose }) {
-  const { isDemo, folders } = useFolders()
+  const { disconnected, folders } = useFolders()
   const register = useRegisterJob()
   const navigate = useNavigate()
 
@@ -43,7 +36,7 @@ export default function AddFlow({ onClose }) {
   const [priority, setPriority] = useState(false)
   const [browse, setBrowse] = useState({ kind: null, sourceId: null }) // 라이브 탐색 대상
 
-  const cards = isDemo ? DEMO_CARDS : foldersToCards(folders)
+  const cards = disconnected ? [] : foldersToCards(folders)
   const effId = picked || cards[0]?.id || ''
   const pickedCard = cards.find(c => c.id === effId) || null
 
@@ -51,13 +44,13 @@ export default function AddFlow({ onClose }) {
   const goBack = () => setStack(s => { if (!s.length) return s; setView(s[s.length - 1]); return s.slice(0, -1) })
   const showBack = stack.length > 0 && view !== VIEWS.DONE
 
-  // 통합 등록: folderPath 가 있으면 실제 discover/scan, 없으면(데모) 완료 화면만
+  // 등록: 선택 폴더 경로로 실제 discover/scan.
   const doRegister = (folderPath, name) => {
-    if (!folderPath) { navTo(VIEWS.DONE); return }
+    if (!folderPath) return
     register.mutate({ folderPath, priority, name }, { onSuccess: () => navTo(VIEWS.DONE) })
   }
-  const onRegisterCard = () => doRegister(isDemo ? null : pickedCard?.path, pickedCard?.name)
-  const registeredTotal = register.data?.total_files ?? (Number((pickedCard?.info || '412').replace(/[^0-9]/g, '')) || 412)
+  const onRegisterCard = () => doRegister(pickedCard?.path, pickedCard?.name)
+  const registeredTotal = register.data?.total_files ?? 0
 
   const openLive = (kind, sourceId = null) => { setBrowse({ kind, sourceId }); navTo(VIEWS.LIVE) }
 
@@ -88,7 +81,7 @@ export default function AddFlow({ onClose }) {
           </div>
         )}
 
-        {view === VIEWS.NAS && <NasView onBrowse={(id) => openLive('webdav', id)} isDemo={isDemo} />}
+        {view === VIEWS.NAS && <NasView onBrowse={(id) => openLive('webdav', id)} disconnected={disconnected} />}
 
         {view === VIEWS.LIVE && (
           <LiveBrowser kind={browse.kind} sourceId={browse.sourceId} registering={register.isPending} onRegister={doRegister} />
@@ -96,7 +89,7 @@ export default function AddFlow({ onClose }) {
 
         {view === VIEWS.BROWSE && (
           <div>
-            {!isDemo && <p style={{ fontSize: 10.5, color: 'var(--faint)', margin: '0 0 8px' }}>서버가 아는 폴더에서 선택</p>}
+            {!disconnected && <p style={{ fontSize: 10.5, color: 'var(--faint)', margin: '0 0 8px' }}>서버가 아는 폴더에서 선택</p>}
             <div className="fgrid" style={{ maxHeight: 360 }}>
               {cards.map(c => (
                 <div key={c.id} className={`fcard ${effId === c.id ? 'sel' : ''}`} onClick={() => setPicked(c.id)}>
@@ -157,7 +150,7 @@ export default function AddFlow({ onClose }) {
 }
 
 /** NAS 소스 목록 + 새 소스 연결(테스트/추가) */
-function NasView({ onBrowse, isDemo }) {
+function NasView({ onBrowse, disconnected }) {
   const { sources } = useSources()
   const { add, test } = useSourceMutations()
   const [form, setForm] = useState({ id: '', url: '', username: '', password: '', verify_ssl: true })
@@ -174,7 +167,7 @@ function NasView({ onBrowse, isDemo }) {
       ))}
       {sources.length === 0 && (
         <div className="nas-item" style={{ opacity: .6 }}>
-          🌐<div><div className="t">등록된 NAS 없음</div><div className="d">아래에서 새 NAS를 연결하세요{isDemo ? ' (서버 연결 시)' : ''}</div></div>
+          🌐<div><div className="t">등록된 NAS 없음</div><div className="d">아래에서 새 NAS를 연결하세요{disconnected ? ' (서버 연결 시)' : ''}</div></div>
         </div>
       )}
       <div className="nas-form">

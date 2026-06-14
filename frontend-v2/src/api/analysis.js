@@ -10,28 +10,11 @@
  *                     throughput, throughput_mode, jobs_completed, ... }
  *   POST /api/v1/analysis-jobs/{id}/pause | /resume | /cancel  (admin)
  *
- * 미연결(서버 없음/401/네트워크)일 때는 데모 데이터를 fallback 으로 돌려준다
- * — 화면이 비지 않게 하되 `isDemo: true` 로 표식한다.
+ * 미연결(서버 없음/401/네트워크)·오류 시 가짜 데이터 없이 빈 상태로 둔다
+ * (disconnected 표식). 하드 게이트라 정상 흐름에선 인증 후에만 도달한다.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from './client'
-
-// ── 데모 fallback (서버 미연결 시) ───────────────────────────
-const DEMO = {
-  jobs: [
-    { id: -1, name: 'NAS / 캐릭터', status: 'active',
-      progress: { total: 3100, complete: 1820, pct: 59, failed: { parse: 3 } } },
-    { id: -2, name: '배경 다시 분석', status: 'active',
-      progress: { total: 700, complete: 410, pct: 59, failed: {} } },
-    { id: -3, name: '신규 컨셉 2026-06', status: 'active',
-      progress: { total: 412, complete: 0, pct: 0, failed: {} } },
-  ],
-  workers: [
-    { id: 1, worker_name: '이 서버', status: 'online', current_file: 'knight_v3.psd', throughput: 7.9 },
-    { id: 2, worker_name: '지민-MacBook', status: 'online', current_file: 'bg_forest_07.psd', throughput: 78 },
-    { id: 3, worker_name: 'gpu-box-01', status: 'online', current_file: 'npc_smith.psd', throughput: 81 },
-  ],
-}
 
 // ── 원자 쿼리 ────────────────────────────────────────────────
 function useJobsQuery() {
@@ -56,17 +39,17 @@ function failedCount(progress) {
 
 /**
  * 분석 화면 전체 데이터를 하나로 모은다.
- * 반환: { isDemo, connected, summary, analyzers, jobs, totalFailed }
+ * 반환: { disconnected, connected, summary, analyzers, jobs, totalFailed }
  */
 export function useAnalysisData() {
   const jq = useJobsQuery()
   const wq = useWorkersQuery()
 
   const connected = !jq.isError && !wq.isError && (jq.data || wq.data)
-  const isDemo = !connected
+  const disconnected = !connected   // 미연결/오류 — 가짜 데이터 없이 빈 상태로 둔다
 
-  const rawJobs = (connected && jq.data?.jobs) ? jq.data.jobs : DEMO.jobs
-  const rawWorkers = (connected && wq.data?.workers) ? wq.data.workers : DEMO.workers
+  const rawJobs = (connected && jq.data?.jobs) ? jq.data.jobs : []
+  const rawWorkers = (connected && wq.data?.workers) ? wq.data.workers : []
 
   // 분석기 스트립: 온라인 워커만, 지금 처리 중인 파일 표시
   const analyzers = rawWorkers
@@ -115,7 +98,7 @@ export function useAnalysisData() {
   const flow = analyzers.filter(a => a.busy).map(a => ({ name: a.file.replace(' 처리 중', ''), busy: true }))
 
   return {
-    isDemo,
+    disconnected,
     connected: !!connected,
     loading: jq.isLoading || wq.isLoading,
     summary,

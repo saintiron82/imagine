@@ -14,29 +14,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from './client'
 
-const DEMO_WORKERS = {
-  workers: [
-    { id: 1, worker_name: '이 서버', status: 'online', current_file: 'knight_v3.psd', current_phase: 'mc', throughput: 7.9, throughput_mode: 'mc', jobs_completed: 210, origin: 'server-local', launcher: 'server' },
-    { id: 2, worker_name: '지민-MacBook', status: 'online', current_file: 'bg_forest_07.psd', current_phase: 'vv', throughput: 78, throughput_mode: 'vv', jobs_completed: 880, origin: 'client', launcher: 'electron' },
-    { id: 3, worker_name: 'gpu-box-01', status: 'online', current_file: 'npc_smith.psd', current_phase: 'mc', throughput: 81, throughput_mode: 'mc', jobs_completed: 1240, origin: 'headless', launcher: 'cli' },
-    { id: 4, worker_name: 'old-laptop', status: 'blocked', current_file: null, throughput: 0, jobs_completed: 0, origin: 'client', launcher: 'electron' },
-  ],
-  global_processing_mode: 'auto',
-}
-const DEMO_JOBS = {
-  jobs: [
-    { id: -1, status: 'active', progress: { total: 3800, downloaded: 3800, parsed: 3640, mc_done: 2710, vv_done: 3205, mv_done: 2560 } },
-  ],
-}
-
 const PHASE_LABEL = { dl: 'DL', parse: '파싱', mc: 'MC', vv: 'VV', mv: 'MV' }
 
 export function useWorkers() {
   const q = useQuery({ queryKey: ['admin-workers'], queryFn: () => apiClient.get('/api/v1/admin/workers') })
   const connected = !q.isError && q.data
-  const data = connected ? q.data : DEMO_WORKERS
+  const data = connected ? q.data : {}
   return {
-    isDemo: !connected,
+    disconnected: !connected,
     loading: q.isLoading,
     workers: data.workers || [],
     globalMode: data.global_processing_mode || 'auto',
@@ -52,8 +37,8 @@ export function useClusterValves() {
   const jq = useQuery({ queryKey: ['analysis-jobs'], queryFn: () => apiClient.get('/api/v1/analysis-jobs', { include_completed: false }) })
   const wq = useQuery({ queryKey: ['admin-workers'], queryFn: () => apiClient.get('/api/v1/admin/workers') })
   const connected = !jq.isError && !wq.isError && (jq.data || wq.data)
-  const jobs = (connected && jq.data?.jobs) ? jq.data.jobs : DEMO_JOBS.jobs
-  const workers = (connected && wq.data?.workers) ? wq.data.workers : DEMO_WORKERS.workers
+  const jobs = (connected && jq.data?.jobs) ? jq.data.jobs : []
+  const workers = (connected && wq.data?.workers) ? wq.data.workers : []
 
   const sum = (key) => jobs.reduce((a, j) => a + (j.progress?.[key] || 0), 0)
   const total = sum('total')
@@ -77,7 +62,7 @@ export function useClusterValves() {
     .map(ph => valves.find(v => v.phase === ph))
     .find(v => v && v.pending > 0) || null
 
-  return { isDemo: !connected, total, valves, bottleneck }
+  return { disconnected: !connected, total, valves, bottleneck }
 }
 
 export function useWorkerControl() {

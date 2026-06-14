@@ -11,22 +11,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './client'
 
-const DEMO = {
-  connect_modes: [
-    { mode: 'direct_local', url: 'http://localhost:8000', available: true },
-    { mode: 'direct_lan', url: 'http://192.168.0.5:8000', available: true },
-    { mode: 'relay_session', url: 'ourteam.imagine.app', available: true },
-  ],
-}
-
 export function useConnectionInfo() {
   const q = useQuery({ queryKey: ['connection-info'], queryFn: () => apiClient.get('/api/v1/server/connection-info') })
   const connected = !q.isError && q.data
-  const data = connected ? q.data : DEMO
-  const modes = data.connect_modes || []
+  const modes = (connected && q.data?.connect_modes) ? q.data.connect_modes : []
   const byMode = (m) => modes.find(x => x.mode === m) || null
   return {
-    isDemo: !connected,
+    disconnected: !connected,
     external: byMode('relay_session'),   // 외부 접속(Cloudflare 터널/릴레이)
     lan: byMode('direct_lan'),
     local: byMode('direct_local'),

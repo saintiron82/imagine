@@ -10,7 +10,7 @@ import AddFlow from '../flows/AddFlow'
  * 역할 게이팅: 일반 사용자에겐 폴더/분석/관리/+추가가 존재하지 않는 앱처럼 보인다.
  */
 export default function AppShell() {
-  const { isOperator, toggleRole, role, server } = useApp()
+  const { isOperator, server } = useApp()
   const { connected, checking, firebaseUser, serverName, signOutAll } = useAuth()
   const navigate = useNavigate()
   const [addOpen, setAddOpen] = useState(false)
@@ -44,18 +44,11 @@ export default function AppShell() {
         </div>
         {isOperator && server.online && (
           <button className="srv-chip" onClick={() => navigate('/admin')}>
-            <span className="sd" />{connected ? (serverName || '서버') : '서버'} 온라인{server.external ? ' · 외부 접속 연결됨' : ''}
+            <span className="sd" />{serverName || '서버'} 온라인
           </button>
         )}
-        {connected ? (
-          <button className="role-chip" title={firebaseUser?.email || ''} onClick={signOutAll}>
-            {firebaseUser?.email ? firebaseUser.email.split('@')[0] : '로그인됨'} · <b>로그아웃</b>
-          </button>
-        ) : (
-          <button className="role-chip" onClick={() => navigate('/start')}>로그인</button>
-        )}
-        <button className="role-chip" onClick={toggleRole}>
-          데모 · 역할: <b>{role === 'operator' ? '운영자' : '일반 사용자'}</b>
+        <button className="role-chip" title={firebaseUser?.email || ''} onClick={signOutAll}>
+          {firebaseUser?.email ? firebaseUser.email.split('@')[0] : (serverName || '로그인됨')} · <b>로그아웃</b>
         </button>
       </header>
       <main>

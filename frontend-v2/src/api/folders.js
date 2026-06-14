@@ -12,20 +12,10 @@
  * 주의(용어 0): 폴더 탭은 일반 표면 — MC/VV/MV 라벨 노출 금지.
  *   내부적으로 "분석됨"은 mc(캡션 생성 완료) 수를 헤드라인으로 쓰되 UI 라벨은 "분석됨".
  * 폴더 목록은 평면 folder_path 문자열 → 경로 분할로 트리를 구성한다.
- * 미연결 시 데모 데이터 fallback + isDemo 표식.
+ * 미연결/오류 시 빈 상태(가짜 데이터 없음, disconnected 표식).
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from './client'
-
-// ── 데모 fallback (real shape: folder_path/total/mc/vv/mv) ───
-const DEMO = {
-  folders: [
-    { folder_path: 'NAS/캐릭터/주인공', total: 1800, mc: 1800, vv: 1750, mv: 1700 },
-    { folder_path: 'NAS/캐릭터/NPC', total: 1300, mc: 760, vv: 700, mv: 640 },
-    { folder_path: 'NAS/배경', total: 880, mc: 880, vv: 880, mv: 880 },
-    { folder_path: '로컬/컨셉아트', total: 700, mc: 0, vv: 0, mv: 0 },
-  ],
-}
 
 const lastSeg = (p) => { const s = p.split('/').filter(Boolean); return s[s.length - 1] || p }
 const covClass = (pct, total) => (total === 0 ? 'r' : pct >= 99 ? 'g' : pct > 0 ? 'a' : 'r')
@@ -84,10 +74,10 @@ export function useFolders() {
     queryFn: () => apiClient.get('/api/v1/archive/folders'),
   })
   const connected = !q.isError && q.data
-  const raw = (connected && q.data?.folders) ? q.data.folders : DEMO.folders
+  const raw = (connected && q.data?.folders) ? q.data.folders : []
   const folders = raw.map(normalize)
   const tree = buildTree(folders)
-  return { isDemo: !connected, loading: q.isLoading, folders, tree }
+  return { disconnected: !connected, loading: q.isLoading, folders, tree }
 }
 
 // ── 동기화 (admin) — scan 후 이동/삭제 자동 적용 ──────────────

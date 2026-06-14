@@ -6,18 +6,16 @@ import { useAnalysisData, useJobControl } from '../api/analysis'
  * 화면의 주인공은 잡 메타데이터가 아니라 큐의 내용물이다.
  *
  * 데이터: useAnalysisData() (analysis-jobs + admin/workers 집계).
- * 서버 미연결 시 데모 데이터로 fallback 하고 상단에 표식.
+ * 미연결/오류 시 가짜 데이터 없이 빈 상태 + 정직한 표식.
  */
 export default function AnalysisScreen() {
-  const { isDemo, loading, summary, analyzers, jobs, flow, totalFailed } = useAnalysisData()
+  const { disconnected, loading, summary, analyzers, jobs, flow, totalFailed } = useAnalysisData()
   const { pause, resume, cancel } = useJobControl()
 
-  // 잡 상태별 실제 동작 가능한 버튼만 노출 (백엔드에 존재하는 엔드포인트)
   const jobActions = (j) => {
     if (j.status === 'paused') return [{ label: '재개', fn: () => resume.mutate(j.id) }, { label: '취소', fn: () => cancel.mutate(j.id) }]
     return [{ label: '일시정지', fn: () => pause.mutate(j.id) }, { label: '취소', fn: () => cancel.mutate(j.id) }]
   }
-  const liveAction = (j) => !isDemo && j.id > 0  // 데모 행은 제어 비활성
 
   return (
     <section id="scr-analysis" className="screen active">
@@ -26,12 +24,12 @@ export default function AnalysisScreen() {
           분석 리스트 <span className="sub">등록 순이 아니라 작업 간 공정 배분으로 처리</span>
         </div>
 
-        {isDemo && (
+        {disconnected && (
           <div style={{
             margin: '8px 0 14px', padding: '8px 12px', borderRadius: 6, fontSize: 11.5,
-            background: 'rgba(251,191,36,.10)', border: '1px solid rgba(251,191,36,.25)', color: 'var(--amber)',
+            background: 'rgba(248,113,113,.10)', border: '1px solid rgba(248,113,113,.25)', color: 'var(--red)',
           }}>
-            ● 데모 데이터 — 서버에 연결되지 않았습니다 {loading ? '(연결 시도 중…)' : '(예시를 표시 중)'}
+            ● 서버 연결 끊김 {loading ? '— 재시도 중…' : '— 데이터를 불러올 수 없습니다'}
           </div>
         )}
 
@@ -72,9 +70,7 @@ export default function AnalysisScreen() {
                 </span>
               )}
               <div className="acts2">
-                {liveAction(j)
-                  ? jobActions(j).map(a => <button key={a.label} onClick={a.fn}>{a.label}</button>)
-                  : <button disabled style={{ opacity: .4, cursor: 'default' }}>제어</button>}
+                {jobActions(j).map(a => <button key={a.label} onClick={a.fn}>{a.label}</button>)}
               </div>
             </div>
           ))}

@@ -27,7 +27,7 @@ function TreeNode({ node, selected, onSelect }) {
 }
 
 export default function FoldersScreen() {
-  const { isDemo, loading, folders, tree } = useFolders()
+  const { disconnected, loading, folders, tree } = useFolders()
   const sync = useFolderSync()
   const reanalyze = useReanalyze()
   const [selected, setSelected] = useState(null)
@@ -43,12 +43,12 @@ export default function FoldersScreen() {
     ? `재분석 작업 등록됨 (${(reanalyze.data.total_files ?? 0).toLocaleString()}장)`
     : reanalyze.isPending ? '등록 중…' : reanalyze.isError ? '등록 실패' : null
 
-  const canMutate = !isDemo && !!selNode
+  const canMutate = !disconnected && !!selNode
 
   return (
     <section id="scr-library" className="screen active" style={{ height: '100%' }}>
       <aside className="lib-side">
-        <h3>폴더 {isDemo && <span style={{ fontSize: 9, color: 'var(--amber)' }}>● 데모</span>}</h3>
+        <h3>폴더 {disconnected && <span style={{ fontSize: 9, color: 'var(--amber)' }}>연결 끊김</span>}</h3>
         <div className="tree">
           {tree.length === 0 && !loading && (
             <div style={{ fontSize: 11, color: 'var(--faint)', padding: 8 }}>등록된 폴더가 없습니다</div>
@@ -68,7 +68,7 @@ export default function FoldersScreen() {
               <button disabled={!canMutate || sync.isPending} onClick={() => sync.mutate(selNode.path)}>동기화</button>
               <button disabled={!canMutate || reanalyze.isPending} onClick={() => reanalyze.mutate(selNode.path)}>다시 분석…</button>
             </div>
-            {isDemo && <div style={{ fontSize: 9.5, color: 'var(--faint)', marginTop: 6 }}>서버 연결 시 동기화·재분석이 활성화됩니다</div>}
+            {disconnected && <div style={{ fontSize: 9.5, color: 'var(--faint)', marginTop: 6 }}>서버 연결 시 동기화·재분석이 활성화됩니다</div>}
           </div>
         )}
       </aside>

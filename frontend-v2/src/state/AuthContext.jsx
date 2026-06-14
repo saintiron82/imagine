@@ -22,6 +22,7 @@ export function AuthProvider({ children }) {
   const [firebaseUser, setFirebaseUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [connected, setConnected] = useState(false)
+  const [role, setRole] = useState('')          // 인증된 사용자의 실제 역할(admin/user)
   // checking: 저장된 토큰을 검증하는 동안 true(게이트가 깜빡이지 않게). 토큰 없으면 즉시 false.
   const [checking, setChecking] = useState(!!getAccessToken())
   const [serverName, setServerName] = useState(() => { try { return localStorage.getItem(SERVER_NAME_KEY) || '' } catch { return '' } })
@@ -44,7 +45,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!getAccessToken()) { setChecking(false); return }
     getMe()
-      .then(() => { setConnected(true) })
+      .then((me) => { setConnected(true); setRole(me?.role || '') })
       .catch(() => { clearTokens(); setConnected(false) })
       .finally(() => setChecking(false))
   }, [])
@@ -73,6 +74,7 @@ export function AuthProvider({ children }) {
       const idToken = await (await fb()).getIdToken()
       if (!idToken) throw new Error('먼저 로그인하세요')
       await firebaseConnect(idToken, serverPassword) // 성공 시 토큰 저장
+      try { const me = await getMe(); setRole(me?.role || '') } catch { /* role best-effort */ }
       try { localStorage.setItem(SERVER_NAME_KEY, groupName) } catch {}
       setServerName(groupName)
       setConnected(true)
@@ -85,14 +87,15 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  const disconnect = useCallback(() => { clearTokens(); setConnected(false) }, [])
+  const disconnect = useCallback(() => { clearTokens(); setConnected(false); setRole('') }, [])
   const signOutAll = useCallback(async () => {
     disconnect()
     try { await (await fb()).signOut() } catch {}
   }, [disconnect])
 
   const value = {
-    firebaseUser, authLoading, connected, checking, serverName, busy, error,
+    firebaseUser, authLoading, connected, checking, role, serverName, busy, error,
+    isOperator: role === 'admin',
     signInEmail, signUpEmail, signInGoogle, connectToServer, disconnect, signOutAll,
   }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
