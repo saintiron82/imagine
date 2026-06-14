@@ -8,7 +8,9 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('imagineDesktop', {
   googleOAuth: () => ipcRenderer.invoke('google-oauth'),
-  // 서버는 독립·상주 프로세스 — 끄는 건 관리에서 명시적으로만.
+  // 서버 켜고/끄기/상태/자동실행은 이 Electron 앱이 담당.
+  startServer: () => ipcRenderer.invoke('server-start'),
   stopServer: () => ipcRenderer.invoke('server-stop'),
   serverStatus: () => ipcRenderer.invoke('server-status'),
+  setAutostart: (enabled) => ipcRenderer.invoke('server-autostart', enabled),
 })

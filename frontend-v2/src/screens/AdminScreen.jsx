@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useWorkers, useClusterValves, useWorkerControl } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
@@ -190,6 +190,48 @@ function MembersPanel() {
   )
 }
 
+function DesktopServerControl() {
+  const d = window.imagineDesktop
+  const [st, setSt] = useState(null) // {running, autostart}
+  const [busy, setBusy] = useState(false)
+  const refresh = () => d.serverStatus().then(setSt).catch(() => setSt({ running: false, autostart: false }))
+  useEffect(() => { refresh() }, []) // eslint-disable-line
+
+  const start = async () => { setBusy(true); try { await d.startServer() } finally { await refresh(); setBusy(false) } }
+  const stop = async () => {
+    if (!confirm('이 컴퓨터의 서버를 끕니다.\n끄면 팀원도 접속할 수 없습니다. 계속할까요?')) return
+    setBusy(true); try { await d.stopServer() } finally { await refresh(); setBusy(false) }
+  }
+  const toggleAuto = async (e) => { setBusy(true); try { await d.setAutostart(e.target.checked) } finally { await refresh(); setBusy(false) } }
+
+  const running = st?.running
+  return (
+    <div className="panel">
+      <h4>이 컴퓨터의 서버 <span className="hint">독립·상주 — 앱 창을 닫아도 팀에 계속 서비스합니다</span></h4>
+      <table><tbody>
+        <tr>
+          <td>서버 프로세스</td>
+          <td style={{ color: running ? 'var(--emerald)' : 'var(--faint)', fontSize: 11 }}>
+            {st === null ? '확인 중…' : running ? '● 실행 중 (상주)' : '○ 꺼짐'}
+          </td>
+          <td><div className="row-act">
+            {running
+              ? <button className="danger" disabled={busy} onClick={stop}>서버 끄기</button>
+              : <button disabled={busy} onClick={start}>서버 켜기</button>}
+          </div></td>
+        </tr>
+        <tr>
+          <td>부팅 시 자동 실행<div style={{ fontSize: 10, color: 'var(--faint)' }}>로그인하면 서버가 조용히 켜짐(창은 안 뜸)</div></td>
+          <td />
+          <td><label className="chk" style={{ justifyContent: 'flex-end' }}>
+            <input type="checkbox" checked={!!st?.autostart} disabled={busy || st === null} onChange={toggleAuto} /> 자동 실행
+          </label></td>
+        </tr>
+      </tbody></table>
+    </div>
+  )
+}
+
 function ToolsPanel() {
   const { disconnected, external, lan } = useConnectionInfo()
   const desktop = typeof window !== 'undefined' && window.imagineDesktop // 데스크톱 셸에서만
@@ -197,12 +239,6 @@ function ToolsPanel() {
     ? `● 연결됨 — ${external.url || '터널'} · 주소 공유 불필요`
     : '○ 외부 접속 꺼짐 — 터널 미연결'
   const lanDesc = lan?.available ? `${lan.url} · 빠른 경로 (자동 발견)` : 'LAN 경로 없음'
-
-  const stopServer = async () => {
-    if (!desktop) return
-    if (!confirm('이 컴퓨터의 서버를 끕니다.\n끄면 팀원도 접속할 수 없습니다. 계속할까요?')) return
-    try { await window.imagineDesktop.stopServer() } catch { /* noop */ }
-  }
 
   const rows = [
     ['외부 접속 (Cloudflare 터널)', extDesc, ['재연결'], external?.available ? 'var(--emerald)' : 'var(--faint)'],
@@ -214,18 +250,7 @@ function ToolsPanel() {
   ]
   return (
     <>
-      {desktop && (
-        <div className="panel">
-          <h4>이 컴퓨터의 서버 <span className="hint">독립·상주 — 앱 창을 닫아도 팀에 계속 서비스합니다</span></h4>
-          <table><tbody>
-            <tr>
-              <td>서버 프로세스</td>
-              <td style={{ color: 'var(--emerald)', fontSize: 11 }}>● 실행 중 (상주) — 끄기 전까지 유지</td>
-              <td><div className="row-act"><button className="danger" onClick={stopServer}>서버 끄기</button></div></td>
-            </tr>
-          </tbody></table>
-        </div>
-      )}
+      {desktop && <DesktopServerControl />}
       <div className="panel">
         <h4>서버 도구 <span className="hint">DB·정합성·연결{disconnected && ' · 연결 끊김'}</span></h4>
         <table>

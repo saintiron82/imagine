@@ -101,20 +101,36 @@ async function createWindow() {
   return win
 }
 
+async function ensureBackend() {
+  if (await healthOnce()) return true
+  spawnBackend()
+  return waitHealth()
+}
+
 app.whenReady().then(async () => {
-  const already = await healthOnce()
-  if (already) console.log('[electron] backend already running — reusing :' + PORT)
-  else { spawnBackend(); const ok = await waitHealth(); if (!ok) console.error('[electron] backend did not become healthy') }
-  await createWindow()
+  // 자동 실행(로그인 항목)으로 숨겨서 뜬 경우 → 서버만 띄우고 창은 만들지 않는다.
+  const li = app.getLoginItemSettings()
+  const launchedHidden = li.wasOpenedAsHidden || li.wasOpenedAtLogin || process.argv.includes('--hidden')
+  await ensureBackend()
+  if (!launchedHidden) await createWindow()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
-// 앱 종료 시 백엔드를 죽이지 않는다 — 서버는 독립·상주(창 닫아도 팀에 계속 서비스).
+// 앱이 종료돼도 백엔드는 죽이지 않는다 — 서버는 detached·상주라 앱과 무관하게 산다.
 
-// 관리에서 명시적으로 서버를 끄거나 상태를 묻는 데스크톱 채널(window.imagineDesktop)
+// 서버 켜기/끄기/상태/자동실행은 모두 이 Electron 앱이 담당(window.imagineDesktop 채널).
+ipcMain.handle('server-start', async () => ({ ok: await ensureBackend() }))
 ipcMain.handle('server-stop', async () => { stopBackend(); return { ok: true } })
-ipcMain.handle('server-status', async () => ({ running: await healthOnce(), desktop: true }))
+ipcMain.handle('server-status', async () => ({
+  running: await healthOnce(),
+  autostart: app.getLoginItemSettings().openAtLogin,
+  desktop: true,
+}))
+ipcMain.handle('server-autostart', async (_e, enabled) => {
+  app.setLoginItemSettings({ openAtLogin: !!enabled, openAsHidden: !!enabled })
+  return { ok: true, autostart: app.getLoginItemSettings().openAtLogin }
+})
 
 // ── Google OAuth (desktop) — signInWithPopup 은 Electron 에서 막히므로 시스템 OAuth
 //    윈도로 id_token 을 받아 렌더러에서 signInWithCredential. (구 셸 핸들러 이식) ──
