@@ -13,18 +13,27 @@ export default function StartScreen() {
     signInEmail, signInGoogle, connectToServer, createServer } = useAuth()
 
   const [step, setStep] = useState(1)
-  const [mode, setMode] = useState('connect') // step2: 'connect' | 'create'
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [localErr, setLocalErr] = useState('')
-  const [srvName, setSrvName] = useState(serverName || '')
+  const [srvName, setSrvName] = useState('')   // 원격 서버 이름(다른 팀 서버 접속용)
   const [srvPw, setSrvPw] = useState('')
+  const [localInfo, setLocalInfo] = useState(null) // 이 머신 서버 상태: null=로딩 | {initialized, group_name}
+  const [view2, setView2] = useState('auto')   // step2: 'auto'(이 머신) | 'remote'(다른 서버)
 
   useEffect(() => {
     if (connected) navigate('/search')
     else if (firebaseUser && step === 1) setStep(2)
   }, [firebaseUser, connected]) // eslint-disable-line
-  useEffect(() => { if (serverName) setSrvName(serverName) }, [serverName])
+
+  // step2 진입 시 이 컴퓨터의 서버 상태 조회(같은-origin → 프록시 → 로컬 백엔드)
+  useEffect(() => {
+    if (step !== 2 || localInfo) return
+    fetch('/api/v1/server/info')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => setLocalInfo(d && typeof d.initialized === 'boolean' ? d : { initialized: false }))
+      .catch(() => setLocalInfo({ initialized: false }))
+  }, [step, localInfo])
 
   const doEmail = async () => {
     setLocalErr('')
@@ -36,7 +45,11 @@ export default function StartScreen() {
     try { await signInGoogle(); setStep(2) }
     catch (e) { setLocalErr(e.message || 'Google 로그인 실패') }
   }
-  const doConnect = async () => {
+  const doConnectLocal = async () => {   // 이 머신의 서버 — 이름 고정, 로컬 백엔드 직결
+    const r = await connectToServer(localInfo.group_name, srvPw, '')
+    if (r.ok) navigate('/search')
+  }
+  const doConnectRemote = async () => {  // 다른 팀 서버 — 이름으로 조회(lookupGroup)
     const r = await connectToServer(srvName.trim(), srvPw)
     if (r.ok) navigate('/search')
   }
@@ -65,34 +78,50 @@ export default function StartScreen() {
         </div>
       )}
 
-      {step === 2 && mode === 'connect' && (
+      {step === 2 && localInfo === null && (
+        <div className="start-card"><div className="tag" style={{ padding: '20px 0' }}>이 컴퓨터의 서버 확인 중…</div></div>
+      )}
+
+      {/* 이 머신에 서버가 이미 있음 → 접속(이름 고정, 비번만) */}
+      {step === 2 && view2 === 'auto' && localInfo?.initialized && (
         <div className="start-card">
-          <div className="lg" style={{ fontSize: 14 }}>서버 접속</div>
-          <div className="tag">{firebaseUser?.email ? `${firebaseUser.email} 로 로그인됨` : '서버 이름과 비밀번호로 접속'}</div>
-          <input placeholder="서버 이름" value={srvName} onChange={e => setSrvName(e.target.value)} />
-          <input type="password" placeholder="서버 비밀번호" value={srvPw} onChange={e => setSrvPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && doConnect()} />
+          <div className="lg" style={{ fontSize: 14 }}>이 컴퓨터의 서버에 접속</div>
+          <div className="tag">🖥️ <b style={{ color: 'var(--text)' }}>{localInfo.group_name}</b> · {firebaseUser?.email || ''}</div>
+          <input type="password" placeholder="서버 비밀번호" value={srvPw} onChange={e => setSrvPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && doConnectLocal()} autoFocus />
           {error && <div style={{ fontSize: 10.5, color: 'var(--red)', marginBottom: 8 }}>{error}</div>}
-          <button className="pri-w" disabled={busy || !srvName.trim() || !srvPw} onClick={doConnect}>{busy ? '접속 중…' : '접속'}</button>
-          <div className="start-div">또는</div>
-          <button className="start-opt" onClick={() => { setMode('create') }}>
-            🖥️<div><div className="t">이 컴퓨터를 서버로 만들기</div><div className="d">이 PC가 팀의 라이브러리 서버가 됩니다</div></div>
-          </button>
-          <div style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'center', marginTop: 10 }}>
-            팀 초대를 받았다면 그 이메일로 로그인하면 자동으로 접속됩니다.
+          <button className="pri-w" disabled={busy || !srvPw} onClick={doConnectLocal}>{busy ? '접속 중…' : '접속'}</button>
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--faint)', cursor: 'pointer' }} onClick={() => { setView2('remote') }}>다른 팀 서버에 접속 →</span>
           </div>
         </div>
       )}
 
-      {step === 2 && mode === 'create' && (
+      {/* 이 머신에 서버 없음 → 만들기 */}
+      {step === 2 && view2 === 'auto' && localInfo && !localInfo.initialized && (
         <div className="start-card">
           <div className="lg" style={{ fontSize: 14 }}>이 컴퓨터를 서버로 만들기</div>
           <div className="tag">이 PC가 팀의 라이브러리 서버가 됩니다 — 로그인한 계정이 운영자</div>
           <input placeholder="서버 이름 — 팀원이 접속할 이름" value={srvName} onChange={e => setSrvName(e.target.value)} />
-          <input type="password" placeholder="서버 관리 비밀번호 — 접속·초기화에 사용" value={srvPw} onChange={e => setSrvPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && doCreate()} />
+          <input type="password" placeholder="서버 관리 비밀번호" value={srvPw} onChange={e => setSrvPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && doCreate()} />
           {error && <div style={{ fontSize: 10.5, color: 'var(--red)', marginBottom: 8 }}>{error}</div>}
           <button className="pri-w" disabled={busy || !srvName.trim() || !srvPw} onClick={doCreate}>{busy ? '서버 생성 중…' : '서버 만들기'}</button>
-          <div style={{ textAlign: 'center', marginTop: 10 }}>
-            <span style={{ fontSize: 10.5, color: 'var(--faint)', cursor: 'pointer' }} onClick={() => { setMode('connect') }}>← 기존 서버에 접속</span>
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--faint)', cursor: 'pointer' }} onClick={() => { setView2('remote') }}>대신 다른 팀 서버에 접속 →</span>
+          </div>
+        </div>
+      )}
+
+      {/* 다른 팀 서버에 접속(원격) — 이름 조회 */}
+      {step === 2 && view2 === 'remote' && (
+        <div className="start-card">
+          <div className="lg" style={{ fontSize: 14 }}>다른 팀 서버에 접속</div>
+          <div className="tag">서버 이름과 비밀번호로 원격 서버에 접속합니다</div>
+          <input placeholder="서버 이름" value={srvName} onChange={e => setSrvName(e.target.value)} />
+          <input type="password" placeholder="서버 비밀번호" value={srvPw} onChange={e => setSrvPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && doConnectRemote()} />
+          {error && <div style={{ fontSize: 10.5, color: 'var(--red)', marginBottom: 8 }}>{error}</div>}
+          <button className="pri-w" disabled={busy || !srvName.trim() || !srvPw} onClick={doConnectRemote}>{busy ? '접속 중…' : '접속'}</button>
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--faint)', cursor: 'pointer' }} onClick={() => { setView2('auto') }}>← 이 컴퓨터의 서버</span>
           </div>
         </div>
       )}
