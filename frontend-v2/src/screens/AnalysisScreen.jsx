@@ -1,4 +1,5 @@
-import { useAnalysisData, useJobControl } from '../api/analysis'
+import { useState } from 'react'
+import { useAnalysisData, useJobControl, useJobHistory, useJobErrors, useIncompleteStats } from '../api/analysis'
 
 /**
  * 분석 — "무엇이 되고 있나". 작업 리스트 + 지금 처리 중 라이브 모니터.
@@ -7,22 +8,32 @@ import { useAnalysisData, useJobControl } from '../api/analysis'
  *
  * 데이터: useAnalysisData() (analysis-jobs + admin/workers 집계).
  * 미연결/오류 시 가짜 데이터 없이 빈 상태 + 정직한 표식.
+ * 완료 잔류 없음 원칙: 히스토리(IMGV2-20)는 기본 숨김·opt-in 별도 뷰.
  */
 export default function AnalysisScreen() {
   const { disconnected, loading, summary, analyzers, jobs, flow, totalFailed } = useAnalysisData()
   const { pause, resume, cancel } = useJobControl()
+  const [showHistory, setShowHistory] = useState(false)
 
   const jobActions = (j) => {
     if (j.status === 'paused') return [{ label: '재개', fn: () => resume.mutate(j.id) }, { label: '취소', fn: () => cancel.mutate(j.id) }]
     return [{ label: '일시정지', fn: () => pause.mutate(j.id) }, { label: '취소', fn: () => cancel.mutate(j.id) }]
   }
 
+  const pausedJobs = jobs.filter(j => j.status === 'paused')
+
   return (
     <section id="scr-analysis" className="screen active">
       <div style={{ maxWidth: 880, margin: '0 auto', padding: '20px 24px' }}>
-        <div className="sec-title">
-          분석 리스트 <span className="sub">등록 순이 아니라 작업 간 공정 배분으로 처리</span>
+        <div className="sec-title" style={{ display: 'flex', alignItems: 'baseline' }}>
+          <span>분석 리스트 <span className="sub">등록 순이 아니라 작업 간 공정 배분으로 처리</span></span>
+          <button style={{ marginLeft: 'auto', fontSize: 11.5, background: 'none', border: '1px solid var(--line)', borderRadius: 6, padding: '4px 10px', color: showHistory ? 'var(--text)' : 'var(--dim)', cursor: 'pointer' }}
+            onClick={() => setShowHistory(v => !v)}>{showHistory ? '히스토리 닫기' : '히스토리'}</button>
         </div>
+
+        {!disconnected && pausedJobs.length > 0 && (
+          <ResumeBanner pausedJobs={pausedJobs} onResumeAll={() => pausedJobs.forEach(j => resume.mutate(j.id))} resuming={resume.isPending} />
+        )}
 
         {disconnected && (
           <div style={{
@@ -97,11 +108,86 @@ export default function AnalysisScreen() {
           {totalFailed > 0 && (
             <div className="plain-fail">
               <span className="n">실패 {totalFailed}건</span>
-              <span>작업별 실패 상세는 관리에서 확인</span>
+              <span>작업별 실패 상세는 아래 히스토리에서 확인</span>
             </div>
           )}
         </div>
+
+        {showHistory && <HistorySection />}
       </div>
     </section>
+  )
+}
+
+// ── 이어하기 제안 (IMGV2-25) ─────────────────────────────────
+// 일시정지된 작업이 있으면 상단에 이어하기/무시 배너. 미완료 파일 수는 보조 정보.
+function ResumeBanner({ pausedJobs, onResumeAll, resuming }) {
+  const { totalIncomplete } = useIncompleteStats()
+  const [dismissed, setDismissed] = useState(false)
+  if (dismissed) return null
+  return (
+    <div style={{
+      margin: '8px 0 14px', padding: '10px 14px', borderRadius: 8, fontSize: 12,
+      background: 'rgba(96,165,250,.10)', border: '1px solid rgba(96,165,250,.30)',
+      display: 'flex', alignItems: 'center', gap: 12,
+    }}>
+      <span style={{ color: 'var(--cyan)' }}>
+        일시정지된 작업 <b>{pausedJobs.length}개</b>{totalIncomplete > 0 ? ` · 미완료 ${totalIncomplete.toLocaleString()}장` : ''} — 이어서 처리할까요?
+      </span>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        <button disabled={resuming} onClick={onResumeAll}>{resuming ? '재개 중…' : '모두 이어하기'}</button>
+        <button onClick={() => setDismissed(true)}>무시</button>
+      </div>
+    </div>
+  )
+}
+
+// ── 완료 작업 히스토리 (IMGV2-20) ───────────────────────────
+const HIST_STATUS = { completed: { label: '완료', color: 'var(--emerald)' }, cancelled: { label: '취소', color: 'var(--faint)' }, archived: { label: '보관', color: 'var(--dim)' } }
+
+function HistorySection() {
+  const { jobs, loading, isError } = useJobHistory(true)
+  return (
+    <div className="live" style={{ marginTop: 16 }}>
+      <div className="live-head">완료/지난 작업 <span className="rate">{jobs.length}건</span></div>
+      {loading && <div style={{ fontSize: 11.5, color: 'var(--faint)', padding: '8px 2px' }}>불러오는 중…</div>}
+      {isError && <div style={{ fontSize: 11.5, color: 'var(--red)', padding: '8px 2px' }}>히스토리를 불러올 수 없습니다</div>}
+      {!loading && !isError && jobs.length === 0 && <div style={{ fontSize: 11.5, color: 'var(--faint)', padding: '8px 2px' }}>종료된 작업이 없습니다</div>}
+      {jobs.map(j => <HistoryRow key={j.id} job={j} />)}
+    </div>
+  )
+}
+
+function HistoryRow({ job }) {
+  const [open, setOpen] = useState(false)
+  const { errors, count, loading } = useJobErrors(job.id, open)
+  const s = HIST_STATUS[job.status] || { label: job.status, color: 'var(--faint)' }
+  const when = job.createdAt ? new Date(job.createdAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) : ''
+  return (
+    <div style={{ borderTop: '1px solid var(--line)', padding: '8px 2px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+        <span style={{ color: s.color, fontSize: 10, fontWeight: 700, minWidth: 28 }}>{s.label}</span>
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.name}</span>
+        <span className="mono2" style={{ color: 'var(--dim)' }}>{job.done.toLocaleString()} / {job.total.toLocaleString()}</span>
+        {when && <span style={{ color: 'var(--faint)', fontSize: 10 }}>{when}</span>}
+        {job.failed > 0
+          ? <button style={{ fontSize: 10 }} onClick={() => setOpen(v => !v)}>{open ? '오류 닫기' : `오류 ${job.failed}`}</button>
+          : <span style={{ width: 56 }} />}
+      </div>
+      {open && (
+        <div style={{ marginTop: 6, paddingLeft: 38 }}>
+          {loading && <div style={{ fontSize: 11, color: 'var(--faint)' }}>불러오는 중…</div>}
+          {!loading && count === 0 && <div style={{ fontSize: 11, color: 'var(--faint)' }}>상세 오류 기록이 없습니다</div>}
+          {errors.map((e, i) => (
+            <div key={i} style={{ fontSize: 11, color: 'var(--faint)', padding: '2px 0' }}>
+              <b style={{ color: 'var(--text)' }}>{e.file_name}</b>
+              {e.failed_phases?.length ? <span style={{ color: 'var(--red)' }}> [{e.failed_phases.join(', ')}]</span> : null}
+              {e.permanent ? <span style={{ color: 'var(--red)' }}> · 영구 실패</span> : (e.retry_count != null ? ` · 재시도 ${e.retry_count}` : '')}
+              {e.error ? <span> — {e.error}</span> : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

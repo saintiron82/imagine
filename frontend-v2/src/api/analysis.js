@@ -112,10 +112,65 @@ export function useAnalysisData() {
 // ── 잡 제어 mutation (admin) ─────────────────────────────────
 export function useJobControl() {
   const qc = useQueryClient()
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['analysis-jobs'] })
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['analysis-jobs'] })
+    qc.invalidateQueries({ queryKey: ['analysis-jobs-history'] })
+  }
   const mk = (verb) => useMutation({
     mutationFn: (jobId) => apiClient.post(`/api/v1/analysis-jobs/${jobId}/${verb}`),
     onSuccess: invalidate,
   })
   return { pause: mk('pause'), resume: mk('resume'), cancel: mk('cancel') }
+}
+
+/**
+ * 완료 작업 히스토리(IMGV2-20) — 완료/취소/보관된 과거 작업.
+ *   GET /api/v1/analysis-jobs?include_completed=true → { jobs[] }
+ * 진행 중(active/paused)은 메인 리스트에 있으므로 여기선 종료된 것만.
+ * enabled 로 lazy — 히스토리 뷰를 열 때만 조회한다(완료 잔류 없음 원칙).
+ */
+export function useJobHistory(enabled) {
+  const q = useQuery({
+    queryKey: ['analysis-jobs-history'],
+    queryFn: () => apiClient.get('/api/v1/analysis-jobs', { include_completed: true }),
+    enabled: !!enabled,
+  })
+  const all = q.data?.jobs || []
+  const TERMINAL = new Set(['completed', 'archived', 'cancelled'])
+  const jobs = all.filter(j => TERMINAL.has(j.status)).map(j => {
+    const p = j.progress || {}
+    const failed = Object.values(p.failed || {}).reduce((a, b) => a + (Number(b) || 0), 0)
+    return {
+      id: j.id, name: j.name, status: j.status,
+      done: p.complete || 0, total: p.total || j.total_files || 0,
+      failed, createdAt: j.created_at,
+    }
+  })
+  return { jobs, loading: q.isLoading, isError: q.isError }
+}
+
+/**
+ * 작업별 실패 상세(IMGV2-20) — 히스토리 행 펼칠 때만 lazy 조회.
+ *   GET /api/v1/analysis-jobs/{id}/errors → { errors[], count }
+ *   error: { file_name, failed_phases[], error, retry_count, permanent }
+ */
+export function useJobErrors(jobId, enabled) {
+  const q = useQuery({
+    queryKey: ['analysis-job-errors', jobId],
+    queryFn: () => apiClient.get(`/api/v1/analysis-jobs/${jobId}/errors`),
+    enabled: !!enabled && !!jobId,
+  })
+  return { errors: q.data?.errors || [], count: q.data?.count || 0, loading: q.isLoading }
+}
+
+/**
+ * 미완료 감지(IMGV2-25) — 이어하기 제안용. stats/incomplete 조회.
+ *   GET /api/v1/stats/incomplete → { total_files, total_incomplete, folders[] }
+ */
+export function useIncompleteStats() {
+  const q = useQuery({ queryKey: ['stats-incomplete'], queryFn: () => apiClient.get('/api/v1/stats/incomplete') })
+  return {
+    totalIncomplete: (!q.isError && q.data?.total_incomplete) || 0,
+    folders: (!q.isError && q.data?.folders) || [],
+  }
 }
