@@ -1961,28 +1961,51 @@ class SQLiteDB:
         """
         Restore this database in place from a snapshot file (IMGV2-48).
 
-        Validates that src is a SQLite DB carrying our schema (a `files` table),
-        then uses SQLite's online backup API to overwrite every page of the live
-        connection — no file swap / reconnect needed. DESTRUCTIVE: replaces all
-        content (including users/auth) with the snapshot's.
+        Validates that src is an intact SQLite DB carrying our schema (a `files`
+        table) BEFORE loading the vec extension on the untrusted upload, takes a
+        pre-import safety copy of the current DB, then uses SQLite's online backup
+        API to overwrite every page of the live connection (no file swap needed).
+
+        DESTRUCTIVE: replaces ALL content (including users/auth) with the
+        snapshot's. CONCURRENCY: the online backup needs an exclusive write on the
+        live DB — if a worker/pool thread is mid-write it can block until that
+        writer finishes. Run with processing paused / server idle. On failure the
+        pre-import copy at `<db>.preimport.bak` allows manual recovery.
         """
+        import os as _os
         src = None
         try:
             src = sqlite3.connect(src_path, timeout=30)
-            self._load_vec_extension(src)         # vec0 vtabs must instantiate to copy
+            # Validate the untrusted upload BEFORE instantiating any vec0 vtabs on it.
             has_files = src.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
             ).fetchone()
             if not has_files:
                 return {"success": False, "error": "유효한 Imagine 데이터베이스가 아닙니다 (files 테이블 없음)"}
+            integrity = src.execute("PRAGMA integrity_check").fetchone()
+            if not integrity or integrity[0] != "ok":
+                return {"success": False, "error": f"업로드 파일 무결성 검사 실패: {integrity[0] if integrity else 'unknown'}"}
+            self._load_vec_extension(src)         # now safe — vec0 vtabs must instantiate to copy
             file_count = src.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+
+            # Pre-import safety copy so a bad restore is recoverable.
+            safety_path = f"{self.db_path}.preimport.bak"
+            try:
+                if _os.path.exists(safety_path):
+                    _os.unlink(safety_path)
+                snap = self.export_snapshot(safety_path)
+                if not snap.get("success"):
+                    safety_path = None
+            except Exception as se:  # pragma: no cover - defensive
+                logger.warning(f"pre-import safety snapshot failed (continuing): {se}")
+                safety_path = None
 
             dest = self.conn
             dest.rollback()                        # ensure no open txn before backup
             src.backup(dest)                       # copy src -> live dest (all pages)
             dest.execute("PRAGMA wal_checkpoint(FULL)")
-            logger.info(f"DB snapshot imported: {file_count} files restored into {self.db_path}")
-            return {"success": True, "file_count": file_count}
+            logger.info(f"DB snapshot imported: {file_count} files restored into {self.db_path} (safety copy: {safety_path})")
+            return {"success": True, "file_count": file_count, "safety_backup": safety_path}
         except Exception as e:
             logger.error(f"DB import failed: {e}")
             return {"success": False, "error": str(e)}

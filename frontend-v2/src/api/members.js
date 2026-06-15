@@ -42,6 +42,7 @@ export function useLicenseStatus() {
   const expiresAt = u.expires_at || null
   let daysLeft = null
   if (expiresAt) {
+    // eslint-disable-next-line react-hooks/purity -- 만료까지 남은 일수는 현재시각 기준 재계산이 의도된 동작(라이브 카운트다운)
     const ms = new Date(expiresAt).getTime() - Date.now()
     daysLeft = Math.ceil(ms / 86400000)
   }

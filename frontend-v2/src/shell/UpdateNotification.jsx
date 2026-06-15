@@ -22,7 +22,7 @@ export default function UpdateNotification() {
 
   const install = () => { window.imagineDesktop?.installUpdate?.() }
 
-  let title = '', body = '', action = null, tone = 'var(--cyan)'
+  let title, body, action = null, tone = 'var(--cyan)'
   if (evt.type === 'available') { title = '새 버전 다운로드 중'; body = evt.version ? `v${evt.version}` : '백그라운드에서 받는 중…' }
   else if (evt.type === 'progress') { title = '업데이트 다운로드'; body = `${evt.percent ?? 0}%` }
   else if (evt.type === 'downloaded') { title = '업데이트 준비됨'; body = evt.version ? `v${evt.version} — 재시작하면 적용됩니다` : '재시작하면 적용됩니다'; action = '지금 재시작' }

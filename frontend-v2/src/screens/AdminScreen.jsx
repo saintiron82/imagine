@@ -61,7 +61,7 @@ function ApSetting({ label, suffix, value, min, max, disabled, onCommit }) {
 
 function WorkersPanel() {
   const { disconnected, workers, globalMode } = useWorkers()
-  const { valves, bottleneck, total } = useClusterValves()
+  const { valves, bottleneck } = useClusterValves()
   const { stop, block, unblock } = useWorkerControl()
   const ap = useAutoProcessing()
   const canControl = !disconnected

@@ -22,7 +22,7 @@ export function useBackfill() {
     queryFn: () => apiClient.get('/api/v1/admin/backfill-hashes'),
     refetchInterval: (q) => (q.state.data?.running ? 1500 : false),
   })
-  const inval = () => qc.invalidateQueries({ queryKey: ['backfill-status'] })
+  const inval = () => { qc.invalidateQueries({ queryKey: ['backfill-status'] }) }  // no promise return → mutation settles immediately
   const start = useMutation({ mutationFn: () => apiClient.post('/api/v1/admin/backfill-hashes'), onSuccess: inval })
   const stop = useMutation({ mutationFn: () => apiClient.delete('/api/v1/admin/backfill-hashes'), onSuccess: inval })
   return { status: status.data, loading: status.isLoading, start, stop }
@@ -91,7 +91,7 @@ export function useRepairParse() {
   })
   const start = useMutation({
     mutationFn: () => apiClient.post('/api/v1/admin/tools/repair-parse'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repair-parse-status'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['repair-parse-status'] }) },
   })
   return { status: status.data, start }
 }

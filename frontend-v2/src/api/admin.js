@@ -12,7 +12,7 @@
  *               mc_done, vv_done, mv_done } → 클러스터 밸브/병목 집계
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState, useEffect } from 'react'
+import { useRef } from 'react'
 import { apiClient } from './client'
 
 const PHASE_LABEL = { dl: 'DL', parse: '파싱', mc: 'MC', vv: 'VV', mv: 'MV' }
@@ -68,7 +68,7 @@ export function useClusterValves() {
 
 export function useWorkerControl() {
   const qc = useQueryClient()
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['admin-workers'] })
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['admin-workers'] }) }  // no promise return
   const mk = (verb) => useMutation({
     mutationFn: (id) => apiClient.post(`/api/v1/admin/workers/${id}/${verb}`),
     onSuccess: invalidate,
@@ -122,27 +122,27 @@ export function useFeedbackSummary() {
  * 클라이언트에 최대 1000줄 누적(서버는 신규분만 반환).
  */
 export function useLogStream(active) {
+  const qc = useQueryClient()
   const afterRef = useRef(0)
-  const [entries, setEntries] = useState([])
+  const accRef = useRef([])
+  // 누적은 queryFn 안의 ref 로 처리(effect 에서 setState 금지). 신규분이 오면 새 배열을
+  // 반환해 리렌더, 없으면 같은 참조를 반환해 불필요한 리렌더를 피한다(structural sharing).
   const q = useQuery({
     queryKey: ['admin-logs'],
-    queryFn: () => apiClient.get('/api/v1/admin/logs', { after: afterRef.current, limit: 300 }),
+    queryFn: async () => {
+      const res = await apiClient.get('/api/v1/admin/logs', { after: afterRef.current, limit: 300 })
+      if (res?.last_seq != null) afterRef.current = Math.max(afterRef.current, res.last_seq)
+      if (res?.entries?.length) {
+        const merged = accRef.current.concat(res.entries)
+        accRef.current = merged.length > 1000 ? merged.slice(-1000) : merged
+      }
+      return accRef.current
+    },
     enabled: !!active,
     refetchInterval: active ? 1500 : false,
   })
-  useEffect(() => {
-    const d = q.data
-    if (!d) return
-    if (d.last_seq != null) afterRef.current = Math.max(afterRef.current, d.last_seq)
-    if (d.entries?.length) {
-      setEntries(prev => {
-        const merged = prev.concat(d.entries)
-        return merged.length > 1000 ? merged.slice(-1000) : merged
-      })
-    }
-  }, [q.data])
-  const clear = () => setEntries([])
-  return { entries, clear, disconnected: q.isError }
+  const clear = () => { accRef.current = []; qc.setQueryData(['admin-logs'], []) }
+  return { entries: q.data || [], clear, disconnected: q.isError }
 }
 
 export function useAutoProcessing() {
@@ -150,7 +150,7 @@ export function useAutoProcessing() {
   const q = useQuery({ queryKey: ['auto-processing'], queryFn: () => apiClient.get('/api/v1/admin/workers/auto-processing') })
   const update = useMutation({
     mutationFn: (patch) => apiClient.patch('/api/v1/admin/workers/auto-processing', patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['auto-processing'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['auto-processing'] }) },
   })
   return { config: q.data, loading: q.isLoading, disconnected: q.isError, update }
 }

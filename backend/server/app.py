@@ -94,7 +94,7 @@ async def startup():
     logger.info("Imagine Server starting up...")
 
     # Start parent watchdog — auto-exit when Electron (parent) dies unexpectedly.
-    # Without this, the server process would remain orphaned and hold the port.
+    # Without this, the server process would be left running with no parent and hold the port.
     try:
         from backend.utils.parent_watchdog import start_parent_watchdog
         start_parent_watchdog()

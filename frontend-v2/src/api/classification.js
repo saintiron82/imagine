@@ -32,11 +32,7 @@ export function useSetActiveDomain() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (domainId) => setActiveDomain(domainId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['domain-active'] })
-      // 검색 필터의 image_type/art_style 옵션이 활성 도메인에서 옴 → 갱신
-      qc.invalidateQueries({ queryKey: ['active-domain-config'] })
-    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['domain-active'] }) },
   })
 }
 
@@ -44,7 +40,7 @@ export function useSaveDomain() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ domainId, yamlContent }) => saveDomainYaml(domainId, yamlContent),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['domains'] }) },
   })
 }
 

@@ -12,6 +12,7 @@ from starlette.background import BackgroundTask
 
 from backend.db.sqlite_client import SQLiteDB
 from backend.server.deps import require_admin, get_db_safe
+from backend.server.security import audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,11 @@ def reset_database(
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result.get("error", "Reset failed"))
 
+    audit_log.record(
+        db, "database_reset",
+        actor_user_id=admin.get("id"), actor_username=admin.get("username"),
+        target_kind="database", detail=f"files={result.get('files')} vectors={result.get('vectors')}",
+    )
     return result
 
 
@@ -71,6 +77,11 @@ def export_database(
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     filename = f"imagine-backup-{stamp}.db"
     logger.info("Admin %s exported DB snapshot (%s bytes)", admin.get("username"), result.get("bytes"))
+    audit_log.record(
+        db, "database_exported",
+        actor_user_id=admin.get("id"), actor_username=admin.get("username"),
+        target_kind="database", detail=f"bytes={result.get('bytes')} files={result.get('file_count')}",
+    )
     return FileResponse(
         tmp,
         media_type="application/x-sqlite3",
@@ -89,7 +100,13 @@ async def import_database(
     """Restore the database from an uploaded snapshot (IMGV2-48). DESTRUCTIVE.
 
     Re-verifies the admin password (same gate as reset) and validates that the
-    upload carries our schema before overwriting the live database.
+    upload is intact and carries our schema before overwriting the live database.
+
+    Caveats (surfaced to the operator): the restore replaces ALL data including
+    users/auth — if the snapshot lacks your account you must re-login with the
+    restored credentials afterward. The online backup needs an exclusive write,
+    so run it with processing paused. A pre-import copy is kept at
+    `<db>.preimport.bak` for manual recovery.
     """
     _verify_admin_password(db, admin, password)
 
@@ -112,6 +129,11 @@ async def import_database(
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result.get("error", "Import failed"))
         logger.info("Admin %s imported DB snapshot (%s files)", admin.get("username"), result.get("file_count"))
+        audit_log.record(
+            db, "database_imported",
+            actor_user_id=admin.get("id"), actor_username=admin.get("username"),
+            target_kind="database", detail=f"files={result.get('file_count')} bytes={total}",
+        )
         return result
     finally:
         try:
