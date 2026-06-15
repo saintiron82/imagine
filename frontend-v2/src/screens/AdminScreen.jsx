@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useWorkers, useClusterValves, useWorkerControl, useHeadlessCommand, useFeedbackSummary, useAutoProcessing } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
-import { useDbAudit, useBackfill, useDbReset, useRepairParse } from '../api/tools'
+import { useDbAudit, useBackfill, useDbReset, useRepairParse, useDbExport, useDbImport } from '../api/tools'
 import { useDomains, useActiveDomain, useDomainDetail, useSetActiveDomain, useSaveDomain, generateDomainPrompt } from '../api/classification'
 
 /**
@@ -593,8 +593,14 @@ function DbToolsControl() {
   const { status: bf, start: bfStart, stop: bfStop } = useBackfill()
   const { status: rp, start: rpStart } = useRepairParse()
   const reset = useDbReset()
+  const dbExport = useDbExport()
+  const dbImport = useDbImport()
+  const fileRef = useRef(null)
   const [pwOpen, setPwOpen] = useState(false)
   const [pw, setPw] = useState('')
+  const [impOpen, setImpOpen] = useState(false)
+  const [impPw, setImpPw] = useState('')
+  const [impFile, setImpFile] = useState(null)
 
   const auditMsg = audit.data
     ? `전체 ${audit.data.total_files?.toLocaleString() ?? '—'}장 · 미완성 ${audit.data.total_incomplete?.toLocaleString() ?? 0}장 · 폴더 ${(audit.data.folders || []).length}개`
@@ -617,6 +623,22 @@ function DbToolsControl() {
   const doReset = () => {
     if (!pw) return
     reset.mutate(pw, { onSuccess: () => { setPwOpen(false); setPw('') } })
+  }
+  // 내보내기/가져오기 둘 다 data 가 남으므로 더 최근(submittedAt) 액션을 표시.
+  const recentImport = (dbImport.submittedAt || 0) >= (dbExport.submittedAt || 0)
+  const ioError = recentImport ? dbImport.isError : dbExport.isError
+  let ioMsg = '전체 DB 스냅샷 백업/복원'
+  if (dbExport.isPending) ioMsg = '내보내는 중…'
+  else if (dbImport.isPending) ioMsg = '복원 중…'
+  else if (recentImport && dbImport.isError) ioMsg = dbImport.error?.detail || dbImport.error?.message || '복원 실패'
+  else if (recentImport && dbImport.data) ioMsg = `복원됨 — 파일 ${(dbImport.data.file_count ?? 0).toLocaleString()}장`
+  else if (!recentImport && dbExport.isError) ioMsg = dbExport.error?.message || '내보내기 실패'
+  else if (!recentImport && dbExport.data) ioMsg = `내보냄 — ${dbExport.data.filename} (${Math.round((dbExport.data.bytes || 0) / 1024).toLocaleString()} KB)`
+  const doImport = () => {
+    if (!impPw || !impFile) return
+    dbImport.mutate({ password: impPw, file: impFile }, {
+      onSuccess: () => { setImpOpen(false); setImpPw(''); setImpFile(null) },
+    })
   }
 
   return (
@@ -644,9 +666,26 @@ function DbToolsControl() {
         </tr>
         <tr>
           <td>DB 내보내기 / 가져오기</td>
-          <td style={{ color: 'var(--faint)', fontSize: 11 }}>백엔드 백업/복원 엔드포인트 준비 중</td>
-          <td><div className="row-act"><button disabled title="백엔드 엔드포인트 준비 중">내보내기</button><button disabled>가져오기</button></div></td>
+          <td style={{ color: ioError ? 'var(--red)' : 'var(--faint)', fontSize: 11 }}>{ioMsg}</td>
+          <td><div className="row-act">
+            <button disabled={dbExport.isPending} onClick={() => dbExport.mutate()}>내보내기</button>
+            <button className="danger" onClick={() => setImpOpen(v => !v)}>가져오기…</button>
+          </div></td>
         </tr>
+        {impOpen && (
+          <tr>
+            <td colSpan={3}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.3)', borderRadius: 6, padding: '8px 10px' }}>
+                <span style={{ fontSize: 11, color: 'var(--red)' }}>⚠ 현재 DB를 업로드한 스냅샷으로 완전히 덮어씁니다(사용자/인증 포함). 운영자 비밀번호 확인:</span>
+                <input type="password" value={impPw} onChange={e => setImpPw(e.target.value)} placeholder="비밀번호" style={{ background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '6px 10px', color: 'var(--text)', fontSize: 12, width: 150 }} />
+                <input ref={fileRef} type="file" accept=".db,.sqlite,.sqlite3,application/x-sqlite3" style={{ display: 'none' }} onChange={e => setImpFile(e.target.files?.[0] || null)} />
+                <button onClick={() => fileRef.current?.click()}>{impFile ? impFile.name : '백업 파일 선택…'}</button>
+                <button className="danger" disabled={!impPw || !impFile || dbImport.isPending} onClick={doImport}>{dbImport.isPending ? '복원 중…' : '복원 실행'}</button>
+                <button onClick={() => { setImpOpen(false); setImpPw(''); setImpFile(null) }}>취소</button>
+              </div>
+            </td>
+          </tr>
+        )}
         <tr>
           <td style={{ color: 'var(--red)' }}>DB 초기화</td>
           <td style={{ color: reset.isError ? 'var(--red)' : 'var(--faint)', fontSize: 11 }}>{resetMsg}</td>

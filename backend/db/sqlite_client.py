@@ -1931,6 +1931,65 @@ class SQLiteDB:
             logger.error(f"Database reset failed: {e}")
             return {"success": False, "error": str(e)}
 
+    def export_snapshot(self, dest_path: str) -> dict:
+        """
+        Write a consistent full snapshot of this database to dest_path (IMGV2-48).
+
+        Uses `VACUUM INTO` which produces a clean, WAL-consistent copy without
+        holding a long write lock. dest_path must NOT already exist.
+        """
+        conn = self.conn
+        old_iso = conn.isolation_level
+        try:
+            conn.rollback()                       # leave any implicit txn
+            conn.isolation_level = None           # autocommit — VACUUM cannot run in a txn
+            conn.execute("PRAGMA wal_checkpoint(FULL)")
+            safe = dest_path.replace("'", "''")
+            conn.execute(f"VACUUM INTO '{safe}'")
+            import os as _os
+            size = _os.path.getsize(dest_path)
+            file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            logger.info(f"DB snapshot exported: {file_count} files, {size} bytes -> {dest_path}")
+            return {"success": True, "bytes": size, "file_count": file_count}
+        except Exception as e:
+            logger.error(f"DB export failed: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.isolation_level = old_iso
+
+    def import_snapshot(self, src_path: str) -> dict:
+        """
+        Restore this database in place from a snapshot file (IMGV2-48).
+
+        Validates that src is a SQLite DB carrying our schema (a `files` table),
+        then uses SQLite's online backup API to overwrite every page of the live
+        connection — no file swap / reconnect needed. DESTRUCTIVE: replaces all
+        content (including users/auth) with the snapshot's.
+        """
+        src = None
+        try:
+            src = sqlite3.connect(src_path, timeout=30)
+            self._load_vec_extension(src)         # vec0 vtabs must instantiate to copy
+            has_files = src.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
+            ).fetchone()
+            if not has_files:
+                return {"success": False, "error": "유효한 Imagine 데이터베이스가 아닙니다 (files 테이블 없음)"}
+            file_count = src.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+
+            dest = self.conn
+            dest.rollback()                        # ensure no open txn before backup
+            src.backup(dest)                       # copy src -> live dest (all pages)
+            dest.execute("PRAGMA wal_checkpoint(FULL)")
+            logger.info(f"DB snapshot imported: {file_count} files restored into {self.db_path}")
+            return {"success": True, "file_count": file_count}
+        except Exception as e:
+            logger.error(f"DB import failed: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            if src is not None:
+                src.close()
+
     def insert_file(
         self,
         file_path: str,
