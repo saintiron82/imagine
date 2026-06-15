@@ -84,6 +84,30 @@ def test_import_rejects_non_imagine_db(tmp_path):
     assert "files" in result["error"]
 
 
+def test_import_busy_probe_fails_fast(tmp_path):
+    # A concurrent writer holding the write lock must make import fail fast
+    # (bounded probe), NOT hang forever in Connection.backup().
+    import time
+    src = SQLiteDB(str(tmp_path / "src.db"))
+    _marker(src, "x")
+    snap = str(tmp_path / "snap.db")
+    assert src.export_snapshot(snap)["success"]
+
+    dest = SQLiteDB(str(tmp_path / "dest.db"))
+    blocker = sqlite3.connect(str(tmp_path / "dest.db"), timeout=30)
+    blocker.execute("BEGIN IMMEDIATE")          # hold RESERVED on the live DB
+    try:
+        t0 = time.time()
+        result = dest.import_snapshot(snap)
+        elapsed = time.time() - t0
+        assert result["success"] is False
+        assert result.get("busy") is True
+        assert elapsed < 20                      # bounded (~8s probe), did not hang
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+
 def test_import_rejects_garbage_file(tmp_path):
     junk = tmp_path / "junk.db"
     junk.write_bytes(b"this is not a sqlite database")

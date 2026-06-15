@@ -1,5 +1,6 @@
 """Database admin operations — reset / export / import with password verification."""
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -125,16 +126,36 @@ async def import_database(
         if total == 0:
             raise HTTPException(status_code=400, detail="Empty upload")
 
-        result = db.import_snapshot(tmp)
-        if not result["success"]:
-            raise HTTPException(status_code=400, detail=result.get("error", "Import failed"))
-        logger.info("Admin %s imported DB snapshot (%s files)", admin.get("username"), result.get("file_count"))
-        audit_log.record(
-            db, "database_imported",
-            actor_user_id=admin.get("id"), actor_username=admin.get("username"),
-            target_kind="database", detail=f"files={result.get('file_count')} bytes={total}",
-        )
-        return result
+        # Quiesce the pipeline: pause all phases so no pool/worker STARTS a new DB
+        # write during the restore, then let in-flight tasks drain. import_snapshot
+        # additionally probes the write lock (bounded) before the online backup.
+        from backend.server.routers.analysis import get_paused_phases, set_paused_phases
+        phases = ("dl", "parse", "mc", "vv", "mv")
+        prior = get_paused_phases(db)
+        set_paused_phases(db, {p: True for p in phases})
+        ok = False
+        try:
+            await asyncio.sleep(1.5)  # grace: let in-flight pool tasks commit & release the lock
+            result = db.import_snapshot(tmp)
+            if not result["success"]:
+                if result.get("busy"):
+                    raise HTTPException(status_code=409, detail=result.get("error", "Server busy"))
+                raise HTTPException(status_code=400, detail=result.get("error", "Import failed"))
+            ok = True
+            logger.info("Admin %s imported DB snapshot (%s files)", admin.get("username"), result.get("file_count"))
+            audit_log.record(
+                db, "database_imported",
+                actor_user_id=admin.get("id"), actor_username=admin.get("username"),
+                target_kind="database", detail=f"files={result.get('file_count')} bytes={total}",
+            )
+            return result
+        finally:
+            # Success → resume processing on the restored DB; failure → restore the
+            # operator's prior pause state (live DB is unchanged).
+            try:
+                set_paused_phases(db, {p: False for p in phases} if ok else prior)
+            except Exception:
+                pass
     finally:
         try:
             os.unlink(tmp)

@@ -1988,6 +1988,22 @@ class SQLiteDB:
             self._load_vec_extension(src)         # now safe — vec0 vtabs must instantiate to copy
             file_count = src.execute("SELECT COUNT(*) FROM files").fetchone()[0]
 
+            # Bounded write-lock probe FIRST: Connection.backup() retries on SQLITE_BUSY
+            # forever (ignores busy_timeout), so if another thread is mid-write the backup
+            # would hang indefinitely. Acquire RESERVED on a short-timeout probe connection —
+            # if it can't within the timeout, fail fast & clearly (before any expensive work).
+            probe = sqlite3.connect(self.db_path, timeout=8)
+            try:
+                probe.execute("BEGIN IMMEDIATE")
+                probe.execute("ROLLBACK")
+            except sqlite3.OperationalError:
+                return {
+                    "success": False, "busy": True,
+                    "error": "다른 처리가 진행 중이라 복원할 수 없습니다. 자동 처리를 일시정지한 뒤 다시 시도하세요.",
+                }
+            finally:
+                probe.close()
+
             # Pre-import safety copy so a bad restore is recoverable.
             safety_path = f"{self.db_path}.preimport.bak"
             try:
