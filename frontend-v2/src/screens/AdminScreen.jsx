@@ -3,6 +3,7 @@ import { useWorkers, useClusterValves, useWorkerControl } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
 import { useDbAudit, useBackfill, useDbReset } from '../api/tools'
+import { useDomains, useActiveDomain, useDomainDetail, useSetActiveDomain, useSaveDomain, generateDomainPrompt } from '../api/classification'
 
 /**
  * 관리 — 엔진룸. 기술 용어(MC/VV/MV)는 운영자 전용인 이 화면에만 허용된다.
@@ -15,12 +16,13 @@ export default function AdminScreen() {
   return (
     <section id="scr-admin" className="screen active" style={{ height: '100%' }}>
       <aside className="adm-side">
-        {[['workers', '분석기'], ['members', '멤버'], ['tools', '서버 도구']].map(([id, label]) => (
+        {[['workers', '분석기'], ['classification', '분류'], ['members', '멤버'], ['tools', '서버 도구']].map(([id, label]) => (
           <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>
         ))}
       </aside>
       <div className="adm-main">
         {tab === 'workers' && <WorkersPanel />}
+        {tab === 'classification' && <ClassificationPanel />}
         {tab === 'members' && <MembersPanel />}
         {tab === 'tools' && <ToolsPanel />}
       </div>
@@ -104,6 +106,196 @@ function WorkersPanel() {
           </div>
         ))}
       </div>
+    </>
+  )
+}
+
+// ── 분류/도메인 (IMGV2-17) ──────────────────────────────────
+// 활성 도메인이 분석 분류 기준·태그 공간·검색 필터 옵션을 정한다.
+// 백엔드는 생성 전용(POST /domains 는 기존 id 409) → 상세는 읽기 전용, 편집은 "새 도메인" 생성으로.
+
+function Chip({ children }) {
+  return <span style={{ background: 'rgba(96,165,250,.15)', color: 'var(--cyan)', borderRadius: 6, padding: '2px 8px', fontSize: 11 }}>{children}</span>
+}
+
+function HintRows({ obj }) {
+  return Object.entries(obj).map(([k, v]) => (
+    <div key={k} style={{ display: 'flex', gap: 8, fontSize: 11, padding: '2px 0' }}>
+      <span style={{ color: 'var(--faint)', minWidth: 120, flexShrink: 0 }}>{k}</span>
+      <span>{Array.isArray(v) ? v.join(', ') : String(v)}</span>
+    </div>
+  ))
+}
+
+function DomainDetailPanel({ detail }) {
+  const [open, setOpen] = useState(() => new Set())
+  const toggle = (t) => setOpen(prev => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n })
+  const box = { border: '1px solid var(--line)', borderRadius: 8 }
+  const sectionLabel = { fontSize: 11, color: 'var(--faint)', margin: '0 0 6px' }
+
+  return (
+    <div className="panel">
+      <h4>{detail.name_ko || detail.name} <span className="hint">{detail.id} · 읽기 전용 (편집은 새 도메인 생성)</span></h4>
+      <div style={{ marginBottom: 12 }}>
+        <div style={sectionLabel}>이미지 타입 ({detail.image_types?.length || 0})</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{(detail.image_types || []).map(t => <Chip key={t}>{t}</Chip>)}</div>
+      </div>
+      {Object.keys(detail.type_hints || {}).length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={sectionLabel}>타입별 힌트</div>
+          <div style={box}>
+            {Object.entries(detail.type_hints).map(([type, hints]) => (
+              <div key={type} style={{ borderBottom: '1px solid var(--line)' }}>
+                <button onClick={() => toggle(type)} style={{ width: '100%', display: 'flex', gap: 8, alignItems: 'center', background: 'none', border: 'none', color: 'var(--text)', padding: '8px 10px', cursor: 'pointer', fontSize: 12 }}>
+                  <span style={{ color: 'var(--faint)' }}>{open.has(type) ? '▾' : '▸'}</span>
+                  <b>{type}</b><span style={{ marginLeft: 'auto', color: 'var(--faint)', fontSize: 10 }}>{Object.keys(hints).length} 필드</span>
+                </button>
+                {open.has(type) && <div style={{ padding: '0 10px 8px 28px' }}><HintRows obj={hints} /></div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {detail.common_hints && Object.keys(detail.common_hints).length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={sectionLabel}>공통 힌트 <span style={{ color: 'var(--faint)' }}>(_base.yaml — 자동)</span></div>
+          <div style={{ ...box, padding: '8px 10px' }}><HintRows obj={detail.common_hints} /></div>
+        </div>
+      )}
+      {detail.type_instructions && Object.keys(detail.type_instructions).length > 0 && (
+        <div>
+          <div style={sectionLabel}>타입별 지시문</div>
+          <div style={box}>
+            {Object.entries(detail.type_instructions).map(([type, ins]) => (
+              <div key={type} style={{ borderBottom: '1px solid var(--line)', padding: '8px 10px' }}>
+                <b style={{ fontSize: 12 }}>{type}</b>
+                <p style={{ fontSize: 11, color: 'var(--faint)', margin: '4px 0 0' }}>{ins}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CreateDomainModal({ existingIds, onClose }) {
+  const save = useSaveDomain()
+  const [step, setStep] = useState(1)
+  const [domainId, setDomainId] = useState('')
+  const [nameEn, setNameEn] = useState('')
+  const [nameKo, setNameKo] = useState('')
+  const [description, setDescription] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [yamlInput, setYamlInput] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [error, setError] = useState('')
+
+  const idError = domainId && !/^[a-z][a-z0-9_]*$/.test(domainId) ? '소문자 snake_case 만 가능'
+    : domainId && existingIds.includes(domainId) ? '이미 존재하는 ID' : ''
+  const canNext1 = domainId && nameEn && nameKo && description && !idError
+
+  const next1 = () => { setPrompt(generateDomainPrompt({ domainId, nameEn, nameKo, description })); setStep(2) }
+  const copy = async () => { try { await navigator.clipboard.writeText(prompt); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* noop */ } }
+  const doSave = () => {
+    setError('')
+    const cleaned = yamlInput.replace(/^```[\w]*\n?/, '').replace(/\n?```\s*$/, '').trim()
+    save.mutate({ domainId, yamlContent: cleaned }, {
+      onSuccess: (r) => { if (r?.success) onClose(); else setError(r?.detail || r?.error || '저장 실패') },
+      onError: (e) => setError(e?.detail || e?.message || '저장 실패'),
+    })
+  }
+
+  const overlay = { position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.6)' }
+  const modal = { background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 12, width: 'min(640px, 92vw)', maxHeight: '82vh', overflowY: 'auto', padding: 20 }
+  const inp = { width: '100%', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '8px 10px', color: 'var(--text)', fontSize: 12, boxSizing: 'border-box' }
+  const lbl = { display: 'block', fontSize: 11, color: 'var(--faint)', margin: '0 0 4px' }
+  const stepName = step === 1 ? '정의' : step === 2 ? 'AI 프롬프트 복사' : 'YAML 붙여넣기'
+
+  return (
+    <div style={overlay} onClick={onClose}>
+      <div style={modal} onClick={e => e.stopPropagation()}>
+        <h4 style={{ marginTop: 0 }}>새 도메인 <span className="hint">{step}/3 · {stepName}</span></h4>
+        {step === 1 && <div style={{ display: 'grid', gap: 12 }}>
+          <div><label style={lbl}>도메인 ID (snake_case)</label>
+            <input style={inp} value={domainId} onChange={e => setDomainId(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))} placeholder="예: medical_image" autoFocus />
+            {idError && <div style={{ color: 'var(--red)', fontSize: 11, marginTop: 4 }}>{idError}</div>}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div><label style={lbl}>이름 (영문)</label><input style={inp} value={nameEn} onChange={e => setNameEn(e.target.value)} placeholder="Medical Image" /></div>
+            <div><label style={lbl}>이름 (한글)</label><input style={inp} value={nameKo} onChange={e => setNameKo(e.target.value)} placeholder="의료 이미지" /></div>
+          </div>
+          <div><label style={lbl}>설명 / 용도</label><textarea style={{ ...inp, resize: 'none' }} rows={4} value={description} onChange={e => setDescription(e.target.value)} placeholder="이 도메인이 다루는 이미지 종류와 용도" /></div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button onClick={onClose}>취소</button>
+            <button disabled={!canNext1} onClick={next1}>다음</button>
+          </div>
+        </div>}
+        {step === 2 && <div style={{ display: 'grid', gap: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--faint)' }}>이 프롬프트를 LLM(Claude 등)에 붙여넣어 YAML 을 생성한 뒤, 다음 단계에 결과를 붙여넣으세요.</div>
+          <pre style={{ background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: 10, fontSize: 11, maxHeight: '40vh', overflowY: 'auto', whiteSpace: 'pre-wrap', margin: 0 }}>{prompt}</pre>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <button onClick={() => setStep(1)}>이전</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={copy}>{copied ? '복사됨 ✓' : '프롬프트 복사'}</button>
+              <button onClick={() => setStep(3)}>다음</button>
+            </div>
+          </div>
+        </div>}
+        {step === 3 && <div style={{ display: 'grid', gap: 12 }}>
+          <label style={lbl}>생성된 YAML 붙여넣기</label>
+          <textarea style={{ ...inp, resize: 'none', fontFamily: 'monospace' }} rows={16} value={yamlInput} onChange={e => { setYamlInput(e.target.value); setError('') }} placeholder={'domain:\n  id: ...'} />
+          {error && <div style={{ color: 'var(--red)', fontSize: 11, background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.3)', borderRadius: 6, padding: '8px 10px' }}>{error}</div>}
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <button onClick={() => setStep(2)}>이전</button>
+            <button disabled={save.isPending || !yamlInput.trim()} onClick={doSave}>{save.isPending ? '저장 중…' : '도메인 저장'}</button>
+          </div>
+        </div>}
+      </div>
+    </div>
+  )
+}
+
+function ClassificationPanel() {
+  const { data: domains = [], isLoading, isError } = useDomains()
+  const { data: active } = useActiveDomain()
+  const setActive = useSetActiveDomain()
+  const [selectedId, setSelectedId] = useState(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const activeId = active?.active_domain || null
+  const effectiveId = selectedId || activeId || domains[0]?.id || null
+  const { data: detail } = useDomainDetail(effectiveId)
+
+  if (isLoading) return <div className="panel"><span style={{ color: 'var(--faint)' }}>도메인을 불러오는 중…</span></div>
+  if (isError) return <div className="panel"><span style={{ color: 'var(--faint)' }}>서버에 연결되지 않았습니다</span></div>
+
+  return (
+    <>
+      <div className="panel">
+        <h4>분류 도메인 <span className="hint">활성 도메인이 분류 기준·태그 공간·검색 필터 옵션을 정한다</span>
+          <button style={{ marginLeft: 'auto' }} onClick={() => setShowCreate(true)}>+ 새 도메인</button></h4>
+        <table>
+          <thead><tr><th>도메인</th><th>타입</th><th style={{ textAlign: 'right' }}>상태</th></tr></thead>
+          <tbody>
+            {domains.map(d => {
+              const isActive = d.id === activeId
+              const isSel = d.id === effectiveId
+              return (
+                <tr key={d.id} onClick={() => setSelectedId(d.id)} style={{ cursor: 'pointer', background: isSel ? 'var(--panel2)' : undefined }}>
+                  <td><b>{d.name_ko || d.name}</b> <span style={{ color: 'var(--faint)', fontSize: 10 }}>{d.id}</span>
+                    <div style={{ color: 'var(--faint)', fontSize: 11 }}>{d.description}</div></td>
+                  <td className="mono">{d.image_types_count ?? d.image_types?.length ?? 0}</td>
+                  <td style={{ textAlign: 'right' }}>{isActive
+                    ? <span className="badge b-ok">활성</span>
+                    : <button disabled={setActive.isPending} onClick={(e) => { e.stopPropagation(); setActive.mutate(d.id) }}>활성화</button>}</td>
+                </tr>
+              )
+            })}
+            {domains.length === 0 && <tr><td colSpan={3} style={{ color: 'var(--faint)' }}>도메인이 없습니다</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {detail && <DomainDetailPanel detail={detail} />}
+      {showCreate && <CreateDomainModal existingIds={domains.map(d => d.id)} onClose={() => setShowCreate(false)} />}
     </>
   )
 }
