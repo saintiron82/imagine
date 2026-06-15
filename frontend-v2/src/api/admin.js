@@ -12,6 +12,7 @@
  *               mc_done, vv_done, mv_done } → 클러스터 밸브/병목 집계
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRef, useState, useEffect } from 'react'
 import { apiClient } from './client'
 
 const PHASE_LABEL = { dl: 'DL', parse: '파싱', mc: 'MC', vv: 'VV', mv: 'MV' }
@@ -114,6 +115,36 @@ export function useFeedbackSummary() {
  *   GET   /api/v1/admin/workers/auto-processing → {enabled, rest_after_batch_s, batch_size, verbose_log}
  *   PATCH /api/v1/admin/workers/auto-processing  (부분 갱신) → {ok}
  */
+/**
+ * 실시간 로그(IMGV2-26) — 커서 폴링으로 서버 링버퍼를 따라간다.
+ *   GET /api/v1/admin/logs?after=<seq> → { entries[], last_seq }
+ * SSE 는 Authorization 헤더를 못 실어 JWT 인증과 안 맞으므로 폴링(1.5s) 채택.
+ * 클라이언트에 최대 1000줄 누적(서버는 신규분만 반환).
+ */
+export function useLogStream(active) {
+  const afterRef = useRef(0)
+  const [entries, setEntries] = useState([])
+  const q = useQuery({
+    queryKey: ['admin-logs'],
+    queryFn: () => apiClient.get('/api/v1/admin/logs', { after: afterRef.current, limit: 300 }),
+    enabled: !!active,
+    refetchInterval: active ? 1500 : false,
+  })
+  useEffect(() => {
+    const d = q.data
+    if (!d) return
+    if (d.last_seq != null) afterRef.current = Math.max(afterRef.current, d.last_seq)
+    if (d.entries?.length) {
+      setEntries(prev => {
+        const merged = prev.concat(d.entries)
+        return merged.length > 1000 ? merged.slice(-1000) : merged
+      })
+    }
+  }, [q.data])
+  const clear = () => setEntries([])
+  return { entries, clear, disconnected: q.isError }
+}
+
 export function useAutoProcessing() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['auto-processing'], queryFn: () => apiClient.get('/api/v1/admin/workers/auto-processing') })

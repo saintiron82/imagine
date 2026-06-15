@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useWorkers, useClusterValves, useWorkerControl, useHeadlessCommand, useFeedbackSummary, useAutoProcessing } from '../api/admin'
+import { useWorkers, useClusterValves, useWorkerControl, useHeadlessCommand, useFeedbackSummary, useAutoProcessing, useLogStream } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
 import { useDbAudit, useBackfill, useDbReset, useRepairParse, useDbExport, useDbImport } from '../api/tools'
@@ -16,7 +16,7 @@ export default function AdminScreen() {
   return (
     <section id="scr-admin" className="screen active" style={{ height: '100%' }}>
       <aside className="adm-side">
-        {[['workers', '분석기'], ['classification', '분류'], ['members', '멤버'], ['feedback', '피드백'], ['tools', '서버 도구']].map(([id, label]) => (
+        {[['workers', '분석기'], ['classification', '분류'], ['members', '멤버'], ['feedback', '피드백'], ['logs', '로그'], ['tools', '서버 도구']].map(([id, label]) => (
           <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>
         ))}
       </aside>
@@ -25,6 +25,7 @@ export default function AdminScreen() {
         {tab === 'classification' && <ClassificationPanel />}
         {tab === 'members' && <MembersPanel />}
         {tab === 'feedback' && <FeedbackPanel />}
+        {tab === 'logs' && <LogPanel />}
         {tab === 'tools' && <ToolsPanel />}
       </div>
     </section>
@@ -421,6 +422,41 @@ function ClassificationPanel() {
       {detail && <DomainDetailPanel detail={detail} />}
       {showCreate && <CreateDomainModal existingIds={domains.map(d => d.id)} onClose={() => setShowCreate(false)} />}
     </>
+  )
+}
+
+// ── 실시간 로그 (IMGV2-26) ──────────────────────────────────
+const LOG_LEVEL_COLOR = { ERROR: 'var(--red)', CRITICAL: 'var(--red)', WARNING: '#fbbf24', INFO: 'var(--faint)', DEBUG: 'var(--faint)' }
+const LOG_CATS = [['all', '전체'], ['job', '작업'], ['network', '네트워크'], ['general', '일반']]
+
+function LogPanel() {
+  const [cat, setCat] = useState('all')
+  const { entries, clear, disconnected } = useLogStream(true)
+  const scrollRef = useRef(null)
+  const filtered = cat === 'all' ? entries : entries.filter(e => e.category === cat)
+  useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight }, [filtered.length])
+
+  const chip = (id) => ({ fontSize: 11, background: cat === id ? 'var(--panel2)' : 'none', border: '1px solid var(--line)', borderRadius: 6, padding: '3px 9px', color: cat === id ? 'var(--text)' : 'var(--dim)', cursor: 'pointer' })
+
+  return (
+    <div className="panel">
+      <h4>실시간 로그 <span className="hint">서버 처리 로그 · 1.5초 폴링{disconnected && ' · 연결 끊김'}</span>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+          {LOG_CATS.map(([id, l]) => <button key={id} style={chip(id)} onClick={() => setCat(id)}>{l}</button>)}
+          <button style={{ fontSize: 11, border: '1px solid var(--line)', borderRadius: 6, padding: '3px 9px', background: 'none', color: 'var(--dim)', cursor: 'pointer' }} onClick={clear}>지우기</button>
+        </span>
+      </h4>
+      <div ref={scrollRef} style={{ height: '62vh', overflowY: 'auto', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '8px 10px', fontFamily: 'monospace', fontSize: 11 }}>
+        {filtered.length === 0 && <div style={{ color: 'var(--faint)' }}>로그 없음 — 처리 활동이 생기면 여기에 실시간으로 흐릅니다</div>}
+        {filtered.map(e => (
+          <div key={e.seq} style={{ display: 'flex', gap: 8, padding: '1px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <span style={{ color: 'var(--faint)', flexShrink: 0 }}>{new Date(e.ts * 1000).toLocaleTimeString('ko-KR', { hour12: false })}</span>
+            <span style={{ color: LOG_LEVEL_COLOR[e.level] || 'var(--faint)', flexShrink: 0, width: 56 }}>{e.level}</span>
+            <span style={{ color: 'var(--text)' }}>{e.message}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
