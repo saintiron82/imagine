@@ -89,3 +89,37 @@ export function useHeadlessCommand() {
     mutationFn: (payload) => apiClient.post('/api/v1/admin/workers/headless-command', payload),
   })
 }
+
+/**
+ * 검색 피드백 대시보드(IMGV2-23) — 검색 품질 진단.
+ *   GET /api/v1/admin/search-feedback/summary
+ *     → { total_30d, top_files:[{file_id,count}], top_queries:[{query,count}] }
+ * 사용자가 검색 결과에 '부적절' 라벨을 남긴 기록을 30일 집계.
+ */
+export function useFeedbackSummary() {
+  const q = useQuery({ queryKey: ['feedback-summary'], queryFn: () => apiClient.get('/api/v1/admin/search-feedback/summary') })
+  const connected = !q.isError && q.data
+  const data = connected ? q.data : {}
+  return {
+    disconnected: !connected,
+    loading: q.isLoading,
+    total30d: data.total_30d || 0,
+    topFiles: data.top_files || [],
+    topQueries: data.top_queries || [],
+  }
+}
+
+/**
+ * 자동 처리 정책(IMGV2-21) — 서버 전역 auto-processing 읽기/갱신.
+ *   GET   /api/v1/admin/workers/auto-processing → {enabled, rest_after_batch_s, batch_size, verbose_log}
+ *   PATCH /api/v1/admin/workers/auto-processing  (부분 갱신) → {ok}
+ */
+export function useAutoProcessing() {
+  const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['auto-processing'], queryFn: () => apiClient.get('/api/v1/admin/workers/auto-processing') })
+  const update = useMutation({
+    mutationFn: (patch) => apiClient.patch('/api/v1/admin/workers/auto-processing', patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auto-processing'] }),
+  })
+  return { config: q.data, loading: q.isLoading, disconnected: q.isError, update }
+}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useWorkers, useClusterValves, useWorkerControl, useHeadlessCommand } from '../api/admin'
+import { useWorkers, useClusterValves, useWorkerControl, useHeadlessCommand, useFeedbackSummary, useAutoProcessing } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
 import { useDbAudit, useBackfill, useDbReset, useRepairParse } from '../api/tools'
@@ -16,7 +16,7 @@ export default function AdminScreen() {
   return (
     <section id="scr-admin" className="screen active" style={{ height: '100%' }}>
       <aside className="adm-side">
-        {[['workers', '분석기'], ['classification', '분류'], ['members', '멤버'], ['tools', '서버 도구']].map(([id, label]) => (
+        {[['workers', '분석기'], ['classification', '분류'], ['members', '멤버'], ['feedback', '피드백'], ['tools', '서버 도구']].map(([id, label]) => (
           <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>
         ))}
       </aside>
@@ -24,6 +24,7 @@ export default function AdminScreen() {
         {tab === 'workers' && <WorkersPanel />}
         {tab === 'classification' && <ClassificationPanel />}
         {tab === 'members' && <MembersPanel />}
+        {tab === 'feedback' && <FeedbackPanel />}
         {tab === 'tools' && <ToolsPanel />}
       </div>
     </section>
@@ -33,11 +34,38 @@ export default function AdminScreen() {
 const ORIGIN_LABEL = (w) => [w.origin, w.launcher].filter(Boolean).join(' · ') || '—'
 const PHASE_KR = { mc: 'MC', vv: 'VV', mv: 'MV', parse: '파싱', dl: 'DL' }
 
+// 자동 처리 수치 설정(IMGV2-21) — 입력 중엔 로컬, 포커스 아웃/Enter 시에만 PATCH(스팸 방지).
+function ApSetting({ label, suffix, value, min, max, disabled, onCommit }) {
+  const [draft, setDraft] = useState('')
+  const [editing, setEditing] = useState(false)
+  const shown = editing ? draft : (value ?? '')
+  const commit = () => {
+    setEditing(false)
+    const n = Math.max(min, Math.min(max, Number(draft)))
+    if (draft !== '' && Number.isFinite(n) && n !== value) onCommit(n)
+  }
+  return (
+    <label style={{ fontSize: 11, color: 'var(--faint)', display: 'flex', gap: 6, alignItems: 'center' }}>
+      {label}
+      <input type="number" min={min} max={max} disabled={disabled} value={shown}
+        onFocus={() => { setEditing(true); setDraft(String(value ?? '')) }}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+        style={{ width: 64, background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '4px 8px', color: 'var(--text)', fontSize: 12, fontFamily: 'monospace' }} />
+      {suffix}
+    </label>
+  )
+}
+
 function WorkersPanel() {
   const { disconnected, workers, globalMode } = useWorkers()
   const { valves, bottleneck, total } = useClusterValves()
   const { stop, block, unblock } = useWorkerControl()
+  const ap = useAutoProcessing()
   const canControl = !disconnected
+  const apOn = ap.config?.enabled ?? true
+  const setAp = (patch) => { if (!disconnected) ap.update.mutate(patch) }
 
   const online = workers.filter(w => w.status === 'online')
   const blocked = workers.filter(w => w.status === 'blocked')
@@ -45,7 +73,9 @@ function WorkersPanel() {
   return (
     <>
       <div className="panel">
-        <h4>자동 분석 <span className="hint">서버 전역 정책 · 현재 모드 {globalMode}{disconnected && ' · 연결 끊김'}</span><span className="toggle" /></h4>
+        <h4>자동 분석 <span className="hint">서버 전역 정책 · 현재 모드 {globalMode}{disconnected && ' · 연결 끊김'}</span>
+          <span className={`toggle ${apOn ? '' : 'off'}`} title={apOn ? '자동 분석 켜짐 — 끄려면 클릭' : '자동 분석 꺼짐 — 켜려면 클릭'}
+            onClick={() => !disconnected && !ap.update.isPending && setAp({ enabled: !apOn })} /></h4>
         {bottleneck && bottleneck.pending > 0 ? (
           <div className="bottleneck">
             현재 병목: <b>{bottleneck.label}</b> — 대기 {bottleneck.pending.toLocaleString()}장 · 클러스터 처리력 <b>분당 {bottleneck.rate ?? 0}장</b> (이 단계가 전체 완료 속도를 결정)
@@ -69,6 +99,15 @@ function WorkersPanel() {
               </div>
             )
           })}
+        </div>
+        <div style={{ display: 'flex', gap: 18, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+          <ApSetting label="배치 간 휴식" suffix="초" disabled={disconnected || ap.update.isPending}
+            value={ap.config?.rest_after_batch_s} min={0} max={3600} onCommit={(n) => setAp({ rest_after_batch_s: n })} />
+          <ApSetting label="배치 크기" suffix="장" disabled={disconnected || ap.update.isPending}
+            value={ap.config?.batch_size} min={1} max={64} onCommit={(n) => setAp({ batch_size: n })} />
+          <label style={{ fontSize: 11, color: 'var(--faint)', display: 'flex', gap: 6, alignItems: 'center', cursor: disconnected ? 'default' : 'pointer' }}>
+            <input type="checkbox" disabled={disconnected || ap.update.isPending} checked={ap.config?.verbose_log ?? false} onChange={(e) => setAp({ verbose_log: e.target.checked })} /> 상세 로그
+          </label>
         </div>
       </div>
 
@@ -381,6 +420,45 @@ function ClassificationPanel() {
       </div>
       {detail && <DomainDetailPanel detail={detail} />}
       {showCreate && <CreateDomainModal existingIds={domains.map(d => d.id)} onClose={() => setShowCreate(false)} />}
+    </>
+  )
+}
+
+// ── 검색 피드백 대시보드 (IMGV2-23) ─────────────────────────
+function FeedbackPanel() {
+  const { disconnected, loading, total30d, topFiles, topQueries } = useFeedbackSummary()
+  if (loading) return <div className="panel"><span style={{ color: 'var(--faint)' }}>피드백을 불러오는 중…</span></div>
+  if (disconnected) return <div className="panel"><span style={{ color: 'var(--faint)' }}>서버에 연결되지 않았습니다</span></div>
+
+  return (
+    <>
+      <div className="panel">
+        <h4>검색 피드백 <span className="hint">사용자가 '부적절'로 표시한 결과 — 검색 품질 진단</span></h4>
+        <div style={{ fontSize: 28, fontWeight: 600 }}>{total30d.toLocaleString()}<span style={{ fontSize: 12, color: 'var(--faint)', fontWeight: 400 }}> 건 (지난 30일)</span></div>
+        {total30d === 0 && <div style={{ color: 'var(--faint)', fontSize: 12, marginTop: 6 }}>최근 부적절 표시가 없습니다 — 검색 결과 만족도 양호.</div>}
+      </div>
+      {topQueries.length > 0 && (
+        <div className="panel">
+          <h4>최다 플래그 쿼리 <span className="hint">이 검색어들이 부적절 결과를 자주 냄</span></h4>
+          <table>
+            <thead><tr><th>쿼리</th><th style={{ textAlign: 'right' }}>플래그</th></tr></thead>
+            <tbody>{topQueries.map((q, i) => (
+              <tr key={i}><td>{q.query}</td><td className="mono" style={{ textAlign: 'right' }}>{q.count.toLocaleString()}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+      {topFiles.length > 0 && (
+        <div className="panel">
+          <h4>최다 플래그 파일 <span className="hint">이 파일들이 부적절 결과로 자주 지목됨</span></h4>
+          <table>
+            <thead><tr><th>파일 ID</th><th style={{ textAlign: 'right' }}>플래그</th></tr></thead>
+            <tbody>{topFiles.map((f, i) => (
+              <tr key={i}><td className="mono">#{f.file_id}</td><td className="mono" style={{ textAlign: 'right' }}>{f.count.toLocaleString()}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
     </>
   )
 }
