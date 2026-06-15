@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useWorkers, useClusterValves, useWorkerControl } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
+import { useDbAudit, useBackfill, useDbReset } from '../api/tools'
 
 /**
  * 관리 — 엔진룸. 기술 용어(MC/VV/MV)는 운영자 전용인 이 화면에만 허용된다.
@@ -232,6 +233,74 @@ function DesktopServerControl() {
   )
 }
 
+function DbToolsControl() {
+  const audit = useDbAudit()
+  const { status: bf, start: bfStart, stop: bfStop } = useBackfill()
+  const reset = useDbReset()
+  const [pwOpen, setPwOpen] = useState(false)
+  const [pw, setPw] = useState('')
+
+  const auditMsg = audit.data
+    ? `전체 ${audit.data.total_files?.toLocaleString() ?? '—'}장 · 미완성 ${audit.data.total_incomplete?.toLocaleString() ?? 0}장 · 폴더 ${(audit.data.folders || []).length}개`
+    : audit.isPending ? '검사 중…' : audit.isError ? '검사 실패' : '미완성/잔여 작업 검사'
+  const bfRunning = bf?.running
+  const bfMsg = bf
+    ? (bfRunning
+        ? `진행 중 ${(bf.done ?? 0).toLocaleString()} / ${(bf.total ?? 0).toLocaleString()}${bf.failed ? ` · 실패 ${bf.failed}` : ''}`
+        : `대기 — 마지막: 완료 ${(bf.done ?? 0).toLocaleString()}${bf.skipped ? ` · 건너뜀 ${bf.skipped}` : ''}${bf.last_error ? ` · 오류 있음` : ''}`)
+    : '파생물 캐시 자격 부여 (~16KB/파일)'
+  const resetMsg = reset.data ? `초기화됨 — 파일 ${(reset.data.file_count ?? reset.data.deleted ?? 0).toLocaleString()}장 삭제` : reset.isError ? (reset.error?.detail || '초기화 실패(비번 확인)') : '비밀번호 확인 필요'
+
+  const doReset = () => {
+    if (!pw) return
+    reset.mutate(pw, { onSuccess: () => { setPwOpen(false); setPw('') } })
+  }
+
+  return (
+    <div className="panel">
+      <h4>DB·정합성 도구 <span className="hint">정합성 감사·해시 백필·초기화</span></h4>
+      <table><tbody>
+        <tr>
+          <td>정합성 감사</td>
+          <td style={{ color: 'var(--faint)', fontSize: 11 }}>{auditMsg}</td>
+          <td><div className="row-act"><button disabled={audit.isPending} onClick={() => audit.mutate()}>실행</button></div></td>
+        </tr>
+        <tr>
+          <td>해시 백필</td>
+          <td style={{ color: bfRunning ? 'var(--cyan)' : 'var(--faint)', fontSize: 11 }}>{bfMsg}</td>
+          <td><div className="row-act">
+            {bfRunning
+              ? <button className="danger" disabled={bfStop.isPending} onClick={() => bfStop.mutate()}>중지</button>
+              : <button disabled={bfStart.isPending} onClick={() => bfStart.mutate()}>실행</button>}
+          </div></td>
+        </tr>
+        <tr>
+          <td>DB 내보내기 / 가져오기</td>
+          <td style={{ color: 'var(--faint)', fontSize: 11 }}>백엔드 백업/복원 엔드포인트 준비 중</td>
+          <td><div className="row-act"><button disabled title="백엔드 엔드포인트 준비 중">내보내기</button><button disabled>가져오기</button></div></td>
+        </tr>
+        <tr>
+          <td style={{ color: 'var(--red)' }}>DB 초기화</td>
+          <td style={{ color: reset.isError ? 'var(--red)' : 'var(--faint)', fontSize: 11 }}>{resetMsg}</td>
+          <td><div className="row-act"><button className="danger" onClick={() => setPwOpen(v => !v)}>초기화…</button></div></td>
+        </tr>
+        {pwOpen && (
+          <tr>
+            <td colSpan={3}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.3)', borderRadius: 6, padding: '8px 10px' }}>
+                <span style={{ fontSize: 11, color: 'var(--red)' }}>⚠ 모든 파일 분석 데이터를 삭제합니다. 운영자 비밀번호 확인:</span>
+                <input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && doReset()} placeholder="비밀번호" style={{ background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '6px 10px', color: 'var(--text)', fontSize: 12, width: 160 }} autoFocus />
+                <button className="danger" disabled={!pw || reset.isPending} onClick={doReset}>{reset.isPending ? '초기화 중…' : '초기화 실행'}</button>
+                <button onClick={() => { setPwOpen(false); setPw('') }}>취소</button>
+              </div>
+            </td>
+          </tr>
+        )}
+      </tbody></table>
+    </div>
+  )
+}
+
 function ToolsPanel() {
   const { disconnected, external, lan } = useConnectionInfo()
   const desktop = typeof window !== 'undefined' && window.imagineDesktop // 데스크톱 셸에서만
@@ -240,31 +309,25 @@ function ToolsPanel() {
     : '○ 외부 접속 꺼짐 — 터널 미연결'
   const lanDesc = lan?.available ? `${lan.url} · 빠른 경로 (자동 발견)` : 'LAN 경로 없음'
 
-  const rows = [
-    ['외부 접속 (Cloudflare 터널)', extDesc, ['재연결'], external?.available ? 'var(--emerald)' : 'var(--faint)'],
-    ['같은 네트워크 (LAN)', lanDesc, []],
-    ['정합성 감사', '미완성/잔여 작업 검사·복구', ['실행']],
-    ['해시 백필', '파생물 캐시 자격 부여 (~16KB/파일)', ['실행']],
-    ['DB 내보내기 / 가져오기', '', ['내보내기', '가져오기']],
-    ['DB 초기화', '비밀번호 확인 필요', ['초기화…'], 'var(--red)', true],
-  ]
   return (
     <>
       {desktop && <DesktopServerControl />}
       <div className="panel">
-        <h4>서버 도구 <span className="hint">DB·정합성·연결{disconnected && ' · 연결 끊김'}</span></h4>
-        <table>
-          <tbody>
-            {rows.map(([name, desc, actions, color, danger]) => (
-              <tr key={name}>
-                <td style={danger ? { color: 'var(--red)' } : undefined}>{name}</td>
-                <td style={{ color: color || 'var(--faint)', fontSize: 11 }}>{desc}</td>
-                <td><div className="row-act">{actions.map(a => <button key={a} className={danger ? 'danger' : ''}>{a}</button>)}</div></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <h4>접속 <span className="hint">외부(터널)·LAN{disconnected && ' · 연결 끊김'}</span></h4>
+        <table><tbody>
+          <tr>
+            <td>외부 접속 (Cloudflare 터널)</td>
+            <td style={{ color: external?.available ? 'var(--emerald)' : 'var(--faint)', fontSize: 11 }}>{extDesc}</td>
+            <td><div className="row-act"><button>재연결</button></div></td>
+          </tr>
+          <tr>
+            <td>같은 네트워크 (LAN)</td>
+            <td style={{ color: 'var(--faint)', fontSize: 11 }}>{lanDesc}</td>
+            <td />
+          </tr>
+        </tbody></table>
       </div>
+      <DbToolsControl />
     </>
   )
 }
