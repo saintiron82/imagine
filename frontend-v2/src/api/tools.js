@@ -31,3 +31,23 @@ export function useBackfill() {
 export function useDbReset() {
   return useMutation({ mutationFn: (password) => apiClient.post('/api/v1/admin/database/reset', { password }) })
 }
+
+/**
+ * Parse 데이터 복구(IMGV2-24) — 파싱 누락/손상 재처리.
+ *   POST /api/v1/admin/tools/repair-parse        시작 → {success, total, local_count, webdav_count}
+ *   GET  /api/v1/admin/tools/repair-parse/status  {running, progress:{done,failed,skipped,total,current_file,phase}}
+ * 백필과 유사하나 중지 엔드포인트는 없음(시작 + 진행률 폴링만).
+ */
+export function useRepairParse() {
+  const qc = useQueryClient()
+  const status = useQuery({
+    queryKey: ['repair-parse-status'],
+    queryFn: () => apiClient.get('/api/v1/admin/tools/repair-parse/status'),
+    refetchInterval: (q) => (q.state.data?.running ? 1500 : false),
+  })
+  const start = useMutation({
+    mutationFn: () => apiClient.post('/api/v1/admin/tools/repair-parse'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['repair-parse-status'] }),
+  })
+  return { status: status.data, start }
+}

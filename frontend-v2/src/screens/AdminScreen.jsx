@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useWorkers, useClusterValves, useWorkerControl, useHeadlessCommand } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
-import { useDbAudit, useBackfill, useDbReset } from '../api/tools'
+import { useDbAudit, useBackfill, useDbReset, useRepairParse } from '../api/tools'
 import { useDomains, useActiveDomain, useDomainDetail, useSetActiveDomain, useSaveDomain, generateDomainPrompt } from '../api/classification'
 
 /**
@@ -513,6 +513,7 @@ function DesktopServerControl() {
 function DbToolsControl() {
   const audit = useDbAudit()
   const { status: bf, start: bfStart, stop: bfStop } = useBackfill()
+  const { status: rp, start: rpStart } = useRepairParse()
   const reset = useDbReset()
   const [pwOpen, setPwOpen] = useState(false)
   const [pw, setPw] = useState('')
@@ -527,6 +528,13 @@ function DbToolsControl() {
         : `대기 — 마지막: 완료 ${(bf.done ?? 0).toLocaleString()}${bf.skipped ? ` · 건너뜀 ${bf.skipped}` : ''}${bf.last_error ? ` · 오류 있음` : ''}`)
     : '파생물 캐시 자격 부여 (~16KB/파일)'
   const resetMsg = reset.data ? `초기화됨 — 파일 ${(reset.data.file_count ?? reset.data.deleted ?? 0).toLocaleString()}장 삭제` : reset.isError ? (reset.error?.detail || '초기화 실패(비번 확인)') : '비밀번호 확인 필요'
+  const rpRunning = rp?.running
+  const rpp = rp?.progress
+  const rpMsg = rpp
+    ? (rpRunning
+        ? `진행 중 ${(rpp.done ?? 0).toLocaleString()} / ${(rpp.total ?? 0).toLocaleString()}${rpp.failed ? ` · 실패 ${rpp.failed}` : ''}${rpp.current_file ? ` · ${rpp.current_file}` : ''}`
+        : `대기 — 마지막: 완료 ${(rpp.done ?? 0).toLocaleString()}${rpp.skipped ? ` · 건너뜀 ${rpp.skipped}` : ''}${rpp.failed ? ` · 실패 ${rpp.failed}` : ''}`)
+    : '파싱 누락/손상 데이터 재처리'
 
   const doReset = () => {
     if (!pw) return
@@ -550,6 +558,11 @@ function DbToolsControl() {
               ? <button className="danger" disabled={bfStop.isPending} onClick={() => bfStop.mutate()}>중지</button>
               : <button disabled={bfStart.isPending} onClick={() => bfStart.mutate()}>실행</button>}
           </div></td>
+        </tr>
+        <tr>
+          <td>Parse 데이터 복구</td>
+          <td style={{ color: rpRunning ? 'var(--cyan)' : 'var(--faint)', fontSize: 11 }}>{rpMsg}</td>
+          <td><div className="row-act"><button disabled={rpRunning || rpStart.isPending} onClick={() => rpStart.mutate()}>{rpRunning ? '진행 중' : '실행'}</button></div></td>
         </tr>
         <tr>
           <td>DB 내보내기 / 가져오기</td>
