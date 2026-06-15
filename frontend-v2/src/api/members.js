@@ -30,6 +30,26 @@ export function useMembersData() {
   }
 }
 
+/**
+ * 라이선스 만료 상태(IMGV2-22) — members/usage 의 expires_at/expired 로 배너 상태 계산.
+ *   state: 'expired'(만료) | 'warning'(임박, ≤14일) | 'ok'
+ * /members/usage 는 admin 전용이므로 운영자에게만 의미가 있다(일반 사용자는
+ * 만료 시 백엔드 하드 게이트(IMGV2-14)로 입장 자체가 막힌다).
+ */
+export function useLicenseStatus() {
+  const use = useResource('member-usage', '/api/v1/members/usage', EMPTY_USAGE)
+  const u = use.data || EMPTY_USAGE
+  const expiresAt = u.expires_at || null
+  let daysLeft = null
+  if (expiresAt) {
+    const ms = new Date(expiresAt).getTime() - Date.now()
+    daysLeft = Math.ceil(ms / 86400000)
+  }
+  const state = u.expired ? 'expired'
+    : (daysLeft != null && daysLeft <= 14 ? 'warning' : 'ok')
+  return { disconnected: use.disconnected, state, daysLeft, expiresAt, expired: !!u.expired }
+}
+
 export function useMemberMutations() {
   const qc = useQueryClient()
   const inval = () => {

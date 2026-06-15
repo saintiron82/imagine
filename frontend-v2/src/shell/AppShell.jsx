@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Outlet, NavLink, Navigate, useNavigate } from 'react-router-dom'
 import { useApp } from '../state/AppContext'
 import { useAuth } from '../state/AuthContext'
+import { useLicenseStatus } from '../api/members'
 import AddFlow from '../flows/AddFlow'
 
 /**
@@ -51,10 +52,40 @@ export default function AppShell() {
           {firebaseUser?.email ? firebaseUser.email.split('@')[0] : (serverName || '로그인됨')} · <b>로그아웃</b>
         </button>
       </header>
+      {isOperator && <ExpiryBanner />}
       <main>
         <Outlet />
       </main>
       {addOpen && <AddFlow onClose={() => setAddOpen(false)} />}
     </>
+  )
+}
+
+/**
+ * 구독/만료 배너 (IMGV2-22) — 운영자에게만. 만료/임박 시 상단 고정 안내.
+ * 갱신은 홈페이지('계정의 집')에서 — 배포 URL 이 코드에 고정돼 있지 않아
+ * 죽은 링크 대신 경로를 텍스트로 안내한다(URL 확정 시 링크화).
+ */
+function ExpiryBanner() {
+  const { state, daysLeft, expiresAt } = useLicenseStatus()
+  const [dismissed, setDismissed] = useState(false)
+  if (state === 'ok' || dismissed) return null
+
+  const expired = state === 'expired'
+  const when = expiresAt ? new Date(expiresAt).toLocaleDateString('ko-KR') : ''
+  const bg = expired ? 'rgba(248,113,113,.12)' : 'rgba(251,191,36,.12)'
+  const bd = expired ? 'rgba(248,113,113,.4)' : 'rgba(251,191,36,.4)'
+  const fg = expired ? 'var(--red)' : '#fbbf24'
+  const msg = expired
+    ? `라이선스가 만료되었습니다${when ? ` (${when})` : ''} — 갱신 전까지 새 분석/멤버 추가가 제한됩니다.`
+    : `라이선스 만료 ${daysLeft}일 전${when ? ` (${when})` : ''} — 중단 없이 쓰려면 미리 갱신하세요.`
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 18px', fontSize: 12.5, background: bg, borderBottom: `1px solid ${bd}`, color: fg }}>
+      <span>{expired ? '⛔' : '⚠'}</span>
+      <span style={{ color: 'var(--text)' }}>{msg}</span>
+      <span style={{ marginLeft: 'auto', color: 'var(--faint)', fontSize: 11 }}>갱신: 홈페이지 &gt; 내 라이선스</span>
+      <button onClick={() => setDismissed(true)} style={{ background: 'none', border: 'none', color: 'var(--faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
+    </div>
   )
 }
