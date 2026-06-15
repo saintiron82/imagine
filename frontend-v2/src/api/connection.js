@@ -21,5 +21,9 @@ export function useConnectionInfo() {
     external: byMode('relay_session'),   // 외부 접속(Cloudflare 터널/릴레이)
     lan: byMode('direct_lan'),
     local: byMode('direct_local'),
+    modes,                               // 원격 분석기 등록 폼의 connect_mode 선택지
+    requestOrigin: connected ? (q.data?.request_origin || '') : '',
+    serverId: connected ? (q.data?.server_id || '') : '',
+    groupName: connected ? (q.data?.group_name || '') : '',
   }
 }

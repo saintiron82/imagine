@@ -74,3 +74,18 @@ export function useWorkerControl() {
   })
   return { stop: mk('stop'), block: mk('block'), unblock: mk('unblock') }
 }
+
+/**
+ * 원격 분석기 등록(IMGV2-18) — 헤드리스 워커용 토큰 + Linux 부트스트랩 명령 발급.
+ *   POST /api/v1/admin/workers/headless-command
+ *     body: { worker_name, launcher(cli|service|cloud), expires_minutes(15..43200),
+ *             server_url(direct 모드 override|null), connect_mode(direct_lan|manual_external|relay_session) }
+ *     resp: { linux_command, worker_username, access_token, refresh_token, server_url,
+ *             relay_endpoint, server_id, bootstrap_url, expires_minutes, ... }
+ * 명령에 토큰이 박혀 있으므로 한 번만 보이고 운영자가 복사해 워커 머신에서 실행한다.
+ */
+export function useHeadlessCommand() {
+  return useMutation({
+    mutationFn: (payload) => apiClient.post('/api/v1/admin/workers/headless-command', payload),
+  })
+}

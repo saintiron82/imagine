@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useWorkers, useClusterValves, useWorkerControl } from '../api/admin'
+import { useWorkers, useClusterValves, useWorkerControl, useHeadlessCommand } from '../api/admin'
 import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
 import { useDbAudit, useBackfill, useDbReset } from '../api/tools'
@@ -106,7 +106,92 @@ function WorkersPanel() {
           </div>
         ))}
       </div>
+
+      <EnrollWorkerPanel disabled={disconnected} />
     </>
+  )
+}
+
+// ── 원격 분석기 등록 (IMGV2-18) ─────────────────────────────
+// 다른 머신을 분석기로 붙이는 설치 명령(+토큰)을 발급한다. connect_mode 별로
+// 명령 형태가 다르다(direct_lan/manual_external = 직접 URL, relay_session = 릴레이).
+const MODE_LABEL = { direct_lan: '같은 네트워크 (LAN 직접)', manual_external: '외부 주소 직접 입력', relay_session: '릴레이 세션 (Cloudflare 터널 — 주소 비공유)' }
+
+function EnrollWorkerPanel({ disabled }) {
+  const { requestOrigin, modes } = useConnectionInfo()
+  const issue = useHeadlessCommand()
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('cloud-worker-1')
+  const [launcher, setLauncher] = useState('cloud')
+  const [expires, setExpires] = useState(1440)
+  const [mode, setMode] = useState('direct_lan')
+  const [overrideUrl, setOverrideUrl] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const result = issue.data
+  const errMsg = issue.isError ? (issue.error?.detail || issue.error?.message || '발급 실패') : ''
+  // 서버가 광고하는 connect_mode 중 명령 발급 대상 3종만 노출
+  const available = new Set((modes || []).filter(m => m.available).map(m => m.mode))
+  const modeOptions = ['direct_lan', 'manual_external', 'relay_session']
+
+  const generate = () => {
+    setCopied(false)
+    issue.mutate({
+      worker_name: name.trim() || 'headless-worker',
+      launcher,
+      expires_minutes: Number(expires) || 1440,
+      server_url: mode === 'relay_session' ? null : (overrideUrl.trim() || null),
+      connect_mode: mode,
+    })
+  }
+  const copy = async () => {
+    if (!result?.linux_command) return
+    try { await navigator.clipboard.writeText(result.linux_command); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* 수동 복사용으로 텍스트는 보임 */ }
+  }
+
+  const inp = { background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '6px 9px', color: 'var(--text)', fontSize: 12, width: '100%', boxSizing: 'border-box' }
+  const lbl = { display: 'block', fontSize: 11, color: 'var(--faint)', marginBottom: 4 }
+
+  return (
+    <div className="panel">
+      <h4>분석기 추가 (원격) <span className="hint">다른 머신을 분석기로 붙이는 설치 명령·토큰 발급{disabled && ' · 연결 끊김'}</span>
+        <button style={{ marginLeft: 'auto' }} onClick={() => setOpen(v => !v)} disabled={disabled}>{open ? '닫기' : '명령 생성…'}</button></h4>
+      {open && (
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div><label style={lbl}>분석기 이름</label><input style={{ ...inp, fontFamily: 'monospace' }} value={name} onChange={e => setName(e.target.value)} /></div>
+            <div><label style={lbl}>실행 방식 (launcher)</label>
+              <select style={inp} value={launcher} onChange={e => setLauncher(e.target.value)}>
+                <option value="cloud">cloud</option><option value="cli">cli</option><option value="service">service</option>
+              </select></div>
+            <div><label style={lbl}>토큰 만료 (분)</label><input style={{ ...inp, fontFamily: 'monospace' }} type="number" min={15} max={43200} value={expires} onChange={e => setExpires(e.target.value)} /></div>
+            <div><label style={lbl}>접속 방식</label>
+              <select style={inp} value={mode} onChange={e => setMode(e.target.value)}>
+                {modeOptions.map(m => <option key={m} value={m}>{MODE_LABEL[m]}{available.size && !available.has(m) ? ' (미광고)' : ''}</option>)}
+              </select></div>
+          </div>
+          {mode !== 'relay_session' && (
+            <div><label style={lbl}>서버 주소 재정의 (선택)</label>
+              <input style={{ ...inp, fontFamily: 'monospace' }} placeholder={requestOrigin || 'https://...'} value={overrideUrl} onChange={e => setOverrideUrl(e.target.value)} /></div>
+          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button disabled={issue.isPending} onClick={generate}>{issue.isPending ? '발급 중…' : '설치 명령 생성'}</button>
+            {result?.linux_command && <button onClick={copy}>{copied ? '복사됨 ✓' : '명령 복사'}</button>}
+          </div>
+          {errMsg && <div style={{ color: 'var(--red)', fontSize: 11 }}>{errMsg}</div>}
+          {result?.linux_command && (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--faint)' }}>
+                분석기 계정 <b style={{ color: 'var(--text)' }}>{result.worker_username}</b> · 토큰 만료 {result.expires_minutes}분
+                {result.relay_endpoint ? ` · 릴레이 ${result.relay_endpoint}` : result.server_url ? ` · ${result.server_url}` : ''}
+                <br />⚠ 토큰이 포함된 1회용 명령입니다 — 워커 머신에서 그대로 실행하세요.
+              </div>
+              <pre style={{ background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: 10, fontSize: 11, color: 'var(--emerald)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>{result.linux_command}</pre>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
