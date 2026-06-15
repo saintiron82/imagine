@@ -13,4 +13,12 @@ contextBridge.exposeInMainWorld('imagineDesktop', {
   stopServer: () => ipcRenderer.invoke('server-stop'),
   serverStatus: () => ipcRenderer.invoke('server-status'),
   setAutostart: (enabled) => ipcRenderer.invoke('server-autostart', enabled),
+  // 자동 업데이트(IMGV2-27): 메인→렌더러 이벤트 구독 + 확인/설치 트리거.
+  onUpdateEvent: (cb) => {
+    const handler = (_e, data) => cb(data)
+    ipcRenderer.on('update-event', handler)
+    return () => ipcRenderer.removeListener('update-event', handler)
+  },
+  checkForUpdates: () => ipcRenderer.invoke('update-check'),
+  installUpdate: () => ipcRenderer.invoke('update-install'),
 })

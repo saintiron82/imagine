@@ -4,6 +4,7 @@ import { useApp } from '../state/AppContext'
 import { useAuth } from '../state/AuthContext'
 import { useLicenseStatus } from '../api/members'
 import AddFlow from '../flows/AddFlow'
+import UpdateNotification from './UpdateNotification'
 
 /**
  * 앱 셸 — 상단 내비게이션 + 전역 [+ 추가] + 서버 상태 칩.
@@ -57,6 +58,7 @@ export default function AppShell() {
         <Outlet />
       </main>
       {addOpen && <AddFlow onClose={() => setAddOpen(false)} />}
+      <UpdateNotification />
     </>
   )
 }

@@ -98,8 +98,50 @@ async function createWindow() {
 
   if (isDev) await win.loadURL(DEV_URL)
   else await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+  setupAutoUpdater(win)
   return win
 }
+
+// ── 자동 업데이트 (electron-updater) — IMGV2-27 ──────────────────────────────
+// 패키징된 앱에서만 동작. dev 에서는 require 자체를 하지 않으므로 electron-updater
+// 미설치여도 dev 가 깨지지 않는다. 실제 확인/다운로드는 build.publish 피드가
+// 구성돼야 의미가 있다(미구성 시 checkForUpdates 가 에러 → 토스트 없이 무시).
+let _autoUpdater = null
+function setupAutoUpdater(win) {
+  if (!app.isPackaged) return
+  try {
+    ({ autoUpdater: _autoUpdater } = require('electron-updater'))
+  } catch (e) {
+    console.warn('[electron] electron-updater unavailable:', e.message)
+    _autoUpdater = null
+    return
+  }
+  _autoUpdater.autoDownload = true
+  _autoUpdater.autoInstallOnAppQuit = true
+  const send = (type, payload = {}) => {
+    try { win.webContents.send('update-event', { type, ...payload }) } catch { /* window gone */ }
+  }
+  _autoUpdater.on('checking-for-update', () => send('checking'))
+  _autoUpdater.on('update-available', (info) => send('available', { version: info?.version }))
+  _autoUpdater.on('update-not-available', () => send('none'))
+  _autoUpdater.on('download-progress', (p) => send('progress', { percent: Math.round(p?.percent || 0) }))
+  _autoUpdater.on('update-downloaded', (info) => send('downloaded', { version: info?.version }))
+  _autoUpdater.on('error', (err) => send('error', { message: String(err?.message || err) }))
+  // 시작 5초 후 1회 + 6시간 주기 확인
+  setTimeout(() => { _autoUpdater.checkForUpdates().catch(() => {}) }, 5000)
+  setInterval(() => { _autoUpdater.checkForUpdates().catch(() => {}) }, 6 * 60 * 60 * 1000)
+}
+
+ipcMain.handle('update-check', async () => {
+  if (!_autoUpdater) return { ok: false, reason: 'unavailable' }
+  try { await _autoUpdater.checkForUpdates(); return { ok: true } }
+  catch (e) { return { ok: false, reason: String(e?.message || e) } }
+})
+ipcMain.handle('update-install', async () => {
+  if (!_autoUpdater) return { ok: false }
+  setImmediate(() => _autoUpdater.quitAndInstall())
+  return { ok: true }
+})
 
 async function ensureBackend() {
   if (await healthOnce()) return true
