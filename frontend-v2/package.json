@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "electron": "electron .",
     "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:9275 && electron .\"",
-    "dist:electron": "vite build && electron-builder"
+    "build:backend": "bash ../scripts/build-backend.sh",
+    "dist:electron": "npm run build:backend && vite build && electron-builder"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.1",
@@ -47,7 +48,7 @@
     "directories": { "output": "dist-electron" },
     "files": ["dist/**", "electron/**", "package.json"],
     "extraResources": [
-      { "from": "../.dist-python", "to": "python", "filter": ["**/*"] }
+      { "from": "../dist/backend_cli", "to": "backend", "filter": ["**/*"] }
     ],
     "mac": { "target": ["dmg", "zip"], "category": "public.app-category.productivity" },
     "win": { "target": ["nsis"] },

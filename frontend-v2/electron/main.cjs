@@ -44,18 +44,27 @@ async function waitHealth(timeoutMs = 40000) {
 }
 
 // 서버를 분리·상주 프로세스로 띄운다 — 앱(부모)이 죽어도 살아남는다.
+// dev: .venv 의 python 으로 uvicorn 실행. prod: PyInstaller 번들 backend_cli 의
+// `server` 서브커맨드(구 frontend 와 동일한 검증된 패키징 — backend_cli.spec →
+// dist/backend_cli → electron-builder extraResources 로 resources/backend 에 동봉).
 function spawnBackend() {
-  const py = isDev
-    ? path.join(projectRoot, '.venv', 'bin', 'python')
-    : path.join(process.resourcesPath, 'python', process.platform === 'win32' ? 'python.exe' : 'python3')
-  console.log(`[electron] starting independent backend: ${py} -m uvicorn (cwd=${projectRoot})`)
   const out = fs.openSync(LOGFILE, 'a')
-  backendProc = spawn(py, ['-m', 'uvicorn', 'backend.server.app:app', '--host', '127.0.0.1', '--port', String(PORT)], {
+  const common = {
     cwd: projectRoot,
     detached: true,                 // 부모 프로세스 그룹에서 분리
     stdio: ['ignore', out, out],    // 로그 파일로 (창과 무관)
     env: { ...process.env, PYTHONPATH: projectRoot, IMAGINE_NO_PARENT_WATCHDOG: '1' },
-  })
+  }
+  if (isDev) {
+    const py = path.join(projectRoot, '.venv', 'bin', 'python')
+    console.log(`[electron] starting independent backend (dev): ${py} -m uvicorn`)
+    backendProc = spawn(py, ['-m', 'uvicorn', 'backend.server.app:app', '--host', '127.0.0.1', '--port', String(PORT)], common)
+  } else {
+    const exe = process.platform === 'win32' ? 'backend_cli.exe' : 'backend_cli'
+    const cli = path.join(process.resourcesPath, 'backend', exe)
+    console.log(`[electron] starting independent backend (packaged): ${cli} server`)
+    backendProc = spawn(cli, ['server', '--port', String(PORT), '--host', '127.0.0.1'], { ...common, cwd: process.resourcesPath })
+  }
   try { fs.writeFileSync(PIDFILE, String(backendProc.pid)) } catch { /* noop */ }
   backendProc.unref()               // 앱이 이 자식을 기다리지 않게 → 앱 종료해도 서버 생존
 }
