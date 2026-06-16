@@ -50,11 +50,19 @@
     "extraResources": [
       { "from": "../dist/backend_cli", "to": "backend", "filter": ["**/*"] }
     ],
-    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.productivity" },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist",
+      "notarize": true
+    },
     "win": { "target": ["nsis"] },
     "linux": { "target": ["AppImage"] },
     "publish": [
-      { "provider": "generic", "url": "https://REPLACE-ME.example.com/imagine/updates/" }
+      { "provider": "github", "owner": "saintiron82", "repo": "imagine" }
     ]
   }
 }

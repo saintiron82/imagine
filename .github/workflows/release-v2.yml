@@ -1,0 +1,109 @@
+name: Build & Release (v2)
+
+# v2 데스크톱 앱(frontend-v2) 릴리스 — 구 frontend 의 release.yml(v* 태그)과
+# 충돌하지 않도록 v2-* 태그로 분리. electron-builder --publish always 로 설치본 +
+# latest*.yml(자동업데이트 피드 매니페스트)을 GitHub Releases 에 올린다.
+#
+# 필요한 저장소 시크릿(없으면 서명/공증 실패 — 미서명 빌드를 원하면 PACKAGING.md 참고):
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID  (macOS 공증)
+#   CSC_LINK, CSC_KEY_PASSWORD                            (mac Developer ID / win Authenticode .p12 base64)
+#   GITHUB_TOKEN 은 자동 제공.
+
+on:
+  push:
+    tags:
+      - 'v2-*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: Imagine-v2-mac
+          - os: windows-latest
+            artifact: Imagine-v2-win
+          - os: ubuntu-latest
+            artifact: Imagine-v2-linux
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Derive version from the v2-<semver> tag → frontend-v2/package.json ──
+      - name: Set version from tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v2-}"          # v2-2.0.1 → 2.0.1
+          VERSION="${VERSION#v}"        # tolerate v2.0.1
+          if [ -z "$VERSION" ]; then VERSION="0.0.0-dev"; fi
+          echo "Building version $VERSION (tag $TAG)"
+          node -e "const f='frontend-v2/package.json',p=require('./'+f);p.version=process.env.V;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+        env:
+          V: ${{ github.ref_name }}
+
+      # ── Python backend bundle (PyInstaller → dist/backend_cli) ──
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install uvicorn fastapi python-jose passlib python-multipart
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Build backend (PyInstaller)
+        run: python -m PyInstaller backend_cli.spec --noconfirm
+
+      # ── Electron app (frontend-v2) ──
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+          cache-dependency-path: frontend-v2/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend-v2
+        run: npm ci
+
+      - name: Build renderer (Vite)
+        working-directory: frontend-v2
+        run: npm run build
+
+      - name: Build & publish Electron app
+        working-directory: frontend-v2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization (set as repo secrets to enable)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npx electron-builder --publish always
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            frontend-v2/dist-electron/*.dmg
+            frontend-v2/dist-electron/*.zip
+            frontend-v2/dist-electron/*.exe
+            frontend-v2/dist-electron/*.AppImage
+            frontend-v2/dist-electron/latest*.yml
+          retention-days: 7
+          if-no-files-found: ignore
