@@ -22,7 +22,7 @@ const ACTIVITY = {
 
 export default function AnalysisScreen() {
   const { disconnected, loading, summary, analyzers, jobs, flow, current, totalFailed } = useAnalysisData()
-  const { pause, resume, cancel } = useJobControl()
+  const { pause, resume, cancel, retry, dismiss } = useJobControl()
   const [showHistory, setShowHistory] = useState(false)
 
   const jobActions = (j) => {
@@ -102,8 +102,11 @@ export default function AnalysisScreen() {
                 </span>
                 {showCurrent && <span className="mono2" style={{ color: 'var(--emerald)', fontSize: 11, fontWeight: 700 }}>분당 {current.rate}장</span>}
                 {j.failed > 0 && (
-                  <span className="plain-fail" style={{ margin: 0 }}>
+                  <span className="plain-fail" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span className="n">실패 {j.failed}</span>
+                    <button style={{ fontSize: 10 }} disabled={retry.isPending} onClick={() => retry.mutate(j.id)}>재시도</button>
+                    <button style={{ fontSize: 10 }} disabled={dismiss.isPending}
+                      onClick={() => { if (window.confirm('재시도를 소진한 영구 실패 파일을 실패 목록에서 제외할까요? (파일은 삭제되지 않음)')) dismiss.mutate(j.id) }}>무시</button>
                   </span>
                 )}
                 <div className="acts2">
@@ -188,6 +191,7 @@ function HistorySection() {
 function HistoryRow({ job }) {
   const [open, setOpen] = useState(false)
   const { errors, count, loading } = useJobErrors(job.id, open)
+  const { retry, dismiss } = useJobControl()
   const s = HIST_STATUS[job.status] || { label: job.status, color: 'var(--faint)' }
   const when = job.createdAt ? new Date(job.createdAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) : ''
   return (
@@ -203,6 +207,13 @@ function HistoryRow({ job }) {
       </div>
       {open && (
         <div style={{ marginTop: 6, paddingLeft: 38 }}>
+          {job.failed > 0 && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+              <button style={{ fontSize: 10 }} disabled={retry.isPending} onClick={() => retry.mutate(job.id)}>실패 재시도</button>
+              <button style={{ fontSize: 10 }} disabled={dismiss.isPending}
+                onClick={() => { if (window.confirm('영구 실패 파일을 실패 목록에서 제외할까요? (파일은 삭제되지 않음)')) dismiss.mutate(job.id) }}>무시</button>
+            </div>
+          )}
           {loading && <div style={{ fontSize: 11, color: 'var(--faint)' }}>불러오는 중…</div>}
           {!loading && count === 0 && <div style={{ fontSize: 11, color: 'var(--faint)' }}>상세 오류 기록이 없습니다</div>}
           {errors.map((e, i) => (

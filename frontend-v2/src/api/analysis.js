@@ -139,12 +139,14 @@ export function useJobControl() {
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['analysis-jobs'] })
     qc.invalidateQueries({ queryKey: ['analysis-jobs-history'] })
+    qc.invalidateQueries({ queryKey: ['analysis-job-errors'] })
   }
   const mk = (verb) => useMutation({
     mutationFn: (jobId) => apiClient.post(`/api/v1/analysis-jobs/${jobId}/${verb}`),
     onSuccess: invalidate,
   })
-  return { pause: mk('pause'), resume: mk('resume'), cancel: mk('cancel') }
+  // retry = 실패 태스크 재큐잉 · dismiss = 영구 실패만 카운트에서 제외(백엔드 admin)
+  return { pause: mk('pause'), resume: mk('resume'), cancel: mk('cancel'), retry: mk('retry'), dismiss: mk('dismiss') }
 }
 
 /**
