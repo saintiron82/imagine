@@ -14,9 +14,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/app", tags=["app"])
 
-# Default: look for installers in frontend/dist-electron/
+# Serve installers from the frontend-v2 build output; fall back to the legacy
+# frontend/ output during staged retirement (v2 takes precedence when present).
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-DOWNLOADS_DIR = PROJECT_ROOT / "frontend" / "dist-electron"
+DOWNLOADS_DIR = PROJECT_ROOT / "frontend-v2" / "dist-electron"
+if not DOWNLOADS_DIR.exists():
+    DOWNLOADS_DIR = PROJECT_ROOT / "frontend" / "dist-electron"
 
 # Allowed installer extensions
 INSTALLER_EXTS = {".dmg", ".exe", ".msi", ".appimage", ".deb", ".rpm", ".zip", ".pkg"}

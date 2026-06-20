@@ -645,7 +645,11 @@ def _start_heartbeat_watchdog():
 
 # ── SPA Static Serving (React frontend) ─────────────────────
 
-DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
+# Serve the frontend-v2 SPA; fall back to the legacy frontend/ build during
+# staged retirement (frontend-v2 takes precedence when its build is present).
+DIST_DIR = PROJECT_ROOT / "frontend-v2" / "dist"
+if not DIST_DIR.exists():
+    DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
 
 if DIST_DIR.exists():
     # Serve static assets (JS, CSS, images, fonts)

@@ -1,10 +1,10 @@
 name: Build & Release
 
+# Legacy frontend release — auto-trigger retired in favor of release-v2.yml
+# (v2-* tags). Kept as manual-only so the old app can still be built on demand,
+# and to avoid double-firing on v2-* tags (which the old 'v*' glob matched).
 on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:  # manual trigger from GitHub UI
+  workflow_dispatch:  # manual only
 
 permissions:
   contents: write
