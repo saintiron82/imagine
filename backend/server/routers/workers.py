@@ -360,12 +360,28 @@ def worker_connect(
         logger.warning(f"Rejected connect from blocked worker: {req.worker_name} (user={user['username']})")
         raise HTTPException(status_code=403, detail="Worker is blocked by admin")
 
-    # Mark any stale sessions from this user as offline
+    # Mark any stale sessions from this user as offline. A crashed worker (no
+    # graceful disconnect) leaves tasks 'assigned' to a session that never
+    # returns — reclaim them → pending here so the reconnecting worker can pick
+    # them up, instead of being stuck until the next server restart.
+    stale_ids = [
+        r[0] for r in cursor.execute(
+            "SELECT id FROM worker_sessions WHERE user_id = ? AND status = 'online'",
+            (user["id"],),
+        ).fetchall()
+    ]
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
            WHERE user_id = ? AND status = 'online'""",
         (now, user["id"])
     )
+    for _sid in stale_ids:
+        for _phase in ("mc", "vv", "mv"):
+            cursor.execute(
+                f"""UPDATE file_tasks SET {_phase}_status = 'pending', {_phase}_assigned_to = NULL
+                    WHERE {_phase}_status = 'assigned' AND {_phase}_assigned_to = ?""",
+                (_sid,),
+            )
 
     cursor.execute(
         """INSERT INTO worker_sessions
