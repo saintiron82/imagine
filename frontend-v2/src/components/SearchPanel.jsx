@@ -536,7 +536,7 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
     // Remote mode (Electron client / Web): server API URL with JWT
     const thumbnailSrc = isLocalMode()
         ? (result.thumbnail_path ? toFileUrl(result.thumbnail_path) : canPreviewNatively ? toFileUrl(localPath) : null)
-        : getThumbnailUrl(result.id);
+        : getThumbnailUrl(result.thumbnail_path, result.id);
 
     return (
         <div
