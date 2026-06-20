@@ -21,7 +21,7 @@ const ACTIVITY = {
 }
 
 export default function AnalysisScreen() {
-  const { disconnected, loading, summary, analyzers, jobs, flow, current, totalFailed } = useAnalysisData()
+  const { disconnected, loading, summary, analyzers, jobs, totalFailed } = useAnalysisData()
   const { pause, resume, cancel, retry, dismiss } = useJobControl()
   const [showHistory, setShowHistory] = useState(false)
 
@@ -62,45 +62,27 @@ export default function AnalysisScreen() {
             <span className="mono2" style={{ color: '#93c5fd', fontWeight: 700 }}>{summary.pct}%</span>
           </div>
           <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--dim)' }}>
-            활성 작업 <b style={{ color: 'var(--text)' }}>{summary.activeCount}개</b> · 잔여 <b style={{ color: 'var(--text)' }}>{summary.remainingTotal.toLocaleString()}장</b> · 지금 <b style={{ color: 'var(--emerald)' }}>분당 {summary.ratePerMin}장</b> · 분석기 <b>{summary.analyzerCount}대</b>
-          </div>
-          <div className="an-strip">
-            {analyzers.map(a => (
-              <div className="an-card" key={a.id}>
-                <span className={a.busy ? 'st run' : 'st'} style={a.busy ? undefined : { background: 'var(--faint)' }} />
-                <div><div className="nm2">{a.name}</div><div className="sub2">{a.file}</div></div>
-                <span className="rate2">{a.rate}</span>
-              </div>
-            ))}
-            {analyzers.length === 0 && (
-              <div className="an-card" style={{ color: 'var(--faint)' }}><span className="sub2">연결된 분석기 없음</span></div>
-            )}
+            활성 작업 <b style={{ color: 'var(--text)' }}>{summary.activeCount}개</b> · 잔여 <b style={{ color: 'var(--text)' }}>{summary.remainingTotal.toLocaleString()}장</b> · 지금 <b style={{ color: 'var(--emerald)' }}>분당 {summary.ratePerMin}장</b>
           </div>
         </div>
 
+        <div className="sec-sub" style={{ margin: '18px 0 6px', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+          작업 <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--faint)' }}>— 무엇을 · 얼마나 처리됐나</span>
+        </div>
         <div className="jobs">
           {jobs.map(j => {
             const meta = ACTIVITY[j.activity] || ACTIVITY.queued
             const running = j.activity === 'running'
-            const showCurrent = running && current
             return (
               <div className={`jrow ${running ? '' : 'waiting'}`} key={j.id}>
                 <span className={running ? 'st run' : 'st'} style={running ? undefined : { background: 'var(--faint)' }} />
-                <span className="nm">
-                  {j.name}
-                  {showCurrent && (
-                    <span style={{ display: 'block', fontSize: 10, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={current.file}>
-                      {current.file}
-                    </span>
-                  )}
-                </span>
+                <span className="nm">{j.name}</span>
                 <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, minWidth: 54, textAlign: 'right' }}>{meta.label}</span>
                 <div className="bar"><i style={{ width: `${j.pct}%` }} /></div>
                 <span className="cnt">
                   {j.done.toLocaleString()} / {j.total.toLocaleString()}
                   {j.remaining > 0 && <span style={{ color: 'var(--faint)' }}> · 잔여 {j.remaining.toLocaleString()}</span>}
                 </span>
-                {showCurrent && <span className="mono2" style={{ color: 'var(--emerald)', fontSize: 11, fontWeight: 700 }}>분당 {current.rate}장</span>}
                 {j.failed > 0 && (
                   <span className="plain-fail" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span className="n">실패 {j.failed}</span>
@@ -122,26 +104,30 @@ export default function AnalysisScreen() {
           )}
         </div>
 
-        <div className="live">
-          <div className="live-head">지금 처리 중 <span className="rate">분당 {summary.ratePerMin}장</span></div>
-          <div className="flow">
-            {flow.map((f, i) => (
-              <div className={`fl-item ${f.busy ? 'busy' : ''}`} key={`${f.name}-${i}`}>
-                <div className="ph" style={{ background: 'linear-gradient(140deg,#1e3a5f,#2d4a73)' }} />
-                <div className="fn">{f.name}</div>
-              </div>
-            ))}
-            {flow.length === 0 && (
-              <div style={{ fontSize: 11.5, color: 'var(--faint)', padding: '8px 2px' }}>처리 중인 파일이 없습니다</div>
-            )}
-          </div>
-          {totalFailed > 0 && (
-            <div className="plain-fail">
-              <span className="n">실패 {totalFailed}건</span>
-              <span>작업별 실패 상세는 아래 히스토리에서 확인</span>
+        <div className="sec-sub" style={{ margin: '18px 0 6px', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+          분석기 <b style={{ color: 'var(--emerald)' }}>{summary.analyzerCount}대</b> <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--faint)' }}>— 누가 · 지금 무엇을 · 처리율</span>
+        </div>
+        <div className="jobs">
+          {analyzers.map(a => (
+            <div className={`jrow ${a.busy ? '' : 'waiting'}`} key={a.id}>
+              <span className={a.busy ? 'st run' : 'st'} style={a.busy ? undefined : { background: 'var(--faint)' }} />
+              <span className="nm">{a.name}</span>
+              <span className="cnt" style={{ flex: 1, minWidth: 0, color: a.busy ? 'var(--text)' : 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.busy ? a.file : '대기 중'}</span>
+              <span className="mono2" style={{ color: 'var(--emerald)', fontWeight: 700 }}>{a.rate}</span>
+            </div>
+          ))}
+          {analyzers.length === 0 && (
+            <div className="jrow" style={{ color: 'var(--faint)' }}>
+              <span className="nm">연결된 분석기 없음</span>
             </div>
           )}
         </div>
+        {totalFailed > 0 && (
+          <div className="plain-fail" style={{ marginTop: 12 }}>
+            <span className="n">실패 {totalFailed}건</span>
+            <span>작업 행의 재시도/무시 또는 히스토리에서 상세 확인</span>
+          </div>
+        )}
 
         {showHistory && <HistorySection />}
       </div>
