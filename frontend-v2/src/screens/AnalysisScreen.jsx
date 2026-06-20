@@ -10,8 +10,18 @@ import { useAnalysisData, useJobControl, useJobHistory, useJobErrors, useIncompl
  * 미연결/오류 시 가짜 데이터 없이 빈 상태 + 정직한 표식.
  * 완료 잔류 없음 원칙: 히스토리(IMGV2-20)는 기본 숨김·opt-in 별도 뷰.
  */
+// 작업 단위 상태 — 내부 단계명(MC/VV/MV) 노출 금지, 사용자 언어로.
+const ACTIVITY = {
+  running:  { label: '처리 중',       color: 'var(--emerald)' },
+  queued:   { label: '분석 대기',     color: 'var(--cyan)' },
+  upstream: { label: '다운로드 대기', color: 'var(--dim)' },
+  paused:   { label: '일시정지',      color: 'var(--faint)' },
+  waiting:  { label: '대기',          color: 'var(--faint)' },
+  done:     { label: '완료',          color: 'var(--faint)' },
+}
+
 export default function AnalysisScreen() {
-  const { disconnected, loading, summary, analyzers, jobs, flow, totalFailed } = useAnalysisData()
+  const { disconnected, loading, summary, analyzers, jobs, flow, current, totalFailed } = useAnalysisData()
   const { pause, resume, cancel } = useJobControl()
   const [showHistory, setShowHistory] = useState(false)
 
@@ -52,7 +62,7 @@ export default function AnalysisScreen() {
             <span className="mono2" style={{ color: '#93c5fd', fontWeight: 700 }}>{summary.pct}%</span>
           </div>
           <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--dim)' }}>
-            지금 <b style={{ color: 'var(--emerald)' }}>분당 {summary.ratePerMin}장</b>씩 처리 중 · 분석기 <b>{summary.analyzerCount}대</b> 참여
+            활성 작업 <b style={{ color: 'var(--text)' }}>{summary.activeCount}개</b> · 잔여 <b style={{ color: 'var(--text)' }}>{summary.remainingTotal.toLocaleString()}장</b> · 지금 <b style={{ color: 'var(--emerald)' }}>분당 {summary.ratePerMin}장</b> · 분석기 <b>{summary.analyzerCount}대</b>
           </div>
           <div className="an-strip">
             {analyzers.map(a => (
@@ -69,22 +79,39 @@ export default function AnalysisScreen() {
         </div>
 
         <div className="jobs">
-          {jobs.map(j => (
-            <div className={`jrow ${j.waiting ? 'waiting' : ''}`} key={j.id}>
-              <span className={j.waiting ? 'st' : 'st run'} style={j.waiting ? { background: 'var(--faint)' } : undefined} />
-              <span className="nm">{j.name}</span>
-              {!j.waiting && <div className="bar"><i style={{ width: `${j.pct}%` }} /></div>}
-              <span className="cnt">{j.waiting ? `${j.total.toLocaleString()}장 · 대기` : `${j.done.toLocaleString()} / ${j.total.toLocaleString()}`}</span>
-              {j.failed > 0 && (
-                <span className="plain-fail" style={{ margin: 0 }}>
-                  <span className="n">실패 {j.failed}</span>
+          {jobs.map(j => {
+            const meta = ACTIVITY[j.activity] || ACTIVITY.queued
+            const running = j.activity === 'running'
+            const showCurrent = running && current
+            return (
+              <div className={`jrow ${running ? '' : 'waiting'}`} key={j.id}>
+                <span className={running ? 'st run' : 'st'} style={running ? undefined : { background: 'var(--faint)' }} />
+                <span className="nm">
+                  {j.name}
+                  {showCurrent && (
+                    <span style={{ display: 'block', fontSize: 10, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={current.file}>
+                      {current.file}
+                    </span>
+                  )}
                 </span>
-              )}
-              <div className="acts2">
-                {jobActions(j).map(a => <button key={a.label} onClick={a.fn}>{a.label}</button>)}
+                <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, minWidth: 54, textAlign: 'right' }}>{meta.label}</span>
+                <div className="bar"><i style={{ width: `${j.pct}%` }} /></div>
+                <span className="cnt">
+                  {j.done.toLocaleString()} / {j.total.toLocaleString()}
+                  {j.remaining > 0 && <span style={{ color: 'var(--faint)' }}> · 잔여 {j.remaining.toLocaleString()}</span>}
+                </span>
+                {showCurrent && <span className="mono2" style={{ color: 'var(--emerald)', fontSize: 11, fontWeight: 700 }}>분당 {current.rate}장</span>}
+                {j.failed > 0 && (
+                  <span className="plain-fail" style={{ margin: 0 }}>
+                    <span className="n">실패 {j.failed}</span>
+                  </span>
+                )}
+                <div className="acts2">
+                  {jobActions(j).map(a => <button key={a.label} onClick={a.fn}>{a.label}</button>)}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
           {jobs.length === 0 && !loading && (
             <div className="jrow" style={{ color: 'var(--faint)' }}>
               <span className="nm">등록된 분석 작업이 없습니다 — [＋ 추가]에서 폴더를 등록하세요</span>

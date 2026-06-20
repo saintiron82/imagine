@@ -62,35 +62,58 @@ export function useAnalysisData() {
       busy: !!w.current_file,
     }))
 
-  // 잡 행
+  // 라이브 분석기 상태(전역): 지금 잡고 있는 파일 — 작업별 "처리 중" 표시에 귀속.
+  const busyWorker = rawWorkers.find(w => w.status === 'online' && w.current_file)
+
+  // 잡 행 — 작업 단위 진행. 핵심은 완료 누적이 아니라 "이 작업의 잔여가 지금
+  // 어디서 처리/대기 중인지"다. progress.phases = 잔여 파일의 단계 분포
+  // (download/parse=상류 준비, ai/mv=분석기 단계).
   const jobs = rawJobs.map(j => {
     const p = j.progress || {}
+    const ph = p.phases || {}
+    const total = p.total || j.total_files || 0
+    const done = p.complete || 0
     const failed = failedCount(p)
-    const waiting = (p.complete || 0) === 0 && j.status === 'active'
+    const remaining = Math.max(0, total - done)
+    const analyzerQueued = (ph.ai || 0) + (ph.mv || 0)      // 분석기가 처리할 물량
+    const upstreamQueued = (ph.download || 0) + (ph.parse || 0)  // 다운로드/준비 대기(상류)
+    const waiting = done === 0 && j.status === 'active'
+    // activity: 처리 중 / 분석 대기 / 다운로드 대기 / 일시정지 / 완료 / 대기
+    let activity
+    if (j.status === 'paused') activity = 'paused'
+    else if (remaining === 0) activity = 'done'
+    else if (analyzerQueued > 0) activity = analyzers.length > 0 ? 'running' : 'queued'
+    else if (upstreamQueued > 0) activity = 'upstream'
+    else if (waiting) activity = 'waiting'
+    else activity = 'queued'
     return {
-      id: j.id,
-      name: j.name,
-      status: j.status,
-      waiting,
-      done: p.complete || 0,
-      total: p.total || j.total_files || 0,
-      pct: p.pct != null ? Math.round(p.pct) : 0,
-      failed,
+      id: j.id, name: j.name, status: j.status, waiting,
+      done, total, remaining,
+      pct: p.pct != null ? Math.round(p.pct) : (total ? Math.round((done / total) * 100) : 0),
+      failed, activity, analyzerQueued, upstreamQueued,
     }
   })
 
-  // 요약: 전체 완료/전체, 처리율 합, 온라인 분석기 수
+  // 요약: 라이브러리 누적 + 지금 활성 작업/잔여 중심(완료 누적이 주인공이 아님).
   const totalAll = jobs.reduce((a, j) => a + j.total, 0)
   const completeAll = jobs.reduce((a, j) => a + j.done, 0)
   const ratePerMin = analyzers.filter(a => a.busy)
     .reduce((a, w) => a + (Number(rawWorkers.find(rw => rw.id === w.id)?.throughput) || 0), 0)
+  const activeRows = jobs.filter(j => j.status === 'active' && j.remaining > 0)
   const summary = {
     total: totalAll,
     complete: completeAll,
     pct: totalAll ? Math.round((completeAll / totalAll) * 100) : 0,
     ratePerMin: Math.round(ratePerMin * 10) / 10,
     analyzerCount: analyzers.length,
+    activeCount: activeRows.length,
+    remainingTotal: activeRows.reduce((a, j) => a + j.remaining, 0),
   }
+
+  // 라이브 현재 상태 — "처리 중"인 작업 행에 분당 처리율 + 현재 파일을 귀속.
+  const current = busyWorker
+    ? { file: busyWorker.current_file, rate: summary.ratePerMin }
+    : null
 
   const totalFailed = jobs.reduce((a, j) => a + j.failed, 0)
 
@@ -105,6 +128,7 @@ export function useAnalysisData() {
     analyzers,
     jobs,
     flow,
+    current,
     totalFailed,
   }
 }
