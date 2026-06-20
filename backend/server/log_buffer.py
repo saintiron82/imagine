@@ -76,9 +76,13 @@ def install(level: int = logging.INFO) -> None:
     INFO records are filtered at the logger before ever reaching any handler.
     """
     global _installed
-    if _installed:
-        return
     root = logging.getLogger()
+    # Truly idempotent: drop any prior ring handler before attaching. All handlers
+    # share the module-global _buf/_seq, so two attached handlers double-count
+    # every record (app-import install + a test fixture re-install would do this).
+    for h in list(root.handlers):
+        if isinstance(h, RingBufferLogHandler):
+            root.removeHandler(h)
     if root.getEffectiveLevel() > level:
         root.setLevel(level)
     handler = RingBufferLogHandler()

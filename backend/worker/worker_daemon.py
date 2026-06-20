@@ -496,6 +496,14 @@ class WorkerDaemon:
                 resp = getattr(self.session, method)(url, **kwargs)
             else:
                 logger.error("[WORKER-AUTH] Refresh FAILED — giving up")
+        # DB write-lock contention → server returns 503 (retryable). Brief backoff
+        # retry so the worker survives write-contention bursts instead of treating
+        # a transient lock as a heartbeat/claim failure (which marks it offline).
+        attempts = 0
+        while resp.status_code == 503 and attempts < 3:
+            attempts += 1
+            time.sleep(0.3 * attempts)
+            resp = getattr(self.session, method)(url, **kwargs)
         return resp
 
     # ── Session Management ─────────────────────────────────────

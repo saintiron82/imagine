@@ -10,6 +10,7 @@ Or via CLI:
 
 import logging
 import os
+import sqlite3
 import sys
 import threading
 from pathlib import Path
@@ -73,6 +74,18 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Log full traceback for any unhandled exception (500 errors)."""
+    # SQLite write-lock contention is transient — return 503 (retryable) instead
+    # of 500 so clients/workers back off and retry rather than hard-failing.
+    # Frontend apiClient and worker _authed_request both retry on 503.
+    if isinstance(exc, sqlite3.OperationalError) and (
+        "locked" in str(exc).lower() or "busy" in str(exc).lower()
+    ):
+        logger.warning(f"DB busy on {request.method} {request.url.path}: {exc} → 503")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Database temporarily busy — retry shortly"},
+            headers={"Retry-After": "1"},
+        )
     tb = _traceback.format_exception(type(exc), exc, exc.__traceback__)
     logger.error(
         f"Unhandled exception on {request.method} {request.url.path}:\n"
