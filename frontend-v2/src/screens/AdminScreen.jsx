@@ -94,7 +94,7 @@ function WorkersPanel() {
             return (
               <div className={`valve ${isBn ? 'bn' : ''}`} key={v.phase}>
                 <div className="ph">{v.label}{isBn && <span className="bn-tag">병목</span>}</div>
-                <div className="n">{v.done.toLocaleString()}/{v.total.toLocaleString()}</div>
+                <div className="n">{v.pending > 0 ? `대기 ${v.pending.toLocaleString()}장` : '따라잡음'}</div>
                 <div className="rate">{rateTxt}</div>
                 <span className="sw on">ON</span>
               </div>
