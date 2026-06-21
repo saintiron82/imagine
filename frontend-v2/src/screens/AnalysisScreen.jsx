@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useAnalysisData, useJobControl, useJobHistory, useJobErrors, useIncompleteStats } from '../api/analysis'
+import { useAnalysisData, useJobControl, useJobHistory, useJobErrors, useIncompleteStats, useDbStats } from '../api/analysis'
 
 /**
  * 분석 — "무엇이 되고 있나". 작업 리스트 + 지금 처리 중 라이브 모니터.
@@ -22,6 +22,7 @@ const ACTIVITY = {
 
 export default function AnalysisScreen() {
   const { disconnected, loading, summary, analyzers, jobs, totalFailed } = useAnalysisData()
+  const db = useDbStats()
   const { pause, resume, cancel, retry, dismiss } = useJobControl()
   const [showHistory, setShowHistory] = useState(false)
 
@@ -56,10 +57,10 @@ export default function AnalysisScreen() {
 
         <div className="summary">
           <div className="sum-row">
-            <span className="big">{summary.complete.toLocaleString()}</span>
-            <span className="of">/ {summary.total.toLocaleString()} 장 분석됨</span>
-            <div className="bar"><i style={{ width: `${summary.pct}%` }} /></div>
-            <span className="mono2" style={{ color: '#93c5fd', fontWeight: 700 }}>{summary.pct}%</span>
+            <span className="big">{db.analyzed.toLocaleString()}</span>
+            <span className="of">/ {db.total.toLocaleString()} 장 분석 완료 · DB 보관</span>
+            <div className="bar"><i style={{ width: `${db.pct}%` }} /></div>
+            <span className="mono2" style={{ color: '#93c5fd', fontWeight: 700 }}>{db.pct}%</span>
           </div>
           <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--dim)' }}>
             활성 작업 <b style={{ color: 'var(--text)' }}>{summary.activeCount}개</b> · 잔여 <b style={{ color: 'var(--text)' }}>{summary.remainingTotal.toLocaleString()}장</b> · 지금 <b style={{ color: 'var(--emerald)' }}>분당 {summary.ratePerMin}장</b>

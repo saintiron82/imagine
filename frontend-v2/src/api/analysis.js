@@ -176,6 +176,23 @@ export function useJobHistory(enabled) {
 }
 
 /**
+ * DB 상태 — 지금까지 분석되어 DB에 보관 중인 "실제" 수치(활성 작업 합산이 아님).
+ * 요약 헤드라인용: 작업의 진행/잔여(그냥 잡)와 섞지 않는다.
+ *   GET /api/v1/stats/db → { total_files, files_with_mc_caption, searchable, ... }
+ */
+export function useDbStats() {
+  const q = useQuery({
+    queryKey: ['stats-db'],
+    queryFn: () => apiClient.get('/api/v1/stats/db'),
+    refetchInterval: 5000,
+  })
+  const d = q.data || {}
+  const total = d.total_files || 0
+  const analyzed = d.files_with_mc_caption ?? d.searchable ?? 0
+  return { total, analyzed, pct: total ? Math.round((analyzed / total) * 100) : 0, loading: q.isLoading }
+}
+
+/**
  * 작업별 실패 상세(IMGV2-20) — 히스토리 행 펼칠 때만 lazy 조회.
  *   GET /api/v1/analysis-jobs/{id}/errors → { errors[], count }
  *   error: { file_name, failed_phases[], error, retry_count, permanent }
