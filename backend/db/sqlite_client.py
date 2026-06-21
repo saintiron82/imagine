@@ -47,6 +47,124 @@ def _retry_on_locked(func):
     return wrapper
 
 
+# ── Process-wide write serialization ─────────────────────────────────────────
+# SQLite allows ONE writer at a time. Each thread (request handler, pipeline pool,
+# worker-result save) gets its own connection (threading.local), so without
+# coordination two connections write concurrently → 'database is locked' → 503s
+# on login/heartbeat under load. We serialize ALL write transactions behind one
+# process-wide lock: a write statement acquires it and holds it until
+# commit/rollback, so SQLite only ever sees a single writer. Reads
+# (SELECT/PRAGMA) never take the lock → concurrent reads stay parallel (WAL).
+_WRITE_LOCK = threading.RLock()
+_WRITE_RE = re.compile(
+    r"^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|VACUUM|BEGIN)\b", re.IGNORECASE
+)
+# Bound the wait so a leaked (never-committed) write txn degrades to the old
+# concurrent behavior instead of hanging the whole process forever.
+_WRITE_LOCK_TIMEOUT = 20.0
+
+
+def _is_write_sql(sql) -> bool:
+    return isinstance(sql, str) and _WRITE_RE.match(sql) is not None
+
+
+class _SerializedCursor:
+    """Cursor wrapper — write statements go through the global write lock."""
+
+    def __init__(self, cursor, owner):
+        object.__setattr__(self, "_cursor", cursor)
+        object.__setattr__(self, "_owner", owner)
+
+    def execute(self, sql, *a, **k):
+        if _is_write_sql(sql):
+            self._owner._acquire_write()
+        return self._cursor.execute(sql, *a, **k)
+
+    def executemany(self, sql, *a, **k):
+        if _is_write_sql(sql):
+            self._owner._acquire_write()
+        return self._cursor.executemany(sql, *a, **k)
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _SerializedConnection:
+    """Connection wrapper: a write grabs the process-wide write lock and holds it
+    until commit()/rollback()/close(), so only one writer ever hits SQLite."""
+
+    def __init__(self, conn):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_held", False)
+
+    def _acquire_write(self):
+        if not self._held:
+            got = _WRITE_LOCK.acquire(timeout=_WRITE_LOCK_TIMEOUT)
+            object.__setattr__(self, "_held", bool(got))
+            if not got:
+                logger.error(
+                    "[db] write-lock acquire timed out (%.0fs) — proceeding unserialized",
+                    _WRITE_LOCK_TIMEOUT,
+                )
+
+    def _release_write(self):
+        if self._held:
+            object.__setattr__(self, "_held", False)
+            try:
+                _WRITE_LOCK.release()
+            except RuntimeError:
+                pass
+
+    def execute(self, sql, *a, **k):
+        if _is_write_sql(sql):
+            self._acquire_write()
+        return self._conn.execute(sql, *a, **k)
+
+    def executemany(self, sql, *a, **k):
+        if _is_write_sql(sql):
+            self._acquire_write()
+        return self._conn.executemany(sql, *a, **k)
+
+    def executescript(self, sql, *a, **k):
+        with _WRITE_LOCK:  # scripts almost always write; RLock-safe if already held
+            return self._conn.executescript(sql, *a, **k)
+
+    def cursor(self, *a, **k):
+        return _SerializedCursor(self._conn.cursor(*a, **k), self)
+
+    def commit(self):
+        try:
+            self._conn.commit()
+        finally:
+            self._release_write()
+
+    def rollback(self):
+        try:
+            self._conn.rollback()
+        finally:
+            self._release_write()
+
+    def close(self):
+        self._release_write()
+        return self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 class SQLiteDB:
     """SQLite database client with sqlite-vec support."""
     CURRENT_DATA_BUILD_LEVEL = 2
@@ -136,7 +254,7 @@ class SQLiteDB:
         c = getattr(self._local, 'conn', None)
         if c is None:
             import threading
-            c = self._create_connection()
+            c = _SerializedConnection(self._create_connection())
             self._local.conn = c
             # Verify busy_timeout is set
             bt = c.execute("PRAGMA busy_timeout").fetchone()[0]
@@ -1938,7 +2056,9 @@ class SQLiteDB:
         Uses `VACUUM INTO` which produces a clean, WAL-consistent copy without
         holding a long write lock. dest_path must NOT already exist.
         """
-        conn = self.conn
+        # Raw connection: VACUUM/isolation_level must bypass the write-serialization
+        # wrapper (it doesn't proxy isolation_level setattr and VACUUM can't run in a txn).
+        conn = getattr(self.conn, "_conn", self.conn)
         old_iso = conn.isolation_level
         try:
             conn.rollback()                       # leave any implicit txn
@@ -2016,7 +2136,7 @@ class SQLiteDB:
                 logger.warning(f"pre-import safety snapshot failed (continuing): {se}")
                 safety_path = None
 
-            dest = self.conn
+            dest = getattr(self.conn, "_conn", self.conn)  # raw conn for C-level backup()
             dest.rollback()                        # ensure no open txn before backup
             src.backup(dest)                       # copy src -> live dest (all pages)
             dest.execute("PRAGMA wal_checkpoint(FULL)")
