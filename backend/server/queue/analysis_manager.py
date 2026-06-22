@@ -83,8 +83,10 @@ class AnalysisJobManager:
                 WHERE {col} = 'assigned'
             """)
             total += cursor.rowcount
+        # Always commit: a 0-row UPDATE still opened a write txn (and acquired the
+        # write gate). Conditional commit would leave it open and pin the gate.
+        self.db.conn.commit()
         if total > 0:
-            self.db.conn.commit()
             logger.info(f"Reclaimed {total} stale assigned tasks → pending")
 
     def reclaim_worker_tasks(self, worker_id: int) -> int:
@@ -163,8 +165,10 @@ class AnalysisJobManager:
                     THEN 'done' ELSE mv_status END
         """)
         synced = cursor.rowcount
+        # Always commit: the UPDATE above opened a write txn even at 0 rows; a
+        # conditional commit would leave it open and pin the write gate.
+        self.db.conn.commit()
         if synced > 0:
-            self.db.conn.commit()
             logger.info(f"Synced {synced} file_tasks with files DB")
 
     def _ensure_snapshot_columns(self):
