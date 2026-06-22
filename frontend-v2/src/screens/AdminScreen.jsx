@@ -4,6 +4,7 @@ import { useConnectionInfo } from '../api/connection'
 import { useMembersData, useMemberMutations } from '../api/members'
 import { useDbAudit, useBackfill, useDbReset, useRepairParse, useDbExport, useDbImport } from '../api/tools'
 import { useDomains, useActiveDomain, useDomainDetail, useSetActiveDomain, useSaveDomain, generateDomainPrompt } from '../api/classification'
+import { useDbStats } from '../api/analysis'
 
 /**
  * 관리 — 엔진룸. 기술 용어(MC/VV/MV)는 운영자 전용인 이 화면에만 허용된다.
@@ -11,17 +12,17 @@ import { useDomains, useActiveDomain, useDomainDetail, useSetActiveDomain, useSa
  * 멤버/플랜: members/invites/usage 실데이터. 미연결 시 빈 상태(가짜 데이터 없음).
  */
 export default function AdminScreen() {
-  const [tab, setTab] = useState('workers')
+  const [tab, setTab] = useState('dbstatus')
 
   return (
     <section id="scr-admin" className="screen active" style={{ height: '100%' }}>
       <aside className="adm-side">
-        {[['workers', '분석기'], ['classification', '분류'], ['members', '멤버'], ['feedback', '피드백'], ['logs', '로그'], ['tools', '서버 도구']].map(([id, label]) => (
+        {[['dbstatus', 'DB 상태'], ['classification', '분류'], ['members', '멤버'], ['feedback', '피드백'], ['logs', '로그'], ['tools', '서버 도구']].map(([id, label]) => (
           <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>
         ))}
       </aside>
       <div className="adm-main">
-        {tab === 'workers' && <WorkersPanel />}
+        {tab === 'dbstatus' && <DbStatusPanel />}
         {tab === 'classification' && <ClassificationPanel />}
         {tab === 'members' && <MembersPanel />}
         {tab === 'feedback' && <FeedbackPanel />}
@@ -59,7 +60,27 @@ function ApSetting({ label, suffix, value, min, max, disabled, onCommit }) {
   )
 }
 
-function WorkersPanel() {
+// ── DB 상태 ── 지금까지 분석되어 DB에 보관 중인 "실제" 수치(작업 합산이 아님).
+function DbStatusPanel() {
+  const { total, analyzed, pct, loading } = useDbStats()
+  const remaining = Math.max(0, total - analyzed)
+  return (
+    <div className="panel">
+      <h4>DB 상태 <span className="hint">지금까지 분석되어 보관 중인 실제 수치{loading ? ' · 불러오는 중' : ''}</span></h4>
+      <div className="sum-row" style={{ marginTop: 4 }}>
+        <span className="big">{analyzed.toLocaleString()}</span>
+        <span className="of">/ {total.toLocaleString()} 장 분석 완료</span>
+        <div className="bar"><i style={{ width: `${pct}%` }} /></div>
+        <span className="mono2" style={{ color: '#93c5fd', fontWeight: 700 }}>{pct}%</span>
+      </div>
+      <div style={{ marginTop: 10, fontSize: 12, color: 'var(--dim)' }}>
+        보관 <b style={{ color: 'var(--text)' }}>{total.toLocaleString()}장</b> · 분석 완료 <b style={{ color: 'var(--emerald)' }}>{analyzed.toLocaleString()}장</b> · 미분석 <b style={{ color: 'var(--text)' }}>{remaining.toLocaleString()}장</b>
+      </div>
+    </div>
+  )
+}
+
+export function WorkersPanel() {
   const { disconnected, workers, globalMode } = useWorkers()
   const { valves, bottleneck } = useClusterValves()
   const { stop, block, unblock } = useWorkerControl()

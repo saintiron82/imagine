@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useAnalysisData, useJobControl, useJobHistory, useJobErrors, useIncompleteStats, useDbStats } from '../api/analysis'
+import { useAnalysisData, useJobControl, useJobHistory, useJobErrors, useIncompleteStats } from '../api/analysis'
+import { WorkersPanel } from './AdminScreen'
 
 /**
  * 분석 — "무엇이 되고 있나". 작업 리스트 + 지금 처리 중 라이브 모니터.
@@ -21,8 +22,7 @@ const ACTIVITY = {
 }
 
 export default function AnalysisScreen() {
-  const { disconnected, loading, summary, analyzers, jobs, totalFailed } = useAnalysisData()
-  const db = useDbStats()
+  const { disconnected, loading, summary, jobs, totalFailed } = useAnalysisData()
   const { pause, resume, cancel, retry, dismiss } = useJobControl()
   const [showHistory, setShowHistory] = useState(false)
 
@@ -56,14 +56,9 @@ export default function AnalysisScreen() {
         )}
 
         <div className="summary">
-          <div className="sum-row">
-            <span className="big">{db.analyzed.toLocaleString()}</span>
-            <span className="of">/ {db.total.toLocaleString()} 장 분석 완료 · DB 보관</span>
-            <div className="bar"><i style={{ width: `${db.pct}%` }} /></div>
-            <span className="mono2" style={{ color: '#93c5fd', fontWeight: 700 }}>{db.pct}%</span>
-          </div>
-          <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--dim)' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--dim)' }}>
             활성 작업 <b style={{ color: 'var(--text)' }}>{summary.activeCount}개</b> · 잔여 <b style={{ color: 'var(--text)' }}>{summary.remainingTotal.toLocaleString()}장</b> · 지금 <b style={{ color: 'var(--emerald)' }}>분당 {summary.ratePerMin}장</b>
+            <span style={{ marginLeft: 8, color: 'var(--faint)' }}>· DB 보관량은 관리 &gt; DB 상태</span>
           </div>
         </div>
 
@@ -106,23 +101,9 @@ export default function AnalysisScreen() {
         </div>
 
         <div className="sec-sub" style={{ margin: '18px 0 6px', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-          분석기 <b style={{ color: 'var(--emerald)' }}>{summary.analyzerCount}대</b> <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--faint)' }}>— 누가 · 지금 무엇을 · 처리율</span>
+          분석기 <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--faint)' }}>— 누가 지금 무엇을 처리하나 · 병목 · 정지/차단 · 원격 추가</span>
         </div>
-        <div className="jobs">
-          {analyzers.map(a => (
-            <div className={`jrow ${a.busy ? '' : 'waiting'}`} key={a.id}>
-              <span className={a.busy ? 'st run' : 'st'} style={a.busy ? undefined : { background: 'var(--faint)' }} />
-              <span className="nm">{a.name}</span>
-              <span className="cnt" style={{ flex: 1, minWidth: 0, color: a.busy ? 'var(--text)' : 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.busy ? a.file : '대기 중'}</span>
-              <span className="mono2" style={{ color: 'var(--emerald)', fontWeight: 700 }}>{a.rate}</span>
-            </div>
-          ))}
-          {analyzers.length === 0 && (
-            <div className="jrow" style={{ color: 'var(--faint)' }}>
-              <span className="nm">연결된 분석기 없음</span>
-            </div>
-          )}
-        </div>
+        <WorkersPanel />
         {totalFailed > 0 && (
           <div className="plain-fail" style={{ marginTop: 12 }}>
             <span className="n">실패 {totalFailed}건</span>
