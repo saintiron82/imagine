@@ -544,7 +544,8 @@ function MembersPanel() {
           <div className="kpi"><div className="v">{usage.seats_used} <span className="faint" style={{ fontSize: 12 }}>/ {usage.seat_limit || '∞'}</span></div><div className="k">좌석 — 멤버 {usage.members} + 대기 초대 {usage.pending_invites}</div></div>
           <div className="kpi"><div className="v" style={{ color: usage.smtp_configured ? 'var(--emerald)' : 'var(--faint)' }}>{usage.smtp_configured ? '메일 ON' : '메일 OFF'}</div><div className="k">초대 발송 방식</div></div>
           <div className="kpi" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <button style={{ background: 'var(--blue-d)', color: '#fff', fontWeight: 600, fontSize: 11.5, padding: '7px 16px', borderRadius: 6 }}>갱신 / 업그레이드</button>
+            <button onClick={() => window.open('https://imagine.app/account', '_blank', 'noopener')}
+              style={{ background: 'var(--blue-d)', color: '#fff', fontWeight: 600, fontSize: 11.5, padding: '7px 16px', borderRadius: 6 }}>갱신 / 업그레이드</button>
           </div>
         </div>
         <div style={{ fontSize: 10, color: 'var(--amber)', marginTop: 6 }}>만료 시 이 서버 접속이 차단됩니다 (로그인은 되어도 입장 불가) · 데이터는 보존되며 갱신 즉시 복귀</div>
@@ -766,7 +767,7 @@ function DbToolsControl() {
 }
 
 function ToolsPanel() {
-  const { disconnected, external, lan } = useConnectionInfo()
+  const { disconnected, external, lan, refetch, refreshing } = useConnectionInfo()
   const desktop = typeof window !== 'undefined' && window.imagineDesktop // 데스크톱 셸에서만
   const extDesc = external?.available
     ? `● 연결됨 — ${external.url || '터널'} · 주소 공유 불필요`
@@ -782,7 +783,7 @@ function ToolsPanel() {
           <tr>
             <td>외부 접속 (Cloudflare 터널)</td>
             <td style={{ color: external?.available ? 'var(--emerald)' : 'var(--faint)', fontSize: 11 }}>{extDesc}</td>
-            <td><div className="row-act"><button>재연결</button></div></td>
+            <td><div className="row-act"><button onClick={() => refetch()} disabled={refreshing}>{refreshing ? '확인 중…' : '재연결'}</button></div></td>
           </tr>
           <tr>
             <td>같은 네트워크 (LAN)</td>

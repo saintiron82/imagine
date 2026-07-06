@@ -18,6 +18,8 @@ export function useConnectionInfo() {
   const byMode = (m) => modes.find(x => x.mode === m) || null
   return {
     disconnected: !connected,
+    refetch: q.refetch,                  // 접속 상태 재조회 (관리 > 서버 도구 "재연결")
+    refreshing: q.isFetching,
     external: byMode('relay_session'),   // 외부 접속(Cloudflare 터널/릴레이)
     lan: byMode('direct_lan'),
     local: byMode('direct_local'),

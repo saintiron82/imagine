@@ -71,8 +71,7 @@ export default function AppShell() {
 
 /**
  * 구독/만료 배너 (IMGV2-22) — 운영자에게만. 만료/임박 시 상단 고정 안내.
- * 갱신은 홈페이지('계정의 집')에서 — 배포 URL 이 코드에 고정돼 있지 않아
- * 죽은 링크 대신 경로를 텍스트로 안내한다(URL 확정 시 링크화).
+ * 갱신은 홈페이지('계정의 집')에서 — imagine.app/account 로 연결한다.
  */
 function ExpiryBanner() {
   const { state, daysLeft, expiresAt } = useLicenseStatus()
@@ -92,7 +91,8 @@ function ExpiryBanner() {
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 18px', fontSize: 12.5, background: bg, borderBottom: `1px solid ${bd}`, color: fg }}>
       <span>{expired ? '⛔' : '⚠'}</span>
       <span style={{ color: 'var(--text)' }}>{msg}</span>
-      <span style={{ marginLeft: 'auto', color: 'var(--faint)', fontSize: 11 }}>갱신: 홈페이지 &gt; 내 라이선스</span>
+      <a href="https://imagine.app/account" target="_blank" rel="noreferrer"
+        style={{ marginLeft: 'auto', color: fg, fontSize: 11, textDecoration: 'underline' }}>갱신: 홈페이지 &gt; 내 라이선스</a>
       <button onClick={() => setDismissed(true)} style={{ background: 'none', border: 'none', color: 'var(--faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
     </div>
   )
