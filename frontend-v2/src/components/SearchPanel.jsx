@@ -5,10 +5,9 @@ import ImageSearchInput from './ImageSearchInput';
 import SearchHistorySidebar from './SearchHistorySidebar';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
-import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, isLocalMode, getActiveDomainConfig, postSearchFeedback } from '../services/bridge';
+import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, getActiveDomainConfig, postSearchFeedback } from '../services/bridge';
 import { isElectron, getServerUrl } from '../api/client';
 
-const IMAGE_PREVIEW_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 const FETCH_LIMIT = 100;   // Backend returns up to this many results in one call
 const DISPLAY_PAGE = 20;   // Show this many per "page" in the UI
 
@@ -101,9 +100,7 @@ const MetadataModal = ({ metadata, onClose, onNavigateToFolder }) => {
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(async () => {
             try {
-                await updateUserMeta(
-                    isLocalMode() ? metadata.file_path : metadata.id, editedData
-                );
+                await updateUserMeta(metadata.id, editedData);
                 Object.assign(metadata, editedData);
             } catch (err) {
                 console.error('Auto-save failed:', err);
@@ -515,28 +512,9 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
     const localPath = result.resolved_path || result.path;
     const fileName = (localPath || dbPath).split(/[/\\]/).pop();
     const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
-    const canPreviewNatively = IMAGE_PREVIEW_EXTS.includes(ext);
 
-    const toFileUrl = (p) => {
-        if (!p || typeof p !== 'string') return '';
-        // Resolve relative paths (e.g. "output/thumbnails/...") to absolute using projectRoot
-        let resolved = p;
-        if (!/^[A-Za-z]:/.test(p) && !/^\//.test(p)) {
-            const root = window.electron?.projectRoot || '';
-            resolved = root ? `${root}/${p}` : p;
-        }
-        const normalized = resolved.replace(/\\/g, '/');
-        const encoded = normalized.split('/').map(s => encodeURIComponent(s)).join('/');
-        // Windows: file:///C:/... | Mac/Linux: file:///home/... (path already starts with /)
-        return /^[A-Za-z]:/.test(normalized) ? `file:///${encoded}` : `file://${encoded}`;
-    };
-
-    // Prefer DB thumbnail (always generated during Process), fallback to native preview
-    // Local mode (Electron server): file:// URL from disk
-    // Remote mode (Electron client / Web): server API URL with JWT
-    const thumbnailSrc = isLocalMode()
-        ? (result.thumbnail_path ? toFileUrl(result.thumbnail_path) : canPreviewNatively ? toFileUrl(localPath) : null)
-        : getThumbnailUrl(result.thumbnail_path, result.id);
+    // DB thumbnail via server API URL with JWT
+    const thumbnailSrc = getThumbnailUrl(result.thumbnail_path, result.id);
 
     return (
         <div

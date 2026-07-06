@@ -1,5 +1,4 @@
-import { createContext, useContext, useEffect } from 'react'
-import { setUseLocalBackend } from '../services/bridge'
+import { createContext, useContext } from 'react'
 import { useAuth } from './AuthContext'
 
 /**
@@ -10,9 +9,6 @@ const AppContext = createContext(null)
 
 export function AppProvider({ children }) {
   const { isOperator, connected, serverName } = useAuth()
-
-  // v2 는 항상 HTTP 모드 — bridge 는 서버 API(apiClient)를 탄다(IPC 아님).
-  useEffect(() => { setUseLocalBackend(false) }, [])
 
   const value = {
     isOperator,

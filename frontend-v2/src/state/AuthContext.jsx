@@ -51,7 +51,6 @@ export function AuthProvider({ children }) {
   }, [])
 
   const signInEmail = useCallback(async (email, pw) => (await fb()).signIn(email, pw), [])
-  const signUpEmail = useCallback(async (email, pw, name) => (await fb()).signUp(email, pw, name), [])
   const signInGoogle = useCallback(async () => (await fb()).signInWithGoogle(), [])
 
   /** 서버 연결: 그룹 조회 → URL 설정 → Firebase idToken → /auth/connect.
@@ -128,7 +127,7 @@ export function AuthProvider({ children }) {
   const value = {
     firebaseUser, authLoading, connected, checking, role, serverName, busy, error,
     isOperator: role === 'admin',
-    signInEmail, signUpEmail, signInGoogle, connectToServer, createServer, disconnect, signOutAll,
+    signInEmail, signInGoogle, connectToServer, createServer, disconnect, signOutAll,
   }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

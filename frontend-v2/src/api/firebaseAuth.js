@@ -1,36 +1,19 @@
 /**
- * Firebase Auth wrapper — sign up, sign in, sign out, state observation.
+ * Firebase Auth wrapper — sign in, sign out, state observation.
  */
 
 import {
-  createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithCredential,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged as firebaseOnAuthStateChanged,
-  updateProfile,
 } from 'firebase/auth';
 import { auth } from './firebaseApp';
 
 const googleProvider = new GoogleAuthProvider();
 const isElectron = !!window.electron;
-
-/**
- * Create a new Firebase account.
- * @param {string} email
- * @param {string} password
- * @param {string} [displayName]
- * @returns {Promise<import('firebase/auth').UserCredential>}
- */
-export async function signUp(email, password, displayName) {
-  const cred = await createUserWithEmailAndPassword(auth, email, password);
-  if (displayName) {
-    await updateProfile(cred.user, { displayName });
-  }
-  return cred;
-}
 
 /**
  * Sign in with Google.
