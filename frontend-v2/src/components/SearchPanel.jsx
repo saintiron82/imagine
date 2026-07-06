@@ -780,7 +780,7 @@ const SearchInput = React.memo(({ onSearch, onClear, hasImages, isSearching, sho
 const SEARCH_GAP = 16;
 
 // Virtualized search results grid (memoized — only re-renders when its own props change)
-const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, isLoadingMore, onLoadMore, onContextMenu, onNavigateToFolder, onFindSimilar, onMarkIrrelevant, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount, confidence }) => {
+const SearchResults = React.memo(({ results, isSearching, searchStage, hasResults, onShowMeta, onClear, noMoreResults, onLoadMore, onContextMenu, onNavigateToFolder, onFindSimilar, onMarkIrrelevant, activeFilters, onRemoveFilter, searchScope, onClearScope, refineStack, refineInput, onRefineInputChange, onRefineCommit, onRefineRemove, totalCount, confidence }) => {
     const { t } = useLocale();
     const scrollRef = useRef(null);
 
@@ -960,17 +960,9 @@ const SearchResults = React.memo(({ results, isSearching, searchStage, hasResult
                                         ) : (
                                             <button
                                                 onClick={onLoadMore}
-                                                disabled={isLoadingMore}
-                                                className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-800 text-gray-300 hover:text-white disabled:text-gray-600 rounded-lg border border-gray-600 hover:border-gray-500 disabled:border-gray-700 transition-all flex items-center gap-2 text-sm"
+                                                className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg border border-gray-600 hover:border-gray-500 transition-all flex items-center gap-2 text-sm"
                                             >
-                                                {isLoadingMore ? (
-                                                    <>
-                                                        <Loader2 size={16} className="animate-spin" />
-                                                        {t('status.loading_more')}
-                                                    </>
-                                                ) : (
-                                                    t('action.load_more')
-                                                )}
+                                                {t('action.load_more')}
                                             </button>
                                         )}
                                     </div>
@@ -1030,7 +1022,6 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const allResultsRef = useRef([]); // Full results from backend (up to FETCH_LIMIT)
     const [isSearching, setIsSearching] = useState(false);
     const [searchStage, setSearchStage] = useState(null); // 'decompose'|'visual'|'semantic'|'keyword'|'ranking'
-    const searchCache = useRef(new Map()); // query → {results, timestamp}
     const [searchHistory, setSearchHistory] = useState(() => {
         try { return JSON.parse(localStorage.getItem('search_history_v2') || '[]'); }
         catch { return []; }
@@ -1048,7 +1039,6 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const [metadata, setMetadata] = useState(null);
     // showSettings removed — settings now in dedicated tab
     const [dbStats, setDbStats] = useState(null);
-    const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [currentLimit, setCurrentLimit] = useState(20);
     const [noMoreResults, setNoMoreResults] = useState(false);
     const [resetSignal, setResetSignal] = useState(0);
@@ -1098,6 +1088,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             setQueryImages([]);
             setQueryFileId(queryFileId);
             setSearchMode(mode);
+            allResultsRef.current = [];
             setResults([]);
             setConfidence(null);
             setNoMoreResults(false);
@@ -1110,7 +1101,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             const performSearch = async () => {
                 try {
                     const searchOptions = {
-                        limit: 20,
+                        limit: FETCH_LIMIT,
                         threshold: 0,
                         filters: null,
                         queryFileId,
@@ -1118,12 +1109,15 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     };
                     const response = await searchImages(searchOptions);
                     if (response.success) {
-                        setResults(response.results);
+                        const all = response.results || [];
+                        allResultsRef.current = all;
+                        setResults(all.slice(0, DISPLAY_PAGE));
                         setConfidence(response.confidence || null);
-                        setCurrentLimit(20);
-                        setNoMoreResults(response.results.length < 20);
+                        setCurrentLimit(DISPLAY_PAGE);
+                        setNoMoreResults(all.length <= DISPLAY_PAGE);
                     } else {
                         setError(response.error || 'Search failed');
+                        allResultsRef.current = [];
                         setResults([]);
                         setConfidence(null);
                     }
@@ -1167,6 +1161,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         setQueryImages([]);
         setQueryFileId(fileId);
         setSearchMode(mode);
+        allResultsRef.current = [];
         setResults([]);
         setConfidence(null);
         setNoMoreResults(false);
@@ -1178,7 +1173,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
         const performSearch = async () => {
             try {
                 const searchOptions = {
-                    limit: 20,
+                    limit: FETCH_LIMIT,
                     threshold: 0,
                     filters: null,
                     queryFileId: fileId,
@@ -1186,12 +1181,15 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 };
                 const response = await searchImages(searchOptions);
                 if (response.success) {
-                    setResults(response.results);
+                    const all = response.results || [];
+                    allResultsRef.current = all;
+                    setResults(all.slice(0, DISPLAY_PAGE));
                     setConfidence(response.confidence || null);
-                    setCurrentLimit(20);
-                    setNoMoreResults(response.results.length < 20);
+                    setCurrentLimit(DISPLAY_PAGE);
+                    setNoMoreResults(all.length <= DISPLAY_PAGE);
                 } else {
                     setError(response.error || 'Search failed');
+                    allResultsRef.current = [];
                     setResults([]);
                     setConfidence(null);
                 }
@@ -1207,9 +1205,9 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     // Ref to capture latest state for stable callbacks
     const searchStateRef = useRef();
     const lastSearchConfigRef = useRef({ useCodex: true, effort: 'low' }); // Track last search config for Load More
-    searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results, isLoadingMore };
+    searchStateRef.current = { query, queryFileId, searchMode, queryImages, imageSearchMode, activeFilters, threshold, currentLimit, results };
 
-    const handleSearch = useCallback(async (searchQuery, { useCache = false, useCodex = true, effort = 'low' } = {}) => {
+    const handleSearch = useCallback(async (searchQuery, { useCodex = true, effort = 'low' } = {}) => {
         const { queryImages, imageSearchMode, activeFilters, threshold } = searchStateRef.current;
         const hasText = searchQuery && searchQuery.trim().length > 0;
         const hasImages = queryImages.length > 0;
@@ -1415,16 +1413,15 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     const handleHistorySelect = useCallback((item) => {
         // Support both old format (string) and new format (object with filters)
         if (typeof item === 'string') {
-            handleSearch(item, { useCache: true });
+            handleSearch(item);
             return;
         }
         if (item.filters) setActiveFilters(item.filters);
         if (item.threshold != null) setThreshold(item.threshold);
-        handleSearch(item.query, { useCache: true });
+        handleSearch(item.query);
     }, [handleSearch]);
 
     const handleHistoryDelete = useCallback((q) => {
-        searchCache.current.delete(q);
         setSearchHistory(prev => {
             const next = prev.filter(h => h.query !== q);
             try { localStorage.setItem('search_history_v2', JSON.stringify(next)); } catch {}
@@ -1433,7 +1430,6 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
     }, []);
 
     const handleHistoryClearAll = useCallback(() => {
-        searchCache.current.clear();
         setSearchHistory([]);
         try { localStorage.removeItem('search_history_v2'); } catch {}
     }, []);
@@ -1662,7 +1658,6 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 onContextMenu={handleCardContextMenu}
                 onClear={clearSearch}
                 noMoreResults={noMoreResults}
-                isLoadingMore={isLoadingMore}
                 onLoadMore={handleLoadMore}
                 onNavigateToFolder={onNavigateToFolder}
                 onFindSimilar={(fileId) => triggerStructureSearch(fileId, 'vector')}
@@ -1670,7 +1665,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 activeFilters={activeFilters}
                 onRemoveFilter={(key) => setActiveFilters(prev => ({ ...prev, [key]: undefined }))}
                 searchScope={searchScope}
-                onClearScope={() => { setSearchScope(null); handleSearch(query, { useCache: false }); }}
+                onClearScope={() => { setSearchScope(null); handleSearch(query); }}
                 refineStack={refineStack}
                 refineInput={refineInput}
                 onRefineInputChange={setRefineInput}

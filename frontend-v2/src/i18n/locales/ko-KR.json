@@ -136,7 +136,6 @@
   "search.empty_explainer": "검색 조건에 충분히 부합하는 이미지가 없습니다. 다른 표현으로 시도해 보세요.",
   "search.mark_irrelevant": "이 결과는 관련 없음",
   "search.mark_irrelevant_short": "관련 없음",
-  "status.loading_more": "추가 검색 중...",
   "status.results_found": "{count}개 결과",
   "status.no_more_results": "더 이상 결과 없음",
   "status.errors": "오류 {count}개",
