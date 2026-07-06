@@ -5,7 +5,7 @@
  * Remote mode (Electron client/worker, Web): calls server API via apiClient
  */
 
-import { apiClient, isElectron, getServerUrl, getAccessToken } from '../api/client';
+import { apiClient, getServerUrl, getAccessToken } from '../api/client';
 
 
 // ── Mode management ──────────────────────────────────────────
@@ -229,22 +229,6 @@ export async function saveDomainYaml(domainId, yamlContent) {
 
 
 // ── File Download ────────────────────────────────────────────
-
-/**
- * Get download URL for original image file.
- * Local mode: returns null (use openFile instead).
- * Remote mode: returns server API URL with JWT token.
- */
-export function getOriginalDownloadUrl(fileId) {
-  if (_useLocalBackend) {
-    return null; // Electron uses openFile / showInFolder
-  }
-  if (!fileId) return null;
-  const base = getServerUrl();
-  const token = getAccessToken();
-  const url = `${base}/api/v1/files/${fileId}/download`;
-  return token ? `${url}?token=${token}` : url;
-}
 
 
 // ── Archive Browse ───────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import SearchPanel from '../components/SearchPanel'
 
 /**
- * 검색 — 구 앱의 SearchPanel/FileGrid 를 그대로 이식(재작성 금지).
+ * 검색 — 구 앱의 SearchPanel 을 그대로 이식(재작성 금지).
  * v2 셸은 자체 상단바·라우팅을 쓰므로, 패널 내부의 "설정/폴더로 이동" 콜백만
  * v2 라우터에 접속한다. 검색 로직·API·결과 UI 는 원본 그대로다.
  *

@@ -76,7 +76,7 @@ const META_CATEGORY_OPTIONS = [
     { value: 'Archive', key: 'category.archive' },
 ];
 
-// Metadata Modal (reused from FileGrid - imported inline to avoid circular deps)
+// Metadata Modal
 const MetadataModal = ({ metadata, onClose, onNavigateToFolder }) => {
     const { t } = useLocale();
     const [lang, setLang] = useState('kr');
@@ -1112,7 +1112,7 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
             .catch(() => {});
     }, []);
 
-    // Handle initial search trigger (e.g. from FileGrid context menu)
+    // Handle initial search trigger (initialSearch prop)
     useEffect(() => {
         if (initialSearch) {
             const { queryFileId, mode } = initialSearch;

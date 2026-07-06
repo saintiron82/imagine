@@ -9,7 +9,7 @@ import { AppProvider } from './state/AppContext'
 import AppShell from './shell/AppShell'
 
 // 코드 스플리팅: 화면을 라우트별 지연 로드한다. 가장 무거운 검색면
-// (SearchPanel/FileGrid + react-virtual)을 초기 청크에서 분리 — 검색 진입 시에만 로드.
+// (SearchPanel + react-virtual)을 초기 청크에서 분리 — 검색 진입 시에만 로드.
 const StartScreen = lazy(() => import('./screens/StartScreen'))
 const SearchScreen = lazy(() => import('./screens/SearchScreen'))
 const FoldersScreen = lazy(() => import('./screens/FoldersScreen'))

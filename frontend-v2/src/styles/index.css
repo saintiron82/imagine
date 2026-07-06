@@ -2,7 +2,7 @@
  * v2 스타일 진입점 — 목업 CSS와 Tailwind를 한 캐스케이드에서 공존시킨다.
  *
  * 핵심: app.css 의 unlayered `*{margin:0;padding:0}` 전역 리셋은 cascade 에서
- * @layer 규칙을 모두 이긴다. 그대로 두면 검색면(SearchPanel/FileGrid)의
+ * @layer 규칙을 모두 이긴다. 그대로 두면 검색면(SearchPanel)의
  * 모든 Tailwind 패딩/마진 유틸리티(p- · m- 계열)가 0 으로 덮인다.
  * → app.css 전체를 `mockup` 레이어로 넣고, 레이어 순서를
  *   theme < base < mockup < components < utilities 로 선언한다.
