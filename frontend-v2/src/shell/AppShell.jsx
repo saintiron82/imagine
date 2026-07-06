@@ -3,6 +3,7 @@ import { Outlet, NavLink, Navigate, useNavigate, useLocation } from 'react-route
 import { useApp } from '../state/AppContext'
 import { useAuth } from '../state/AuthContext'
 import { useLicenseStatus } from '../api/members'
+import { isOperatorOnlyPath } from '../lib/roleGuard'
 import AddFlow from '../flows/AddFlow'
 import UpdateNotification from './UpdateNotification'
 
@@ -28,8 +29,7 @@ export default function AppShell() {
     return <Navigate to="/start" replace />
   }
   // 역할 게이트: 운영자 전용 경로는 URL 직접 접근도 차단한다(내비 숨김만으로는 부족).
-  const operatorOnly = ['/folders', '/analysis', '/admin']
-  if (!isOperator && operatorOnly.some(p => location.pathname.startsWith(p))) {
+  if (!isOperator && isOperatorOnlyPath(location.pathname)) {
     return <Navigate to="/search" replace />
   }
 

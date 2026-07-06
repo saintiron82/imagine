@@ -6,6 +6,7 @@ import SearchHistorySidebar from './SearchHistorySidebar';
 import { useLocale } from '../i18n';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
 import { searchImages, getDbStats as bridgeGetDbStats, getFileDetail, updateUserMeta, getThumbnailUrl, getActiveDomainConfig, postSearchFeedback } from '../services/bridge';
+import { pageState } from '../lib/paging';
 import { isElectron, getServerUrl } from '../api/client';
 
 const FETCH_LIMIT = 100;   // Backend returns up to this many results in one call
@@ -1112,10 +1113,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                     if (response.success) {
                         const all = response.results || [];
                         allResultsRef.current = all;
-                        setResults(all.slice(0, DISPLAY_PAGE));
+                        const page = pageState(all, DISPLAY_PAGE);
+                        setResults(page.visible);
                         setConfidence(response.confidence || null);
                         setCurrentLimit(DISPLAY_PAGE);
-                        setNoMoreResults(all.length <= DISPLAY_PAGE);
+                        setNoMoreResults(page.noMore);
                     } else {
                         setError(response.error || 'Search failed');
                         allResultsRef.current = [];
@@ -1184,10 +1186,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 if (response.success) {
                     const all = response.results || [];
                     allResultsRef.current = all;
-                    setResults(all.slice(0, DISPLAY_PAGE));
+                    const page = pageState(all, DISPLAY_PAGE);
+                    setResults(page.visible);
                     setConfidence(response.confidence || null);
                     setCurrentLimit(DISPLAY_PAGE);
-                    setNoMoreResults(all.length <= DISPLAY_PAGE);
+                    setNoMoreResults(page.noMore);
                 } else {
                     setError(response.error || 'Search failed');
                     allResultsRef.current = [];
@@ -1261,10 +1264,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 // Sort by combined_score descending so display order matches ★ badge
                 const all = (response.results || []).sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
                 allResultsRef.current = all;
-                setResults(all.slice(0, DISPLAY_PAGE));
+                const page = pageState(all, DISPLAY_PAGE);
+                setResults(page.visible);
                 setConfidence(response.confidence || null);
                 setCurrentLimit(DISPLAY_PAGE);
-                setNoMoreResults(all.length <= DISPLAY_PAGE);
+                setNoMoreResults(page.noMore);
 
                 // Update scope from backend decomposition
                 const scope = response.scope || null;
@@ -1304,11 +1308,11 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
     const handleLoadMore = useCallback(() => {
         const { currentLimit } = searchStateRef.current;
-        const all = allResultsRef.current;
         const nextLimit = currentLimit + DISPLAY_PAGE;
-        setResults(all.slice(0, nextLimit));
+        const page = pageState(allResultsRef.current, nextLimit);
+        setResults(page.visible);
         setCurrentLimit(nextLimit);
-        setNoMoreResults(nextLimit >= all.length);
+        setNoMoreResults(page.noMore);
     }, []);
 
     const handleRefineCommit = useCallback(async () => {

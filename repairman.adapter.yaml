@@ -60,6 +60,7 @@ package_policy:
 validation:
   frontend_v2:
     - "cd frontend-v2 && npm run lint"
+    - "cd frontend-v2 && npm test"
     - "cd frontend-v2 && npm run build"
   backend:
     - "python -m pytest tests/ -x -q"
