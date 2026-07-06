@@ -134,6 +134,7 @@ class ScanJobRequest(BaseModel):
     name: Optional[str] = None
     priority: int = 0
     analysis_profile: Optional[dict] = None
+    force_reanalyze: bool = False  # 전체 다시 분석 — CAS 캐시 히트를 무시하고 재계산
 
 
 class ClaimRequest(BaseModel):
@@ -270,14 +271,18 @@ def scan_and_create_job(
             "scanned_path": folder_path,
         }
 
-    # Create analysis job
+    # Create analysis job — force_reanalyze 는 잡 프로필에 실어 parse 단계의
+    # CAS 캐시 적용(apply_cache_hits)에서 소비한다(프롬프트 prior 와 저장소 공유).
+    profile = dict(req.analysis_profile) if req.analysis_profile else {}
+    if req.force_reanalyze:
+        profile["force_reanalyze"] = True
     mgr = _get_manager(db)
     result = mgr.create_job(
         name=name,
         source_path=folder_path,
         file_paths=file_paths,
         created_by=user.get("id"),
-        analysis_profile=req.analysis_profile,
+        analysis_profile=profile or None,
     )
     _auto_start_worker()
     return {"success": True, "jobs_created": 1, **result}

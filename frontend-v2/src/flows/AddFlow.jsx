@@ -34,6 +34,8 @@ export default function AddFlow({ onClose }) {
   const [stack, setStack] = useState([])
   const [picked, setPicked] = useState('')
   const [priority, setPriority] = useState(false)
+  const [types, setTypes] = useState(new Set())          // 분석 힌트 (expected_types)
+  const [fullReanalyze, setFullReanalyze] = useState(false) // 전체 다시 분석
   const [browse, setBrowse] = useState({ kind: null, sourceId: null }) // 라이브 탐색 대상
 
   const cards = disconnected ? [] : foldersToCards(folders)
@@ -47,7 +49,11 @@ export default function AddFlow({ onClose }) {
   // 등록: 선택 폴더 경로로 실제 discover/scan.
   const doRegister = (folderPath, name) => {
     if (!folderPath) return
-    register.mutate({ folderPath, priority, name }, { onSuccess: () => navTo(VIEWS.DONE) })
+    register.mutate({
+      folderPath, priority, name,
+      analysisProfile: types.size ? { expected_types: [...types], source: 'user' } : null,
+      forceReanalyze: fullReanalyze,
+    }, { onSuccess: () => navTo(VIEWS.DONE) })
   }
   const onRegisterCard = () => doRegister(pickedCard?.path, pickedCard?.name)
   const registeredTotal = register.data?.total_files ?? 0
@@ -114,13 +120,13 @@ export default function AddFlow({ onClose }) {
         {view === VIEWS.DETAIL && (
           <div>
             <div className="frow">
-              <label>이 폴더에 주로 들어있는 것 <span style={{ color: 'var(--cyan)' }}>— 폴더명에서 '컨셉' 감지 → 추천 적용됨</span></label>
-              <TypeChips />
+              <label>이 폴더에 주로 들어있는 것 <span style={{ color: 'var(--faint)' }}>— 선택 시 분석 힌트로 전달 (선택 사항)</span></label>
+              <TypeChips value={types} onChange={setTypes} />
             </div>
             <div className="frow">
               <label>범위</label>
-              <label className="radio"><input type="radio" name="md" defaultChecked /> <b>새 파일만</b> — 이미 분석된 파일은 건너뜀 (캐시 활용)</label>
-              <label className="radio"><input type="radio" name="md" /> <b>전체 다시 분석</b> — 결과를 새로 덮어씀</label>
+              <label className="radio"><input type="radio" name="md" checked={!fullReanalyze} onChange={() => setFullReanalyze(false)} /> <b>새 파일만</b> — 이미 분석된 파일은 건너뜀 (캐시 활용)</label>
+              <label className="radio"><input type="radio" name="md" checked={fullReanalyze} onChange={() => setFullReanalyze(true)} /> <b>전체 다시 분석</b> — 결과를 새로 덮어씀</label>
             </div>
             <div className="frow">
               <label className="chk"><input type="checkbox" checked={priority} onChange={e => setPriority(e.target.checked)} /> ⚡ 우선 처리 — 다른 작업보다 먼저</label>
@@ -232,14 +238,24 @@ function LiveBrowser({ kind, sourceId, registering, onRegister }) {
   )
 }
 
-function TypeChips() {
-  const [on, setOn] = useState(new Set(['일러스트 ★', '캐릭터']))
-  const types = ['일러스트 ★', '캐릭터', '배경/BG', '소품', '이펙트', 'UI', '아이콘', '텍스처']
+// 화면 라벨(한글) ↔ 백엔드 analysis_profile.expected_types 정규 슬러그.
+const TYPE_OPTIONS = [
+  { label: '일러스트', value: 'illustration' },
+  { label: '캐릭터', value: 'character' },
+  { label: '배경/BG', value: 'background' },
+  { label: '소품', value: 'prop' },
+  { label: '이펙트', value: 'effect' },
+  { label: 'UI', value: 'ui' },
+  { label: '아이콘', value: 'icon' },
+  { label: '텍스처', value: 'texture' },
+]
+
+function TypeChips({ value, onChange }) {
   return (
     <div className="type-grid">
-      {types.map(t => (
-        <span key={t} className={`tchip ${on.has(t) ? 'on' : ''}`}
-          onClick={() => setOn(s => { const n = new Set(s); n.has(t) ? n.delete(t) : n.add(t); return n })}>{t}</span>
+      {TYPE_OPTIONS.map(o => (
+        <span key={o.value} className={`tchip ${value.has(o.value) ? 'on' : ''}`}
+          onClick={() => onChange(s => { const n = new Set(s); n.has(o.value) ? n.delete(o.value) : n.add(o.value); return n })}>{o.label}</span>
       ))}
     </div>
   )

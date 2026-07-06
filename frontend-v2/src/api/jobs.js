@@ -1,8 +1,11 @@
 /**
  * 작업 등록 — discover/scan 으로 폴더를 분석 작업으로 등록한다.
- *   POST /api/v1/discover/scan { folder_path, name?, priority?, analysis_profile? }
+ *   POST /api/v1/discover/scan
+ *     { folder_path, name?, priority?, analysis_profile?, force_reanalyze? }
  *     → { success, job_id, total_files, scanned_path }
  * 우선 처리 체크 시 priority 를 높여 스케줄러가 먼저 잡도록 한다.
+ * analysis_profile { expected_types[], source } 은 비전 단계의 soft prior,
+ * force_reanalyze 는 CAS 캐시를 무시하고 전체 재계산.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from './client'
@@ -10,11 +13,13 @@ import { apiClient } from './client'
 export function useRegisterJob() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ folderPath, priority, name }) =>
+    mutationFn: ({ folderPath, priority, name, analysisProfile, forceReanalyze }) =>
       apiClient.post('/api/v1/discover/scan', {
         folder_path: folderPath,
         priority: priority ? 10 : 0,
         ...(name ? { name } : {}),
+        ...(analysisProfile ? { analysis_profile: analysisProfile } : {}),
+        ...(forceReanalyze ? { force_reanalyze: true } : {}),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['analysis-jobs'] })

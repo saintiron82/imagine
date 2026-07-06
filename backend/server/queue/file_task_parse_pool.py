@@ -345,20 +345,25 @@ class FileTaskParsePool(BaseAheadPool):
 
         # 8. CAS M3: materialize cached derivations — phases already
         # computed for identical content skip the workers entirely.
+        # 잡 프로필이 force_reanalyze 면 캐시를 건너뛰고 전 단계를 재계산한다.
         try:
-            from backend.server.queue.derivations import apply_cache_hits
-            applied = apply_cache_hits(
-                self.db, task_id, stored_file_id, meta.content_hash)
-            self.db.conn.commit()
-            if applied:
+            if self._job_forces_reanalyze(task_id):
                 logger.info(
-                    f"FileTaskParse: cache hit {applied} for {file_p.name}")
-                if set(applied) >= {"mc", "vv", "mv"}:
-                    # Fully served from cache — close out the job if done
-                    # (_check_job_completion takes the TASK id and resolves
-                    # the job itself)
-                    from backend.server.queue.analysis_manager import AnalysisJobManager
-                    AnalysisJobManager(self.db)._check_job_completion(task_id)
+                    f"FileTaskParse: force_reanalyze — cache skip for {file_p.name}")
+            else:
+                from backend.server.queue.derivations import apply_cache_hits
+                applied = apply_cache_hits(
+                    self.db, task_id, stored_file_id, meta.content_hash)
+                self.db.conn.commit()
+                if applied:
+                    logger.info(
+                        f"FileTaskParse: cache hit {applied} for {file_p.name}")
+                    if set(applied) >= {"mc", "vv", "mv"}:
+                        # Fully served from cache — close out the job if done
+                        # (_check_job_completion takes the TASK id and resolves
+                        # the job itself)
+                        from backend.server.queue.analysis_manager import AnalysisJobManager
+                        AnalysisJobManager(self.db)._check_job_completion(task_id)
         except Exception as e:
             logger.warning(f"FileTaskParse: cache-hit application failed: {e}")
             try:
@@ -371,6 +376,25 @@ class FileTaskParsePool(BaseAheadPool):
             self._download_pool.release_slot(file_id)
 
         return ""  # success
+
+    def _job_forces_reanalyze(self, task_id: int) -> bool:
+        """'전체 다시 분석' 잡 여부 — 잡 프로필의 force_reanalyze 플래그."""
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """SELECT aj.analysis_profile_json
+                   FROM file_tasks ft
+                   JOIN analysis_jobs aj ON aj.id = ft.analysis_job_id
+                   WHERE ft.id = ?""",
+                (task_id,),
+            )
+            row = cursor.fetchone()
+            if not row or not row[0]:
+                return False
+            import json
+            return bool(json.loads(row[0]).get("force_reanalyze"))
+        except Exception:
+            return False
 
     def _fallback_thumbnail(self, file_p: Path, file_path: str):
         """Generate minimal AssetMeta with thumbnail when full parse fails.
