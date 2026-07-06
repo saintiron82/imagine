@@ -1805,6 +1805,9 @@ class SQLiteDB:
             )
 
             if cursor.rowcount == 0:
+                # 0-row UPDATE 도 write lock 을 잡는다 — 락을 풀고 반환.
+                if commit:
+                    self.conn.rollback()
                 logger.warning(f"update_vision_fields: file not found: {file_path}")
                 return False
 
