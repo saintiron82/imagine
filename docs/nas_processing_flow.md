@@ -33,6 +33,10 @@ FileTaskParsePool (file_task_parse_pool.py)    [서버 백그라운드 스레드
   - 파싱: ParserFactory → PSD 레이어/텍스트/폰트 추출 + 썸네일 생성
       실패 시 PIL thumbnail-only fallback (processing_status='parse_fallback')
   - files 테이블 upsert + 썸네일을 서버 thumbnail_dir로 복사
+  - CAS 캐시 적용(apply_cache_hits): 동일 content_hash의 기존 MC/VV/MV가
+      있으면 워커를 거치지 않고 즉시 done 처리.
+      단, 잡 프로필의 force_reanalyze('전체 다시 분석')면 캐시를 건너뛰고
+      전 단계를 재계산한다(게이트 판단 불가 시에도 재계산 쪽).
   - 완료 후 DownloadAheadPool.release_slot(file_id)
       → 원본 임시 파일 삭제 + 버퍼 슬롯 반환 (원본은 더 이상 불필요)
         │

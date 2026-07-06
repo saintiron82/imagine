@@ -1259,11 +1259,12 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
 
             if (response.success) {
                 // Sort by combined_score descending so display order matches ★ badge
-                allResultsRef.current = (response.results || []).sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
-                setResults(response.results.slice(0, DISPLAY_PAGE));
+                const all = (response.results || []).sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                allResultsRef.current = all;
+                setResults(all.slice(0, DISPLAY_PAGE));
                 setConfidence(response.confidence || null);
                 setCurrentLimit(DISPLAY_PAGE);
-                setNoMoreResults(response.results.length <= DISPLAY_PAGE);
+                setNoMoreResults(all.length <= DISPLAY_PAGE);
 
                 // Update scope from backend decomposition
                 const scope = response.scope || null;

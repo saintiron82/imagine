@@ -378,7 +378,11 @@ class FileTaskParsePool(BaseAheadPool):
         return ""  # success
 
     def _job_forces_reanalyze(self, task_id: int) -> bool:
-        """'전체 다시 분석' 잡 여부 — 잡 프로필의 force_reanalyze 플래그."""
+        """'전체 다시 분석' 잡 여부 — 잡 프로필의 force_reanalyze 플래그.
+
+        판단 불가(조회/파싱 예외) 시 True — 캐시 오적용은 사용자의 덮어쓰기
+        의도를 조용히 무시하는 정확성 위반이고, 재계산은 느릴 뿐이다.
+        """
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(
@@ -393,8 +397,11 @@ class FileTaskParsePool(BaseAheadPool):
                 return False
             import json
             return bool(json.loads(row[0]).get("force_reanalyze"))
-        except Exception:
-            return False
+        except Exception as e:
+            logger.warning(
+                f"FileTaskParse: force_reanalyze gate failed for task {task_id} "
+                f"— skipping cache to be safe: {e}")
+            return True
 
     def _fallback_thumbnail(self, file_p: Path, file_path: str):
         """Generate minimal AssetMeta with thumbnail when full parse fails.

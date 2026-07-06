@@ -111,6 +111,7 @@ export default function AddFlow({ onClose }) {
             <div className="pick-bar">
               <span className="sel-name">📁 {pickedCard?.name || '폴더 선택'}</span>
               <span style={{ flex: 1 }} />
+              {register.isError && <span style={{ fontSize: 10.5, color: 'var(--red)', marginRight: 'auto' }}>등록 실패 — {register.error?.message || '서버 오류'}</span>}
               <button className="sec" onClick={() => navTo(VIEWS.DETAIL)}>세부 옵션</button>
               <button className="pri" disabled={!pickedCard || register.isPending} onClick={onRegisterCard}>{register.isPending ? '등록 중…' : '작업 등록'}</button>
             </div>
@@ -132,6 +133,7 @@ export default function AddFlow({ onClose }) {
               <label className="chk"><input type="checkbox" checked={priority} onChange={e => setPriority(e.target.checked)} /> ⚡ 우선 처리 — 다른 작업보다 먼저</label>
             </div>
             <div className="m-acts">
+              {register.isError && <span style={{ fontSize: 10.5, color: 'var(--red)', marginRight: 'auto' }}>등록 실패 — {register.error?.message || '서버 오류'}</span>}
               <button className="pri" disabled={!pickedCard || register.isPending} onClick={onRegisterCard}>{register.isPending ? '등록 중…' : '작업 등록'}</button>
             </div>
           </div>
@@ -243,9 +245,9 @@ const TYPE_OPTIONS = [
   { label: '일러스트', value: 'illustration' },
   { label: '캐릭터', value: 'character' },
   { label: '배경/BG', value: 'background' },
-  { label: '소품', value: 'prop' },
+  { label: '소품', value: 'item' },
   { label: '이펙트', value: 'effect' },
-  { label: 'UI', value: 'ui' },
+  { label: 'UI', value: 'ui_element' },
   { label: '아이콘', value: 'icon' },
   { label: '텍스처', value: 'texture' },
 ]
