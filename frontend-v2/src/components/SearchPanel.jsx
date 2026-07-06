@@ -89,7 +89,8 @@ const MetadataModal = ({ metadata, onClose, onNavigateToFolder }) => {
     const saveTimer = useRef(null);
     const isInitialMount = useRef(true);
 
-    if (!metadata) return null;
+    // metadata 부재 가드는 호출부({metadata && <MetadataModal/>})가 담당한다 —
+    // 훅 사이 조건부 return 은 훅 규칙 위반이라 여기서 두지 않는다.
 
     useEffect(() => {
         if (isInitialMount.current) {

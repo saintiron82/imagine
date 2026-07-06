@@ -86,14 +86,14 @@ export function useFolderSync() {
   return useMutation({
     mutationFn: async (folderPath) => {
       const scan = await apiClient.post('/api/v1/sync/scan', { folder_path: folderPath })
-      let updated = 0, deleted = 0
+      let updated = 0
       if (scan.moved_list?.length) {
         const r = await apiClient.post('/api/v1/sync/apply-moves', {
           moves: scan.moved_list.map(m => ({ id: m.id, new_path: m.new_path })),
         })
         updated = r.updated || 0
       }
-      return { ...scan, applied_moves: updated, applied_deletes: deleted }
+      return { ...scan, applied_moves: updated }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['archive-folders'] }),
   })
