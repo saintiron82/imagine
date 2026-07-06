@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Outlet, NavLink, Navigate, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useApp } from '../state/AppContext'
 import { useAuth } from '../state/AuthContext'
 import { useLicenseStatus } from '../api/members'
@@ -15,6 +15,7 @@ export default function AppShell() {
   const { isOperator, server } = useApp()
   const { connected, checking, firebaseUser, serverName, signOutAll } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [addOpen, setAddOpen] = useState(false)
 
   const tab = ({ isActive }) => (isActive ? 'active' : '')
@@ -25,6 +26,11 @@ export default function AppShell() {
   }
   if (!connected) {
     return <Navigate to="/start" replace />
+  }
+  // 역할 게이트: 운영자 전용 경로는 URL 직접 접근도 차단한다(내비 숨김만으로는 부족).
+  const operatorOnly = ['/folders', '/analysis', '/admin']
+  if (!isOperator && operatorOnly.some(p => location.pathname.startsWith(p))) {
+    return <Navigate to="/search" replace />
   }
 
   return (
