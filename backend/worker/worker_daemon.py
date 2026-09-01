@@ -194,6 +194,7 @@ class WorkerDaemon:
         self.session_id = None
         self.processing_mode = "idle"  # "mc" | "vv" | "mv" | "parse" | "idle" — set by server on connect/heartbeat
         self._total_completed = 0
+        self._report_rejected = 0   # completions the server refused (loud, not silent)
         self._total_failed = 0
         self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
         self._last_claim_diag = None  # Last empty-claim diagnostic from server
@@ -719,6 +720,34 @@ class WorkerDaemon:
         if should_flush:
             self._flush_reports()
 
+    def _log_report_rejections(self, resp):
+        """Surface per-item rejections carried in a 200 complete-batch response.
+
+        These items are dropped from the buffer with the rest of the batch: a
+        semantic rejection (task reassigned, session reclaimed → 403, unknown
+        task) will not start succeeding on retry, and re-queueing it would wedge
+        the FIFO buffer behind an item that can never drain. So the loss is made
+        LOUD instead of silent — this is the failure mode where a worker keeps
+        computing MC results that never reach the phase state machine.
+        """
+        try:
+            errors = (resp.json() or {}).get("errors") or []
+        except Exception:
+            logger.warning("Batch report: 200 with unparseable body — "
+                           "cannot confirm per-item acceptance")
+            return
+        if not errors:
+            return
+        # Diagnostic counter — must never be able to break the reporting path
+        # itself (test helpers build daemons via __new__, bypassing __init__).
+        self._report_rejected = getattr(self, "_report_rejected", 0) + len(errors)
+        for err in errors:
+            logger.error(
+                "완료보고 거부: task=%s — %s "
+                "(결과는 저장됐으나 phase 상태가 전진하지 않는다)",
+                err.get("task_id"), err.get("error"),
+            )
+
     def _flush_reports(self):
         """Send buffered completion reports in batches of ≤50.
 
@@ -745,15 +774,33 @@ class WorkerDaemon:
                         logger.info("Server lacks complete-batch — per-item reports")
                         continue
                     if resp.status_code != 200:
-                        logger.debug(f"Batch report failed: HTTP {resp.status_code}")
+                        logger.warning(
+                            f"Batch report failed: HTTP {resp.status_code} — "
+                            f"{len(batch)} reports kept buffered for retry"
+                        )
                         return  # keep buffered, retry on next flush
+                    # A 200 does NOT mean every item landed. The server isolates
+                    # items and returns per-item rejections in `errors[]`; the
+                    # buffer is cleared below regardless, so an unread rejection
+                    # means the phase status never advances and the file is
+                    # reprocessed forever while counters sit still.
+                    self._log_report_rejections(resp)
                 else:
                     for item in batch:
-                        self._authed_request(
+                        r = self._authed_request(
                             "post",
                             f"{self.server_url}/api/v1/tasks/complete",
                             json=item,
                         )
+                        status = getattr(r, "status_code", None)
+                        if status is not None and status != 200:
+                            self._report_rejected = getattr(self, "_report_rejected", 0) + 1
+                            logger.error(
+                                "완료보고 거부 (per-item): task=%s phase=%s HTTP %s %s "
+                                "— 해당 파일의 phase 상태가 전진하지 않는다",
+                                item.get("task_id"), item.get("phase"), status,
+                                (getattr(r, "text", "") or "")[:200],
+                            )
             except Exception as e:
                 logger.debug(f"Task phase report failed: {e}")
                 return  # keep buffered

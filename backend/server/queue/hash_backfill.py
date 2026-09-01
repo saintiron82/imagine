@@ -48,6 +48,7 @@ def start_backfill(db_factory) -> dict:
 
 
 def _run(db_factory):
+    db = None
     try:
         db = db_factory()
         cursor = db.conn.cursor()
@@ -60,7 +61,6 @@ def _run(db_factory):
             _state["total"] = len(rows)
 
         clients = {}  # source_id → WebDAVClient
-        pending_commit = 0
         for file_id, file_path, file_size in rows:
             if not _state["running"]:
                 break
@@ -71,20 +71,29 @@ def _run(db_factory):
                         "UPDATE files SET content_hash = ? WHERE id = ?",
                         (content_hash, file_id),
                     )
-                    pending_commit += 1
+                    # Commit per file — NEVER batch. The process-wide write gate
+                    # is held from this UPDATE until commit, and the next loop
+                    # iteration does WebDAV Range I/O. Batching pinned the gate
+                    # across ~50 files' worth of network waits, so every other
+                    # writer (login, heartbeat, /tasks/complete, parse pool)
+                    # blocked for the full reclaim bound and then hit
+                    # 'database is locked' → server-wide 503s.
+                    db.conn.commit()
                     with _lock:
                         _state["done"] += 1
-                    if pending_commit >= 50:
-                        db.conn.commit()
-                        pending_commit = 0
                 else:
                     with _lock:
                         _state["skipped"] += 1
             except Exception as e:
+                # Never carry a half-open write txn into the next file's
+                # network wait — that would re-create the stall above.
+                try:
+                    db.conn.rollback()
+                except Exception:
+                    logger.exception("Hash backfill: rollback after item failure failed")
                 with _lock:
                     _state["failed"] += 1
                     _state["last_error"] = str(e)[:200]
-        db.conn.commit()
 
         for c in clients.values():
             try:
@@ -100,6 +109,16 @@ def _run(db_factory):
         with _lock:
             _state["last_error"] = str(e)[:200]
     finally:
+        # Safety net required of every background DML loop in this repo: this
+        # thread owns its own thread-local connection, so a write txn left open
+        # by a failed commit would pin the write gate until the reclaim bound
+        # and stall the whole server. Unconditional rollback is a no-op when
+        # there is nothing open.
+        if db is not None:
+            try:
+                db.conn.rollback()
+            except Exception:
+                logger.exception("Hash backfill: final rollback failed")
         with _lock:
             _state["running"] = False
 

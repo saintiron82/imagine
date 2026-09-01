@@ -725,6 +725,15 @@ def complete_task_phases_batch(
             errors.append({"task_id": item.task_id, "error": exc.detail})
         except ValueError as exc:
             errors.append({"task_id": item.task_id, "error": str(exc)})
+        except Exception as exc:
+            # Item-level isolation is this endpoint's contract (see docstring).
+            # complete_task_phase() commits per item, so letting anything else
+            # escape would 500 the request with the earlier items ALREADY
+            # committed — the worker then re-sends all 50 and the tail of the
+            # batch is never reported at all. A DB lock error here is exactly
+            # the case that must degrade to a per-item error, not a 500.
+            logger.exception("complete-batch item failed: task_id=%s", item.task_id)
+            errors.append({"task_id": item.task_id, "error": str(exc)})
     return {"success": True, "accepted": accepted, "errors": errors}
 
 

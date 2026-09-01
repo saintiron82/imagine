@@ -133,6 +133,17 @@ class _WriteGate:
             self._gen += 1
             return self._gen
 
+    def is_live(self, holder, generation):
+        """True iff `holder`'s grant at `generation` is still the live hold.
+
+        A holder whose hold was reclaimed (past the bound) is NOT live even
+        though it still believes it holds the gate — callers must re-acquire
+        before writing again, or they would run concurrently with the new
+        owner and defeat the single-writer guarantee.
+        """
+        with self._cv:
+            return self._owner is holder and self._gen == generation
+
     def release(self, holder, generation):
         """Release one level for `holder` iff its grant is still live.
 
@@ -192,7 +203,14 @@ class _SerializedConnection:
         object.__setattr__(self, "_gen", 0)
 
     def _acquire_write(self):
-        if not self._held:
+        # `_held` alone is NOT enough: a hold can be RECLAIMED out from under
+        # us once we pass the bound (see _WriteGate), and the gate then belongs
+        # to another writer while our flag still says True. Re-acquiring on a
+        # dead generation is what keeps the REST of this transaction serialized
+        # — without it the remaining writes would bypass the gate entirely and
+        # run concurrently with the new owner, exactly the failure the gate
+        # exists to prevent, at the moment of highest contention.
+        if not self._held or not _WRITE_GATE.is_live(self, self._gen):
             gen = _WRITE_GATE.acquire(self, timeout=_WRITE_LOCK_TIMEOUT)
             object.__setattr__(self, "_gen", gen)
             object.__setattr__(self, "_held", True)
