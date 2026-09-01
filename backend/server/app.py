@@ -243,14 +243,24 @@ def _activate_server(app_instance):
               AND (mc_status = 'pending' OR vv_status = 'pending' OR mv_status = 'pending')
         """)
         pending = cursor.fetchone()[0]
-        if pending > 0:
+
+        # Honour the operator's switch. Without this check an admin who turned
+        # the local worker off saw it come back on the next activation, because
+        # only `pending > 0` was consulted — the disable was not durable.
+        from backend.utils.config import get_config
+        auto_enabled = get_config().get("server.auto_processing.enabled", True)
+
+        if not auto_enabled:
+            _log(f"Phase 6: Local worker disabled by operator — not starting "
+                 f"({pending} pending) {_time.perf_counter()-t1:.2f}s")
+        elif pending > 0:
             from backend.server.local_worker import start_worker
             result = start_worker()
             _log(f"Phase 6: Local worker started ({pending} pending tasks) {_time.perf_counter()-t1:.2f}s")
         else:
             _log(f"Phase 6: No pending tasks — worker standby {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
-        _log(f"Phase 6 FAILED: Embedded worker: {e}")
+        _log(f"Phase 6 FAILED: local worker start: {e}")
 
     total = _time.perf_counter() - t0
     app_instance.state.ready = True

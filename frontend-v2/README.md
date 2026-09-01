@@ -10,18 +10,27 @@
 ## 구조
 ```
 src/shell/      셸 (역할 게이팅, +추가, 서버 칩)
-src/screens/    시작 / 검색(이식 자리) / 폴더 / 분석 / 관리 / 설정
+src/screens/    시작 / 검색 / 폴더 / 분석 / 관리 / 설정
 src/flows/      AddFlow (분석 작업 등록)
-src/state/      AppContext (역할·서버 — 실인증 전 데모 토글)
+src/state/      AuthContext (Firebase + JWT) · AppContext (역할·서버 — AuthContext에서 파생, 데모 토글 없음)
+src/api/        서버 클라이언트 (TanStack Query)
+src/components/ SearchPanel 등 공용 컴포넌트
+src/hooks/      공용 훅
+src/lib/        순수 로직 (roleGuard, paging)
+src/i18n/       로케일 (en-US ↔ ko-KR 키 패리티 유지)
+src/services/   브리지·업데이트 등 실행 표면 서비스
 src/styles/     목업에서 추출한 토큰·컴포넌트 CSS
+electron/       main.cjs · preload.cjs · PACKAGING.md
 ```
 
 ## 현재 상태
-정적 이식 완료(목업 v26 기준). 다음: 백엔드 연동(TanStack Query로 잡/분석기/폴더),
-검색면 이식(U4 — 구 SearchPanel/FileGrid, 재작성 금지), 실인증(Firebase+이메일 초대).
+U1~U4 완료 — 백엔드 연동(TanStack Query), 검색면 이식, 실인증(Firebase + 초대) 모두 배선됨.
+남은 것: 구 `frontend/` 표면 제거, 실서버 수동 검증.
 
 ```sh
 npm run dev        # 개발
 npm run build      # 빌드
+npm test           # Vitest (페이징·역할가드·i18n 패리티 불변식) — CI 게이트
+npm run lint       # ESLint
 node smoke.mjs     # 렌더 스모크 (playwright, preview 서버 필요)
 ```

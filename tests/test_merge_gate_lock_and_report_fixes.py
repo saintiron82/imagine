@@ -611,3 +611,63 @@ def test_short_range_read_is_counted_as_failed_by_the_backfill(
     st = hb.get_status()
     assert st["failed"] == 1 and st["done"] == 0
     assert "range read failed" in (st["last_error"] or "")
+
+
+# ── I14: the local-worker toggle must actually toggle ──────────────────────
+
+def test_worker_toggle_writes_the_key_the_getter_and_gate_read(monkeypatch):
+    """PATCH used to write `server.embedded_worker.enabled` — a key nothing in
+    the repo reads — via `_set_dotted`, which does not persist. Enabling was a
+    complete no-op and the GET reported an unrelated key."""
+    from backend.server.routers import workers as w
+
+    saved, started, stopped = {}, [], []
+
+    class _Cfg:
+        def get(self, key, default=None):
+            return saved.get(key, default)
+
+        def save_user_setting(self, key, value):
+            saved[key] = value
+
+        def _set_dotted(self, key, value):   # must NOT be used here
+            raise AssertionError(f"non-persistent _set_dotted used for {key}")
+
+    import backend.utils.config as cfgmod
+    monkeypatch.setattr(cfgmod, "get_config", lambda: _Cfg())
+    monkeypatch.setattr(w, "_start_local_worker", lambda app: started.append(True))
+    monkeypatch.setattr(w, "_stop_local_worker", lambda: stopped.append(True))
+    monkeypatch.setattr(w, "get_status", lambda: {"running": False}, raising=False)
+
+    import backend.server.local_worker as lw
+    monkeypatch.setattr(lw, "get_status", lambda: {"running": False})
+
+    w.admin_update_embedded_worker(
+        req=w.EmbeddedWorkerUpdate(enabled=True), request=None, admin={"id": 1})
+
+    assert saved.get("server.auto_processing.enabled") is True, (
+        f"enable wrote nothing readable — saved keys: {list(saved)}")
+    assert started, "enable did not start the local worker"
+
+    w.admin_update_embedded_worker(
+        req=w.EmbeddedWorkerUpdate(enabled=False), request=None, admin={"id": 1})
+    assert saved["server.auto_processing.enabled"] is False
+    assert stopped, "disable did not stop the local worker"
+
+
+# ── I9: a failed phase-resume after restore must be visible ────────────────
+
+def test_restore_surfaces_a_failed_phase_resume():
+    """import paused every phase; swallowing the resume failure left the whole
+    pipeline stopped behind a 200 with nothing in the log."""
+    import inspect
+    from backend.server.routers import database
+
+    src = inspect.getsource(database)
+    assert "phases_resumed" in src, (
+        "the restore path does not report whether phases were resumed")
+    # The bare `except Exception: pass` around set_paused_phases must be gone.
+    resume_block = src[src.index("set_paused_phases(db, {p: False"):]
+    resume_block = resume_block[:400]
+    assert "except Exception:\n                pass" not in resume_block, (
+        "the phase-resume failure is still swallowed silently")

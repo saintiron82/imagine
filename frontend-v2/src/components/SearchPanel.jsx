@@ -1329,7 +1329,13 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort,
             });
             if (response.success) {
-                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                // (response.results || []) — a success:true body with results
+                // missing would otherwise throw on .sort and kill the panel.
+                const sorted = (response.results || []).sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                // allResultsRef is the pool handleLoadMore slices. Leaving it on
+                // the pre-refine results is the same defect 21ef8ed fixed for the
+                // structure/initial paths; it is only masked here by noMore=true.
+                allResultsRef.current = sorted;
                 setResults(sorted);
                 setConfidence(response.confidence || null);
                 setCurrentLimit(sorted.length);
@@ -1365,7 +1371,8 @@ function SearchPanel({ onScanFolder, isBusy, initialSearch, onSearchConsumed, re
                 mode: 'triaxis', use_codex: cfg.useCodex, effort: cfg.effort,
             });
             if (response.success) {
-                const sorted = response.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                const sorted = (response.results || []).sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+                allResultsRef.current = sorted;   // keep the load-more pool in step
                 setResults(sorted);
                 setConfidence(response.confidence || null);
                 setCurrentLimit(sorted.length);

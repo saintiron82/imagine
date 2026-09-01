@@ -1,5 +1,6 @@
 """
-Admin router — user management, invite codes, embedded worker control.
+Admin router — user/member management, invite codes, local worker control,
+CAS model-version waves, and content-hash backfill.
 """
 
 import logging

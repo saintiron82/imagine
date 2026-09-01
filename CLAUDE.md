@@ -444,13 +444,15 @@ pressure ≈ pending / (workers_on + 1) × phase_weight
 
 즉 서버는 orchestration 쪽이고, 워커는 inference executor 쪽이다.
 
-단, 이 경계는 완전히 절대적이지 않다.  
-현재 구현에는 **embedded worker**가 있어서 서버 프로세스 내부에서도 추론 실행 경로가 존재한다.
+이 경계는 실행 위치와 무관하게 유지된다.  
+서버 머신에서 도는 워커도 **독립 프로세스**로 뜨며(`backend/server/local_worker.py`),
+외부 워커와 같은 `WorkerDaemon` + HTTP transport 코드 경로를 쓴다.
+서버 프로세스 내부에서 추론하던 embedded worker 경로는 제거됐다.
 
 따라서 구조적으로는 다음처럼 이해하는 것이 맞다.
 
-- 외부 워커: 분산 inference executor
-- embedded worker: 서버 내부 inference executor
+- 외부 워커: 원격 머신의 inference executor
+- 로컬 워커: 서버 머신의 inference executor (서버가 spawn·감독만 하고, 배치 배정은 스케줄러가 한다)
 - 서버 본체: 상태 관리와 orchestration
 
 ## WebDAV와 원격 처리 논리
@@ -480,7 +482,13 @@ WebDAV/NAS 원격 경로도 현재 구조의 일부다.
 
 ## 프런트엔드 구조
 
-프런트엔드는 하나의 React 앱이 두 실행 표면을 가진다.
+프런트엔드는 현재 3개의 표면으로 나뉜다.
+
+- `frontend-v2/` — **신규 앱**. Electron과 Web 두 실행 표면을 공유한다. 새 작업은 여기서 한다.
+- `frontend/` — 구 앱. 은퇴 경로에 있으며 참조용으로만 남아 있다.
+- `homepage/` — 계정 홈·서버 생성·초대 흐름(앱과 별개).
+
+아래 설명은 `frontend-v2`의 두 실행 표면에 대한 것이다.
 
 ### Electron 모드
 
@@ -539,8 +547,8 @@ Imagine은 다음 네 가지를 동시에 만족시키려는 설계다.
 6. `backend/search/sqlite_search.py`
 7. `backend/search/scoring.py`
 8. `backend/search/query_decomposer.py`
-9. `frontend/src/App.jsx`
-10. `frontend/src/contexts/AuthContext.jsx`
+9. `frontend-v2/src/shell/AppShell.jsx`
+10. `frontend-v2/src/state/AuthContext.jsx`
 
 ## 한 줄 요약
 

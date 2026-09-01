@@ -2,13 +2,14 @@
 Download-ahead pool — pre-downloads WebDAV files to a temp folder.
 
 Monitors file_tasks for pending WebDAV downloads and downloads originals
-to a bounded temp folder. Workers then use these local copies for
-Phase P (parsing + thumbnail generation).
+to a bounded temp folder. The server's FileTaskParsePool then parses those
+local copies (Phase P: layers + thumbnail) — download and parse are separate
+stages, and parsing is the server's job, not the worker's.
 
 Producer-Consumer pattern:
   - Producer: This pool downloads WebDAV originals (parallel threads)
   - Buffer:   Temp folder with max_files limit (semaphore-controlled)
-  - Consumer: Workers (embedded or external) access temp files via get_temp_path()
+  - Consumer: FileTaskParsePool reads temp files via get_temp_path()
 """
 
 import json

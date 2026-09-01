@@ -154,8 +154,23 @@ async def import_database(
             # operator's prior pause state (live DB is unchanged).
             try:
                 set_paused_phases(db, {p: False for p in phases} if ok else prior)
-            except Exception:
-                pass
+                if ok:
+                    result["phases_resumed"] = True
+            except Exception as exc:
+                # Every phase was paused above. Swallowing this leaves the WHOLE
+                # pipeline stopped while a 200 goes out and nothing lands in the
+                # log — the symptom is "restore worked, then nothing processes
+                # ever again" with no trail back to here.
+                logger.error(
+                    "복원 후 phase 재개 실패 — 파이프라인이 정지 상태로 남았다. "
+                    "관리 화면에서 수동 재개 필요: %s", exc, exc_info=True,
+                )
+                if ok:
+                    result["phases_resumed"] = False
+                    result["warning"] = (
+                        "복원은 완료됐으나 처리 단계 재개에 실패했습니다 — "
+                        "관리 화면에서 수동으로 재개하세요."
+                    )
     finally:
         try:
             os.unlink(tmp)

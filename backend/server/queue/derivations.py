@@ -1,8 +1,9 @@
-"""Derivation cache write path (CAS M1 — shadow write).
+"""Derivation cache (CAS) — shadow write (M1) + lookup/materialize (M3).
 
 Results saved for a file are also recorded under
-(content_hash, phase, model_version) so identical content can later be
-materialized without recomputation (reads activate in M3). Files without
+(content_hash, phase, model_version) so identical content is materialized
+without recomputation. The read side lives here too: lookup_done(),
+materialize() and apply_cache_hits(). Files without
 a content_hash (pre-backfill legacy rows) are skipped silently.
 
 Shadow writes must never fail the primary save — callers wrap in

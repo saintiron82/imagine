@@ -77,12 +77,23 @@ async function refreshAccessToken() {
         // Forward new tokens to embedded worker (if running in Electron)
         _syncTokensToWorker(data.access_token, data.refresh_token);
         return data.access_token;
-      } else {
+      } else if (resp.status === 401 || resp.status === 403) {
+        // The refresh token itself is expired/revoked — only this actually
+        // means "signed out".
         clearTokens();
         return null;
+      } else {
+        // 5xx / 429 / anything else is the SERVER having a bad moment, not the
+        // session being invalid. Clearing here logged the user out of a
+        // hard-auth-gated app (every screen goes away) on a restart or a blip,
+        // with no explanation and no way back except signing in again.
+        console.warn(`[auth] token refresh failed with HTTP ${resp.status} — keeping tokens for retry`);
+        return null;
       }
-    } catch {
-      clearTokens();
+    } catch (err) {
+      // Network error: same reasoning as above — the tokens are still valid,
+      // we just could not reach the server.
+      console.warn('[auth] token refresh could not reach the server — keeping tokens for retry:', err);
       return null;
     } finally {
       _refreshPromise = null;

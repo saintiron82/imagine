@@ -1046,16 +1046,27 @@ def admin_update_embedded_worker(
     request: Request,
     admin: dict = Depends(require_admin),
 ):
-    """Enable or disable the local worker."""
+    """Enable or disable the local worker.
+
+    Kept as an alias of PATCH /admin/workers/auto-processing (the legacy
+    frontend still calls this path) and now writes the SAME key that endpoint
+    and the GET above read.
+
+    It used to write `server.embedded_worker.enabled`, which nothing in the
+    repo reads, via `_set_dotted`, which does not persist — so enabling was a
+    complete no-op, the GET reported an unrelated key, and disabling survived
+    only until the next activation.
+    """
     from backend.server.local_worker import get_status
     from backend.utils.config import get_config
 
     cfg = get_config()
 
     if req.enabled is not None:
-        cfg._set_dotted("server.embedded_worker.enabled", req.enabled)
-        # Start handled by _activate_server. Only stop here.
-        if not req.enabled:
+        cfg.save_user_setting("server.auto_processing.enabled", req.enabled)
+        if req.enabled:
+            _start_local_worker(None)   # no-op if already running
+        else:
             _stop_local_worker()
 
     status = get_status()
