@@ -1,7 +1,17 @@
-import time
-from sentence_transformers import SentenceTransformer
-from PIL import Image
 import os
+import time
+
+import pytest
+
+# sentence-transformers is NOT in requirements.txt — importing it at module
+# scope made pytest fail COLLECTION (not just this file) anywhere it is absent,
+# which is what kept the CI backend job red. Skip instead.
+SentenceTransformer = pytest.importorskip(
+    "sentence_transformers",
+    reason="sentence-transformers is not a declared dependency",
+).SentenceTransformer
+
+from PIL import Image
 
 def test_image_vectorization():
     # User uploaded image path
