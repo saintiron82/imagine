@@ -91,13 +91,15 @@ def test_stale_owner_reacquires_instead_of_writing_unserialized():
 class _GateSpyDB:
     """Records whether a write txn is open at each _hash_one() call."""
 
-    def __init__(self):
+    def __init__(self, rows=None):
         self.conn = self
         self.open_txn = False
         self.txn_open_during_io = []
         self.rollbacks = 0
         self.updates = 0
         self.fail_commit_on = None
+        self._rows = rows if rows is not None else [
+            (1, "/a.psd", 100), (2, "/b.psd", 200), (3, "/c.psd", 300)]
 
     # -- SQLiteDB surface used by hash_backfill._run --
     def cursor(self):
@@ -105,7 +107,7 @@ class _GateSpyDB:
 
     def execute(self, sql, params=()):
         if sql.strip().upper().startswith("SELECT"):
-            self._rows = [(1, "/a.psd", 100), (2, "/b.psd", 200), (3, "/c.psd", 300)]
+            pass          # rows are fixed at construction
         else:
             self.updates += 1
             self.open_txn = True
@@ -441,3 +443,171 @@ def test_batch_end_save_failure_counts_as_failed(tmp_path, monkeypatch):
     assert results[0][1] is False
     assert d._total_completed == 0
     assert d._total_failed == 1
+
+
+# ── I3: connect-time reclaim must not touch a live sibling worker ───────────
+
+@pytest.fixture()
+def worker_env(tmp_path):
+    """Two workers on ONE account, each holding an assigned task."""
+    from backend.server.routers import workers as workers_router
+
+    AnalysisJobManager._initialized = False
+    db = SQLiteDB(str(tmp_path / "w.db"))
+    AnalysisJobManager(db)
+    cur = db.conn.cursor()
+    cur.execute("INSERT INTO users (username, password_hash) VALUES ('acct','x')")
+    cur.execute("INSERT INTO analysis_jobs (name, source_path, status, total_files) "
+                "VALUES ('t','/x','active',2)")
+    jid = cur.lastrowid
+
+    sessions = {}
+    tasks = {}
+    for name in ("gpu-a", "gpu-b"):
+        cur.execute("INSERT INTO worker_sessions (user_id, worker_name, status, "
+                    "last_heartbeat) VALUES (1,?, 'online', datetime('now'))", (name,))
+        sessions[name] = cur.lastrowid
+        cur.execute("INSERT INTO files (file_path, file_name) VALUES (?,?)",
+                    (f"/x/{name}.png", f"{name}.png"))
+        fid = cur.lastrowid
+        cur.execute(
+            "INSERT INTO file_tasks (analysis_job_id, file_id, file_path, "
+            "download_status, parse_status, mc_status, vv_status, mv_status, "
+            "mc_assigned_to) "
+            "VALUES (?,?,?,'n/a','done','assigned','pending','pending',?)",
+            (jid, fid, f"/x/{name}.png", sessions[name]))
+        tasks[name] = cur.lastrowid
+    db.conn.commit()
+
+    app = FastAPI()
+    app.include_router(workers_router.router)
+    app.dependency_overrides[deps.get_db_safe] = lambda: db
+    app.dependency_overrides[deps.get_current_user] = (
+        lambda: {"id": 1, "username": "acct"})
+    return db, TestClient(app), sessions, tasks
+
+
+def _mc_state(db, task_id):
+    row = db.conn.execute(
+        "SELECT mc_status, mc_assigned_to FROM file_tasks WHERE id = ?",
+        (task_id,)).fetchone()
+    return tuple(row)   # sqlite3.Row does not compare equal to a plain tuple
+
+
+def test_connect_does_not_reclaim_a_live_sibling_workers_tasks(worker_env):
+    """gpu-b connecting must not disturb gpu-a. Scoping the reclaim by user_id
+    alone reset the sibling's in-flight task, so a second worker redid the work
+    and gpu-a's later /tasks/complete 403'd — its GPU work was thrown away."""
+    db, client, sessions, tasks = worker_env
+
+    resp = client.post("/workers/connect", json={
+        "worker_name": "gpu-b", "hostname": "h", "origin": "headless",
+        "launcher": "cli", "batch_capacity": 5})
+    assert resp.status_code == 200
+
+    status, assigned = _mc_state(db, tasks["gpu-a"])
+    assert (status, assigned) == ("assigned", sessions["gpu-a"]), (
+        "a live sibling's in-flight task was reclaimed by another worker's connect")
+    assert db.conn.execute(
+        "SELECT status FROM worker_sessions WHERE id = ?",
+        (sessions["gpu-a"],)).fetchone()[0] == "online", (
+        "a live sibling session was marked offline")
+
+
+def test_connect_reclaims_the_same_workers_own_previous_session(worker_env):
+    """The case the reclaim exists for: gpu-a crashed and reconnects under the
+    same name — its stranded task must go back to pending immediately."""
+    db, client, sessions, tasks = worker_env
+
+    resp = client.post("/workers/connect", json={
+        "worker_name": "gpu-a", "hostname": "h", "origin": "headless",
+        "launcher": "cli", "batch_capacity": 5})
+    assert resp.status_code == 200
+
+    status, assigned = _mc_state(db, tasks["gpu-a"])
+    assert (status, assigned) == ("pending", None), (
+        "the worker's own stranded task was not reclaimed on reconnect")
+    assert db.conn.execute(
+        "SELECT status FROM worker_sessions WHERE id = ?",
+        (sessions["gpu-a"],)).fetchone()[0] == "offline"
+    # gpu-b untouched
+    assert _mc_state(db, tasks["gpu-b"]) == ("assigned", sessions["gpu-b"])
+
+
+# ── I7: a short Range read must fail, not produce a wrong hash ─────────────
+
+class _ShortRangeSession:
+    """Returns fewer bytes than the requested range asked for."""
+
+    def __init__(self, status, payload):
+        self.status, self.payload = status, payload
+
+    def get(self, url, **kw):
+        payload, status = self.payload, self.status
+
+        class _R:
+            status_code = status
+            content = payload
+
+            def raise_for_status(self): pass
+            def iter_content(self, chunk_size=65536): yield payload
+            def close(self): pass
+
+        return _R()
+
+
+def _client_with(session):
+    from backend.remote.webdav_client import WebDAVClient
+    c = WebDAVClient.__new__(WebDAVClient)
+    c.session = session
+    c.timeout = 5
+    c._url = lambda p: f"http://dav/{p}"
+    return c
+
+
+@pytest.mark.parametrize("status", [206, 200])
+def test_short_range_read_returns_none_instead_of_partial_bytes(status):
+    """The bytes feed the boundary content_hash, which is the CAS cache key.
+    Hashing a short read stored a hash that can never match the local
+    computation — the cache missed forever and the backfill counted it done."""
+    c = _client_with(_ShortRangeSession(status, b"only-8b"))   # 7 bytes
+    assert c.read_range("f.psd", 0, 8191) is None
+
+
+@pytest.mark.parametrize("status", [206, 200])
+def test_full_range_read_still_returns_the_bytes(status):
+    payload = b"z" * 8192
+    c = _client_with(_ShortRangeSession(status, payload))
+    assert c.read_range("f.psd", 0, 8191) == payload
+
+
+def test_short_range_read_is_counted_as_failed_by_the_backfill(
+        monkeypatch, _reset_backfill_state):
+    """End of the chain: read_range None → _hash_one raises → the item is
+    recorded as failed with a reason, instead of silently 'done'."""
+    from backend.server.queue import hash_backfill as hb
+
+    class _NullRangeClient:
+        def read_range(self, *a, **k): return None
+        def close(self): pass
+
+    monkeypatch.setattr(hb, "get_webdav_source", lambda sid: {
+        "url": "http://dav", "username": "u", "password": "p"}, raising=False)
+
+    db = _GateSpyDB(rows=[(1, "webdav://s1/a.psd", 100000)])
+
+    def fake_hash_one(file_path, file_size, clients):
+        clients["s1"] = _NullRangeClient()
+        head = clients["s1"].read_range(file_path, 0, 8191)
+        if head is None:
+            raise RuntimeError(f"range read failed: {file_path}")
+        return "unreachable"
+
+    monkeypatch.setattr(hb, "_hash_one", fake_hash_one)
+    with hb._lock:
+        hb._state["running"] = True
+    hb._run(lambda: db)
+
+    st = hb.get_status()
+    assert st["failed"] == 1 and st["done"] == 0
+    assert "range read failed" in (st["last_error"] or "")

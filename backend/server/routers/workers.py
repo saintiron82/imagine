@@ -360,20 +360,30 @@ def worker_connect(
         logger.warning(f"Rejected connect from blocked worker: {req.worker_name} (user={user['username']})")
         raise HTTPException(status_code=403, detail="Worker is blocked by admin")
 
-    # Mark any stale sessions from this user as offline. A crashed worker (no
-    # graceful disconnect) leaves tasks 'assigned' to a session that never
-    # returns — reclaim them → pending here so the reconnecting worker can pick
-    # them up, instead of being stuck until the next server restart.
+    # Retire THIS worker's own previous session. A crashed worker (no graceful
+    # disconnect) leaves tasks 'assigned' to a session that never returns —
+    # reclaim them → pending here so the restarted worker picks them straight
+    # back up instead of waiting out the heartbeat timeout.
+    #
+    # Scoped to (user_id, worker_name), NOT to the whole account. Scoping by
+    # user_id alone meant a SECOND worker connecting under the same account
+    # reset a LIVE sibling's in-flight tasks: another worker redid the work,
+    # and the sibling's later /tasks/complete hit 403 (the task was no longer
+    # 'assigned' to it) so its finished GPU work was discarded. Genuinely dead
+    # sibling sessions belong to the heartbeat watchdog
+    # (_start_heartbeat_watchdog in app.py — 15 min timeout), which reclaims
+    # across all users and is the single owner of that decision.
     stale_ids = [
         r[0] for r in cursor.execute(
-            "SELECT id FROM worker_sessions WHERE user_id = ? AND status = 'online'",
-            (user["id"],),
+            """SELECT id FROM worker_sessions
+               WHERE user_id = ? AND worker_name = ? AND status = 'online'""",
+            (user["id"], req.worker_name),
         ).fetchall()
     ]
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
-           WHERE user_id = ? AND status = 'online'""",
-        (now, user["id"])
+           WHERE user_id = ? AND worker_name = ? AND status = 'online'""",
+        (now, user["id"], req.worker_name)
     )
     for _sid in stale_ids:
         for _phase in ("mc", "vv", "mv"):

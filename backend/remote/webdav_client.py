@@ -281,6 +281,18 @@ class WebDAVClient:
             resp.raise_for_status()
             if resp.status_code == 206:
                 data = resp.content
+                if len(data) < want:
+                    # A short read is NOT a partial success. The caller feeds
+                    # these bytes into the boundary content_hash, which is the
+                    # derivation-cache key — silently hashing fewer bytes stores
+                    # a hash that can never match the local computation, so the
+                    # cache misses forever with no error anywhere. Fail loudly
+                    # instead; the backfill counts it as failed and it retries.
+                    logger.warning(
+                        f"Short Range read for {remote_path}: got {len(data)} "
+                        f"of {want} bytes (206) — refusing to hash a partial read"
+                    )
+                    return None
                 return data[:want]
             # Range ignored (200): stream-skip to offset, read what we need
             buf = b""
@@ -295,6 +307,15 @@ class WebDAVClient:
                 if len(buf) >= want:
                     break
             resp.close()
+            if len(buf) < want:
+                # Same rule as the 206 path: the stream ended before the range
+                # was covered (truncated response, or a server that ignored
+                # Range on a file shorter than we were told).
+                logger.warning(
+                    f"Short Range read for {remote_path}: got {len(buf)} of "
+                    f"{want} bytes (200 stream) — refusing to hash a partial read"
+                )
+                return None
             return buf[:want]
         except Exception as e:
             logger.warning(f"Range read failed for {remote_path}: {e}")
