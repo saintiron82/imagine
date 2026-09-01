@@ -37,6 +37,13 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
 
+      # Static guard on the worker-runtime model. It had silently rotted into a
+      # FileNotFoundError because nothing ran it — wired up so that cannot recur.
+      - name: Worker runtime contract
+        run: python tools/check_worker_runtime_contract.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
   # frontend-v2 has a Vitest harness locking the paging, role-guard and i18n
   # parity invariants. Nothing ran it until now, so those locks were inert.
   frontend-v2:

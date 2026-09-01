@@ -197,7 +197,6 @@ class WorkerDaemon:
         self._report_rejected = 0   # completions the server refused (loud, not silent)
         self._total_failed = 0
         self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
-        self._last_claim_diag = None  # Last empty-claim diagnostic from server
         # Batched completion reports (one HTTP per ~10 results, not per file)
         self._report_buffer = []
         self._report_lock = threading.Lock()
@@ -280,9 +279,6 @@ class WorkerDaemon:
     def _io_loop(self):
         """IO thread: heartbeat, result upload, batch prefetch."""
         heartbeat_interval = 5
-        # If a transport ever exposes a direct DB handle, end every iteration
-        # with an explicit rollback as a safety net (CLAUDE.md SQLite rule).
-        local_db = getattr(self.transport, "db", None)
         while not self._shutdown:
             try:
                 # 1. Heartbeat
@@ -315,12 +311,6 @@ class WorkerDaemon:
 
             except Exception as e:
                 logger.warning(f"[IO] loop error: {e}")
-            finally:
-                if local_db is not None:
-                    try:
-                        local_db.conn.rollback()
-                    except Exception:
-                        pass
 
             time.sleep(heartbeat_interval)
 
@@ -353,13 +343,6 @@ class WorkerDaemon:
             if success:
                 self._total_completed += 1
         except Exception as e:
-            # Release any implicit transaction before bubbling back to _io_loop.
-            local_db = getattr(self.transport, "db", None)
-            if local_db is not None:
-                try:
-                    local_db.conn.rollback()
-                except Exception:
-                    pass
             logger.warning(f"[IO] save {rtype} failed for file {file_id}: {e}")
 
     def _analysis_loop(self):
