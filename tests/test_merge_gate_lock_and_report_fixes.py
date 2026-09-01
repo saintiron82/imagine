@@ -328,3 +328,116 @@ def test_unexpected_item_error_does_not_500_the_whole_batch(server_env, monkeypa
     assert len(body["errors"]) == 1
     assert body["errors"][0]["task_id"] == tasks[1]
     assert "locked" in body["errors"][0]["error"]
+
+
+# ── I2: every completed file must be counted exactly once ──────────────────
+
+def _mc_daemon(tmp_path, save_result=True):
+    """A daemon wired just enough to run _process_batch_mc's upload loop."""
+    d = WorkerDaemon.__new__(WorkerDaemon)
+    d.transport = SimpleNamespace(
+        save_vision=lambda file_id, fields: save_result,
+        report_complete=lambda *a, **k: None,
+    )
+    d.uploader = None
+    d.server_url = "http://test"
+    d.storage_mode = "shared_fs"
+    d._total_completed = 0
+    d._total_failed = 0
+    d._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
+    d._phase_throughput = {"mc": 0.0, "vv": 0.0, "mv": 0.0}
+    d._batch_throughput = 0.0
+    d._report_buffer = []
+    d._report_lock = threading.Lock()
+    d._batch_report_supported = True
+    d._io_thread = None
+    d._result_queue = None
+    d._authed_request = lambda m, url, **kw: _resp(200)
+    d._report_task_start = lambda *a, **k: None
+    d._report_task_phase = lambda *a, **k: None
+    d._get_downloaded = lambda job: None
+    d._resolve_thumbnail = lambda job: None
+    d._clear_current = lambda: None
+
+    thumb = tmp_path / "t.png"
+    thumb.write_bytes(b"x")
+    job = {"job_id": 1, "task_id": 11, "file_id": 21,
+           "file_path": "/x/a.psd", "thumb_path": str(thumb), "metadata": {}}
+    return d, [job]
+
+
+def _stub_vision(d, monkeypatch, mark):
+    """Replace the VLM phase; `mark(ctx)` sets up the post-vision state."""
+    def fake(active, progress_callback=None):
+        for ctx in active:
+            ctx.vision_fields = {"mc_caption": "a caption"}
+            # Mirrors the real vision loop, which counts the phase here.
+            d._phase_counts["mc"] += 1
+            mark(ctx)
+        return 1.0
+    monkeypatch.setattr(d, "_run_vision_phase", fake)
+
+
+def test_file_saved_at_its_own_save_point_is_counted_once(tmp_path, monkeypatch):
+    """Both save points (IO thread `_save_result`, inline CLI save) already
+    increment _total_completed. The batch-end loop incremented again for every
+    ctx marked `_saved` — so each file counted twice, and the heartbeat ships
+    the delta as jobs_completed into the scheduler's batch sizing."""
+    d, jobs = _mc_daemon(tmp_path)
+
+    def mark(ctx):
+        d._total_completed += 1     # what the real save point does
+        ctx._save_ok = True
+        ctx._saved = True
+
+    _stub_vision(d, monkeypatch, mark)
+    results = d._process_batch_mc(jobs)
+
+    assert results == [(1, True, "")]
+    assert d._total_completed == 1, (
+        f"one file counted {d._total_completed}x — jobs_completed is inflated")
+    assert d._phase_counts["mc"] == 1
+
+
+def test_failed_inline_save_is_not_reported_as_success(tmp_path, monkeypatch):
+    """`ctx._saved = True` was set even when the inline save FAILED, and the
+    batch-end loop appended (job_id, True, "") for anything marked saved."""
+    d, jobs = _mc_daemon(tmp_path)
+
+    def mark(ctx):
+        ctx._save_ok = False        # save was attempted and refused
+        ctx._save_error = "MC save rejected"
+        ctx._saved = True
+
+    _stub_vision(d, monkeypatch, mark)
+    results = d._process_batch_mc(jobs)
+
+    assert results == [(1, False, "MC save rejected")]
+    assert d._total_completed == 0, "a failed save was counted as completed"
+    assert d._total_failed == 1
+
+
+def test_batch_end_save_counts_the_phase_once(tmp_path, monkeypatch):
+    """The batch-end save path incremented _phase_counts['mc'] a second time,
+    on top of the vision loop's increment — so it disagreed with the queued
+    and inline paths, which count once."""
+    d, jobs = _mc_daemon(tmp_path, save_result=True)
+    _stub_vision(d, monkeypatch, lambda ctx: None)   # nothing pre-saved
+
+    results = d._process_batch_mc(jobs)
+
+    assert results == [(1, True, "")]
+    assert d._total_completed == 1
+    assert d._phase_counts["mc"] == 1, (
+        f"phase count is {d._phase_counts['mc']} for one file")
+
+
+def test_batch_end_save_failure_counts_as_failed(tmp_path, monkeypatch):
+    d, jobs = _mc_daemon(tmp_path, save_result="quota exceeded")
+    _stub_vision(d, monkeypatch, lambda ctx: None)
+
+    results = d._process_batch_mc(jobs)
+
+    assert results[0][1] is False
+    assert d._total_completed == 0
+    assert d._total_failed == 1

@@ -1143,6 +1143,14 @@ class WorkerDaemon:
                     self._flush_reports()
                     if ok is True:
                         self._total_completed += 1
+                    else:
+                        ctx._save_error = (f"MC save failed: {ok}"
+                                           if isinstance(ok, str) else "MC save rejected")
+                    # `_saved` means "handled at its own save point" — the batch-end
+                    # loop must neither re-save nor re-count it. `_save_ok` carries
+                    # the outcome so a FAILED save is not reported as a success
+                    # there (it used to append (job_id, True, "") unconditionally).
+                    ctx._save_ok = ok is True
                     ctx._saved = True
             else:
                 ctx.failed = True
@@ -1304,10 +1312,19 @@ class WorkerDaemon:
             job_id = ctx.job["job_id"]
             file_name = Path(ctx.job.get("file_path", "")).name
 
-            # Already saved during vision phase (transport mode)
+            # Already handled during the vision phase — either queued to the IO
+            # thread (which counts it in _save_result) or saved inline by the CLI
+            # path (which counts it there). Counting again here made every such
+            # file increment _total_completed TWICE, and the heartbeat sends the
+            # delta as jobs_completed → the scheduler's phase_job_count and batch
+            # sizing were fed a 2x-inflated number.
             if getattr(ctx, '_saved', False):
-                self._total_completed += 1
-                results.append((job_id, True, ""))
+                if getattr(ctx, '_save_ok', True):
+                    results.append((job_id, True, ""))
+                else:
+                    err = getattr(ctx, '_save_error', "MC save failed")
+                    self._total_failed += 1
+                    results.append((job_id, False, err))
                 continue
 
             if ctx.failed:
@@ -1337,7 +1354,11 @@ class WorkerDaemon:
                                     elapsed_s=getattr(ctx, '_inference_elapsed', None))
             if upload_result is True:
                 self._total_completed += 1
-                self._phase_counts["mc"] += 1
+                # NOT _phase_counts["mc"] — already counted when the VLM produced
+                # this file's caption (the same block that sets ctx.vision_fields,
+                # the precondition for reaching this save). Counting here too made
+                # phase_counts disagree with the queued/inline paths, which count
+                # only once.
                 results.append((job_id, True, ""))
             else:
                 err = f"MC upload failed: {upload_result}" if isinstance(upload_result, str) else "MC upload rejected"
