@@ -184,7 +184,7 @@ function NasView({ onBrowse, disconnected }) {
       <div className="nas-form">
         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t('v2.add.new_nas')}</div>
         <div className="fr"><input placeholder={t('v2.add.nas_id')} value={form.id} onChange={set('id')} /></div>
-        <div className="fr"><input placeholder="주소 — 예: https://nas.local:5006 (WebDAV)" value={form.url} onChange={set('url')} /></div>
+        <div className="fr"><input placeholder={t('v2.add.nas_url')} value={form.url} onChange={set('url')} /></div>
         <div className="fr"><input placeholder={t('v2.add.nas_user')} value={form.username} onChange={set('username')} /><input type="password" placeholder={t('v2.add.nas_pw')} value={form.password} onChange={set('password')} /></div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button className="sec" style={{ border: '1px solid var(--line)', borderRadius: 6, padding: '5px 14px', fontSize: 11.5 }}

@@ -8,6 +8,7 @@
  *
  * DB 내보내기/가져오기는 HTTP 엔드포인트가 없어 별도 백엔드 작업 필요(IMGV2-28).
  */
+import { useLocale } from '../i18n'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from './client'
 
@@ -45,13 +46,14 @@ export function useDbReset() {
  *   POST /api/v1/admin/database/import {password, file(multipart)}
  */
 export function useDbExport() {
+  const { t } = useLocale()
   return useMutation({
     mutationFn: async () => {
       const resp = await apiClient.raw('GET', '/api/v1/admin/database/export')
       if (!resp.ok) {
         let detail = resp.statusText
         try { detail = (await resp.json()).detail || detail } catch { /* keep statusText */ }
-        throw new Error(detail || '내보내기 실패')
+        throw new Error(detail || t('v2.api.export_failed'))
       }
       const blob = await resp.blob()
       const cd = resp.headers.get('Content-Disposition') || ''

@@ -14,19 +14,20 @@
  * 폴더 목록은 평면 folder_path 문자열 → 경로 분할로 트리를 구성한다.
  * 미연결/오류 시 빈 상태(가짜 데이터 없음, disconnected 표식).
  */
+import { useLocale } from '../i18n'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from './client'
 
 const lastSeg = (p) => { const s = p.split('/').filter(Boolean); return s[s.length - 1] || p }
 const covClass = (pct, total) => (total === 0 ? 'r' : pct >= 99 ? 'g' : pct > 0 ? 'a' : 'r')
 
-function normalize(f) {
+function normalize(f, t) {
   const total = f.total || 0
   const analyzed = f.mc != null ? f.mc : (f.analyzed || 0) // mc = "분석됨" 헤드라인
   const pct = total ? Math.round((analyzed / total) * 100) : 0
   return {
-    path: f.folder_path || f.storage_root || '(미지정)',
-    name: lastSeg(f.folder_path || f.storage_root || '(미지정)'),
+    path: f.folder_path || f.storage_root || t('v2.api.unspecified'),
+    name: lastSeg(f.folder_path || f.storage_root || t('v2.api.unspecified')),
     total, analyzed, pct,
     cov: covClass(pct, total),
     fullyDone: total > 0 && f.mc === total && f.vv === total && f.mv === total,
@@ -69,13 +70,14 @@ function buildTree(folders) {
 }
 
 export function useFolders() {
+  const { t } = useLocale()
   const q = useQuery({
     queryKey: ['archive-folders'],
     queryFn: () => apiClient.get('/api/v1/archive/folders'),
   })
   const connected = !q.isError && q.data
   const raw = (connected && q.data?.folders) ? q.data.folders : []
-  const folders = raw.map(normalize)
+  const folders = raw.map(f => normalize(f, t))
   const tree = buildTree(folders)
   return { disconnected: !connected, loading: q.isLoading, folders, tree }
 }

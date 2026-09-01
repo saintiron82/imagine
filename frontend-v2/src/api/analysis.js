@@ -13,6 +13,7 @@
  * 미연결(서버 없음/401/네트워크)·오류 시 가짜 데이터 없이 빈 상태로 둔다
  * (disconnected 표식). 하드 게이트라 정상 흐름에선 인증 후에만 도달한다.
  */
+import { useLocale } from '../i18n'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from './client'
 
@@ -42,6 +43,7 @@ function failedCount(progress) {
  * 반환: { disconnected, connected, summary, analyzers, jobs, totalFailed }
  */
 export function useAnalysisData() {
+  const { t } = useLocale()
   const jq = useJobsQuery()
   const wq = useWorkersQuery()
 
@@ -57,8 +59,12 @@ export function useAnalysisData() {
     .map(w => ({
       id: w.id,
       name: w.worker_name,
-      file: w.current_file ? `${w.current_file} 처리 중` : '대기 중',
-      rate: w.throughput != null ? `${Number(w.throughput).toFixed(w.throughput < 10 ? 1 : 0)}장/분` : '—',
+      // fileName is the RAW name; `file` is the display string. Keeping both
+      // avoids the round-trip that used to recover the name with
+      // .replace(' 처리 중', '') — which silently broke in any other locale.
+      fileName: w.current_file || '',
+      file: w.current_file ? t('v2.api.processing', { file: w.current_file }) : t('v2.api.idle'),
+      rate: w.throughput != null ? t('v2.api.rate_per_min', { n: Number(w.throughput).toFixed(w.throughput < 10 ? 1 : 0) }) : '—',
       busy: !!w.current_file,
     }))
 
@@ -118,7 +124,7 @@ export function useAnalysisData() {
   const totalFailed = jobs.reduce((a, j) => a + j.failed, 0)
 
   // 지금 처리 중: 워커가 현재 잡고 있는 파일들 (큐 미래분 API 없음 → busy 만 정직하게)
-  const flow = analyzers.filter(a => a.busy).map(a => ({ name: a.file.replace(' 처리 중', ''), busy: true }))
+  const flow = analyzers.filter(a => a.busy).map(a => ({ name: a.fileName, busy: true }))
 
   return {
     disconnected,

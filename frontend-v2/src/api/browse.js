@@ -9,6 +9,7 @@
  *
  * 경로 타이핑 금지 원칙: 사용자는 폴더를 클릭으로만 드릴다운한다.
  */
+import { useLocale } from '../i18n'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from './client'
 
@@ -22,6 +23,7 @@ export function useSources() {
  * enabled=false 면 호출 안 함(소스 미선택 시).
  */
 export function useBrowse({ kind, sourceId, path }) {
+  const { t } = useLocale()
   const enabled = kind === 'local' || (kind === 'webdav' && !!sourceId)
   const q = useQuery({
     queryKey: ['browse', kind, sourceId || '', path || ''],
@@ -34,7 +36,7 @@ export function useBrowse({ kind, sourceId, path }) {
   return {
     folders: (q.data?.folders) || [],
     loading: q.isFetching,
-    error: q.isError ? (q.error?.detail || q.error?.message || '탐색 실패') : null,
+    error: q.isError ? (q.error?.detail || q.error?.message || t('v2.api.browse_failed')) : null,
   }
 }
 

@@ -11,11 +11,14 @@
  *   GET  /api/v1/analysis-jobs → 각 job.progress { total, downloaded, parsed,
  *               mc_done, vv_done, mv_done } → 클러스터 밸브/병목 집계
  */
+import { useLocale } from '../i18n'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { apiClient } from './client'
 
-const PHASE_LABEL = { dl: 'DL', parse: '파싱', mc: 'MC', vv: 'VV', mv: 'MV' }
+// parse has a translated label; the rest are protocol names shown as-is.
+const PHASE_LABEL = { dl: 'DL', parse: 'v2.ad.phase_parse', mc: 'MC', vv: 'VV', mv: 'MV' }
+const phaseLabel = (ph, t) => (PHASE_LABEL[ph] || '').startsWith('v2.') ? t(PHASE_LABEL[ph]) : (PHASE_LABEL[ph] || ph)
 
 export function useWorkers() {
   const q = useQuery({ queryKey: ['admin-workers'], queryFn: () => apiClient.get('/api/v1/admin/workers') })
@@ -35,6 +38,7 @@ export function useWorkers() {
  * 단계별 처리율 = 해당 mode 로 도는 온라인 워커 throughput 합.
  */
 export function useClusterValves() {
+  const { t } = useLocale()
   const jq = useQuery({ queryKey: ['analysis-jobs'], queryFn: () => apiClient.get('/api/v1/analysis-jobs', { include_completed: false }) })
   const wq = useQuery({ queryKey: ['admin-workers'], queryFn: () => apiClient.get('/api/v1/admin/workers') })
   const connected = !jq.isError && !wq.isError && (jq.data || wq.data)
@@ -54,7 +58,7 @@ export function useClusterValves() {
     const d = done[ph] || 0
     const pending = Math.max(0, total - d)
     const rate = ph === 'dl' || ph === 'parse' ? null : Math.round(rateFor(ph) * 10) / 10
-    return { phase: ph, label: PHASE_LABEL[ph], done: d, total, pending, rate }
+    return { phase: ph, label: phaseLabel(ph, t), done: d, total, pending, rate }
   })
   // 병목 = 파이프라인 순서(mc→vv→mv)에서 아직 밀린(pending>0) 가장 앞 단계.
   // 하류(mv)는 상류(mc) 산출을 기다려 pending 이 더 클 수 있으므로 "최대 pending"은
