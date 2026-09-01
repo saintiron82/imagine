@@ -22,7 +22,7 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchInterval: 5000, staleTime: 4000, retry: 1 } },
 })
 
-const Fallback = () => <div style={{ padding: 24, color: 'var(--faint)', fontSize: 12 }}>불러오는 중…</div>
+const Fallback = () => <div style={{ padding: 24, color: 'var(--faint)', fontSize: 12 }}>…</div>
 const lazy_ = (El) => <Suspense fallback={<Fallback />}><El /></Suspense>
 
 const router = createHashRouter([

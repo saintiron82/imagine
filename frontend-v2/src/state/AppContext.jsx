@@ -12,7 +12,7 @@ export function AppProvider({ children }) {
 
   const value = {
     isOperator,
-    server: { name: serverName || '서버', online: connected },
+    server: { name: serverName || '', online: connected },   // 빈 값이면 표시 측에서 i18n 폴백
   }
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

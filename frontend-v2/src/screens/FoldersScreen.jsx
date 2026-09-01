@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useFolders, useFolderSync, useReanalyze } from '../api/folders'
+import { useLocale } from '../i18n'
 
 /**
  * 폴더 — "무엇이 있나". 등록된 폴더의 구조·분석률.
@@ -33,63 +34,64 @@ export default function FoldersScreen() {
   const [selected, setSelected] = useState(null)
 
   // 기본 선택 = 첫 트리 노드
+  const { t } = useLocale()
   const sel = selected || tree[0]?.path || null
   const selNode = useMemo(() => tree.find(n => n.path === sel) || null, [tree, sel])
 
   const syncMsg = sync.data
-    ? `동기화 완료 · 이동 ${sync.data.moved || 0} · 누락 ${sync.data.missing || 0} · 신규 ${sync.data.new_files || 0}`
-    : sync.isPending ? '동기화 중…' : sync.isError ? '동기화 실패' : null
+    ? t('v2.folders.sync_done', { moved: sync.data.moved || 0, missing: sync.data.missing || 0, new: sync.data.new_files || 0 })
+    : sync.isPending ? t('v2.folders.syncing') : sync.isError ? t('v2.folders.sync_failed') : null
   const reMsg = reanalyze.data
-    ? `재분석 작업 등록됨 (${(reanalyze.data.total_files ?? 0).toLocaleString()}장)`
-    : reanalyze.isPending ? '등록 중…' : reanalyze.isError ? '등록 실패' : null
+    ? t('v2.folders.reanalyze_queued', { count: (reanalyze.data.total_files ?? 0).toLocaleString() })
+    : reanalyze.isPending ? t('v2.folders.registering') : reanalyze.isError ? t('v2.folders.register_failed') : null
 
   const canMutate = !disconnected && !!selNode
 
   return (
     <section id="scr-library" className="screen active" style={{ height: '100%' }}>
       <aside className="lib-side">
-        <h3>폴더 {disconnected && <span style={{ fontSize: 9, color: 'var(--amber)' }}>연결 끊김</span>}</h3>
+        <h3>{t('v2.folders.title')} {disconnected && <span style={{ fontSize: 9, color: 'var(--amber)' }}>{t('v2.folders.disconnected')}</span>}</h3>
         <div className="tree">
           {tree.length === 0 && !loading && (
-            <div style={{ fontSize: 11, color: 'var(--faint)', padding: 8 }}>등록된 폴더가 없습니다</div>
+            <div style={{ fontSize: 11, color: 'var(--faint)', padding: 8 }}>{t('v2.folders.none')}</div>
           )}
           {tree.map(n => <TreeNode key={n.path} node={n} selected={sel} onSelect={setSelected} />)}
         </div>
 
         {selNode && (
           <div className="src-detail">
-            <div className="sd-head">📁 {selNode.name} <span className="sd-sub">폴더 속성</span></div>
-            <div className="sd-row"><span>분석됨</span><span className="sd-val">{selNode.analyzed.toLocaleString()} / {selNode.total.toLocaleString()}장 · {selNode.pct}%</span></div>
-            <div className="sd-row"><span>경로</span><span className="sd-val" style={{ fontSize: 10, opacity: .8 }}>{selNode.path}</span></div>
+            <div className="sd-head">📁 {selNode.name} <span className="sd-sub">{t('v2.folders.properties')}</span></div>
+            <div className="sd-row"><span>{t('v2.folders.analyzed')}</span><span className="sd-val">{t('v2.folders.count_images', { done: selNode.analyzed.toLocaleString(), total: selNode.total.toLocaleString(), pct: selNode.pct })}</span></div>
+            <div className="sd-row"><span>{t('v2.folders.path')}</span><span className="sd-val" style={{ fontSize: 10, opacity: .8 }}>{selNode.path}</span></div>
             {(syncMsg || reMsg) && (
               <div className="sd-row"><span style={{ fontSize: 10.5, color: 'var(--cyan)' }}>{reMsg || syncMsg}</span></div>
             )}
             <div className="sd-acts">
-              <button disabled={!canMutate || sync.isPending} onClick={() => sync.mutate(selNode.path)}>동기화</button>
-              <button disabled={!canMutate || reanalyze.isPending} onClick={() => reanalyze.mutate(selNode.path)}>다시 분석…</button>
+              <button disabled={!canMutate || sync.isPending} onClick={() => sync.mutate(selNode.path)}>{t('v2.folders.sync')}</button>
+              <button disabled={!canMutate || reanalyze.isPending} onClick={() => reanalyze.mutate(selNode.path)}>{t('v2.folders.reanalyze')}</button>
             </div>
-            {disconnected && <div style={{ fontSize: 9.5, color: 'var(--faint)', marginTop: 6 }}>서버 연결 시 동기화·재분석이 활성화됩니다</div>}
+            {disconnected && <div style={{ fontSize: 9.5, color: 'var(--faint)', marginTop: 6 }}>{t('v2.folders.need_connection')}</div>}
           </div>
         )}
       </aside>
 
       <div className="lib-main">
-        <div className="sec-title">폴더 현황 <span className="sub">등록된 폴더가 얼마나 분석됐는지</span></div>
+        <div className="sec-title">{t('v2.folders.overview')} <span className="sub">{t('v2.folders.overview_sub')}</span></div>
         <div className="jobs">
           {folders.map(r => (
             <div className="jrow" key={r.path}>
               <span className={`cov ${r.cov}`} style={{ width: 9, height: 9 }} />
               <span className="nm">{r.name}</span>
               <div className="bar"><i style={{ width: `${r.pct}%`, background: r.cov === 'r' ? 'var(--amber)' : undefined }} /></div>
-              <span className="cnt">{r.analyzed.toLocaleString()} / {r.total.toLocaleString()} 장</span>
+              <span className="cnt">{t('v2.folders.row_count', { done: r.analyzed.toLocaleString(), total: r.total.toLocaleString() })}</span>
               <span style={{ fontSize: 10.5, color: r.fullyDone ? 'var(--faint)' : 'var(--amber)' }}>
-                {r.fullyDone ? '완료' : r.pct === 0 ? '미분석' : `${r.pct}%`}
+                {r.fullyDone ? t('v2.folders.done') : r.pct === 0 ? t('v2.folders.not_analyzed') : `${r.pct}%`}
               </span>
             </div>
           ))}
           {folders.length === 0 && !loading && (
             <div className="jrow" style={{ color: 'var(--faint)' }}>
-              <span className="nm">등록된 폴더가 없습니다 — [＋ 추가]에서 폴더를 등록하세요</span>
+              <span className="nm">{t('v2.folders.empty_hint')}</span>
             </div>
           )}
         </div>

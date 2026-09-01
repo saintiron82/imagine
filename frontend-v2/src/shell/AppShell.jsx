@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Outlet, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useApp } from '../state/AppContext'
+import { useLocale } from '../i18n'
 import { useAuth } from '../state/AuthContext'
 import { useLicenseStatus } from '../api/members'
 import { isOperatorOnlyPath } from '../lib/roleGuard'
@@ -13,6 +14,7 @@ import UpdateNotification from './UpdateNotification'
  * 역할 게이팅: 일반 사용자에겐 폴더/분석/관리/+추가가 존재하지 않는 앱처럼 보인다.
  */
 export default function AppShell() {
+  const { t } = useLocale()
   const { isOperator, server } = useApp()
   const { connected, checking, firebaseUser, serverName, signOutAll } = useAuth()
   const navigate = useNavigate()
@@ -23,7 +25,7 @@ export default function AppShell() {
 
   // 하드 게이트: 저장된 세션 검증 중에는 빈 화면, 미인증이면 로그인으로 강제 이동.
   if (checking) {
-    return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--faint)', fontSize: 13 }}>인증 확인 중…</div>
+    return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--faint)', fontSize: 13 }}>{t('v2.auth.checking')}</div>
   }
   if (!connected) {
     return <Navigate to="/start" replace />
@@ -38,25 +40,25 @@ export default function AppShell() {
       <header className="topbar">
         <div className="logo"><span className="dot" />Imagine</div>
         <nav className="nav">
-          <NavLink to="/search" className={tab}>검색</NavLink>
-          {isOperator && <NavLink to="/folders" className={tab}>폴더</NavLink>}
-          {isOperator && <NavLink to="/analysis" className={tab}>분석</NavLink>}
+          <NavLink to="/search" className={tab}>{t('tab.search')}</NavLink>
+          {isOperator && <NavLink to="/folders" className={tab}>{t('v2.tab.folders')}</NavLink>}
+          {isOperator && <NavLink to="/analysis" className={tab}>{t('tab.analysis')}</NavLink>}
         </nav>
         <div className="spacer" />
         {isOperator && (
-          <button className="btn-add" onClick={() => setAddOpen(true)}>＋ 추가</button>
+          <button className="btn-add" onClick={() => setAddOpen(true)}>{t('v2.action.add')}</button>
         )}
         <div className="right-nav">
-          {isOperator && <NavLink to="/admin" className={tab}>관리</NavLink>}
-          <NavLink to="/settings" className={tab}>설정</NavLink>
+          {isOperator && <NavLink to="/admin" className={tab}>{t('v2.tab.admin')}</NavLink>}
+          <NavLink to="/settings" className={tab}>{t('v2.tab.settings')}</NavLink>
         </div>
         {isOperator && server.online && (
           <button className="srv-chip" onClick={() => navigate('/admin')}>
-            <span className="sd" />{serverName || '서버'} 온라인
+            <span className="sd" />{serverName || t('v2.server.fallback_name')} {t('v2.server.online_suffix')}
           </button>
         )}
         <button className="role-chip" title={firebaseUser?.email || ''} onClick={signOutAll}>
-          {firebaseUser?.email ? firebaseUser.email.split('@')[0] : (serverName || '로그인됨')} · <b>로그아웃</b>
+          {firebaseUser?.email ? firebaseUser.email.split('@')[0] : (serverName || t('v2.auth.signed_in'))} · <b>{t('auth.logout')}</b>
         </button>
       </header>
       {isOperator && <ExpiryBanner />}
@@ -74,25 +76,29 @@ export default function AppShell() {
  * 갱신은 홈페이지('계정의 집')에서 — imagine.app/account 로 연결한다.
  */
 function ExpiryBanner() {
+  const { t, locale } = useLocale()
   const { state, daysLeft, expiresAt } = useLicenseStatus()
   const [dismissed, setDismissed] = useState(false)
   if (state === 'ok' || dismissed) return null
 
   const expired = state === 'expired'
-  const when = expiresAt ? new Date(expiresAt).toLocaleDateString('ko-KR') : ''
+  // Format the date in the ACTIVE locale — this was pinned to ko-KR, so an
+  // English user got a Korean-formatted date inside English copy.
+  const when = expiresAt ? new Date(expiresAt).toLocaleDateString(locale) : ''
   const bg = expired ? 'rgba(248,113,113,.12)' : 'rgba(251,191,36,.12)'
   const bd = expired ? 'rgba(248,113,113,.4)' : 'rgba(251,191,36,.4)'
   const fg = expired ? 'var(--red)' : '#fbbf24'
+  const suffix = when ? ` (${when})` : ''
   const msg = expired
-    ? `라이선스가 만료되었습니다${when ? ` (${when})` : ''} — 갱신 전까지 새 분석/멤버 추가가 제한됩니다.`
-    : `라이선스 만료 ${daysLeft}일 전${when ? ` (${when})` : ''} — 중단 없이 쓰려면 미리 갱신하세요.`
+    ? t('v2.license.expired', { when: suffix })
+    : t('v2.license.expiring', { days: daysLeft, when: suffix })
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 18px', fontSize: 12.5, background: bg, borderBottom: `1px solid ${bd}`, color: fg }}>
       <span>{expired ? '⛔' : '⚠'}</span>
       <span style={{ color: 'var(--text)' }}>{msg}</span>
       <a href="https://imagine.app/account" target="_blank" rel="noreferrer"
-        style={{ marginLeft: 'auto', color: fg, fontSize: 11, textDecoration: 'underline' }}>갱신: 홈페이지 &gt; 내 라이선스</a>
+        style={{ marginLeft: 'auto', color: fg, fontSize: 11, textDecoration: 'underline' }}>{t('v2.license.renew_link')}</a>
       <button onClick={() => setDismissed(true)} style={{ background: 'none', border: 'none', color: 'var(--faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
     </div>
   )

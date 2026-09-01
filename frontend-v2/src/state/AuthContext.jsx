@@ -1,3 +1,4 @@
+import { useLocale } from '../i18n'
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { getAccessToken, setServerUrl, setTokens, clearTokens } from '../api/client'
 import { firebaseConnect, getMe, initServer } from '../api/auth'
@@ -19,6 +20,7 @@ const AuthContext = createContext(null)
 const SERVER_NAME_KEY = 'imagine-v2-server-name'
 
 export function AuthProvider({ children }) {
+  const { t } = useLocale()
   const [firebaseUser, setFirebaseUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [connected, setConnected] = useState(false)
@@ -66,12 +68,12 @@ export function AuthProvider({ children }) {
         if (resolved == null) {
           try { const r = await fetch('/api/v1/health'); if (r.ok) resolved = '' } catch { /* no local backend */ }
         }
-        if (resolved == null) throw new Error('그 이름의 서버를 찾을 수 없습니다')
+        if (resolved == null) throw new Error(t('v2.auth.err_server_not_found'))
         url = resolved
       }
       setServerUrl(url)
       const idToken = await (await fb()).getIdToken()
-      if (!idToken) throw new Error('먼저 로그인하세요')
+      if (!idToken) throw new Error(t('v2.auth.err_sign_in_first'))
       await firebaseConnect(idToken, serverPassword) // 성공 시 토큰 저장
       try { const me = await getMe(); setRole(me?.role || '') } catch { /* role best-effort */ }
       try { localStorage.setItem(SERVER_NAME_KEY, groupName) } catch {}
@@ -79,7 +81,7 @@ export function AuthProvider({ children }) {
       setConnected(true)
       return { ok: true }
     } catch (e) {
-      setError(e.message || '연결 실패')
+      setError(e.message || t('v2.auth.err_connect_failed'))
       return { ok: false, error: e.message }
     } finally {
       setBusy(false)
@@ -94,7 +96,7 @@ export function AuthProvider({ children }) {
       setServerUrl('') // 로컬 백엔드(same-origin /api)
       const me = firebaseUser
       const idToken = await (await fb()).getIdToken().catch(() => null)
-      if (!idToken || !me) throw new Error('먼저 로그인하세요')
+      if (!idToken || !me) throw new Error(t('v2.auth.err_sign_in_first'))
       const data = await initServer('', {
         group_name: groupName,
         server_password: serverPassword,
@@ -109,8 +111,8 @@ export function AuthProvider({ children }) {
       return { ok: true }
     } catch (e) {
       const msg = /already initialized|409/.test(e.message)
-        ? '이미 이 컴퓨터에 서버가 있습니다 — 접속을 사용하세요'
-        : (e.message || '서버 생성 실패')
+        ? t('v2.auth.err_already_server')
+        : (e.message || t('v2.auth.err_create_failed'))
       setError(msg)
       return { ok: false, error: msg }
     } finally {

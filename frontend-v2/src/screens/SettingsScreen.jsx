@@ -8,7 +8,7 @@ import { useLocale } from '../i18n'
  */
 export default function SettingsScreen() {
   const { isOperator } = useApp()
-  const { locale, setLocale, availableLocales } = useLocale()
+  const { locale, setLocale, availableLocales, t } = useLocale()
   const navigate = useNavigate()
   const localeLabel = { 'ko-KR': '한국어', 'en-US': 'English' }
 
@@ -16,10 +16,10 @@ export default function SettingsScreen() {
     <section id="scr-settings" className="screen active">
       <div className="wrap">
         <div className="scope">
-          <h3>나 <span className="scope-tag t-me">나에게만 적용</span></h3>
-          <p>이 계정의 화면 표시 방식</p>
+          <h3>{t('v2.settings.scope_me')} <span className="scope-tag t-me">{t('v2.settings.scope_me_tag')}</span></h3>
+          <p>{t('v2.settings.scope_me_desc')}</p>
           <div className="srow">
-            <div className="lab">언어</div>
+            <div className="lab">{t('v2.settings.language')}</div>
             <select value={locale} onChange={e => setLocale(e.target.value)}>
               {availableLocales.map(l => <option key={l} value={l}>{localeLabel[l] || l}</option>)}
             </select>
@@ -28,15 +28,15 @@ export default function SettingsScreen() {
 
         {isOperator && (
           <div className="scope">
-            <h3>서버 <span className="scope-tag t-srv">전원에게 적용 · 운영자</span></h3>
-            <p>이 라이브러리를 쓰는 모두에게 영향을 주는 정책</p>
+            <h3>{t('v2.settings.scope_server')} <span className="scope-tag t-srv">{t('v2.settings.scope_server_tag')}</span></h3>
+            <p>{t('v2.settings.scope_server_desc')}</p>
             <div className="srow">
-              <div className="lab">자동 분석 · 분석기<div className="d">병목·워커 제어는 관리 화면에서</div></div>
-              <div className="row-act"><button onClick={() => navigate('/admin')}>관리로 이동 →</button></div>
+              <div className="lab">{t('v2.settings.auto_analysis')}<div className="d">{t('v2.settings.auto_analysis_d')}</div></div>
+              <div className="row-act"><button onClick={() => navigate('/admin')}>{t('v2.settings.goto_admin')}</button></div>
             </div>
             <div className="srow">
-              <div className="lab">멤버 · 초대 · 좌석<div className="d">초대 발송·좌석 관리</div></div>
-              <div className="row-act"><button onClick={() => navigate('/admin')}>관리로 이동 →</button></div>
+              <div className="lab">{t('v2.settings.members')}<div className="d">{t('v2.settings.members_d')}</div></div>
+              <div className="row-act"><button onClick={() => navigate('/admin')}>{t('v2.settings.goto_admin')}</button></div>
             </div>
           </div>
         )}

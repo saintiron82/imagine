@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useLocale } from '../i18n'
 
 /**
  * 자동 업데이트 토스트 (IMGV2-27) — Electron 셸에서만.
@@ -7,6 +8,7 @@ import { useEffect, useState } from 'react'
  *   event.type: checking | available | progress | downloaded | none | error
  */
 export default function UpdateNotification() {
+  const { t } = useLocale()
   const [evt, setEvt] = useState(null)
   const [dismissed, setDismissed] = useState(false)
 
@@ -23,10 +25,10 @@ export default function UpdateNotification() {
   const install = () => { window.imagineDesktop?.installUpdate?.() }
 
   let title, body, action = null, tone = 'var(--cyan)'
-  if (evt.type === 'available') { title = '새 버전 다운로드 중'; body = evt.version ? `v${evt.version}` : '백그라운드에서 받는 중…' }
-  else if (evt.type === 'progress') { title = '업데이트 다운로드'; body = `${evt.percent ?? 0}%` }
-  else if (evt.type === 'downloaded') { title = '업데이트 준비됨'; body = evt.version ? `v${evt.version} — 재시작하면 적용됩니다` : '재시작하면 적용됩니다'; action = '지금 재시작' }
-  else if (evt.type === 'error') { title = '업데이트 확인 실패'; body = evt.message || '잠시 후 다시 시도합니다'; tone = 'var(--red)' }
+  if (evt.type === 'available') { title = t('v2.update.downloading'); body = evt.version ? `v${evt.version}` : t('v2.update.in_background') }
+  else if (evt.type === 'progress') { title = t('v2.update.progress'); body = `${evt.percent ?? 0}%` }
+  else if (evt.type === 'downloaded') { title = t('v2.update.ready'); body = evt.version ? `v${evt.version} — ${t('v2.update.restart_applies')}` : t('v2.update.restart_applies'); action = t('v2.update.restart_now') }
+  else if (evt.type === 'error') { title = t('v2.update.check_failed'); body = evt.message || t('v2.update.retry_soon'); tone = 'var(--red)' }
   else return null
 
   return (
