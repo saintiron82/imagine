@@ -87,8 +87,10 @@ def test_corrupt_profile_fails_toward_recompute(db):
 
 # ── 통합: parse 8단계가 실제로 캐시를 건너뛰는지 ─────────────
 
-VV_VEC = __import__("struct").pack("<1152f", *([0.5] * 1152))
-MV_VEC = __import__("struct").pack("<1024f", *([0.5] * 1024))
+from conftest import vv_blob, mv_blob
+
+VV_VEC = vv_blob()
+MV_VEC = mv_blob()
 
 
 def _cache_all_phases(db, donor_file_id, caption="from donor"):

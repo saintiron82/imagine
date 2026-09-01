@@ -114,7 +114,7 @@ def test_vv_endpoint_shadow_writes(db, monkeypatch):
     client = _client(db, monkeypatch)
 
     resp = client.patch(f"/api/v1/files/{fid}/vv",
-                        json={"vector": [0.1] * 1152})  # real vec0 dimension
+                        json={"vector": __import__("conftest").vv_list(0.1)})  # real vec0 dimension
     assert resp.status_code == 200
 
     # Primary save (read path unchanged)

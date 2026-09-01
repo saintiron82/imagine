@@ -26,6 +26,12 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      # config.yaml is gitignored (per-machine, holds the JWT secret), so a
+      # runner has none. Several paths hard-depend on ai_mode.tiers — the
+      # embedding widths come from it and tier_config raises without it.
+      - name: Provide config
+        run: cp config.example.yaml config.yaml
+
       - name: Run test suite
         run: python -m pytest tests/ -q
         env:

@@ -122,8 +122,8 @@ def server_env(tmp_path):
         "INSERT INTO analysis_jobs (name, source_path, status, total_files) "
         "VALUES ('t','/x','active',2)")
     jid = cur.lastrowid
-    import struct
-    vec = struct.pack("<1152f", *([0.5] * 1152))
+    from conftest import vec_blob
+    vec = vec_blob(db)   # width from the schema, not a hardcoded 1152
     tasks = []
     for i in range(2):
         cur.execute("INSERT INTO files (file_path, file_name) VALUES (?,?)",

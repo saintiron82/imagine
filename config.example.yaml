@@ -1,0 +1,259 @@
+# Example configuration — copy to config.yaml and edit.
+#
+# config.yaml is gitignored (it is per-machine and holds the JWT secret),
+# so a fresh clone and CI have no config at all. Several code paths hard-
+# depend on ai_mode.tiers — backend/utils/tier_config.py:66 raises
+# ValueError('Invalid ai_mode.tiers configuration') when it is missing, and
+# the vec_files/vec_text embedding widths are derived from it. CI copies
+# this file to config.yaml before running the test suite.
+#
+# The jwt_secret below is a PLACEHOLDER. Generate a real one:
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+server:
+  cors_allow_all: true
+  host: 0.0.0.0
+  port: 8000
+  auto_processing:
+    enabled: true
+    rest_after_batch_s: 30
+    batch_size: 5
+  parse_ahead:
+    enabled: true
+    poll_interval_s: 2
+    buffer_multiplier: 2
+    parse_timeout_s: 300
+  auth:
+    jwt_secret: CHANGE_ME_generate_a_random_secret
+ai_mode:
+  auto_detect: false
+  override: pro
+  tiers:
+    pro:
+      preprocess:
+        aspect_ratio_mode: contain
+        max_edge: 768
+        padding_color: '#FFFFFF'
+      text_embed:
+        dimensions: 1024
+        model: qwen3-embedding:0.6b
+      visual:
+        dimensions: 1152
+        model: google/siglip2-so400m-patch14-384
+      vlm:
+        backend: auto
+        device: auto
+        model: Qwen/Qwen3.5-9B          # legacy top-level fallback
+        mlx_model: mlx-community/Qwen3.5-9B-MLX-4bit  # legacy mlx fallback
+        backends:
+          darwin:
+            mlx:
+              model: mlx-community/Qwen3.5-9B-MLX-4bit
+            ollama:
+              model: qwen3.5:9b
+            transformers:
+              model: Qwen/Qwen3.5-9B
+          windows:
+            backend: ollama             # legacy: which backend to prefer
+            model: qwen3.5:9b           # legacy: model for that backend
+            ollama:
+              model: qwen3.5:9b
+            transformers:
+              model: Qwen/Qwen3.5-9B
+          linux:
+            backend: ollama
+            model: qwen3.5:9b
+            vllm:
+              model: Qwen/Qwen3.5-9B
+            ollama:
+              model: qwen3.5:9b
+            transformers:
+              model: Qwen/Qwen3.5-9B
+      vram_max: 16384
+      vram_min: 8192
+    standard:
+      preprocess:
+        aspect_ratio_mode: contain
+        max_edge: 512
+        padding_color: '#FFFFFF'
+      text_embed:
+        dimensions: 256
+        model: google/gemma-2b-instruct
+        normalize: true
+      visual:
+        dimensions: 768
+        model: google/siglip2-base-patch16-224
+      vlm:
+        backend: auto
+        device: auto
+        model: vikhyatk/moondream2
+        backends:
+          darwin:
+            mlx:
+              model: mlx-community/Qwen3.5-4B-MLX-4bit
+            ollama:
+              model: qwen3.5:4b
+            transformers:
+              model: vikhyatk/moondream2
+          windows:
+            backend: ollama
+            model: qwen3.5:4b
+            ollama:
+              model: qwen3.5:4b
+            transformers:
+              model: vikhyatk/moondream2
+          linux:
+            backend: ollama
+            model: qwen3.5:4b
+            ollama:
+              model: qwen3.5:4b
+            transformers:
+              model: vikhyatk/moondream2
+      vram_max: 6144
+    ultra:
+      preprocess:
+        aspect_ratio_mode: contain
+        max_edge: 1024
+        padding_color: '#FFFFFF'
+      text_embed:
+        dimensions: 4096
+        model: qwen3-embedding:8b
+      visual:
+        dimensions: 1664
+        model: google/siglip2-giant-opt-patch16-256
+      vlm:
+        backend: auto
+        device: auto
+        dtype: bfloat16
+        model: qwen3.5:9b
+        backends:
+          darwin:
+            mlx:
+              model: mlx-community/Qwen3.5-9B-MLX-4bit
+            ollama:
+              model: qwen3.5:9b
+            transformers:
+              model: Qwen/Qwen3.5-9B
+          windows:
+            backend: ollama
+            model: qwen3.5:9b
+            ollama:
+              model: qwen3.5:9b
+            transformers:
+              model: Qwen/Qwen3.5-9B
+          linux:
+            backend: ollama
+            model: qwen3.5:9b
+            vllm:
+              model: Qwen/Qwen3.5-9B
+            ollama:
+              model: qwen3.5:9b
+            transformers:
+              model: Qwen/Qwen3.5-9B
+      vram_min: 16384
+classification:
+  active_domain: illustration
+embedding:
+  text:
+    dimensions: 1024
+    enabled: true
+    instruction_prefix: ''
+    model: qwen3-embedding:0.6b
+  visual:
+    dimensions: 1152
+    model: google/siglip2-so400m-patch16-naflex
+runtime:
+  ollama_version: 0.15.2
+  pin_version: false
+search:
+  candidate:
+    fts_topn_cut: 2000
+    full_scan_threshold: 10000
+    hard_no_full_scan: true
+    no_cut_if_under: 200
+  diagnostic:
+    enabled: true
+  fts:
+    bm25_weights:
+      meta_strong: 3
+      meta_weak: 1.5
+      caption: 2.5
+      ai_tags: 2
+      classification: 1.5
+      spatial: 2.2
+  rrf:
+    k: 60
+    preset: balanced
+    presets:
+      balanced:
+        m: 0.3
+        s: 0.4
+        v: 0.3
+      fact:
+        m: 0.6
+        s: 0.25
+        v: 0.15
+      semantic:
+        m: 0.25
+        s: 0.55
+        v: 0.2
+      visual:
+        m: 0.15
+        s: 0.35
+        v: 0.5
+  scope_hint:
+    hard_max_files: 1000
+    soft_boost: 0.05
+  threshold:
+    text_vec: 0.15
+    visual: 0.05
+storage:
+  path_style: posix
+thumbnail:
+  format: png
+  index_composite_bg: '#FFFFFF'
+  keep_alpha: true
+  max_size: 1024
+vision:
+  keep_alive: 5m
+  max_retries: 2
+  model: qwen3.5:9b
+  ollama_host: http://localhost:11434
+  temperature: 0.1
+worker:
+  batch_capacity: 5
+  batch_target_seconds: 60    # Time-based batch sizing: batch = target / phase_time
+  heartbeat_interval: 30
+  poll_interval_seconds: 10
+  rest_after_batch_s: 0
+  verbose_log: false
+  temp_buffer:
+    max_files: 350       # ~30 GB buffer (avg 85 MB/PSD × 350)
+    download_workers: 3
+  throttle:
+    danger_wait_seconds: 30
+    thresholds:
+      gpu_memory:
+        warning: 70
+        danger: 85
+        critical: 95
+      cpu:
+        warning: 80
+        danger: 90
+        critical: 95
+      memory:
+        warning: 75
+        danger: 85
+        critical: 95
+      gpu_temp:
+        warning: 75
+        danger: 85
+        critical: 90
+download_cache:
+  enabled: true
+  path: output/download_cache
+  limit_gb: 50
+license:
+  enabled: false
+  verify_url: https://us-central1-imagine-b1e9c.cloudfunctions.net/verify
+  grace_days: 7

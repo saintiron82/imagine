@@ -39,7 +39,7 @@ def test_vv_wave_targets_only_stale_files(db):
 
     # fresh already has a current-version vv derivation
     record_derivation(db, fresh, "vv",
-                      vector_blob=struct.pack("<1152f", *([0.1] * 1152)))
+                      vector_blob=__import__("conftest").vv_blob(0.1))
     db.conn.commit()
 
     result = create_wave_job(db, "vv")

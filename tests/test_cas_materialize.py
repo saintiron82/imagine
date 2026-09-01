@@ -46,8 +46,10 @@ def _seed_task(db, file_path, content_hash=None):
     return jid, fid, cur.lastrowid
 
 
-VV_VEC = struct.pack("<1152f", *([0.5] * 1152))   # vec_files dimension
-MV_VEC = struct.pack("<1024f", *([0.5] * 1024))   # vec_text dimension
+from conftest import vv_blob, mv_blob
+
+VV_VEC = vv_blob()   # vec_files dimension (config-derived, not hardcoded)
+MV_VEC = mv_blob()   # vec_text dimension
 
 
 def _cache_all_phases(db, donor_file_id, caption="cached caption"):
