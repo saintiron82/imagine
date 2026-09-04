@@ -47,6 +47,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # tools/ (wemm_encoder)
 
 DEFAULT_IMAGE_DIR = Path("/Users/saintiron/imageDB/마캬베리즈무/실내소품")
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmarks" / "results"
@@ -703,8 +704,10 @@ def main():
     # Load encoder
     print(f"\n  Loading VV encoder...")
     t0 = time.perf_counter()
-    from backend.vector.siglip2_encoder import SigLIP2Encoder
-    encoder = SigLIP2Encoder(model_name=args.encoder_model)
+    # WeMM 계열이면 어댑터로, 아니면 기존 SigLIP2 경로로 (tools/wemm_encoder.py).
+    # 프로덕션 인코더는 그대로 두고 벤치에서만 갈아끼운다.
+    from wemm_encoder import build_encoder
+    encoder = build_encoder(args.encoder_model)
     # Warm up with first image
     _ = encoder.encode_image(images[0][0])
     timing["model_load_s"] = round(time.perf_counter() - t0, 1)

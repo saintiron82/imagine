@@ -1,0 +1,1233 @@
+{
+  "timestamp": "2026-09-01T17:47:05.155614",
+  "model_a": {
+    "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
+    "results": [
+      {
+        "image_type": "background",
+        "caption": "Bright living room with dining table, large windows, and mountain view",
+        "tags": [
+          "dining table",
+          "chandelier",
+          "curtains",
+          "windows",
+          "mountains",
+          "lake",
+          "artwork",
+          "chairs"
+        ],
+        "objects": [
+          {
+            "name": "dining table",
+            "ko_name": "식탁",
+            "locations": [
+              "center"
+            ],
+            "primary_location": "center",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "chairs",
+            "ko_name": "의자",
+            "locations": [
+              "center"
+            ],
+            "primary_location": "center",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "curtains",
+            "ko_name": "커튼",
+            "locations": [
+              "left"
+            ],
+            "primary_location": "left",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "artwork",
+            "ko_name": "화",
+            "locations": [
+              "right"
+            ],
+            "primary_location": "right",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"Bright living room with dining table, large windows, and mountain view\",\n  \"tags\": [\n    \"dining table\",\n    \"chandelier\",\n    \"curtains\",\n    \"windows\",\n    \"mountains\",\n    \"lake\",\n    \"artwork\",\n    \"chairs\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"dining table\",\n      \"ko_name\": \"식탁\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"chandelier\",\n      \"ko_name\": \"전구\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"chairs\",\n      \"ko_name\": \"의자\",\n      \"locations\": [\n        \"center\",\n        \"bottom-center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"curtains\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"left\",\n        \"center-left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"artwork\",\n      \"ko_name\": \"화\",\n      \"locations\": [\n        \"right\",\n        \"center-right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"windows\",\n      \"ko_name\": \"창문\",\n      \"locations\": [\n        \"center\",",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_01.psd",
+        "_time_s": 14.19
+      },
+      {
+        "image_type": "background",
+        "caption": "Dining room with lake view and indoor lighting",
+        "tags": [
+          "dining table",
+          "chandelier",
+          "curtains",
+          "window",
+          "mountain",
+          "lake",
+          "chairs",
+          "painting"
+        ],
+        "objects": [
+          {
+            "name": "dining table",
+            "ko_name": "식탁",
+            "locations": [
+              "center"
+            ],
+            "primary_location": "center",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "primary"
+          },
+          {
+            "name": "chairs",
+            "ko_name": "의자",
+            "locations": [
+              "center"
+            ],
+            "primary_location": "center",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "curtains",
+            "ko_name": "커튼",
+            "locations": [
+              "left",
+              "center",
+              "right"
+            ],
+            "primary_location": "left",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "painting",
+            "ko_name": "화",
+            "locations": [
+              "right"
+            ],
+            "primary_location": "right",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"Dining room with lake view and indoor lighting\",\n  \"tags\": [\n    \"dining table\",\n    \"chandelier\",\n    \"curtains\",\n    \"window\",\n    \"mountain\",\n    \"lake\",\n    \"chairs\",\n    \"painting\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"dining table\",\n      \"ko_name\": \"식탁\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"chandelier\",\n      \"ko_name\": \"천장등\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"chairs\",\n      \"ko_name\": \"의자\",\n      \"locations\": [\n        \"center\",\n        \"bottom-center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"curtains\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"left\",\n        \"center\",\n        \"right\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"painting\",\n      \"ko_name\": \"화\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"window\",\n      \"ko_name\": \"창문\",\n      \"locations\": [\n        \"center\",\n        \"left\",",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_02.psd",
+        "_time_s": 14.07
+      },
+      {
+        "image_type": "background",
+        "caption": "Modern open-concept kitchen and living room with lake view",
+        "tags": [
+          "kitchen",
+          "living room",
+          "television",
+          "sofa",
+          "stools",
+          "window",
+          "refrigerator",
+          "stove"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"Modern open-concept kitchen and living room with lake view\",\n  \"tags\": [\n    \"kitchen\",\n    \"living room\",\n    \"television\",\n    \"sofa\",\n    \"stools\",\n    \"window\",\n    \"refrigerator\",\n    \"stove\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"stool\",\n      \"ko_name\": \"바檯\",\n      \"locations\": [\n        \"bottom-left\",\n        \"bottom-center\",\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"bottom-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"television\",\n      \"ko_name\": \"텔레비전\",\n      \"locations\": [\n        \"center-right\"\n      ],\n      \"primary_location\": \"center-right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"sofa\",\n      \"ko_name\": \"소파\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"refrigerator\",\n      \"ko_name\": \"냉장고\",\n      \"locations\": [\n        \"center-left\"\n      ],\n      \"primary_location\": \"center-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"stove\",\n      \"ko_name\": \"조리기구\",\n      \"locations\": [\n        \"left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"curtain\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\":",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_03.psd",
+        "_time_s": 14.19
+      },
+      {
+        "image_type": "background",
+        "caption": "A pink house on stilts with a wooden pier and blue boat.",
+        "tags": [
+          "house",
+          "pier",
+          "boat",
+          "trees",
+          "sky",
+          "water",
+          "stairs",
+          "railing"
+        ],
+        "objects": [
+          {
+            "name": "boat",
+            "ko_name": "배",
+            "locations": [
+              "bottom-left"
+            ],
+            "primary_location": "bottom-left",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A pink house on stilts with a wooden pier and blue boat.\",\n  \"tags\": [\n    \"house\",\n    \"pier\",\n    \"boat\",\n    \"trees\",\n    \"sky\",\n    \"water\",\n    \"stairs\",\n    \"railing\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"boat\",\n      \"ko_name\": \"배\",\n      \"locations\": [\n        \"bottom-left\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"house\",\n      \"ko_name\": \"집\",\n      \"locations\": [\n        \"center\",\n        \"top-right\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"pier\",\n      \"ko_name\": \"교량\",\n      \"locations\": [\n        \"center\",\n        \"bottom\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"wide\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"stairs\",\n      \"ko_name\": \"계단\",\n      \"locations\": [\n        \"center-left\"\n      ],\n      \"primary_location\": \"center-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"railing\",\n      \"ko_name\": \"欄간\",\n      \"locations\": [\n        \"center\",\n        \"right\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"water\",\n      \"ko_name\": \"물\",\n      \"locations\": [\n        \"bottom\",\n        \"bottom-left\"\n      ],\n      \"primary_location\":",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_04.psd",
+        "_time_s": 14.29
+      },
+      {
+        "image_type": "background",
+        "caption": "A library interior with bookshelves filled with books and a wooden desk.",
+        "tags": [
+          "bookshelves",
+          "books",
+          "desk",
+          "library",
+          "wooden",
+          "shelves",
+          "interior"
+        ],
+        "objects": [
+          {
+            "name": "bookshelves",
+            "ko_name": "책장",
+            "locations": [
+              "top-left",
+              "top",
+              "top-right"
+            ],
+            "primary_location": "top-left",
+            "extent": "large",
+            "confidence": "high",
+            "salience": "primary"
+          },
+          {
+            "name": "books",
+            "ko_name": "책",
+            "locations": [
+              "top-left",
+              "top",
+              "top-right"
+            ],
+            "primary_location": "top-left",
+            "extent": "large",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "desk",
+            "ko_name": "책상",
+            "locations": [
+              "bottom-left",
+              "bottom"
+            ],
+            "primary_location": "bottom-left",
+            "extent": "large",
+            "confidence": "high",
+            "salience": "primary"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A library interior with bookshelves filled with books and a wooden desk.\",\n  \"tags\": [\n    \"bookshelves\",\n    \"books\",\n    \"desk\",\n    \"library\",\n    \"wooden\",\n    \"shelves\",\n    \"interior\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"bookshelves\",\n      \"ko_name\": \"책장\",\n      \"locations\": [\n        \"top-left\",\n        \"top\",\n        \"top-right\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"books\",\n      \"ko_name\": \"책\",\n      \"locations\": [\n        \"top-left\",\n        \"top\",\n        \"top-right\",\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"desk\",\n      \"ko_name\": \"책상\",\n      \"locations\": [\n        \"bottom-left\",\n        \"bottom\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"library\",\n      \"ko_name\": \"도서관\",\n      \"locations\": [\n        \"top-left\",\n        \"top\",\n        \"top-right\",\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"full\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"wall\",\n      \"ko_name\": \"벽\",\n      \"locations\": [\n        \"top\",\n        \"top-right\",\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"top\",\n      \"extent\": \"wide\",\n      \"confidence\": \"high\",\n      \"salience\": \"background",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_sanko.psd",
+        "_time_s": 14.19
+      },
+      {
+        "image_type": "background",
+        "caption": "A Japanese anime-style bedroom with desk, bed, and bookshelves.",
+        "tags": [
+          "bedroom",
+          "desk",
+          "chair",
+          "bookshelf",
+          "bed",
+          "door",
+          "window",
+          "ceiling fan"
+        ],
+        "objects": [
+          {
+            "name": "desk",
+            "ko_name": "책상",
+            "locations": [
+              "top-left"
+            ],
+            "primary_location": "top-left",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "chair",
+            "ko_name": "의자",
+            "locations": [
+              "top-left"
+            ],
+            "primary_location": "top-left",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "bookshelf",
+            "ko_name": "책장",
+            "locations": [
+              "top-right"
+            ],
+            "primary_location": "top-right",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "bed",
+            "ko_name": "침대",
+            "locations": [
+              "bottom-right"
+            ],
+            "primary_location": "bottom-right",
+            "extent": "large",
+            "confidence": "high",
+            "salience": "primary"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A Japanese anime-style bedroom with desk, bed, and bookshelves.\",\n  \"tags\": [\n    \"bedroom\",\n    \"desk\",\n    \"chair\",\n    \"bookshelf\",\n    \"bed\",\n    \"door\",\n    \"window\",\n    \"ceiling fan\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"desk\",\n      \"ko_name\": \"책상\",\n      \"locations\": [\n        \"top-left\",\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"chair\",\n      \"ko_name\": \"의자\",\n      \"locations\": [\n        \"top-left\",\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"bookshelf\",\n      \"ko_name\": \"책장\",\n      \"locations\": [\n        \"top-center\",\n        \"top-right\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"bed\",\n      \"ko_name\": \"침대\",\n      \"locations\": [\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"bottom-right\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"ceiling fan\",\n      \"ko_name\": \"천장 팬\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"wall\",\n      \"ko_name\": \"벽\",\n      \"locations\": [\n        \"top",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_toukanoheya.psd",
+        "_time_s": 14.24
+      },
+      {
+        "image_type": "background",
+        "caption": "A cozy room with purple walls, a dresser, and a window.",
+        "tags": [
+          "dresser",
+          "plant",
+          "mirror",
+          "curtains",
+          "window",
+          "hanging plant",
+          "wall",
+          "sky"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A cozy room with purple walls, a dresser, and a window.\",\n  \"tags\": [\n    \"dresser\",\n    \"plant\",\n    \"mirror\",\n    \"curtains\",\n    \"window\",\n    \"hanging plant\",\n    \"wall\",\n    \"sky\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"dresser\",\n      \"ko_name\": \"상자\",\n      \"locations\": [\n        \"bottom-left\",\n        \"bottom\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"plant\",\n      \"ko_name\": \"식물\",\n      \"locations\": [\n        \"bottom-left\",\n        \"center\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"mirror\",\n      \"ko_name\": \"거울\",\n      \"locations\": [\n        \"bottom-left\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"hanging plant\",\n      \"ko_name\": \"건물식물\",\n      \"locations\": [\n        \"top-left\",\n        \"top\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"curtains\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"right\",\n        \"top-right\",\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"wide\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"hearts\",\n      \"ko_name\": \"하트\",\n      \"locations\": [\n",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#03_199.psd",
+        "_time_s": 14.22
+      },
+      {
+        "image_type": "background",
+        "caption": "A colorful anime-style bedroom with a desk, bed, and storage shelves.",
+        "tags": [
+          "bedroom",
+          "desk",
+          "bed",
+          "rug",
+          "lamp",
+          "window",
+          "door",
+          "shelf"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A colorful anime-style bedroom with a desk, bed, and storage shelves.\",\n  \"tags\": [\n    \"bedroom\",\n    \"desk\",\n    \"bed\",\n    \"rug\",\n    \"lamp\",\n    \"window\",\n    \"door\",\n    \"shelf\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"bed\",\n      \"ko_name\": \"침대\",\n      \"locations\": [\n        \"bottom-left\",\n        \"bottom\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"desk\",\n      \"ko_name\": \"책상\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"rug\",\n      \"ko_name\": \"자석\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"lamp\",\n      \"ko_name\": \"등\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"shelf\",\n      \"ko_name\": \"책장\",\n      \"locations\": [\n        \"left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"picture frame\",\n      \"ko_name\": \"사진\",\n      \"locations\": [\n        \"left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#03_201.psd",
+        "_time_s": 14.23
+      },
+      {
+        "image_type": "background",
+        "caption": "A room interior with a window, blue curtain, and desk with items.",
+        "tags": [
+          "window",
+          "curtain",
+          "desk",
+          "lamp",
+          "picture frame",
+          "hanging basket",
+          "wall",
+          "light"
+        ],
+        "objects": [
+          {
+            "name": "curtain",
+            "ko_name": "커튼",
+            "locations": [
+              "left",
+              "top-left",
+              "top"
+            ],
+            "primary_location": "left",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "desk",
+            "ko_name": "책상",
+            "locations": [
+              "bottom-right",
+              "bottom"
+            ],
+            "primary_location": "bottom-right",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "primary"
+          },
+          {
+            "name": "lamp",
+            "ko_name": "등",
+            "locations": [
+              "bottom-right",
+              "right"
+            ],
+            "primary_location": "bottom-right",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "picture frame",
+            "ko_name": "사진 프레임",
+            "locations": [
+              "bottom-right",
+              "right"
+            ],
+            "primary_location": "bottom-right",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "hanging basket",
+            "ko_name": "걸린 바구니",
+            "locations": [
+              "right",
+              "top-right"
+            ],
+            "primary_location": "right",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A room interior with a window, blue curtain, and desk with items.\",\n  \"tags\": [\n    \"window\",\n    \"curtain\",\n    \"desk\",\n    \"lamp\",\n    \"picture frame\",\n    \"hanging basket\",\n    \"wall\",\n    \"light\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"curtain\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"left\",\n        \"top-left\",\n        \"top\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"desk\",\n      \"ko_name\": \"책상\",\n      \"locations\": [\n        \"bottom-right\",\n        \"bottom\"\n      ],\n      \"primary_location\": \"bottom-right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"lamp\",\n      \"ko_name\": \"등\",\n      \"locations\": [\n        \"bottom-right\",\n        \"right\"\n      ],\n      \"primary_location\": \"bottom-right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"picture frame\",\n      \"ko_name\": \"사진 프레임\",\n      \"locations\": [\n        \"bottom-right\",\n        \"right\"\n      ],\n      \"primary_location\": \"bottom-right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"hanging basket\",\n      \"ko_name\": \"걸린 바구니\",\n      \"locations\": [\n        \"right\",\n        \"top-right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"window\",\n      \"ko_name\": \"",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#03_202A_202C.psd",
+        "_time_s": 14.22
+      },
+      {
+        "image_type": "background",
+        "caption": "A cozy room interior with a desk, shelves, and decorative items.",
+        "tags": [
+          "desk",
+          "bookshelf",
+          "lamp",
+          "picture",
+          "teapot",
+          "rabbit",
+          "storage boxes"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A cozy room interior with a desk, shelves, and decorative items.\",\n  \"tags\": [\n    \"desk\",\n    \"bookshelf\",\n    \"lamp\",\n    \"picture\",\n    \"teapot\",\n    \"rabbit\",\n    \"storage boxes\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"desk\",\n      \"ko_name\": \"책상\",\n      \"locations\": [\n        \"bottom-center\"\n      ],\n      \"primary_location\": \"bottom-center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"bookshelf\",\n      \"ko_name\": \"책장\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"lamp\",\n      \"ko_name\": \"등\",\n      \"locations\": [\n        \"left\",\n        \"bottom-left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"picture\",\n      \"ko_name\": \"화\",\n      \"locations\": [\n        \"top-left\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"teapot\",\n      \"ko_name\": \"차전자\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"rabbit\",\n      \"ko_name\": \"토끼\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#03_203.psd",
+        "_time_s": 14.21
+      }
+    ],
+    "scores": [
+      {
+        "visual_alignment": 7.7,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 72.7
+      },
+      {
+        "visual_alignment": 10.6,
+        "caption_quality": 21,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 71.6
+      },
+      {
+        "visual_alignment": 12.8,
+        "caption_quality": 20,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 72.8
+      },
+      {
+        "visual_alignment": 12.2,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 77.2
+      },
+      {
+        "visual_alignment": 13.0,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 76.0
+      },
+      {
+        "visual_alignment": 14.0,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 79.0
+      },
+      {
+        "visual_alignment": 19.5,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 84.5
+      },
+      {
+        "visual_alignment": 15.3,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 80.3
+      },
+      {
+        "visual_alignment": 18.1,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 83.1
+      },
+      {
+        "visual_alignment": 9.6,
+        "caption_quality": 21,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 70.6
+      }
+    ]
+  },
+  "model_b": {
+    "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+    "results": [
+      {
+        "image_type": "background",
+        "caption": "A bright living room with a view of mountains and water through large windows.",
+        "tags": [
+          "dining table",
+          "chairs",
+          "windows",
+          "curtains",
+          "chandelier",
+          "mountains",
+          "water",
+          "painting"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A bright living room with a view of mountains and water through large windows.\",\n  \"tags\": [\n    \"dining table\",\n    \"chairs\",\n    \"windows\",\n    \"curtains\",\n    \"chandelier\",\n    \"mountains\",\n    \"water\",\n    \"painting\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"dining table\",\n      \"ko_name\": \"식탁\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"chairs\",\n      \"ko_name\": \"의자\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"chandelier\",\n      \"ko_name\": \"조명\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"curtains\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"left\",\n        \"center-left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"painting\",\n      \"ko_name\": \"화\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"text overlay\",\n      \"ko_name\": \"텍스트 오버레이\",\n      \"locations\": [\n        \"bottom\"\n      ],\n      \"primary_location\": \"bottom\",\n      \"extent\":",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_01.psd",
+        "_time_s": 25.59
+      },
+      {
+        "image_type": "background",
+        "caption": "A dimly lit living room with a view of a lake and mountains at dusk.",
+        "tags": [
+          "dining table",
+          "chairs",
+          "curtains",
+          "window",
+          "chandelier",
+          "painting",
+          "floor",
+          "mountains"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A dimly lit living room with a view of a lake and mountains at dusk.\",\n  \"tags\": [\n    \"dining table\",\n    \"chairs\",\n    \"curtains\",\n    \"window\",\n    \"chandelier\",\n    \"painting\",\n    \"floor\",\n    \"mountains\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"dining table\",\n      \"ko_name\": \"식탁\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"chairs\",\n      \"ko_name\": \"의자\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"curtains\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"left\",\n        \"center\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"chandelier\",\n      \"ko_name\": \"조명\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"painting\",\n      \"ko_name\": \"화\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"background\"\n    },\n    {\n      \"name\": \"text overlay\",\n      \"ko_name\": \"텍스트 오버레이\",\n      \"locations\": [\n        \"bottom\"\n      ],\n      \"primary_location\": \"bottom\",\n      \"extent",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_02.psd",
+        "_time_s": 25.38
+      },
+      {
+        "image_type": "background",
+        "caption": "Modern open-plan kitchen and living room with large window view.",
+        "tags": [
+          "kitchen",
+          "living room",
+          "island",
+          "stools",
+          "refrigerator",
+          "television",
+          "curtains",
+          "mountain view"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"Modern open-plan kitchen and living room with large window view.\",\n  \"tags\": [\n    \"kitchen\",\n    \"living room\",\n    \"island\",\n    \"stools\",\n    \"refrigerator\",\n    \"television\",\n    \"curtains\",\n    \"mountain view\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"refrigerator\",\n      \"ko_name\": \"냉장고\",\n      \"locations\": [\n        \"top-left\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"television\",\n      \"ko_name\": \"텔레비전\",\n      \"locations\": [\n        \"top-right\"\n      ],\n      \"primary_location\": \"top-right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"stools\",\n      \"ko_name\": \"스툴\",\n      \"locations\": [\n        \"bottom-center\"\n      ],\n      \"primary_location\": \"bottom-center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"curtains\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"top-right\"\n      ],\n      \"primary_location\": \"top-right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"mountain view\",\n      \"ko_name\": \"산 경치\",\n      \"locations\": [\n        \"top-right\"\n      ],\n      \"primary_location\": \"top-right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"background\"\n    },\n    {\n      \"name\": \"text overlay\",\n      \"ko_name\": \"텍스트 오버레이\",\n      \"locations\": [\n        \"bottom-left\"\n      ],\n      \"primary_location\":",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_03.psd",
+        "_time_s": 25.57
+      },
+      {
+        "image_type": "background",
+        "caption": "A pink lakeside house with a wooden dock and a blue boat.",
+        "tags": [
+          "house",
+          "dock",
+          "boat",
+          "trees",
+          "water",
+          "sky",
+          "stairs",
+          "porch"
+        ],
+        "objects": [
+          {
+            "name": "boat",
+            "ko_name": "배",
+            "locations": [
+              "bottom-left"
+            ],
+            "primary_location": "bottom-left",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A pink lakeside house with a wooden dock and a blue boat.\",\n  \"tags\": [\n    \"house\",\n    \"dock\",\n    \"boat\",\n    \"trees\",\n    \"water\",\n    \"sky\",\n    \"stairs\",\n    \"porch\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"boat\",\n      \"ko_name\": \"배\",\n      \"locations\": [\n        \"bottom-left\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"house\",\n      \"ko_name\": \"집\",\n      \"locations\": [\n        \"top-right\",\n        \"top\",\n        \"center\"\n      ],\n      \"primary_location\": \"top-right\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"dock\",\n      \"ko_name\": \"도크\",\n      \"locations\": [\n        \"bottom\",\n        \"center\",\n        \"top-left\"\n      ],\n      \"primary_location\": \"bottom\",\n      \"extent\": \"wide\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"stairs\",\n      \"ko_name\": \"계단\",\n      \"locations\": [\n        \"top-left\",\n        \"center\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"porch\",\n      \"ko_name\": \"현관\",\n      \"locations\": [\n        \"top-right\",\n        \"center\"\n      ],\n      \"primary_location\": \"top-right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"trees\",\n      \"ko_name\": \"나무\",\n      \"locations\": [\n",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_04.psd",
+        "_time_s": 25.87
+      },
+      {
+        "image_type": "background",
+        "caption": "Anime-style library interior with bookshelves and a wooden table.",
+        "tags": [
+          "bookshelf",
+          "table",
+          "books",
+          "window",
+          "anime",
+          "library",
+          "wood",
+          "indoor"
+        ],
+        "objects": [
+          {
+            "name": "books",
+            "ko_name": "책",
+            "locations": [
+              "top-left",
+              "top",
+              "top-right"
+            ],
+            "primary_location": "top-left",
+            "extent": "large",
+            "confidence": "high",
+            "salience": "secondary"
+          }
+        ],
+        "structural_objects": [
+          {
+            "name": "bookshelf",
+            "ko_name": "책장",
+            "locations": [
+              "top-left",
+              "top",
+              "top-right"
+            ],
+            "primary_location": "top-left",
+            "extent": "wide",
+            "confidence": "high",
+            "salience": "primary"
+          },
+          {
+            "name": "table",
+            "ko_name": "탁자",
+            "locations": [
+              "bottom-left",
+              "bottom",
+              "bottom-right"
+            ],
+            "primary_location": "bottom-left",
+            "extent": "wide",
+            "confidence": "high",
+            "salience": "primary"
+          },
+          {
+            "name": "window",
+            "ko_name": "창문",
+            "locations": [
+              "top-right",
+              "right",
+              "bottom-right"
+            ],
+            "primary_location": "top-right",
+            "extent": "large",
+            "confidence": "high",
+            "salience": "primary"
+          }
+        ],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"Anime-style library interior with bookshelves and a wooden table.\",\n  \"tags\": [\n    \"bookshelf\",\n    \"table\",\n    \"books\",\n    \"window\",\n    \"anime\",\n    \"library\",\n    \"wood\",\n    \"indoor\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"books\",\n      \"ko_name\": \"책\",\n      \"locations\": [\n        \"top-left\",\n        \"top\",\n        \"top-right\",\n        \"left\",\n        \"center\",\n        \"right\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"bookshelf\",\n      \"ko_name\": \"책장\",\n      \"locations\": [\n        \"top-left\",\n        \"top\",\n        \"top-right\",\n        \"left\",\n        \"center\",\n        \"right\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"wide\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"table\",\n      \"ko_name\": \"탁자\",\n      \"locations\": [\n        \"bottom-left\",\n        \"bottom\",\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"wide\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"window\",\n      \"ko_name\": \"창문\",\n      \"locations\": [\n        \"top-right\",\n        \"right\",\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"top-right\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    }\n  ],\n  \"depth_layers\": [\n    {\n      \"name\": \"table\",\n      \"ko_name\": \"탁자\",\n      \"layer\": \"foreground\",\n      \"confidence\": \"high\"\n    },\n    {\n     ",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_sanko.psd",
+        "_time_s": 25.64
+      },
+      {
+        "image_type": "background",
+        "caption": "Two anime-style bedroom scenes showing a desk and a bed.",
+        "tags": [
+          "bed",
+          "desk",
+          "closet",
+          "door",
+          "bookshelf",
+          "lamp",
+          "chair",
+          "monitor"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"Two anime-style bedroom scenes showing a desk and a bed.\",\n  \"tags\": [\n    \"bed\",\n    \"desk\",\n    \"closet\",\n    \"door\",\n    \"bookshelf\",\n    \"lamp\",\n    \"chair\",\n    \"monitor\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"desk\",\n      \"ko_name\": \"책상\",\n      \"locations\": [\n        \"top-center\",\n        \"top-left\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"chair\",\n      \"ko_name\": \"의자\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"monitor\",\n      \"ko_name\": \"모니터\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"bookshelf\",\n      \"ko_name\": \"책장\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"bed\",\n      \"ko_name\": \"침대\",\n      \"locations\": [\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"bottom-right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"lamp\",\n      \"ko_name\": \"등\",\n      \"locations\": [\n        \"top-center\"\n      ],\n      \"primary_location\": \"top-center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#02_toukanoheya.psd",
+        "_time_s": 25.69
+      },
+      {
+        "image_type": "background",
+        "caption": "A bright room with a dresser, hanging plant, and a window with blue curtains.",
+        "tags": [
+          "dresser",
+          "mirror",
+          "plant",
+          "curtains",
+          "window",
+          "wall",
+          "hanging plant",
+          "sky"
+        ],
+        "objects": [
+          {
+            "name": "dresser",
+            "ko_name": "장의",
+            "locations": [
+              "bottom-left"
+            ],
+            "primary_location": "bottom-left",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "primary"
+          },
+          {
+            "name": "mirror",
+            "ko_name": "거울",
+            "locations": [
+              "bottom-left"
+            ],
+            "primary_location": "bottom-left",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "plant",
+            "ko_name": "식물",
+            "locations": [
+              "bottom-left"
+            ],
+            "primary_location": "bottom-left",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "hanging plant",
+            "ko_name": "매달린 식물",
+            "locations": [
+              "top-left"
+            ],
+            "primary_location": "top-left",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "curtains",
+            "ko_name": "커튼",
+            "locations": [
+              "right",
+              "top-right"
+            ],
+            "primary_location": "right",
+            "extent": "large",
+            "confidence": "high",
+            "salience": "primary"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A bright room with a dresser, hanging plant, and a window with blue curtains.\",\n  \"tags\": [\n    \"dresser\",\n    \"mirror\",\n    \"plant\",\n    \"curtains\",\n    \"window\",\n    \"wall\",\n    \"hanging plant\",\n    \"sky\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"dresser\",\n      \"ko_name\": \"장의\",\n      \"locations\": [\n        \"bottom-left\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"mirror\",\n      \"ko_name\": \"거울\",\n      \"locations\": [\n        \"bottom-left\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"plant\",\n      \"ko_name\": \"식물\",\n      \"locations\": [\n        \"bottom-left\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"hanging plant\",\n      \"ko_name\": \"매달린 식물\",\n      \"locations\": [\n        \"top-left\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"curtains\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"right\",\n        \"top-right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"large\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"wall\",\n      \"ko_name\": \"벽\",\n      \"locations\": [\n        \"left\",\n        \"top-left\",",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#03_199.psd",
+        "_time_s": 25.67
+      },
+      {
+        "image_type": "background",
+        "caption": "A cozy anime-style bedroom with a desk, bed, and bookshelf.",
+        "tags": [
+          "bed",
+          "desk",
+          "bookshelf",
+          "rug",
+          "window",
+          "lamp",
+          "chair",
+          "wardrobe"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A cozy anime-style bedroom with a desk, bed, and bookshelf.\",\n  \"tags\": [\n    \"bed\",\n    \"desk\",\n    \"bookshelf\",\n    \"rug\",\n    \"window\",\n    \"lamp\",\n    \"chair\",\n    \"wardrobe\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"bed\",\n      \"ko_name\": \"침대\",\n      \"locations\": [\n        \"bottom-left\",\n        \"bottom\",\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"bottom-left\",\n      \"extent\": \"wide\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"desk\",\n      \"ko_name\": \"책상\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"lamp\",\n      \"ko_name\": \"등\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"chair\",\n      \"ko_name\": \"의자\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"rug\",\n      \"ko_name\": \"러그\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"table\",\n      \"ko_name\": \"탁자\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#03_201.psd",
+        "_time_s": 25.69
+      },
+      {
+        "image_type": "background",
+        "caption": "A room interior with a window, desk, and hanging basket.",
+        "tags": [
+          "window",
+          "curtain",
+          "desk",
+          "lamp",
+          "basket",
+          "wall",
+          "picture frame",
+          "handle"
+        ],
+        "objects": [
+          {
+            "name": "basket",
+            "ko_name": "가방",
+            "locations": [
+              "top-right"
+            ],
+            "primary_location": "top-right",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "lamp",
+            "ko_name": "등",
+            "locations": [
+              "bottom-right"
+            ],
+            "primary_location": "bottom-right",
+            "extent": "medium",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "picture frame",
+            "ko_name": "사진 프레임",
+            "locations": [
+              "bottom-right"
+            ],
+            "primary_location": "bottom-right",
+            "extent": "small",
+            "confidence": "high",
+            "salience": "secondary"
+          },
+          {
+            "name": "handle",
+            "ko_name": "손잡이",
+            "locations": [
+              "left"
+            ],
+            "primary_location": "left",
+            "extent": "small",
+            "confidence": "medium",
+            "salience": "background"
+          }
+        ],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A room interior with a window, desk, and hanging basket.\",\n  \"tags\": [\n    \"window\",\n    \"curtain\",\n    \"desk\",\n    \"lamp\",\n    \"basket\",\n    \"wall\",\n    \"picture frame\",\n    \"handle\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"basket\",\n      \"ko_name\": \"가방\",\n      \"locations\": [\n        \"top-right\"\n      ],\n      \"primary_location\": \"top-right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"lamp\",\n      \"ko_name\": \"등\",\n      \"locations\": [\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"bottom-right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"picture frame\",\n      \"ko_name\": \"사진 프레임\",\n      \"locations\": [\n        \"bottom-right\"\n      ],\n      \"primary_location\": \"bottom-right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"handle\",\n      \"ko_name\": \"손잡이\",\n      \"locations\": [\n        \"left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"small\",\n      \"confidence\": \"medium\",\n      \"salience\": \"background\"\n    }\n  ],\n  \"structural_objects\": [\n    {\n      \"name\": \"window\",\n      \"ko_name\": \"창문\",\n      \"locations\": [\n        \"left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"primary\"\n    },\n    {\n      \"name\": \"curtain\",\n      \"ko_name\": \"커튼\",\n      \"locations\": [\n        \"left\",\n        \"top-left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#03_202A_202C.psd",
+        "_time_s": 25.96
+      },
+      {
+        "image_type": "background",
+        "caption": "A cozy, colorful anime-style bedroom with a desk, shelves, and a bed.",
+        "tags": [
+          "bed",
+          "desk",
+          "shelf",
+          "lamp",
+          "toy",
+          "painting",
+          "mushroom",
+          "cabinet"
+        ],
+        "objects": [],
+        "structural_objects": [],
+        "depth_layers": [],
+        "relations": [],
+        "art_style": "other",
+        "color_palette": "neutral",
+        "_parse_diagnostics": {
+          "status": "fallback",
+          "repaired": true
+        },
+        "_vlm_raw": "{\n  \"caption\": \"A cozy, colorful anime-style bedroom with a desk, shelves, and a bed.\",\n  \"tags\": [\n    \"bed\",\n    \"desk\",\n    \"shelf\",\n    \"lamp\",\n    \"toy\",\n    \"painting\",\n    \"mushroom\",\n    \"cabinet\"\n  ],\n  \"objects\": [\n    {\n      \"name\": \"lamp\",\n      \"ko_name\": \"등\",\n      \"locations\": [\n        \"left\"\n      ],\n      \"primary_location\": \"left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"painting\",\n      \"ko_name\": \"화\",\n      \"locations\": [\n        \"top-left\"\n      ],\n      \"primary_location\": \"top-left\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"toy\",\n      \"ko_name\": \"인형\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"mushroom\",\n      \"ko_name\": \"버섯\",\n      \"locations\": [\n        \"top-right\"\n      ],\n      \"primary_location\": \"top-right\",\n      \"extent\": \"small\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"cabinet\",\n      \"ko_name\": \"장롱\",\n      \"locations\": [\n        \"center\"\n      ],\n      \"primary_location\": \"center\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"salience\": \"secondary\"\n    },\n    {\n      \"name\": \"box\",\n      \"ko_name\": \"상자\",\n      \"locations\": [\n        \"right\"\n      ],\n      \"primary_location\": \"right\",\n      \"extent\": \"medium\",\n      \"confidence\": \"high\",\n      \"",
+        "_vlm_provenance": {
+          "stage": "stage2",
+          "model": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "adapter": "MLXVisionAdapter",
+          "prompt_version": "spatial_v2"
+        },
+        "_file": "#03_203.psd",
+        "_time_s": 26.19
+      }
+    ],
+    "scores": [
+      {
+        "visual_alignment": 11.7,
+        "caption_quality": 21,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 72.7
+      },
+      {
+        "visual_alignment": 13.2,
+        "caption_quality": 21,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 74.2
+      },
+      {
+        "visual_alignment": 7.8,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 70.8
+      },
+      {
+        "visual_alignment": 14.2,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 79.2
+      },
+      {
+        "visual_alignment": 13.3,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 78.3
+      },
+      {
+        "visual_alignment": 18.1,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 83.1
+      },
+      {
+        "visual_alignment": 20.6,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 85.6
+      },
+      {
+        "visual_alignment": 14.2,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 79.2
+      },
+      {
+        "visual_alignment": 15.1,
+        "caption_quality": 23,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 78.1
+      },
+      {
+        "visual_alignment": 14.7,
+        "caption_quality": 25,
+        "tag_quality": 25,
+        "structure": 15.0,
+        "total": 79.7
+      }
+    ]
+  }
+}

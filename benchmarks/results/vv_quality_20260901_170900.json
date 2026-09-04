@@ -1,0 +1,423 @@
+{
+  "timestamp": "2026-09-01T17:09:00.315854",
+  "encoder": "google/siglip2-so400m-patch14-384",
+  "vlm": "mlx-community/Qwen3.5-9B-MLX-4bit",
+  "image_count": 20,
+  "total_score": 84.69999999999999,
+  "max_score": 100,
+  "self_consistency": {
+    "score": 32.8,
+    "overall_mean_cosine": 0.9337,
+    "per_augmentation": {
+      "center_crop_70": 0.8934,
+      "center_crop_50": 0.8494,
+      "h_flip": 0.9842,
+      "brighten_1.4x": 0.9773,
+      "darken_0.6x": 0.9898,
+      "blur_r3": 0.8407,
+      "resize_50pct": 0.9379,
+      "color_jitter": 0.9969
+    }
+  },
+  "retrieval_at_k": {
+    "score": 23.0,
+    "mean_precision": {
+      "P@3": 0.7111,
+      "P@5": 0.6,
+      "P@10": 0.8089
+    },
+    "group_distribution": {
+      "#03": 7,
+      "#02": 6,
+      "#305": 2,
+      "#06": 1,
+      "#13": 1,
+      "#14": 1,
+      "#1": 1,
+      "#302": 1
+    },
+    "images_evaluated": 15,
+    "images_skipped_singleton": 5,
+    "per_image": [
+      {
+        "file": "#02_01.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.8,
+          "P@10": 0.8
+        }
+      },
+      {
+        "file": "#02_02.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.8,
+          "P@10": 0.8
+        }
+      },
+      {
+        "file": "#02_03.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.8,
+          "P@10": 0.8
+        }
+      },
+      {
+        "file": "#02_04.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.8,
+          "P@10": 0.8
+        }
+      },
+      {
+        "file": "#02_sanko.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 0.2
+        }
+      },
+      {
+        "file": "#02_toukanoheya.psd",
+        "group": "#02",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 0.4
+        }
+      },
+      {
+        "file": "#03_199.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.6,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "#03_201.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.8,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "#03_202A_202C.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.6,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "#03_203.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 0.8,
+          "P@10": 0.833
+        }
+      },
+      {
+        "file": "#03_207.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.8,
+          "P@10": 0.833
+        }
+      },
+      {
+        "file": "#03_궋궶귟궻됄_뙷듫볙 - 복사본.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.6,
+          "P@10": 0.833
+        }
+      },
+      {
+        "file": "#03_궋궶귟궻됄_뙷듫볙.psd",
+        "group": "#03",
+        "precision": {
+          "P@3": 0.667,
+          "P@5": 0.6,
+          "P@10": 0.833
+        }
+      },
+      {
+        "file": "#305_BG_071_WUNCLER PLAZA SECURITY DESK..psd",
+        "group": "#305",
+        "precision": {
+          "P@3": 1.0,
+          "P@5": 1.0,
+          "P@10": 1.0
+        }
+      },
+      {
+        "file": "#305_BG_299_INT. CTA HQ-HALLWAY-(1225).psd",
+        "group": "#305",
+        "precision": {
+          "P@3": 0.0,
+          "P@5": 0.0,
+          "P@10": 1.0
+        }
+      }
+    ]
+  },
+  "timing": {
+    "load_s": 3.9,
+    "model_load_s": 8.8,
+    "sc_s": 33.3,
+    "ret_s": 3.7,
+    "cm_mc_s": 507.2,
+    "cm_s": 4.3
+  },
+  "system_memory": {
+    "rss_mb": 840.8,
+    "mps_mb": 2166.8
+  },
+  "cross_modal_recall": {
+    "score": 28.9,
+    "mean_recall": {
+      "R@1": 0.8,
+      "R@3": 0.95,
+      "R@5": 0.95
+    },
+    "mean_rank": 1.4,
+    "median_rank": 1.0,
+    "per_image": [
+      {
+        "file": "#02_01.psd",
+        "query": "living room, windows, table, chairs, curtains, chandelier, mountains, lake",
+        "rank": 1,
+        "cosine": 0.1482,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#02_02.psd",
+        "query": "living room, windows, table, chairs, chandelier, curtains, mountains, lake",
+        "rank": 2,
+        "cosine": 0.137,
+        "recall": {
+          "R@1": 0.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#02_03.psd",
+        "query": "kitchen, living room, island, stools, refrigerator, television, curtains, lake",
+        "rank": 1,
+        "cosine": 0.1209,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#02_04.psd",
+        "query": "house, dock, boat, trees, water, stairs, sky, porch",
+        "rank": 1,
+        "cosine": 0.1249,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#02_sanko.psd",
+        "query": "bookshelf, table, window, books, anime, indoor, wood, sky",
+        "rank": 1,
+        "cosine": 0.1557,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#02_toukanoheya.psd",
+        "query": "bedroom, desk, chair, bookshelf, bed, tv, closet, ceiling light",
+        "rank": 1,
+        "cosine": 0.1357,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#03_199.psd",
+        "query": "dresser, mirror, plant, curtains, window, wall, hanging plant, sky",
+        "rank": 1,
+        "cosine": 0.2042,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#03_201.psd",
+        "query": "bed, desk, bookshelf, rug, window, closet, lamp, pillow",
+        "rank": 6,
+        "cosine": 0.0976,
+        "recall": {
+          "R@1": 0.0,
+          "R@3": 0.0,
+          "R@5": 0.0
+        }
+      },
+      {
+        "file": "#03_202A_202C.psd",
+        "query": "window, curtain, desk, lamp, mirror, basket, wall, frame",
+        "rank": 1,
+        "cosine": 0.1912,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#03_203.psd",
+        "query": "desk, bookshelf, lamp, rabbit, teapot, books, wall, picture",
+        "rank": 2,
+        "cosine": 0.161,
+        "recall": {
+          "R@1": 0.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#03_207.psd",
+        "query": "cabinet, shelf, teapot, plush toy, books, boxes, basket, toy",
+        "rank": 1,
+        "cosine": 0.1983,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#03_궋궶귟궻됄_뙷듫볙 - 복사본.psd",
+        "query": "entrance, staircase, door, cabinet, umbrella, flower, railing, light",
+        "rank": 2,
+        "cosine": 0.1515,
+        "recall": {
+          "R@1": 0.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#03_궋궶귟궻됄_뙷듫볙.psd",
+        "query": "entrance, staircase, door, cabinet, umbrella, flower, railing, light",
+        "rank": 1,
+        "cosine": 0.1515,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#06_006.psd",
+        "query": "kitchen, wooden floor, shelves, table, window, cabinet, utensils, plates",
+        "rank": 1,
+        "cosine": 0.1329,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#13_212~.psd",
+        "query": "blue walls, green curtains, chandelier, bookshelves, sofa, windows, rug, table",
+        "rank": 1,
+        "cosine": 0.1227,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#14_05.psd",
+        "query": "hotel lobby, tables, chairs, palm trees, windows, ceiling lights, plants, floor",
+        "rank": 1,
+        "cosine": 0.1509,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#1_030.psd",
+        "query": "corkboard, frame, stars, bubbles, green background",
+        "rank": 1,
+        "cosine": 0.2405,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#302_SC271_BG_INT.STEVE’S HOUSE(VIEW TO FOYER)(09.18).psd",
+        "query": "sofa, coffee table, lamp, door, vase, dining table, chair, picture",
+        "rank": 1,
+        "cosine": 0.1261,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#305_BG_071_WUNCLER PLAZA SECURITY DESK..psd",
+        "query": "desk, office chair, monitors, keyboard, dark wood, control panel",
+        "rank": 1,
+        "cosine": 0.1421,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      },
+      {
+        "file": "#305_BG_299_INT. CTA HQ-HALLWAY-(1225).psd",
+        "query": "hallway, doors, ceiling, floor, lights, wall, panel",
+        "rank": 1,
+        "cosine": 0.1261,
+        "recall": {
+          "R@1": 1.0,
+          "R@3": 1.0,
+          "R@5": 1.0
+        }
+      }
+    ]
+  }
+}

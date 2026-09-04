@@ -1,0 +1,32 @@
+# A/B: Qwen3.5-4B (standard 티어 VLM) vs Qwen3.5-9B (pro 티어 VLM)
+#
+# 티어 간 실질 차이를 MC 품질 축에서 본다. ultra 는 VLM 이 pro 와 동일하므로
+# 이 프로젝트에서 VLM 이 실제로 갈리는 지점은 standard ↔ pro 뿐이다.
+#
+# 조건은 2026-04-04 의 gemma4-vs-qwen35 실행(ab_gemma4_vs_qwen35.yaml)과
+# 맞췄다 — count/max_edge/concise/temperature 동일. 따라서 model_b(9B)의 점수는
+# 그때 기록된 78.5/100 과 비교되는 하네스 정합성 대조군 역할도 한다.
+#
+# 4월 실행과 달리 per-model 튜닝을 두지 않았다. 같은 Qwen3.5 계열이라
+# 프롬프트 조건을 동일하게 두고 파라미터 규모만 변수로 남긴다.
+#
+# Usage: python tools/bench_mc_quality.py --profile benchmarks/profiles/ab_qwen35_4b_vs_9b.yaml
+
+name: "A/B: Qwen3.5-4B (standard) vs Qwen3.5-9B (pro)"
+description: "티어별 VLM MC 품질 — 프롬프트 조건 동일, 모델 크기만 변수"
+
+ab:
+  - "mlx-community/Qwen3.5-4B-MLX-4bit"
+  - "mlx-community/Qwen3.5-9B-MLX-4bit"
+count: 10
+max_edge: 768
+
+model_a_opts:
+  concise: true
+  max_tokens: 512
+  temperature: 0.1
+
+model_b_opts:
+  concise: true
+  max_tokens: 512
+  temperature: 0.1
