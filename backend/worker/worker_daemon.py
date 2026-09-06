@@ -128,7 +128,7 @@ try:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 except ValueError:
-    # signal only works in main thread — skip when imported from embedded worker
+    # signal only works in main thread — skip when imported as a library
     pass
 
 
@@ -162,8 +162,8 @@ class WorkerDaemon:
     """Headless worker that processes jobs from the Imagine server.
 
     Supports two transport modes:
-    - transport=None (default): HTTP-based, for external workers
-    - transport=LocalTransport: direct DB calls, for embedded worker
+    - transport=None (default): direct HTTP to the server
+    - transport=RelayTransport: WebSocket via the AWS control relay
     """
 
     def __init__(self, transport=None, origin: str = "headless", launcher: str = "cli"):
@@ -194,9 +194,13 @@ class WorkerDaemon:
         self.session_id = None
         self.processing_mode = "idle"  # "mc" | "vv" | "mv" | "parse" | "idle" — set by server on connect/heartbeat
         self._total_completed = 0
+        self._report_rejected = 0   # completions the server refused (loud, not silent)
         self._total_failed = 0
         self._phase_counts = {"mc": 0, "vv": 0, "mv": 0}
-        self._last_claim_diag = None  # Last empty-claim diagnostic from server
+        # Batched completion reports (one HTTP per ~10 results, not per file)
+        self._report_buffer = []
+        self._report_lock = threading.Lock()
+        self._batch_report_supported = True  # flips off on 404 (older server)
         self._batch_throughput = 0.0  # files/min from last completed batch
         self._phase_throughput = {"mc": 0.0, "vv": 0.0, "mv": 0.0}  # per-phase speed (persists across mode switches)
         self._current_job_id = None
@@ -244,7 +248,7 @@ class WorkerDaemon:
     # ── Dual-Thread Start/Stop ────────────────────────────────
 
     def start(self):
-        """Start IO + Analysis threads. Both embedded and external use this."""
+        """Start IO + Analysis threads."""
         self._shutdown = False
         self._io_thread = threading.Thread(target=self._io_loop, daemon=True, name="worker-io")
         self._analysis_thread = threading.Thread(target=self._analysis_loop, daemon=True, name="worker-analysis")
@@ -275,11 +279,6 @@ class WorkerDaemon:
     def _io_loop(self):
         """IO thread: heartbeat, result upload, batch prefetch."""
         heartbeat_interval = 5
-        # Embedded worker holds a direct DB handle via LocalTransport; any
-        # leaked implicit transaction would wedge the entire process with
-        # "database is locked". Every iteration must end with an explicit
-        # rollback as a safety net (CLAUDE.md SQLite rule).
-        local_db = getattr(self.transport, "db", None)
         while not self._shutdown:
             try:
                 # 1. Heartbeat
@@ -312,12 +311,6 @@ class WorkerDaemon:
 
             except Exception as e:
                 logger.warning(f"[IO] loop error: {e}")
-            finally:
-                if local_db is not None:
-                    try:
-                        local_db.conn.rollback()
-                    except Exception:
-                        pass
 
             time.sleep(heartbeat_interval)
 
@@ -350,13 +343,6 @@ class WorkerDaemon:
             if success:
                 self._total_completed += 1
         except Exception as e:
-            # Release any implicit transaction before bubbling back to _io_loop.
-            local_db = getattr(self.transport, "db", None)
-            if local_db is not None:
-                try:
-                    local_db.conn.rollback()
-                except Exception:
-                    pass
             logger.warning(f"[IO] save {rtype} failed for file {file_id}: {e}")
 
     def _analysis_loop(self):
@@ -433,8 +419,7 @@ class WorkerDaemon:
     def set_tokens(self, access_token: str, refresh_token: str = None) -> bool:
         """Inject existing JWT tokens (skip login, reuse session from Electron).
 
-        Empty token is allowed only for non-HTTP transports such as the
-        embedded LocalTransport path.
+        Empty token is allowed only for non-HTTP transports (e.g. relay).
         """
         self.access_token = access_token or ""
         self.refresh_token = refresh_token
@@ -475,10 +460,10 @@ class WorkerDaemon:
 
     def _authed_request(self, method: str, url: str, **kwargs):
         """Make request with automatic token refresh on 401.
-        Embedded worker (transport set) should not call this — log and skip.
+        Custom transports (relay) should not call this — log and skip.
         """
         if self.transport:
-            logger.debug(f"[SKIP-HTTP] {method.upper()} {url} (using LocalTransport)")
+            logger.debug(f"[SKIP-HTTP] {method.upper()} {url} (custom transport)")
             # Return a fake 200 response to avoid crashes in HTTP-only call sites.
             import types
             fake = types.SimpleNamespace(status_code=200, text='{}', json=lambda: {})
@@ -495,6 +480,14 @@ class WorkerDaemon:
                 resp = getattr(self.session, method)(url, **kwargs)
             else:
                 logger.error("[WORKER-AUTH] Refresh FAILED — giving up")
+        # DB write-lock contention → server returns 503 (retryable). Brief backoff
+        # retry so the worker survives write-contention bursts instead of treating
+        # a transient lock as a heartbeat/claim failure (which marks it offline).
+        attempts = 0
+        while resp.status_code == 503 and attempts < 3:
+            attempts += 1
+            time.sleep(0.3 * attempts)
+            resp = getattr(self.session, method)(url, **kwargs)
         return resp
 
     # ── Session Management ─────────────────────────────────────
@@ -575,9 +568,8 @@ class WorkerDaemon:
             )
             if resp.status_code == 200:
                 data = resp.json()
-                # Embedded worker (__builtin__) decides its own batch size per-phase.
-                # Only external workers take batch_hint from server.
-                if data.get("batch_hint") and self.worker_name != "__builtin__":
+                # Batch size follows the server's hint (scheduler-decided).
+                if data.get("batch_hint"):
                     old_cap = self.batch_capacity
                     self.batch_capacity = data["batch_hint"]
                     if old_cap != self.batch_capacity:
@@ -605,6 +597,7 @@ class WorkerDaemon:
 
     def _disconnect_session(self):
         """Notify server of graceful disconnect."""
+        self._flush_reports()  # deliver pending reports before the session closes
         if not self.session_id:
             return
         try:
@@ -624,37 +617,44 @@ class WorkerDaemon:
         if count <= 0:
             return []
 
-        # Try new /api/v1/tasks/claim first
-        phase = self.processing_mode
-        if phase in ("mc", "vv", "mv", "parse", "download"):
-            try:
-                resp = self._authed_request(
-                    "post",
-                    f"{self.server_url}/api/v1/tasks/claim",
-                    json={"phase": phase, "worker_id": self.session_id or 0, "count": count},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    tasks = data.get("tasks", [])
-                    if tasks:
-                        # Convert API tasks to the worker batch format.
-                        jobs = []
-                        for t in tasks:
-                            jobs.append({
-                                "job_id": t["task_id"],
-                                "file_id": t["file_id"],
-                                "file_path": t["file_path"],
-                                "task_id": t["task_id"],  # new system ID
-                                "analysis_job_id": t.get("job_id"),
-                                "analysis_profile": t.get("analysis_profile"),
-                            })
-                        logger.info(f"{self._log_prefix} Claimed {len(jobs)} {phase} tasks (new API)")
-                        return jobs
-            except Exception as e:
-                logger.warning(f"Task claim failed: {e}")
-                return []
+        # Server scheduler is authoritative: it decides phase + count
+        # (pressure × speed). The phase in the claim response MUST be
+        # applied to processing_mode so the batch runs the right pipeline.
+        try:
+            resp = self._authed_request(
+                "post",
+                f"{self.server_url}/api/v1/tasks/claim",
+                json={"worker_id": self.session_id or 0},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                tasks = data.get("tasks", [])
+                server_phase = data.get("phase")
+                if tasks and server_phase in ("mc", "vv", "mv"):
+                    if server_phase != self.processing_mode:
+                        logger.info(
+                            f"{self._log_prefix} [MODE] {self.processing_mode} → "
+                            f"{server_phase} (server-assigned via claim)"
+                        )
+                    self.processing_mode = server_phase
+                    # Convert API tasks to the worker batch format.
+                    jobs = []
+                    for t in tasks:
+                        jobs.append({
+                            "job_id": t["task_id"],
+                            "file_id": t["file_id"],
+                            "file_path": t["file_path"],
+                            "task_id": t["task_id"],  # new system ID
+                            "analysis_job_id": t.get("job_id"),
+                            "analysis_profile": t.get("analysis_profile"),
+                            # MV: MC text inlined by server (avoids per-file GET /files/{id}/mc)
+                            "vision_data": t.get("vision_data") or {},
+                        })
+                    logger.info(f"{self._log_prefix} Claimed {len(jobs)} {server_phase} tasks (new API)")
+                    return jobs
+        except Exception as e:
+            logger.warning(f"Task claim failed: {e}")
 
-        # No valid phase — nothing to claim
         return []
 
     def _report_task_start(self, task_id: int, phase: str):
@@ -673,30 +673,123 @@ class WorkerDaemon:
         except Exception:
             pass
 
+    REPORT_FLUSH_SIZE = 10      # flush when this many results are buffered
+    REPORT_BUFFER_CAP = 200     # drop-oldest beyond this (network outage)
+
     def _report_task_phase(self, task_id: int, phase: str, success: bool,
                            error: str = None, elapsed_s: float = None):
-        """Report phase completion."""
+        """Report phase completion (buffered — see _flush_reports)."""
         if not task_id:
             return
         if self.transport:
             self.transport.report_complete(task_id, phase, success, error, elapsed_s)
             return
+        payload = {
+            "task_id": task_id,
+            "phase": phase,
+            "success": success,
+            "error_message": error,
+        }
+        if elapsed_s is not None:
+            payload["elapsed_s"] = round(elapsed_s, 3)
+
+        with self._report_lock:
+            self._report_buffer.append(payload)
+            if len(self._report_buffer) > self.REPORT_BUFFER_CAP:
+                dropped = len(self._report_buffer) - self.REPORT_BUFFER_CAP
+                del self._report_buffer[:dropped]
+                logger.warning(f"Report buffer overflow — dropped {dropped} oldest")
+            should_flush = len(self._report_buffer) >= self.REPORT_FLUSH_SIZE
+        if should_flush:
+            self._flush_reports()
+
+    def _log_report_rejections(self, resp):
+        """Surface per-item rejections carried in a 200 complete-batch response.
+
+        These items are dropped from the buffer with the rest of the batch: a
+        semantic rejection (task reassigned, session reclaimed → 403, unknown
+        task) will not start succeeding on retry, and re-queueing it would wedge
+        the FIFO buffer behind an item that can never drain. So the loss is made
+        LOUD instead of silent — this is the failure mode where a worker keeps
+        computing MC results that never reach the phase state machine.
+        """
         try:
-            payload = {
-                "task_id": task_id,
-                "phase": phase,
-                "success": success,
-                "error_message": error,
-            }
-            if elapsed_s is not None:
-                payload["elapsed_s"] = round(elapsed_s, 3)
-            self._authed_request(
-                "post",
-                f"{self.server_url}/api/v1/tasks/complete",
-                json=payload,
+            errors = (resp.json() or {}).get("errors") or []
+        except Exception:
+            logger.warning("Batch report: 200 with unparseable body — "
+                           "cannot confirm per-item acceptance")
+            return
+        if not errors:
+            return
+        # Diagnostic counter — must never be able to break the reporting path
+        # itself (test helpers build daemons via __new__, bypassing __init__).
+        self._report_rejected = getattr(self, "_report_rejected", 0) + len(errors)
+        for err in errors:
+            logger.error(
+                "완료보고 거부: task=%s — %s "
+                "(결과는 저장됐으나 phase 상태가 전진하지 않는다)",
+                err.get("task_id"), err.get("error"),
             )
-        except Exception as e:
-            logger.debug(f"Task phase report failed: {e}")
+
+    def _flush_reports(self):
+        """Send buffered completion reports in batches of ≤50.
+
+        Falls back to per-item posts when the server lacks the batch
+        endpoint (404). On network failure, items stay buffered for the
+        next flush — tasks are eventually reclaimed by heartbeat timeout
+        if the worker dies with a non-empty buffer.
+        """
+        while True:
+            with self._report_lock:
+                if not self._report_buffer:
+                    return
+                batch = self._report_buffer[:50]
+
+            try:
+                if self._batch_report_supported:
+                    resp = self._authed_request(
+                        "post",
+                        f"{self.server_url}/api/v1/tasks/complete-batch",
+                        json={"results": batch},
+                    )
+                    if resp.status_code == 404:
+                        self._batch_report_supported = False
+                        logger.info("Server lacks complete-batch — per-item reports")
+                        continue
+                    if resp.status_code != 200:
+                        logger.warning(
+                            f"Batch report failed: HTTP {resp.status_code} — "
+                            f"{len(batch)} reports kept buffered for retry"
+                        )
+                        return  # keep buffered, retry on next flush
+                    # A 200 does NOT mean every item landed. The server isolates
+                    # items and returns per-item rejections in `errors[]`; the
+                    # buffer is cleared below regardless, so an unread rejection
+                    # means the phase status never advances and the file is
+                    # reprocessed forever while counters sit still.
+                    self._log_report_rejections(resp)
+                else:
+                    for item in batch:
+                        r = self._authed_request(
+                            "post",
+                            f"{self.server_url}/api/v1/tasks/complete",
+                            json=item,
+                        )
+                        status = getattr(r, "status_code", None)
+                        if status is not None and status != 200:
+                            self._report_rejected = getattr(self, "_report_rejected", 0) + 1
+                            logger.error(
+                                "완료보고 거부 (per-item): task=%s phase=%s HTTP %s %s "
+                                "— 해당 파일의 phase 상태가 전진하지 않는다",
+                                item.get("task_id"), item.get("phase"), status,
+                                (getattr(r, "text", "") or "")[:200],
+                            )
+            except Exception as e:
+                logger.debug(f"Task phase report failed: {e}")
+                return  # keep buffered
+
+            with self._report_lock:
+                del self._report_buffer[:len(batch)]
 
     def claim_jobs(self) -> list:
         """Claim jobs using configured batch size (used by worker_ipc loop)."""
@@ -747,7 +840,7 @@ class WorkerDaemon:
         """Get thumbnail path for a pre-parsed job."""
         file_id = job.get("file_id")
 
-        # LocalTransport: read directly from DB/filesystem
+        # Custom transport (e.g. relay): delegate
         if self.transport:
             return self.transport.get_thumbnail(file_id)
 
@@ -1005,14 +1098,42 @@ class WorkerDaemon:
                     ctx.metadata.update(vision_fields)
                 ctx.vision_fields = vision_fields
 
-                # Queue result for IO thread (crash-safe, non-blocking)
+                # Persist this file's MC result. Electron/IPC path: queue for the
+                # async IO thread (crash-safe, non-blocking). Headless CLI worker
+                # has NO IO thread draining the queue — queuing there would strand
+                # the result forever while ctx._saved=True skips the batch-end save
+                # → results silently lost. So in CLI mode save inline per-file now
+                # (progress advances per file, not only at batch end).
                 task_id = ctx.job.get("task_id")
                 file_id = ctx.job.get("file_id")
-                if hasattr(self, '_result_queue') and self._result_queue and file_id:
+                if self._io_thread is not None and self._result_queue and file_id:
                     self._result_queue.put({
                         "type": "mc", "file_id": file_id, "task_id": task_id,
                         "fields": dict(vision_fields), "elapsed_s": _file_elapsed,
                     })
+                    ctx._saved = True
+                elif file_id:
+                    ok = (self.transport.save_vision(file_id, vision_fields)
+                          if self.transport
+                          else self.uploader.save_vision_fields(file_id, vision_fields))
+                    self._report_task_phase(
+                        task_id, "mc", ok is True,
+                        None if ok is True else str(ok), elapsed_s=_file_elapsed,
+                    )
+                    # Flush the completion now so the job counter advances per
+                    # file (CLI batches are large; waiting for the size-10 buffer
+                    # or batch end would look frozen for minutes).
+                    self._flush_reports()
+                    if ok is True:
+                        self._total_completed += 1
+                    else:
+                        ctx._save_error = (f"MC save failed: {ok}"
+                                           if isinstance(ok, str) else "MC save rejected")
+                    # `_saved` means "handled at its own save point" — the batch-end
+                    # loop must neither re-save nor re-count it. `_save_ok` carries
+                    # the outcome so a FAILED save is not reported as a success
+                    # there (it used to append (job_id, True, "") unconditionally).
+                    ctx._save_ok = ok is True
                     ctx._saved = True
             else:
                 ctx.failed = True
@@ -1021,9 +1142,9 @@ class WorkerDaemon:
                 else:
                     ctx.error = f"VLM returned empty MC for {self._current_file}"
                 logger.warning(ctx.error)
-                # Queue failure report for IO thread
+                # Queue failure report for IO thread (only when one runs — see above)
                 task_id = ctx.job.get("task_id")
-                if hasattr(self, '_result_queue') and self._result_queue and task_id:
+                if self._io_thread is not None and self._result_queue and task_id:
                     self._result_queue.put({
                         "type": "mc", "file_id": ctx.job.get("file_id"),
                         "task_id": task_id, "fields": None,
@@ -1067,14 +1188,18 @@ class WorkerDaemon:
         Returns:
             List of (job_id, success) tuples.
         """
-        if self.processing_mode == "mc":
-            return self._process_batch_mc(jobs, progress_callback)
+        try:
+            if self.processing_mode == "mc":
+                return self._process_batch_mc(jobs, progress_callback)
 
-        if self.processing_mode == "vv":
-            return self._process_batch_vv_only(jobs, progress_callback)
+            if self.processing_mode == "vv":
+                return self._process_batch_vv_only(jobs, progress_callback)
 
-        if self.processing_mode == "mv":
-            return self._process_batch_mv_only(jobs, progress_callback)
+            if self.processing_mode == "mv":
+                return self._process_batch_mv_only(jobs, progress_callback)
+        finally:
+            # Batch boundary: deliver whatever is buffered before idling
+            self._flush_reports()
 
         # Workers only ever receive mc/vv/mv from the scheduler.
         # (Parse/Download are server-side pools; the old full-pipeline
@@ -1170,10 +1295,19 @@ class WorkerDaemon:
             job_id = ctx.job["job_id"]
             file_name = Path(ctx.job.get("file_path", "")).name
 
-            # Already saved during vision phase (transport mode)
+            # Already handled during the vision phase — either queued to the IO
+            # thread (which counts it in _save_result) or saved inline by the CLI
+            # path (which counts it there). Counting again here made every such
+            # file increment _total_completed TWICE, and the heartbeat sends the
+            # delta as jobs_completed → the scheduler's phase_job_count and batch
+            # sizing were fed a 2x-inflated number.
             if getattr(ctx, '_saved', False):
-                self._total_completed += 1
-                results.append((job_id, True, ""))
+                if getattr(ctx, '_save_ok', True):
+                    results.append((job_id, True, ""))
+                else:
+                    err = getattr(ctx, '_save_error', "MC save failed")
+                    self._total_failed += 1
+                    results.append((job_id, False, err))
                 continue
 
             if ctx.failed:
@@ -1203,7 +1337,11 @@ class WorkerDaemon:
                                     elapsed_s=getattr(ctx, '_inference_elapsed', None))
             if upload_result is True:
                 self._total_completed += 1
-                self._phase_counts["mc"] += 1
+                # NOT _phase_counts["mc"] — already counted when the VLM produced
+                # this file's caption (the same block that sets ctx.vision_fields,
+                # the precondition for reaching this save). Counting here too made
+                # phase_counts disagree with the queued/inline paths, which count
+                # only once.
                 results.append((job_id, True, ""))
             else:
                 err = f"MC upload failed: {upload_result}" if isinstance(upload_result, str) else "MC upload rejected"

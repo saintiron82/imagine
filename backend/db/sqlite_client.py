@@ -47,6 +47,240 @@ def _retry_on_locked(func):
     return wrapper
 
 
+# ── Process-wide write serialization ─────────────────────────────────────────
+# SQLite allows ONE writer at a time. Each thread (request handler, pipeline pool,
+# worker-result save) gets its own connection (threading.local), so without
+# coordination two connections write concurrently → 'database is locked' → 503s
+# on login/heartbeat under load. We serialize ALL write transactions behind one
+# process-wide writer gate: a write statement acquires the gate and holds it
+# until commit/rollback, so SQLite only ever sees a single writer. Reads
+# (SELECT/PRAGMA) never take the gate → concurrent reads stay parallel (WAL).
+#
+# Why a custom gate and not a plain RLock?  The gate must be held across the
+# WHOLE transaction (first write → commit) — releasing it between the statements
+# of an open transaction deadlocks at the SQLite layer (one connection holds the
+# RESERVED file lock while another spins on busy_timeout while owning the Python
+# lock).  But "held until commit" means a caller that opens a write txn and then
+# never commits (the conditional-commit anti-pattern: `if rowcount: commit()`,
+# early-return-before-commit, or a cross-thread rollback that lands on a
+# DIFFERENT thread-local connection) would pin the gate FOREVER and wedge every
+# other writer.  A plain RLock cannot recover from that.  `_WriteGate` makes the
+# hold RECLAIMABLE: every grant carries a generation token; a waiter that blocks
+# past the bound forcibly reclaims an abandoned hold (bumping the generation), so
+# the stale owner's eventual commit/rollback release is a safe no-op.  This keeps
+# strict single-writer serialization while making a leaked hold self-heal instead
+# of deadlocking — and NO acquire path ever waits unbounded.
+_WRITE_RE = re.compile(
+    r"^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|VACUUM|BEGIN)\b", re.IGNORECASE
+)
+# Bound the wait before a waiter reclaims an apparently-abandoned hold. Long
+# enough to cover any legitimate single write transaction (heavy FTS rebuild,
+# large batch insert), short enough that a genuinely leaked hold recovers fast.
+_WRITE_LOCK_TIMEOUT = 20.0
+
+
+def _is_write_sql(sql) -> bool:
+    return isinstance(sql, str) and _WRITE_RE.match(sql) is not None
+
+
+class _WriteGate:
+    """Process-wide single-writer gate with reclaimable, generation-tracked holds.
+
+    Exactly one holder at a time (single-writer).  Reentrant for the SAME holder
+    object (a connection that already holds it can acquire again for free, e.g.
+    executescript inside an open txn).  A different holder blocks until the gate
+    is free OR until `timeout` elapses, at which point it RECLAIMS the gate from
+    an abandoned owner: the stale owner's generation is invalidated so its later
+    release() no-ops and cannot corrupt the new owner's hold.
+
+    Returns/checks a (holder, generation) ticket so release is idempotent and
+    safe even when commit/rollback runs on a different thread than the writes.
+    """
+
+    def __init__(self):
+        self._cv = threading.Condition(threading.Lock())
+        self._owner = None        # opaque holder object (a _SerializedConnection)
+        self._depth = 0           # reentrancy count for the current owner
+        self._gen = 0             # bumped on every fresh grant / reclaim
+
+    def acquire(self, holder, timeout=_WRITE_LOCK_TIMEOUT):
+        """Acquire for `holder`. Returns the live generation token.
+
+        Reentrant for the same holder.  Bounded wait: on timeout, reclaim from
+        the (assumed abandoned) current owner instead of waiting forever.
+        """
+        import time as _time
+        with self._cv:
+            if self._owner is holder:
+                self._depth += 1
+                return self._gen
+            deadline = _time.monotonic() + timeout
+            while self._owner is not None:
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    # Reclaim: the current owner has held past the bound and is
+                    # treated as abandoned (leaked / never-committed txn). Bump
+                    # the generation so its eventual release() becomes a no-op.
+                    logger.error(
+                        "[db] write-gate reclaimed from a stale holder after %.0fs "
+                        "(leaked write txn — abandoned without commit/rollback)",
+                        timeout,
+                    )
+                    break
+                self._cv.wait(remaining)
+            self._owner = holder
+            self._depth = 1
+            self._gen += 1
+            return self._gen
+
+    def is_live(self, holder, generation):
+        """True iff `holder`'s grant at `generation` is still the live hold.
+
+        A holder whose hold was reclaimed (past the bound) is NOT live even
+        though it still believes it holds the gate — callers must re-acquire
+        before writing again, or they would run concurrently with the new
+        owner and defeat the single-writer guarantee.
+        """
+        with self._cv:
+            return self._owner is holder and self._gen == generation
+
+    def release(self, holder, generation):
+        """Release one level for `holder` iff its grant is still live.
+
+        Safe to call from any thread and safe to over-call: a release whose
+        generation no longer matches (the hold was reclaimed) is ignored, so a
+        cross-thread or duplicated release can never free another owner's gate.
+        """
+        with self._cv:
+            if self._owner is not holder or self._gen != generation:
+                return  # stale / not the owner → no-op
+            self._depth -= 1
+            if self._depth <= 0:
+                self._owner = None
+                self._depth = 0
+                self._cv.notify()
+
+
+_WRITE_GATE = _WriteGate()
+
+
+class _SerializedCursor:
+    """Cursor wrapper — write statements go through the global write gate."""
+
+    def __init__(self, cursor, owner):
+        object.__setattr__(self, "_cursor", cursor)
+        object.__setattr__(self, "_owner", owner)
+
+    def execute(self, sql, *a, **k):
+        if _is_write_sql(sql):
+            self._owner._acquire_write()
+        return self._cursor.execute(sql, *a, **k)
+
+    def executemany(self, sql, *a, **k):
+        if _is_write_sql(sql):
+            self._owner._acquire_write()
+        return self._cursor.executemany(sql, *a, **k)
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _SerializedConnection:
+    """Connection wrapper: a write grabs the process-wide write gate and holds it
+    until commit()/rollback()/close(), so only one writer ever hits SQLite.
+
+    The gate is held across the whole transaction (required — see _WriteGate) but
+    is RECLAIMABLE, so a caller that forgets to commit (or whose commit/rollback
+    lands on a different thread) can never wedge the process: the next contended
+    writer reclaims after a bound. Reads never touch the gate."""
+
+    def __init__(self, conn):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_held", False)
+        object.__setattr__(self, "_gen", 0)
+
+    def _acquire_write(self):
+        # `_held` alone is NOT enough: a hold can be RECLAIMED out from under
+        # us once we pass the bound (see _WriteGate), and the gate then belongs
+        # to another writer while our flag still says True. Re-acquiring on a
+        # dead generation is what keeps the REST of this transaction serialized
+        # — without it the remaining writes would bypass the gate entirely and
+        # run concurrently with the new owner, exactly the failure the gate
+        # exists to prevent, at the moment of highest contention.
+        if not self._held or not _WRITE_GATE.is_live(self, self._gen):
+            gen = _WRITE_GATE.acquire(self, timeout=_WRITE_LOCK_TIMEOUT)
+            object.__setattr__(self, "_gen", gen)
+            object.__setattr__(self, "_held", True)
+
+    def _release_write(self):
+        if self._held:
+            object.__setattr__(self, "_held", False)
+            _WRITE_GATE.release(self, self._gen)
+
+    def execute(self, sql, *a, **k):
+        if _is_write_sql(sql):
+            self._acquire_write()
+        return self._conn.execute(sql, *a, **k)
+
+    def executemany(self, sql, *a, **k):
+        if _is_write_sql(sql):
+            self._acquire_write()
+        return self._conn.executemany(sql, *a, **k)
+
+    def executescript(self, sql, *a, **k):
+        # Scripts almost always write. Acquire the gate with a BOUNDED, reclaimable
+        # wait (NEVER an infinite `with _WRITE_LOCK:` — that deadlocked forever if
+        # another thread held it, problem #1). sqlite3.executescript() issues an
+        # implicit COMMIT of any pending txn before running and leaves the
+        # connection in autocommit, so the script is self-contained: if this
+        # connection did NOT already hold a write txn, release the gate as soon as
+        # the script returns. If a txn WAS already open (_held), keep holding for
+        # the owner's later commit/rollback — the gate is reentrant for us.
+        already_held = self._held
+        if not already_held:
+            self._acquire_write()
+        try:
+            return self._conn.executescript(sql, *a, **k)
+        finally:
+            if not already_held:
+                self._release_write()
+
+    def cursor(self, *a, **k):
+        return _SerializedCursor(self._conn.cursor(*a, **k), self)
+
+    def commit(self):
+        try:
+            self._conn.commit()
+        finally:
+            self._release_write()
+
+    def rollback(self):
+        try:
+            self._conn.rollback()
+        finally:
+            self._release_write()
+
+    def close(self):
+        self._release_write()
+        return self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 class SQLiteDB:
     """SQLite database client with sqlite-vec support."""
     CURRENT_DATA_BUILD_LEVEL = 2
@@ -111,9 +345,18 @@ class SQLiteDB:
         from backend.db.sqlite_migrations import run_migrations
 
         try:
+            # WRAP the setup connection (problem #3: close the bypass gap). Setup
+            # runs single-threaded, but the init thread is later reused by the
+            # request threadpool — caching a RAW (unwrapped) conn here would let
+            # RUNTIME writes on that reused thread bypass write-serialization.
+            # Wrapping makes every later write on this thread go through the gate.
+            # `self._setup_conn` keeps the RAW connection (export/import_snapshot
+            # use `getattr(self.conn, "_conn", self.conn)` for VACUUM/backup, and
+            # close() needs the raw handle); writes still flow through the wrapper.
             self._setup_conn = self._create_connection()
-            # Store setup conn in thread-local so migrations use it via self.conn
-            self._local.conn = self._setup_conn
+            setup_wrapped = _SerializedConnection(self._setup_conn)
+            # Store wrapped setup conn in thread-local so migrations use it via self.conn
+            self._local.conn = setup_wrapped
             if self._vec_extension_loaded:
                 logger.info("sqlite-vec loaded")
 
@@ -124,6 +367,14 @@ class SQLiteDB:
                 logger.info("Empty database detected — auto-initializing schema")
                 self.init_schema()
                 run_migrations(self, existing_db=False)
+
+            # Setup is done. Defensively close any write txn a migration left open
+            # (conditional-commit anti-pattern) so the gate is not held entering
+            # runtime — belt-and-suspenders on top of the gate's reclaim.
+            try:
+                setup_wrapped.rollback()
+            except Exception:
+                pass
 
             logger.info(f"Connected to SQLite database: {self.db_path}")
         except Exception as e:
@@ -136,7 +387,7 @@ class SQLiteDB:
         c = getattr(self._local, 'conn', None)
         if c is None:
             import threading
-            c = self._create_connection()
+            c = _SerializedConnection(self._create_connection())
             self._local.conn = c
             # Verify busy_timeout is set
             bt = c.execute("PRAGMA busy_timeout").fetchone()[0]
@@ -1572,6 +1823,9 @@ class SQLiteDB:
             )
 
             if cursor.rowcount == 0:
+                # 0-row UPDATE 도 write lock 을 잡는다 — 락을 풀고 반환.
+                if commit:
+                    self.conn.rollback()
                 logger.warning(f"update_vision_fields: file not found: {file_path}")
                 return False
 
@@ -1930,6 +2184,106 @@ class SQLiteDB:
             self.conn.rollback()
             logger.error(f"Database reset failed: {e}")
             return {"success": False, "error": str(e)}
+
+    def export_snapshot(self, dest_path: str) -> dict:
+        """
+        Write a consistent full snapshot of this database to dest_path (IMGV2-48).
+
+        Uses `VACUUM INTO` which produces a clean, WAL-consistent copy without
+        holding a long write lock. dest_path must NOT already exist.
+        """
+        # Raw connection: VACUUM/isolation_level must bypass the write-serialization
+        # wrapper (it doesn't proxy isolation_level setattr and VACUUM can't run in a txn).
+        conn = getattr(self.conn, "_conn", self.conn)
+        old_iso = conn.isolation_level
+        try:
+            conn.rollback()                       # leave any implicit txn
+            conn.isolation_level = None           # autocommit — VACUUM cannot run in a txn
+            conn.execute("PRAGMA wal_checkpoint(FULL)")
+            safe = dest_path.replace("'", "''")
+            conn.execute(f"VACUUM INTO '{safe}'")
+            import os as _os
+            size = _os.path.getsize(dest_path)
+            file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            logger.info(f"DB snapshot exported: {file_count} files, {size} bytes -> {dest_path}")
+            return {"success": True, "bytes": size, "file_count": file_count}
+        except Exception as e:
+            logger.error(f"DB export failed: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.isolation_level = old_iso
+
+    def import_snapshot(self, src_path: str) -> dict:
+        """
+        Restore this database in place from a snapshot file (IMGV2-48).
+
+        Validates that src is an intact SQLite DB carrying our schema (a `files`
+        table) BEFORE loading the vec extension on the untrusted upload, takes a
+        pre-import safety copy of the current DB, then uses SQLite's online backup
+        API to overwrite every page of the live connection (no file swap needed).
+
+        DESTRUCTIVE: replaces ALL content (including users/auth) with the
+        snapshot's. CONCURRENCY: the online backup needs an exclusive write on the
+        live DB — if a worker/pool thread is mid-write it can block until that
+        writer finishes. Run with processing paused / server idle. On failure the
+        pre-import copy at `<db>.preimport.bak` allows manual recovery.
+        """
+        import os as _os
+        src = None
+        try:
+            src = sqlite3.connect(src_path, timeout=30)
+            # Validate the untrusted upload BEFORE instantiating any vec0 vtabs on it.
+            has_files = src.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
+            ).fetchone()
+            if not has_files:
+                return {"success": False, "error": "유효한 Imagine 데이터베이스가 아닙니다 (files 테이블 없음)"}
+            integrity = src.execute("PRAGMA integrity_check").fetchone()
+            if not integrity or integrity[0] != "ok":
+                return {"success": False, "error": f"업로드 파일 무결성 검사 실패: {integrity[0] if integrity else 'unknown'}"}
+            self._load_vec_extension(src)         # now safe — vec0 vtabs must instantiate to copy
+            file_count = src.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+
+            # Bounded write-lock probe FIRST: Connection.backup() retries on SQLITE_BUSY
+            # forever (ignores busy_timeout), so if another thread is mid-write the backup
+            # would hang indefinitely. Acquire RESERVED on a short-timeout probe connection —
+            # if it can't within the timeout, fail fast & clearly (before any expensive work).
+            probe = sqlite3.connect(self.db_path, timeout=8)
+            try:
+                probe.execute("BEGIN IMMEDIATE")
+                probe.execute("ROLLBACK")
+            except sqlite3.OperationalError:
+                return {
+                    "success": False, "busy": True,
+                    "error": "다른 처리가 진행 중이라 복원할 수 없습니다. 자동 처리를 일시정지한 뒤 다시 시도하세요.",
+                }
+            finally:
+                probe.close()
+
+            # Pre-import safety copy so a bad restore is recoverable.
+            safety_path = f"{self.db_path}.preimport.bak"
+            try:
+                if _os.path.exists(safety_path):
+                    _os.unlink(safety_path)
+                snap = self.export_snapshot(safety_path)
+                if not snap.get("success"):
+                    safety_path = None
+            except Exception as se:  # pragma: no cover - defensive
+                logger.warning(f"pre-import safety snapshot failed (continuing): {se}")
+                safety_path = None
+
+            dest = getattr(self.conn, "_conn", self.conn)  # raw conn for C-level backup()
+            dest.rollback()                        # ensure no open txn before backup
+            src.backup(dest)                       # copy src -> live dest (all pages)
+            dest.execute("PRAGMA wal_checkpoint(FULL)")
+            logger.info(f"DB snapshot imported: {file_count} files restored into {self.db_path} (safety copy: {safety_path})")
+            return {"success": True, "file_count": file_count, "safety_backup": safety_path}
+        except Exception as e:
+            logger.error(f"DB import failed: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            if src is not None:
+                src.close()
 
     def insert_file(
         self,
@@ -3058,6 +3412,9 @@ class SQLiteDB:
         """Close database connections."""
         # Close current thread's connection
         c = getattr(self._local, 'conn', None)
+        # The init thread's wrapper wraps the RAW self._setup_conn; the raw handle
+        # underneath is the thing actually closed. Track it so we don't double-close.
+        underlying = getattr(c, "_conn", c) if c is not None else None
         if c is not None:
             try:
                 c.execute("PRAGMA wal_checkpoint(PASSIVE)")
@@ -3065,8 +3422,8 @@ class SQLiteDB:
                 pass
             c.close()
             self._local.conn = None
-        # Close setup connection (if different)
-        if self._setup_conn is not None and self._setup_conn is not c:
+        # Close setup connection (if its raw handle was not already closed above)
+        if self._setup_conn is not None and self._setup_conn is not underlying:
             try:
                 self._setup_conn.close()
             except Exception:

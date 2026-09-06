@@ -57,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--launcher",
         default=os.getenv("IMAGINE_WORKER_LAUNCHER", "cli"),
-        choices=("cli", "service", "cloud"),
+        choices=("cli", "service", "cloud", "server"),
     )
     parser.add_argument("--poll-interval", type=int, default=5)
     # Relay-mode env / args
@@ -102,6 +102,7 @@ def load_headless_config(argv: list[str] | None = None) -> HeadlessWorkerConfig:
         access_token=args.access_token,
         refresh_token=args.refresh_token,
         worker_name=args.worker_name or f"{socket.gethostname()}-headless",
+        origin="server-local" if args.launcher == "server" else "headless",
         launcher=args.launcher,
         poll_interval=args.poll_interval,
         connect_mode=args.connect_mode,
@@ -152,6 +153,15 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
                 pass
         return 0
 
+    if cfg.launcher == "server":
+        # Server-supervised local worker: exit when the server process dies
+        # (stdin pipe closes) so no residual worker outlives the server.
+        try:
+            from backend.utils.parent_watchdog import start_parent_watchdog
+            start_parent_watchdog()
+        except Exception:
+            pass
+
     daemon = WorkerDaemon(origin=cfg.origin, launcher=cfg.launcher)
     daemon.worker_name = cfg.worker_name
     daemon.set_tokens(cfg.access_token, cfg.refresh_token)
@@ -171,6 +181,7 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
     signal.signal(signal.SIGTERM, _handle_stop)
 
     try:
+        from backend.worker.schedule import is_active_now
         from backend.worker.worker_state import WorkerState
 
         while not stop_requested:
@@ -180,7 +191,7 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
                 break
 
             daemon._state_machine.update(
-                is_scheduled_active=True,
+                is_scheduled_active=is_active_now(),
                 throttle_level=daemon._check_throttle(),
                 has_pending_jobs=True,
             )
@@ -191,12 +202,19 @@ def run_headless_worker(cfg: HeadlessWorkerConfig) -> int:
             jobs = daemon.claim_jobs()
             if not jobs:
                 daemon._state_machine.update(
-                    is_scheduled_active=True,
+                    is_scheduled_active=is_active_now(),
                     throttle_level=daemon._check_throttle(),
                     has_pending_jobs=False,
                 )
                 time.sleep(cfg.poll_interval)
                 continue
+
+            # Prefetch thumbnails in background threads so the GPU batch
+            # never waits on serial HTTP downloads (same as the Electron path).
+            try:
+                daemon._prefetch_downloads(jobs)
+            except Exception:
+                pass
 
             results = daemon.process_batch_phased(jobs)
             ok = sum(1 for item in results if len(item) > 1 and item[1])

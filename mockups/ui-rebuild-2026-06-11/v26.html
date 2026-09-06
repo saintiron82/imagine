@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Imagine UI 재구축 목업 v26</title>
+<style>
+:root{
+  --bg:#0f1419; --panel:#1f2937; --panel2:#111827; --line:#374151; --line2:#2a3441;
+  --text:#e5e7eb; --dim:#9ca3af; --faint:#6b7280;
+  --blue:#3b82f6; --blue-d:#2563eb; --emerald:#34d399; --emerald-d:#059669;
+  --amber:#fbbf24; --red:#f87171; --purple:#c084fc; --cyan:#67e8f9;
+  --radius:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:13px/1.5 -apple-system,'Apple SD Gothic Neo','Pretendard',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+
+/* ── 셸 ─────────────────────────── */
+.topbar{height:52px;background:var(--panel2);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 16px;gap:8px;flex-shrink:0}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;margin-right:16px}
+.logo .dot{width:10px;height:10px;border-radius:3px;background:var(--blue)}
+.nav{display:flex;gap:4px}
+.nav button{padding:7px 14px;border-radius:6px;color:var(--dim);font-weight:500}
+.nav button:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.nav button.active{color:#fff;background:var(--panel)}
+.spacer{flex:1}
+.btn-add{display:flex;align-items:center;gap:6px;background:var(--blue-d);color:#fff;font-weight:600;padding:7px 16px;border-radius:6px}
+.btn-add:hover{background:var(--blue)}
+.right-nav{display:flex;gap:4px;margin-left:12px}
+.right-nav button{padding:7px 12px;border-radius:6px;color:var(--dim)}
+.right-nav button.active{color:#fff;background:var(--panel)}
+.role-chip{margin-left:14px;font-size:11px;color:var(--faint);border:1px dashed var(--line);padding:4px 10px;border-radius:99px;cursor:pointer}
+.role-chip b{color:var(--amber)}
+
+main{flex:1;overflow:auto}
+.screen{display:none;height:100%}
+.screen.active{display:block}
+
+.badge{display:inline-block;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700}
+.b-vv{background:rgba(59,130,246,.15);color:#93c5fd;border:1px solid rgba(59,130,246,.3)}
+.b-mv{background:rgba(192,132,252,.15);color:var(--purple);border:1px solid rgba(192,132,252,.3)}
+.b-fts{background:rgba(251,191,36,.12);color:var(--amber);border:1px solid rgba(251,191,36,.3)}
+.b-wait{background:rgba(251,191,36,.18);color:var(--amber)}
+.b-ok{background:rgba(52,211,153,.15);color:var(--emerald)}
+.b-fail{background:rgba(248,113,113,.15);color:var(--red)}
+
+/* ── 검색 ────────────────────────── */
+#scr-search{flex-direction:column}
+#scr-search.active{display:flex}
+.search-head{padding:20px 24px 12px;border-bottom:1px solid var(--line2)}
+.search-bar{display:flex;gap:8px;max-width:760px}
+.search-bar input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px}
+.search-bar .go{background:var(--blue-d);border-radius:8px;padding:0 18px;color:#fff;font-weight:600}
+.chips{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.chip{font-size:11px;background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:3px 10px;color:var(--dim)}
+.chip.on{border-color:var(--blue);color:#93c5fd}
+.results{flex:1;overflow:auto;padding:18px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;align-content:start}
+.card{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);overflow:hidden}
+.thumb{height:120px;position:relative;display:flex;align-items:flex-end;padding:8px}
+.thumb .badges{display:flex;gap:4px}
+.score{position:absolute;top:6px;right:8px;font-size:10px;font-family:ui-monospace,monospace;color:rgba(255,255,255,.85);background:rgba(0,0,0,.45);padding:1px 6px;border-radius:4px}
+.card .meta{padding:8px 10px}
+.card .name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .cap{font-size:10px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+
+/* ── 라이브러리 ──────────────────── */
+#scr-library.active{display:flex}
+.lib-side{width:280px;border-right:1px solid var(--line);background:var(--panel2);padding:14px;overflow:auto;flex-shrink:0}
+.lib-side h3{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.lib-side h3 button{color:var(--blue);font-size:11px}
+.tree{font-size:12.5px}
+.tnode{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:5px;cursor:pointer}
+.tnode:hover{background:rgba(255,255,255,.04)}
+.tnode .tw{color:var(--faint);width:10px}
+.tnode .ic{width:14px}
+.tnode .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tnode .cov{width:8px;height:8px;border-radius:99px;flex-shrink:0}
+.cov.g{background:var(--emerald)} .cov.a{background:var(--amber);animation:pulse 1.6s infinite} .cov.r{background:var(--red);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.4}}
+.lvl1{padding-left:24px}
+.src-detail{margin-top:14px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px 12px}
+.sd-head{font-size:12px;font-weight:700;margin-bottom:8px}
+.sd-head .sd-sub{font-weight:400;font-size:10px;color:var(--faint);margin-left:6px}
+.sd-row{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--dim);padding:4px 0}
+.sd-val{color:var(--faint);font-size:10.5px}
+.sd-acts{display:flex;gap:5px;margin-top:8px}
+.sd-acts button{font-size:10.5px;border:1px solid var(--line);border-radius:5px;padding:3px 10px;color:var(--dim)}
+.sd-acts button:hover{color:var(--text)}
+.sd-acts .danger:hover{color:var(--red);border-color:var(--red)}
+.lib-main{flex:1;overflow:auto;padding:20px 24px}
+.sec-title{font-size:13px;font-weight:700;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.sec-title .sub{font-weight:400;font-size:11px;color:var(--faint)}
+.summary{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
+.sum-row{display:flex;align-items:center;gap:12px}
+.sum-row .big{font-size:22px;font-weight:700;font-family:ui-monospace,monospace;color:var(--emerald)}
+.sum-row .of{color:var(--faint)}
+.bar{flex:1;height:8px;background:var(--line2);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--emerald);border-radius:99px}
+.phases{display:flex;gap:18px;margin-top:10px;font-size:11px;font-family:ui-monospace,monospace}
+.phases span b{font-weight:600}
+.p-dl b{color:var(--amber)} .p-pa b{color:var(--cyan)} .p-mc b{color:var(--purple)} .p-vv b{color:#93c5fd} .p-mv b{color:var(--emerald)}
+.jobs{display:flex;flex-direction:column;gap:10px}
+.jrow{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px 14px}
+.jrow .nm{font-weight:600;font-size:12.5px;min-width:170px}
+.jrow .bar{max-width:280px}
+.jrow .cnt{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--dim);white-space:nowrap}
+.jrow .acts2{margin-left:auto;display:flex;gap:6px}
+.jrow .acts2 button{font-size:10.5px;padding:3px 10px;border-radius:5px;border:1px solid var(--line);color:var(--dim)}
+.jrow .acts2 button:hover{color:var(--text)}
+.jrow.waiting{opacity:.75}
+.live{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:14px 16px;margin-top:16px}
+.live-head{display:flex;align-items:center;gap:10px;font-size:12.5px;font-weight:700;margin-bottom:10px}
+.live-head .rate{margin-left:auto;font-weight:400;font-size:11px;color:var(--emerald);font-family:ui-monospace,monospace}
+.flow{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}
+.fl-item{border-radius:6px;overflow:hidden;border:1px solid var(--line2)}
+.fl-item .ph{height:52px}
+.fl-item .fn{font-size:9px;color:var(--faint);padding:2px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--panel2)}
+.fl-item.busy{border-color:rgba(59,130,246,.5)}
+.fl-item.busy .ph{animation:pulse 1.4s infinite}
+.fl-item.busy .fn{color:#93c5fd}
+.an-strip{display:flex;gap:8px;margin:14px 0 0}
+.an-card{flex:1;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:9px 12px;display:flex;align-items:center;gap:9px}
+.an-card .nm2{font-size:12px;font-weight:600}
+.an-card .sub2{font-size:10px;color:var(--faint)}
+.an-card .rate2{margin-left:auto;font-family:ui-monospace,monospace;font-size:12px;color:var(--emerald);font-weight:700}
+.plain-fail{margin-top:12px;font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:8px}
+.plain-fail .n{color:var(--red);font-weight:700}
+.plain-fail button{color:#93c5fd;font-size:11px;text-decoration:underline}
+.jgroup{font-size:11px;color:var(--faint);font-weight:700;margin:14px 0 2px;display:flex;align-items:center;gap:8px}
+.jgroup::after{content:'';flex:1;height:1px;background:var(--line2)}
+.pstrip{display:flex;gap:3px;margin-top:8px}
+.pseg{flex:1}
+.pseg .pl{font-size:9px;color:var(--faint);font-weight:700;margin-bottom:2px;display:flex;justify-content:space-between}
+.pseg .pb{height:4px;background:var(--line2);border-radius:99px;overflow:hidden}
+.pseg .pb i{display:block;height:100%;border-radius:99px}
+.avail{display:flex;align-items:center;gap:8px;font-size:11px;margin-top:8px;color:var(--dim)}
+.avail b{color:var(--emerald)}
+.avail .golink{color:#93c5fd;text-decoration:underline;font-size:11px}
+.jexp{margin-top:10px;border-top:1px solid var(--line2);padding-top:10px;font-size:11px}
+.jexp .krow{display:flex;gap:18px;color:var(--dim);font-family:ui-monospace,monospace;flex-wrap:wrap}
+.jexp .krow b{color:var(--text)}
+.flist{margin-top:8px;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:8px 10px}
+.fitem{display:flex;gap:8px;align-items:center;padding:2px 0;font-size:10.5px;color:var(--dim)}
+.fitem .fcode{color:var(--red);font-family:ui-monospace,monospace;flex-shrink:0}
+.fitem .perma{color:var(--red);font-weight:700;font-size:9px;border:1px solid rgba(248,113,113,.4);padding:0 4px;border-radius:3px}
+.chev{color:var(--faint);transition:transform .15s;margin-left:4px}
+.job.open .chev{transform:rotate(90deg)}
+.job{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:12px 14px}
+.job .head{display:flex;align-items:center;gap:10px}
+.job .head .nm{font-weight:600;font-size:12.5px;flex:1}
+.job .head .pct{font-family:ui-monospace,monospace;font-size:12px;color:#93c5fd}
+.job .head .st{width:7px;height:7px;border-radius:99px}
+.st.run{background:var(--blue);animation:pulse 1.6s infinite}.st.done{background:var(--emerald)}
+.job .sub{font-size:11px;color:var(--faint);margin-top:4px;display:flex;gap:14px;align-items:center}
+.job .bar{margin-top:8px}
+.job .acts{display:flex;gap:6px;margin-top:8px}
+.job .acts button{font-size:10.5px;padding:3px 10px;border-radius:5px;border:1px solid var(--line);color:var(--dim)}
+.job .acts button:hover{color:var(--text);border-color:var(--faint)}
+.fail-line{font-size:11px;color:var(--red);margin-top:6px}
+.fail-line button{color:#93c5fd;margin-left:8px;font-size:11px;text-decoration:underline}
+.empty{color:var(--faint);text-align:center;padding:40px 0;font-size:12px}
+
+/* ── 관리 ───────────────────────── */
+#scr-admin.active{display:flex}
+.adm-side{width:190px;border-right:1px solid var(--line);background:var(--panel2);padding:14px 10px;flex-shrink:0}
+.adm-side button{display:block;width:100%;text-align:left;padding:8px 12px;border-radius:6px;color:var(--dim);font-size:12.5px;margin-bottom:2px}
+.adm-side button.active{background:var(--panel);color:#fff}
+.adm-main{flex:1;overflow:auto;padding:20px 24px}
+.panel{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px}
+.panel h4{font-size:12.5px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.panel h4 .hint{font-weight:400;font-size:10.5px;color:var(--faint)}
+.toggle{width:38px;height:20px;border-radius:99px;background:var(--emerald-d);position:relative;flex-shrink:0;cursor:pointer;margin-left:auto}
+.toggle::after{content:'';position:absolute;width:16px;height:16px;border-radius:99px;background:#fff;top:2px;right:2px}
+.toggle.off{background:var(--line)} .toggle.off::after{right:auto;left:2px}
+.valves{display:flex;gap:8px}
+.valve{flex:1;text-align:center;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:8px 4px}
+.valve .ph{font-size:10px;color:var(--faint);font-weight:700}
+.valve .n{font-family:ui-monospace,monospace;font-size:12px;margin:3px 0}
+.valve .sw{font-size:9px;font-weight:700;padding:1px 8px;border-radius:4px;cursor:pointer}
+.sw.on{background:rgba(52,211,153,.15);color:var(--emerald)} .sw.off{background:rgba(248,113,113,.15);color:var(--red)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{font-size:10.5px;color:var(--faint);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line2)}
+td{padding:8px;border-bottom:1px solid var(--line2)}
+td.mono{font-family:ui-monospace,monospace;font-size:11.5px}
+.row-act{display:flex;gap:4px;justify-content:flex-end}
+.row-act button{font-size:10px;padding:2px 9px;border-radius:4px;border:1px solid var(--line);color:var(--dim)}
+.row-act .danger:hover{color:var(--red);border-color:var(--red)}
+.blocked{background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.25);border-radius:6px;padding:8px 12px;display:flex;align-items:center;gap:10px;font-size:11.5px;margin-top:10px}
+.blocked .unb{margin-left:auto;font-size:10.5px;border:1px solid var(--line);padding:2px 10px;border-radius:4px;color:var(--dim)}
+.bottleneck{background:rgba(192,132,252,.07);border:1px solid rgba(192,132,252,.35);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px}
+.bottleneck b{color:var(--purple)}
+.bottleneck .why{color:var(--dim);font-size:11px;margin-top:3px}
+.valve.bn{border-color:rgba(192,132,252,.5);background:rgba(192,132,252,.06)}
+.valve .rate{font-size:9px;color:var(--emerald);font-family:ui-monospace,monospace}
+.valve .bn-tag{font-size:8.5px;font-weight:700;color:var(--purple);border:1px solid rgba(192,132,252,.4);border-radius:3px;padding:0 4px;margin-left:3px}
+.cap{font-family:ui-monospace,monospace;font-size:11px}
+.cap .cur{font-weight:700}
+.cap .max{color:var(--faint)}
+.cap .note{display:block;font-size:9px;color:var(--faint)}
+.cap.full .cur{color:var(--emerald)}
+.cap.idle .cur{color:var(--faint)}
+.util{width:60px}
+.util .ub{height:5px;background:var(--line2);border-radius:99px;overflow:hidden}
+.util .ub i{display:block;height:100%;background:var(--emerald);border-radius:99px}
+.util .ut{font-size:9px;color:var(--faint);font-family:ui-monospace,monospace}
+.kpis{display:flex;gap:10px}
+.kpi{flex:1;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:10px 12px}
+.kpi .v{font-size:18px;font-weight:700;font-family:ui-monospace,monospace}
+.kpi .k{font-size:10.5px;color:var(--faint);margin-top:2px}
+
+/* ── 설정 ───────────────────────── */
+#scr-settings .wrap{max-width:680px;margin:0 auto;padding:24px}
+.scope{margin-bottom:22px}
+.scope>h3{font-size:13px;margin-bottom:2px}
+.scope>p{font-size:11px;color:var(--faint);margin-bottom:10px}
+.srow{background:var(--panel);border:1px solid var(--line2);display:flex;align-items:center;padding:11px 14px;gap:12px}
+.srow:first-of-type{border-radius:8px 8px 0 0}.srow:last-of-type{border-radius:0 0 8px 8px}
+.srow+.srow{border-top:none}
+.srow .lab{flex:1}.srow .lab .d{font-size:10.5px;color:var(--faint)}
+.srow select,.srow input[type=text]{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:5px;padding:4px 8px;font-size:12px}
+.scope-tag{font-size:9.5px;font-weight:700;padding:1px 7px;border-radius:4px;vertical-align:2px;margin-left:6px}
+.t-me{background:rgba(59,130,246,.15);color:#93c5fd}.t-pc{background:rgba(103,232,249,.12);color:var(--cyan)}.t-srv{background:rgba(248,113,113,.13);color:var(--red)}
+
+/* ── +추가 모달 ─────────────────── */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
+.overlay.open{display:flex}
+.modal{width:680px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+.modal h3{font-size:14px;margin-bottom:4px}
+.steps{display:flex;gap:6px;margin:10px 0 16px}
+.steps i{flex:1;height:3px;border-radius:99px;background:var(--line2)}
+.steps i.on{background:var(--blue)}
+.src-opt{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer}
+.src-opt:hover{border-color:var(--blue)}
+.src-opt .t{font-weight:600;font-size:12.5px}.src-opt .d{font-size:11px;color:var(--faint)}
+.frow{margin-bottom:12px}
+.frow label{display:block;font-size:11px;color:var(--dim);margin-bottom:4px}
+.frow input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;color:var(--text)}
+.frow .chk{display:flex;align-items:center;gap:8px;font-size:12px}
+.m-head{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+.m-back{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);color:var(--dim);font-size:14px;flex-shrink:0}
+.m-back:hover{color:var(--text);border-color:var(--faint)}
+.m-back.hide{visibility:hidden}
+.m-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.m-acts .pri{background:var(--blue-d);color:#fff;font-weight:600;padding:8px 18px;border-radius:6px}
+.m-acts .sec{color:var(--dim);padding:8px 12px}
+.done-box{text-align:center;padding:10px 0}
+.done-box .ic{font-size:30px}
+.browse-wrap{display:flex;gap:10px;height:320px}
+.btree{width:185px;flex-shrink:0;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:8px;overflow:auto;font-size:12px}
+.btn-node{display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.btn-node:hover{background:rgba(255,255,255,.05)}
+.btn-node.sel{background:rgba(59,130,246,.12);color:#93c5fd}
+.btn-node .tw{color:var(--faint);width:9px;font-size:10px}
+.bt-1{padding-left:18px}.bt-2{padding-left:32px}
+.bpane{flex:1;display:flex;flex-direction:column;min-width:0}
+.nas-item{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:8px;padding:11px 13px;margin-bottom:8px}
+.nas-item .t{font-weight:600;font-size:12.5px}.nas-item .d{font-size:11px;color:var(--faint)}
+.nas-item .browse{margin-left:auto;background:var(--blue-d);color:#fff;font-size:11.5px;font-weight:600;padding:5px 14px;border-radius:6px}
+.nas-form{border:1px dashed var(--line);border-radius:8px;padding:12px;margin-top:4px}
+.nas-form .fr{display:flex;gap:8px;margin-bottom:8px}
+.nas-form input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:7px 10px;color:var(--text);font-size:12px}
+.nas-form .test-ok{font-size:11px;color:var(--emerald)}
+.crumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);margin-bottom:10px}
+.crumb b{color:var(--text)} .crumb .sep{color:var(--faint)}
+.crumb button{color:#93c5fd;font-size:12px}
+.fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:300px;overflow:auto;padding-right:2px}
+.fcard{border:1px solid var(--line);border-radius:8px;padding:8px;cursor:pointer;background:var(--panel2)}
+.fcard:hover{border-color:var(--faint)}
+.fcard.sel{border-color:var(--blue);background:rgba(59,130,246,.08)}
+.mosaic{display:grid;grid-template-columns:1fr 1fr;gap:2px;border-radius:5px;overflow:hidden;height:74px;margin-bottom:6px}
+.mosaic div{background:var(--line2)}
+.mosaic.noprev{display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:20px}
+.fcard .fname{font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fcard .finfo{font-size:10px;color:var(--faint);margin-top:1px;display:flex;align-items:center;gap:5px}
+.ftag{font-size:9px;font-weight:700;padding:0 5px;border-radius:3px}
+.ftag.done{background:rgba(52,211,153,.15);color:var(--emerald)}
+.ftag.new{background:rgba(59,130,246,.13);color:#93c5fd}
+.pick-bar{display:flex;align-items:center;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line2);font-size:12px}
+.pick-bar .sel-name{font-weight:600}
+.type-grid{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+.tchip{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:3px 11px;color:var(--dim);cursor:pointer}
+.tchip.on{border-color:var(--blue);color:#93c5fd;background:rgba(59,130,246,.1)}
+.radio{display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 0;cursor:pointer;color:var(--dim)}
+.radio b{color:var(--text);font-weight:600}
+.done-box p{font-size:12px;color:var(--dim);margin-top:6px}
+.done-box p b{color:var(--emerald)}
+
+/* ── 시작(로그인) ─────────────────── */
+#scr-start{align-items:center;justify-content:center}
+#scr-start.active{display:flex}
+.start-card{width:400px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px}
+.start-card .lg{display:flex;align-items:center;gap:9px;font-size:18px;font-weight:700;justify-content:center;margin-bottom:4px}
+.start-card .lg .dot{width:13px;height:13px;border-radius:4px;background:var(--blue)}
+.start-card .tag{font-size:11px;color:var(--faint);text-align:center;margin-bottom:18px}
+.start-card input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:9px 12px;color:var(--text);font-size:13px;margin-bottom:8px}
+.start-card .pri-w{width:100%;background:var(--blue-d);color:#fff;font-weight:700;border-radius:7px;padding:10px;margin-top:4px}
+.start-div{display:flex;align-items:center;gap:10px;color:var(--faint);font-size:10.5px;margin:16px 0 12px}
+.start-div::before,.start-div::after{content:'';flex:1;height:1px;background:var(--line2)}
+.start-opt{display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin-bottom:8px;cursor:pointer;width:100%;text-align:left}
+.start-opt:hover{border-color:var(--blue)}
+.start-opt .t{font-weight:600;font-size:12.5px}.start-opt .d{font-size:10.5px;color:var(--faint)}
+.srv-chip{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--emerald);border:1px solid rgba(52,211,153,.3);background:rgba(52,211,153,.07);padding:4px 10px;border-radius:99px;cursor:pointer;margin-left:10px}
+.srv-chip .sd{width:7px;height:7px;border-radius:99px;background:var(--emerald);animation:pulse 2s infinite}
+/* ── 인스펙터 ───────────────────── */
+.insp-hint{position:fixed;right:12px;bottom:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:10.5px;color:var(--faint);z-index:99}
+.insp-outline{outline:1.5px solid var(--amber)!important;outline-offset:-1px}
+.insp-tip{position:fixed;background:#000;border:1px solid var(--amber);color:var(--amber);font:10.5px ui-monospace,monospace;padding:3px 8px;border-radius:5px;z-index:100;pointer-events:none}
+.user-hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<!-- ══ 셸 ══ -->
+<header class="topbar" data-mock-id="shell/topbar" data-mock-name="상단 셸">
+  <div class="logo" data-mock-id="shell/logo" data-mock-name="로고"><span class="dot"></span>Imagine <span style="font-size:9px;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:0 5px;border-radius:3px;font-weight:700" data-mock-id="shell/version" data-mock-name="목업 버전 (안 보이면 Cmd+Shift+R)">MOCK v26</span></div>
+  <nav class="nav" data-mock-id="shell/nav" data-mock-name="주 내비게이션">
+    <button class="active" data-scr="search" data-mock-id="shell/nav/item[search]" data-mock-name="탭: 검색">검색</button>
+    <button data-scr="library" class="admin-only" data-mock-id="shell/nav/item[library]" data-mock-name="탭: 폴더">폴더</button>
+    <button data-scr="analysis" class="admin-only" data-mock-id="shell/nav/item[analysis]" data-mock-name="탭: 분석 (작업)">분석</button>
+  </nav>
+  <div class="spacer"></div>
+  <button class="btn-add admin-only" onclick="openAdd()" data-mock-id="shell/action[add]" data-mock-name="전역 주 액션: + 추가">＋ 추가</button>
+  <div class="right-nav">
+    <button data-scr="admin" class="admin-only" data-mock-id="shell/nav/item[admin]" data-mock-name="탭: 관리">관리</button>
+    <button data-scr="settings" data-mock-id="shell/nav/item[settings]" data-mock-name="탭: 설정">설정</button>
+  </div>
+  <button class="srv-chip admin-only" onclick="go('admin')" data-mock-id="shell/server-status" data-mock-name="서버 상태 칩 (클릭→관리)">
+    <span class="sd"></span>서버 온라인 · 외부 접속 연결됨
+  </button>
+  <button class="role-chip" onclick="toggleRole()" data-mock-id="shell/demo[role-toggle]" data-mock-name="데모: 역할 전환">데모 · 역할: <b id="roleName">운영자</b> (클릭 전환)</button>
+  <button class="role-chip" onclick="go('start')" data-mock-id="shell/demo[start]" data-mock-name="데모: 시작 화면 보기">시작 화면</button>
+</header>
+
+<main>
+<!-- ══ 시작 (로그인 → 서버 선택, 단계 분리) ══ -->
+<section class="screen" id="scr-start" data-mock-id="screen/start" data-mock-name="시작 화면">
+  <!-- 1단계: 신원 -->
+  <div class="start-card" id="start1" data-mock-id="start/step1" data-mock-name="1단계: 로그인 (질문: 너는 누구냐)">
+    <div class="lg"><span class="dot"></span>Imagine</div>
+    <div class="tag">내 에셋을 자연어로 찾는 검색</div>
+    <button class="start-opt" style="justify-content:center;gap:8px" onclick="startStep2()" data-mock-id="start/google" data-mock-name="Google로 계속하기 (주 경로)">
+      <span style="font-weight:700">G</span><span class="t">Google로 계속하기</span>
+    </button>
+    <div class="start-div">또는 이메일로</div>
+    <input placeholder="이메일" value="saintiron82@gmail.com" data-mock-id="start/email" data-mock-name="이메일">
+    <input type="password" placeholder="비밀번호" value="········">
+    <button class="pri-w" onclick="startStep2()" data-mock-id="start/login" data-mock-name="로그인 → 서버 선택(처음) 또는 자동 접속(재방문)">로그인</button>
+    <div style="font-size:10.5px;color:var(--faint);text-align:center;margin-top:8px" data-mock-id="start/signup-note" data-mock-name="가입은 홈페이지에서 (계정의 집)">계정이 없나요? <span style="color:#93c5fd;cursor:pointer">imagine.app에서 가입</span> — 초대 수락·구매도 거기서</div>
+  </div>
+
+  <!-- 2단계: 서버 선택 (처음/서버 이력 없음일 때만) -->
+  <div class="start-card" id="start2" style="display:none" data-mock-id="start/step2" data-mock-name="2단계: 내 서버 (멤버십 기반 자동 표시)">
+    <div class="lg" style="font-size:14px">내 서버</div>
+    <div class="tag">saintiron82@gmail.com — 멤버인 서버가 자동으로 표시됩니다</div>
+    <button class="start-opt" onclick="go('search')" data-mock-id="start/server[mine]" data-mock-name="멤버인 서버 (수락은 이미 웹에서 끝남)">
+      ⚡<div><div class="t">우리팀 라이브러리</div><div class="d">운영자 · 마지막 접속 어제 — 바로 접속</div></div>
+    </button>
+    <div class="start-div">또는</div>
+    <button class="start-opt" onclick="startCreate(1)" data-mock-id="start/create-server" data-mock-name="서버 만들기 (계정 라이선스 자동 사용)">
+      🖥️<div><div class="t">이 컴퓨터를 서버로 만들기</div><div class="d">계정에 <b style="color:#93c5fd">스튜디오 플랜</b> 보유 — 키 입력 불필요</div></div>
+    </button>
+    <div style="font-size:10px;color:var(--faint);text-align:center;margin-top:10px" data-mock-id="start/invite-note" data-mock-name="초대는 웹에서 수락됨">팀 초대를 받았다면 메일 링크에서 수락하세요 — 수락 후 로그인하면 여기 나타납니다</div>
+  </div>
+
+  <!-- 서버 만들기 1/3: 이름 + 서버 비밀번호 -->
+  <div class="start-card" id="create1" style="display:none" data-mock-id="start/create/step1" data-mock-name="서버 만들기 1/3: 이름·비밀번호">
+    <div class="lg" style="font-size:14px">서버 만들기 <span style="font-size:10px;color:var(--faint)">1 / 3</span></div>
+    <div class="tag">이 컴퓨터가 팀의 라이브러리 서버가 됩니다</div>
+    <input value="우리팀 라이브러리" data-mock-id="start/create/name" data-mock-name="그룹 이름 (Firebase 레지스트리 중복 체크)">
+    <div style="font-size:10px;color:var(--emerald);margin:-4px 0 8px 2px">✓ 사용 가능한 이름</div>
+    <input type="password" placeholder="서버 관리 비밀번호" value="········">
+    <div style="font-size:10px;color:var(--faint);margin:-4px 0 8px 2px">서버 초기화 등 관리 작업에만 사용 — 멤버는 이메일 초대로</div>
+    <div style="display:flex;align-items:center;gap:8px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.3);border-radius:7px;padding:9px 12px;margin-bottom:8px;font-size:11.5px" data-mock-id="start/create/license-auto" data-mock-name="계정 라이선스 자동 사용 (키 타이핑 없음)">
+      ✓ <b>스튜디오 플랜</b> 사용 — 좌석 10 · 분석기 5 <span style="color:var(--faint)">(계정 구매분, 키 입력 불필요)</span>
+    </div>
+    <button class="pri-w" onclick="startCreate(2)">다음</button>
+  </div>
+
+  <!-- 서버 만들기 2/3: 도메인 -->
+  <div class="start-card" id="create2" style="display:none" data-mock-id="start/create/step2" data-mock-name="서버 만들기 2/3: 도메인 (최초 선택의 제자리)">
+    <div class="lg" style="font-size:14px">무엇을 보관하나요? <span style="font-size:10px;color:var(--faint)">2 / 3</span></div>
+    <div class="tag">분류·태그 기준이 됩니다 — 나중에 설정 &gt; 서버에서 변경 가능</div>
+    <button class="start-opt" onclick="startCreate(3)" style="border-color:var(--blue)">🎮<div><div class="t">게임 에셋</div><div class="d">캐릭터·배경·UI·이펙트·아이콘 …</div></div></button>
+    <button class="start-opt" onclick="startCreate(3)">🎨<div><div class="t">일반 일러스트/디자인</div><div class="d">일러스트·사진·시안·레퍼런스</div></div></button>
+    <button class="start-opt" onclick="startCreate(3)">📐<div><div class="t">기본</div><div class="d">범용 분류 — 가장 단순</div></div></button>
+  </div>
+
+  <!-- 서버 만들기 3/3: 완료 + 첫 초대 -->
+  <div class="start-card" id="create3" style="display:none" data-mock-id="start/create/step3" data-mock-name="서버 만들기 3/3: 완료 + 첫 초대 코드">
+    <div class="done-box">
+      <div class="ic">🖥️✅</div>
+      <h3 style="margin-top:6px">서버가 켜졌습니다</h3>
+      <p>우리팀 라이브러리 — 어디서나 접속됩니다<br><b>주소를 알릴 필요 없음</b> · 팀원은 이메일 초대로 참여합니다</p>
+    </div>
+    <div style="display:flex;gap:8px;margin:10px 0" data-mock-id="start/create/first-invite" data-mock-name="첫 팀원 이메일 초대">
+      <input placeholder="팀원 이메일 — 쉼표로 여러 명" style="flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:9px 12px;color:var(--text);font-size:12px">
+      <button style="background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:0 16px;font-size:11.5px;color:#93c5fd">초대 보내기</button>
+    </div>
+    <button class="pri-w" onclick="go('search')" data-mock-id="start/create/finish" data-mock-name="시작하기 → 첫 화면(검색) + 폴더 추가 유도">시작하기 — 첫 폴더를 추가해 보세요</button>
+  </div>
+</section>
+
+<!-- ══ 검색 ══ -->
+<section class="screen active" id="scr-search" data-mock-id="screen/search" data-mock-name="검색 화면">
+  <div class="search-head">
+    <div class="search-bar" data-mock-id="search/bar" data-mock-name="검색 바">
+      <input value="푸른 갑옷을 입은 기사 일러스트" data-mock-id="search/bar/input" data-mock-name="검색 입력">
+      <button class="go">검색</button>
+    </div>
+    <div class="chips" data-mock-id="search/refine" data-mock-name="범위/정제 칩">
+      <span class="chip on">의미: 기사, 갑옷</span>
+      <span class="chip on">색: 푸른</span>
+      <span class="chip">유형: 캐릭터</span>
+      <span class="chip">+ 조건 추가</span>
+    </div>
+  </div>
+  <div class="results" data-mock-id="search/results" data-mock-name="결과 그리드">
+    <div class="card" data-mock-id="search/results/card[1]" data-mock-name="결과 카드(정상)">
+      <div class="thumb" style="background:linear-gradient(140deg,#1e3a5f,#2d4a73)"><span class="score">0.84</span><span class="badges"><span class="badge b-vv">VV</span><span class="badge b-mv">MV</span></span></div>
+      <div class="meta"><div class="name">knight_armor_v3.psd</div><div class="cap">푸른 판금 갑옷의 기사, 정면 입상</div></div>
+    </div>
+    <div class="card" data-mock-id="search/results/card[2]" data-mock-name="결과 카드(분석 대기 — 점진 가용성)">
+      <div class="thumb" style="background:linear-gradient(140deg,#27344a,#3a4a66)"><span class="score">0.71</span><span class="badges"><span class="badge b-wait">분석 대기</span><span class="badge b-vv">VV</span></span></div>
+      <div class="meta"><div class="name">new_knight_concept.psd</div><div class="cap" style="color:var(--amber)">방금 추가됨 — 캡션 생성 중</div></div>
+    </div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(140deg,#1d3146,#28455e)"><span class="score">0.69</span><span class="badges"><span class="badge b-mv">MV</span></span></div><div class="meta"><div class="name">paladin_sketch.png</div><div class="cap">은빛 갑옷 성기사 스케치</div></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(140deg,#33272b,#4a3a40)"><span class="score">0.66</span><span class="badges"><span class="badge b-fts">FTS</span></span></div><div class="meta"><div class="name">기사단_로고_final.psd</div><div class="cap">레이어명 일치: knight_emblem</div></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(140deg,#1e3a4a,#2a5468)"><span class="score">0.63</span><span class="badges"><span class="badge b-vv">VV</span></span></div><div class="meta"><div class="name">armor_texture_02.png</div><div class="cap">청색 금속 질감 타일</div></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(140deg,#2a2a3e,#3c3c5c)"><span class="score">0.61</span><span class="badges"><span class="badge b-vv">VV</span><span class="badge b-mv">MV</span></span></div><div class="meta"><div class="name">guard_npc_set.psd</div><div class="cap">경비병 NPC 3종 세트</div></div></div>
+  </div>
+</section>
+
+<!-- ══ 라이브러리 (구 아카이빙+분석 통합) ══ -->
+<section class="screen" id="scr-library" data-mock-id="screen/library" data-mock-name="라이브러리 화면">
+  <aside class="lib-side" data-mock-id="library/sources" data-mock-name="폴더 패널">
+    <h3>폴더 <button onclick="openAdd()">+ 추가</button></h3>
+    <div class="tree">
+      <div class="tnode" data-mock-id="library/sources/node[nas-characters]" data-mock-name="폴더(NAS, 처리중)"><span class="tw">▾</span><span class="ic">🌐</span><span class="nm">NAS / 캐릭터</span><span class="cov a" title="1,240/3,800 남음"></span></div>
+      <div class="tnode lvl1"><span class="tw">▸</span><span class="ic">📁</span><span class="nm">주인공</span><span class="cov g"></span></div>
+      <div class="tnode lvl1"><span class="tw">▸</span><span class="ic">📁</span><span class="nm">NPC</span><span class="cov a"></span></div>
+      <div class="tnode" data-mock-id="library/sources/node[nas-bg]" data-mock-name="폴더(완료)"><span class="tw">▸</span><span class="ic">🌐</span><span class="nm">NAS / 배경</span><span class="cov g" title="완료"></span></div>
+      <div class="tnode" data-mock-id="library/sources/node[local]" data-mock-name="폴더(로컬, 재구축 필요)"><span class="tw">▸</span><span class="ic">💻</span><span class="nm">로컬 / 컨셉아트</span><span class="cov r" title="재구축 필요 (FTS)"></span></div>
+    </div>
+    <div class="src-detail" data-mock-id="library/source-detail" data-mock-name="폴더 속성 카드 (선택: NAS/캐릭터)">
+      <div class="sd-head">🌐 NAS / 캐릭터 <span class="sd-sub">폴더 속성</span></div>
+      <div class="sd-row"><span>새 파일 자동 분석</span><span class="toggle" style="transform:scale(.85)" data-mock-id="library/source-detail/auto" data-mock-name="폴더 속성: 자동 분석"></span></div>
+      <div class="sd-row"><span>마지막 동기화</span><span class="sd-val">3일 전 · 이동 2건 감지</span></div>
+      <div class="sd-acts">
+        <button data-mock-id="library/source-detail/sync" data-mock-name="폴더 액션: 동기화">동기화</button>
+        <button data-mock-id="library/source-detail/reanalyze" data-mock-name="폴더 액션: 다시 분석…">다시 분석…</button>
+        <button class="danger">제거</button>
+      </div>
+    </div>
+  </aside>
+  <div class="lib-main">
+    <div class="sec-title">폴더 현황 <span class="sub">등록된 폴더가 얼마나 분석됐는지</span></div>
+    <div class="jobs" data-mock-id="library/source-overview" data-mock-name="폴더 현황 행">
+      <div class="jrow" data-mock-id="library/source-overview/row[chars]" data-mock-name="폴더 행(처리 중)">
+        <span class="cov a" style="width:9px;height:9px"></span><span class="nm">🌐 NAS / 캐릭터</span>
+        <div class="bar"><i style="width:67%"></i></div>
+        <span class="cnt">2,560 / 3,800 장</span>
+        <span style="font-size:10.5px;color:var(--faint)">자동 분석 ON</span>
+        <div class="acts2"><button>동기화</button><button>다시 분석…</button></div>
+      </div>
+      <div class="jrow" data-mock-id="library/source-overview/row[bg]" data-mock-name="폴더 행(완료)">
+        <span class="cov g" style="width:9px;height:9px"></span><span class="nm">🌐 NAS / 배경</span>
+        <div class="bar"><i style="width:100%"></i></div>
+        <span class="cnt">880 / 880 장</span>
+        <span style="font-size:10.5px;color:var(--faint)">자동 분석 ON · 동기화 3일 전</span>
+        <div class="acts2"><button>동기화</button><button>다시 분석…</button></div>
+      </div>
+      <div class="jrow" data-mock-id="library/source-overview/row[local]" data-mock-name="폴더 행(점검 필요)">
+        <span class="cov r" style="width:9px;height:9px"></span><span class="nm">💻 로컬 / 컨셉아트</span>
+        <div class="bar"><i style="width:99%;background:var(--amber)"></i></div>
+        <span class="cnt">698 / 700 장</span>
+        <span style="font-size:10.5px;color:var(--amber)">다시 분석 필요</span>
+        <div class="acts2"><button>다시 분석…</button><button class="danger">제거</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 분석 (작업 큐) ══ -->
+<section class="screen" id="scr-analysis" data-mock-id="screen/analysis" data-mock-name="분석 화면 (작업 전용)">
+  <div style="max-width:880px;margin:0 auto;padding:20px 24px">
+
+    <div class="sec-title">분석 리스트 <span class="sub">등록 순이 아니라 작업 간 공정 배분으로 처리</span></div>
+    <div class="summary" data-mock-id="library/summary" data-mock-name="요약 (용어 없음)">
+      <div class="sum-row">
+        <span class="big">2,560</span><span class="of">/ 3,800 장 분석됨</span>
+        <div class="bar"><i style="width:67%"></i></div>
+        <span style="font-family:ui-monospace,monospace;color:#93c5fd;font-weight:700">67%</span>
+      </div>
+      <div style="margin-top:8px;font-size:11.5px;color:var(--dim)" data-mock-id="analysis/summary/line" data-mock-name="상태 한 줄 (사람 말)">
+        지금 <b style="color:var(--emerald)">분당 14.2장</b>씩 처리 중 · 분석기 <b>3대</b> 참여
+      </div>
+      <div class="an-strip" data-mock-id="analysis/analyzers" data-mock-name="분석기 현황 (간이 — 상세·제어는 관리)">
+        <div class="an-card" data-mock-id="analysis/analyzers/card[server]" data-mock-name="분석기(이 서버)">
+          <span class="st run"></span><div><div class="nm2">이 서버</div><div class="sub2">knight_v3.psd 처리 중</div></div>
+          <span class="rate2">7.9장/분</span>
+        </div>
+        <div class="an-card" data-mock-id="analysis/analyzers/card[macbook]" data-mock-name="분석기(멤버 제공)">
+          <span class="st run"></span><div><div class="nm2">지민-MacBook</div><div class="sub2">bg_forest_07.psd 처리 중</div></div>
+          <span class="rate2">78장/분</span>
+        </div>
+        <div class="an-card" data-mock-id="analysis/analyzers/card[gpu]" data-mock-name="분석기(고성능)">
+          <span class="st run"></span><div><div class="nm2">gpu-box-01</div><div class="sub2">npc_smith.psd 처리 중</div></div>
+          <span class="rate2">81장/분</span>
+        </div>
+        <button class="an-card" onclick="go('admin')" style="flex:0 0 auto;cursor:pointer" data-mock-id="analysis/analyzers/more" data-mock-name="관리로 이동">
+          <span class="sub2">상세·제어 →</span>
+        </button>
+      </div>
+    </div>
+    <div class="jobs" data-mock-id="library/jobs" data-mock-name="분석 리스트 (얇은 행 — 용어/ETA/완료 없음)">
+      <div class="jrow" data-mock-id="library/jobs/row[active]" data-mock-name="작업 행(진행)">
+        <span class="st run"></span><span class="nm">NAS / 캐릭터</span>
+        <div class="bar"><i style="width:59%;background:var(--blue)"></i></div>
+        <span class="cnt">1,820 / 3,100</span>
+        <span class="plain-fail" style="margin:0"><span class="n">실패 3</span><button>보기</button></span>
+        <div class="acts2"><button>일시정지</button><button>취소</button></div>
+      </div>
+      <div class="jrow" data-mock-id="library/jobs/row[wave]" data-mock-name="작업 행(재분석)">
+        <span class="st run"></span><span class="nm">배경 다시 분석</span>
+        <div class="bar"><i style="width:59%;background:var(--purple)"></i></div>
+        <span class="cnt">410 / 700</span>
+        <div class="acts2"><button>일시정지</button><button>취소</button></div>
+      </div>
+      <div class="jrow waiting" data-mock-id="library/jobs/row[queued]" data-mock-name="작업 행(대기)">
+        <span class="st" style="background:var(--faint)"></span><span class="nm">신규 컨셉 2026-06</span>
+        <span class="cnt">412장 · 대기</span>
+        <div class="acts2"><button>⚡ 우선 처리</button><button>취소</button></div>
+      </div>
+    </div>
+
+    <div class="live" data-mock-id="library/live" data-mock-name="지금 처리 중 — 작업큐 내용 모니터 (화면의 주인공)">
+      <div class="live-head">지금 처리 중 <span class="rate">분당 14.2장</span></div>
+      <div class="flow" data-mock-id="library/live/flow" data-mock-name="처리 흐름 (좌측=처리 중, 나머지=방금 완료)">
+        <div class="fl-item busy"><div class="ph" style="background:linear-gradient(140deg,#1e3a5f,#2d4a73)"></div><div class="fn">knight_v3.psd</div></div>
+        <div class="fl-item busy"><div class="ph" style="background:linear-gradient(140deg,#33272b,#4a3a40)"></div><div class="fn">npc_smith.psd</div></div>
+        <div class="fl-item busy"><div class="ph" style="background:linear-gradient(140deg,#27344a,#3a4a66)"></div><div class="fn">bg_forest_07.psd</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#1d3146,#28455e)"></div><div class="fn">armor_silver.png</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#2a2a3e,#3c3c5c)"></div><div class="fn">guard_set.psd</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#1e3a4a,#2a5468)"></div><div class="fn">tex_stone.png</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#3a2a3e,#503a56)"></div><div class="fn">villager_12.psd</div></div>
+        <div class="fl-item"><div class="ph" style="background:linear-gradient(140deg,#2e3a2a,#465640)"></div><div class="fn">prop_chest.psd</div></div>
+      </div>
+      <div class="plain-fail" data-mock-id="library/live/fail" data-mock-name="실패 — 사람 말 사유">
+        <span class="n">실패 3건</span>
+        <span>그림 파일이 손상되어 읽을 수 없음 1 · 분석 시간 초과(자동 재시도 중) 2</span>
+        <button>자세히</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 관리 ══ -->
+<section class="screen" id="scr-admin" data-mock-id="screen/admin" data-mock-name="관리 화면">
+  <aside class="adm-side" data-mock-id="admin/subnav" data-mock-name="관리 서브내비">
+    <button class="active" data-adm="workers">분석기</button>
+    <button data-adm="members">멤버</button>
+    <button data-adm="tools">서버 도구</button>
+  </aside>
+  <div class="adm-main">
+    <div id="adm-workers">
+      <div class="panel" data-mock-id="admin/workers/policy" data-mock-name="자동 분석 정책 (유일한 토글 위치)">
+        <h4>자동 분석 <span class="hint">서버 전역 정책 — 이 토글은 여기 한 곳에만 있습니다</span><span class="toggle" data-mock-id="admin/workers/policy/toggle" data-mock-name="자동 분석 토글"></span></h4>
+        <div class="bottleneck" data-mock-id="admin/bottleneck" data-mock-name="병목 진단 (명시)">
+          현재 병목: <b>MC</b> — 대기 1,090장 · 클러스터 MC 처리력 <b>분당 88.9장</b> (이 단계가 전체 완료 속도를 결정)
+          <div class="why">이유: MC 가능 분석기 2대뿐 (지민-MacBook은 VRAM 8GB로 불가) · VV·MV는 처리력 여유 — MC 산출을 기다리는 중</div>
+        </div>
+        <div class="valves" data-mock-id="admin/workers/valves" data-mock-name="단계 밸브 + 단계별 처리율">
+          <div class="valve"><div class="ph">DL</div><div class="n">3,800/3,800</div><div class="rate">완료</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">파싱</div><div class="n">3,640/3,800</div><div class="rate">149/분</div><span class="sw on">ON</span></div>
+          <div class="valve bn" data-mock-id="admin/valves/mc" data-mock-name="밸브: MC (병목 표시)"><div class="ph">MC<span class="bn-tag">병목</span></div><div class="n">2,710/3,800</div><div class="rate">88.9/분</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">VV</div><div class="n">3,205/3,800</div><div class="rate">156/분 가능</div><span class="sw on">ON</span></div>
+          <div class="valve"><div class="ph">MV</div><div class="n">2,560/3,800</div><div class="rate">115/분 가능</div><span class="sw on">ON</span></div>
+        </div>
+      </div>
+      <div class="panel" data-mock-id="admin/workers/table" data-mock-name="분석기 테이블">
+        <h4>분석기 <span class="hint">3대 온라인 — 정지=이번 세션 종료(재시작 가능) · 차단=재접속 거부</span></h4>
+        <table>
+          <tr><th>이름</th><th>MC <span style="font-weight:400">현재/능력</span></th><th>VV <span style="font-weight:400">현재/능력</span></th><th>MV <span style="font-weight:400">현재/능력</span></th><th>발휘율</th><th style="text-align:right">제어</th></tr>
+          <tr data-mock-id="admin/workers/row[server-local]" data-mock-name="분석기 행(이 서버 — 능력 만재)">
+            <td><b>이 서버</b><div style="font-size:10px;color:var(--faint)">자동 · server-local · 벤치 A</div></td>
+            <td><span class="cap full"><span class="cur">7.9</span><span class="max"> / 7.9</span><span class="note">만재 — 더 못 냄</span></span></td>
+            <td><span class="cap idle"><span class="cur">0</span><span class="max"> / 95</span><span class="note">MC에 배정됨</span></span></td>
+            <td><span class="cap idle"><span class="cur">0</span><span class="max"> / 130</span><span class="note">MC에 배정됨</span></span></td>
+            <td><div class="util"><div class="ub"><i style="width:100%"></i></div><div class="ut">100%</div></div></td>
+            <td><div class="row-act"><button>정지</button></div></td>
+          </tr>
+          <tr data-mock-id="admin/workers/row[macbook]" data-mock-name="분석기 행(MC 불가 사유 명시)">
+            <td><b>지민-MacBook</b><div style="font-size:10px;color:var(--faint)">client · electron · 벤치 B</div></td>
+            <td><span class="cap"><span class="cur" style="color:var(--red)">✕ 불가</span><span class="note">VRAM 8GB &lt; 필요 12GB</span></span></td>
+            <td><span class="cap full"><span class="cur">78</span><span class="max"> / 78</span><span class="note">만재</span></span></td>
+            <td><span class="cap"><span class="cur">37</span><span class="max"> / 115</span><span class="note">VV와 교대 중</span></span></td>
+            <td><div class="util"><div class="ub"><i style="width:96%"></i></div><div class="ut">96%</div></div></td>
+            <td><div class="row-act"><button>정지</button><button class="danger">차단</button></div></td>
+          </tr>
+          <tr data-mock-id="admin/workers/row[gpu]" data-mock-name="분석기 행(핀의 기회비용 명시)">
+            <td><b>gpu-box-01</b><div style="font-size:10px;color:var(--faint)">headless · cli · <span style="color:var(--amber)">MC 핀</span> · 벤치 S</div></td>
+            <td><span class="cap full"><span class="cur">81</span><span class="max"> / 81</span><span class="note">만재 (병목 단계 전담)</span></span></td>
+            <td><span class="cap idle"><span class="cur">0</span><span class="max"> / 210</span><span class="note">핀으로 미사용</span></span></td>
+            <td><span class="cap idle"><span class="cur">0</span><span class="max"> / 300</span><span class="note">핀으로 미사용</span></span></td>
+            <td><div class="util"><div class="ub"><i style="width:100%"></i></div><div class="ut">100%</div></div></td>
+            <td><div class="row-act"><button>핀 해제</button><button>정지</button><button class="danger">차단</button></div></td>
+          </tr>
+        </table>
+        <div class="blocked" data-mock-id="admin/workers/blocked" data-mock-name="차단된 분석기">
+          ⛔ <b>old-laptop</b> <span style="color:var(--faint)">— 차단됨 (재접속 불가)</span>
+          <button class="unb">차단 해제</button>
+        </div>
+      </div>
+      <div class="panel" data-mock-id="admin/workers/cache" data-mock-name="파생물 캐시/백필 카드">
+        <h4>파생물 캐시 <span class="hint">같은 내용은 다시 계산하지 않습니다</span></h4>
+        <div class="kpis">
+          <div class="kpi"><div class="v" style="color:var(--emerald)">312</div><div class="k">이번 잡 캐시 적중</div></div>
+          <div class="kpi"><div class="v">17,726</div><div class="k">해시 보유 / 17,726 (백필 완료)</div></div>
+          <div class="kpi"><div class="v" style="color:#93c5fd">3</div><div class="k">활성 모델 버전</div></div>
+          <div class="kpi" data-mock-id="admin/workers/cache/wave" data-mock-name="파도 시작 카드"><div class="v" style="color:var(--purple)">파도 ▸</div><div class="k">모델 교체 재처리 시작</div></div>
+        </div>
+      </div>
+    </div>
+    <div id="adm-members" style="display:none">
+      <div class="panel" data-mock-id="admin/plan" data-mock-name="플랜 (과금·한도의 단일 표면)">
+        <h4>플랜 <span class="hint">서버 단위 라이선스 — 한도는 여기서 옴</span></h4>
+        <div class="kpis">
+          <div class="kpi"><div class="v" style="color:#93c5fd">스튜디오</div><div class="k">연 라이선스 · 2027-06-12 만료</div></div>
+          <div class="kpi" data-mock-id="admin/plan/seats" data-mock-name="좌석 게이지 (멤버+예약)"><div class="v">5 <span style="color:var(--faint);font-size:12px">/ 10</span></div><div class="k">좌석 — 멤버 3 + 대기 초대 2</div></div>
+          <div class="kpi"><div class="v">3 <span style="color:var(--faint);font-size:12px">/ 5</span></div><div class="k">분석기</div></div>
+          <div class="kpi" style="display:flex;align-items:center;justify-content:center"><button style="background:var(--blue-d);color:#fff;font-weight:600;font-size:11.5px;padding:7px 16px;border-radius:6px" data-mock-id="admin/plan/renew" data-mock-name="갱신/업그레이드">갱신 / 업그레이드</button></div>
+        </div>
+        <div style="font-size:10px;color:var(--faint);margin-top:8px" data-mock-id="admin/plan/privacy" data-mock-name="보고 범위 명시 (신뢰 원칙)">사용 현황 보고: 멤버·분석기 수, 월 분석량 — 수치만 전송되며 파일 내용·이름은 절대 포함되지 않습니다</div>
+        <div style="font-size:10px;color:var(--amber);margin-top:4px" data-mock-id="admin/plan/expiry-rule" data-mock-name="만료 규칙: 접속 차단 (데이터 보존)">만료 시 이 서버 접속이 차단됩니다 (로그인은 되어도 입장 불가) · 데이터는 보존되며 갱신 즉시 복귀</div>
+      </div>
+      <div class="panel" data-mock-id="admin/members/invite" data-mock-name="초대 — 이메일 기반 (Anthropic 방식)">
+        <h4>초대 <span class="hint">이메일로 초대 → 메일의 링크로 수락 → 좌석 점유 · 초대는 그 이메일로만 수락 가능</span></h4>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <input placeholder="이메일 주소 — 쉼표로 여러 명" value="newhire@studio.kr" style="flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 12px;color:var(--text);font-size:12px" data-mock-id="admin/members/invite-email" data-mock-name="초대 이메일 입력">
+          <button style="background:var(--blue-d);color:#fff;font-weight:600;font-size:11.5px;padding:0 18px;border-radius:6px" data-mock-id="admin/members/invite-send" data-mock-name="초대 보내기 (발송 시점에 좌석 예약)">초대 보내기</button>
+        </div>
+        <table data-mock-id="admin/members/pending" data-mock-name="대기 중 초대 (좌석 예약 중)">
+          <tr><th>대기 중 초대</th><th>보냄</th><th style="text-align:right"></th></tr>
+          <tr>
+            <td>minsu@studio.kr <span style="font-size:9px;color:var(--amber)">좌석 예약 중</span></td>
+            <td class="mono">2일 전</td>
+            <td><div class="row-act"><button data-mock-id="admin/members/resend" data-mock-name="재발송">재발송</button><button class="danger" data-mock-id="admin/members/cancel-invite" data-mock-name="초대 취소 (좌석 반환)">취소</button></div></td>
+          </tr>
+          <tr>
+            <td>art-extern@partner.co <span style="font-size:9px;color:var(--amber)">좌석 예약 중</span></td>
+            <td class="mono">5시간 전</td>
+            <td><div class="row-act"><button>재발송</button><button class="danger">취소</button></div></td>
+          </tr>
+        </table>
+      </div>
+      <div class="panel" data-mock-id="admin/members/list" data-mock-name="멤버 목록 — 제거=좌석 반환, 비활성=좌석 유지">
+        <h4>멤버 <span class="hint">제거 = 좌석 반환 · 비활성 = 접속만 차단(좌석 유지)</span></h4>
+        <table>
+          <tr><th>이름</th><th>역할</th><th>가입 경로</th><th>마지막 접속</th><th style="text-align:right"></th></tr>
+          <tr><td>성철<div style="font-size:9.5px;color:var(--faint)">saintiron82@gmail.com</div></td><td><span class="badge" style="background:rgba(192,132,252,.15);color:var(--purple)">운영자</span></td><td class="mono" style="font-size:10px">서버 생성자</td><td class="mono">방금</td><td></td></tr>
+          <tr><td>지민<div style="font-size:9.5px;color:var(--faint)">jimin@studio.kr</div></td><td><span class="badge b-ok">사용자</span></td><td class="mono" style="font-size:10px">초대 수락</td><td class="mono">2시간 전</td><td><div class="row-act"><button>역할</button><button class="danger">비활성</button></div></td></tr>
+          <tr style="opacity:.5"><td>퇴사자A<div style="font-size:9.5px;color:var(--faint)">old@studio.kr</div></td><td><span class="badge b-fail">비활성</span></td><td class="mono" style="font-size:10px">초대 수락</td><td class="mono">34일 전</td><td><div class="row-act"><button>활성화</button><button class="danger">제거</button></div></td></tr>
+        </table>
+      </div>
+    </div>
+    <div id="adm-tools" style="display:none">
+      <div class="panel"><h4>서버 도구 <span class="hint">DB·정합성·연결 — 구 헤더 DB 메뉴가 여기로</span></h4>
+        <table>
+          <tr><td>외부 접속 (Cloudflare 터널)</td><td style="color:var(--emerald);font-size:11px">● 연결됨 — ourteam.imagine.app · 주소 공유 불필요</td><td><div class="row-act"><button>재연결</button></div></td></tr>
+          <tr><td>같은 네트워크 (LAN)</td><td style="color:var(--faint);font-size:11px">192.168.0.5:8000 · 빠른 경로 (자동 발견)</td><td></td></tr>
+          <tr><td>정합성 감사</td><td style="color:var(--faint);font-size:11px">미완성/잔여 작업 검사·복구</td><td><div class="row-act"><button>실행</button></div></td></tr>
+          <tr><td>해시 백필</td><td style="color:var(--faint);font-size:11px">파생물 캐시 자격 부여 (~16KB/파일)</td><td><div class="row-act"><button>실행</button></div></td></tr>
+          <tr><td>DB 내보내기 / 가져오기</td><td></td><td><div class="row-act"><button>내보내기</button><button>가져오기</button></div></td></tr>
+          <tr><td style="color:var(--red)">DB 초기화</td><td style="color:var(--faint);font-size:11px">비밀번호 확인 필요</td><td><div class="row-act"><button class="danger">초기화…</button></div></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 설정 (3스코프) ══ -->
+<section class="screen" id="scr-settings" data-mock-id="screen/settings" data-mock-name="설정 화면">
+  <div class="wrap">
+    <div class="scope" data-mock-id="settings/scope[me]" data-mock-name="설정: 나">
+      <h3>나 <span class="scope-tag t-me">나에게만 적용</span></h3>
+      <p>이 계정의 화면 표시 방식</p>
+      <div class="srow"><div class="lab">언어</div><select><option>한국어</option><option>English</option></select></div>
+      <div class="srow"><div class="lab">그리드 밀도<div class="d">검색 결과 카드 크기</div></div><select><option>기본</option><option>조밀</option></select></div>
+    </div>
+    <div class="scope" data-mock-id="settings/scope[machine]" data-mock-name="설정: 이 컴퓨터">
+      <h3>이 컴퓨터 <span class="scope-tag t-pc">이 머신의 기여</span></h3>
+      <p>이 컴퓨터가 분석에 참여하는 방식 — 누구나 자기 머신을 제공할 수 있습니다</p>
+      <div class="srow"><div class="lab">분석 참여<div class="d">내 컴퓨터를 분석기로 제공</div></div><span class="toggle"></span></div>
+      <div class="srow"><div class="lab">활동 시간<div class="d">이 시간에만 분석 (예: 야간)</div></div><input type="text" value="22:00 – 07:00" style="width:120px"></div>
+      <div class="srow"><div class="lab">AI 모델 등급<div class="d">VRAM에 따라 자동 감지</div></div><select><option>자동 (pro)</option><option>standard</option></select></div>
+      <div class="srow"><div class="lab">벤치마크<div class="d">마지막: S등급 · MC 7.9/m</div></div><div class="row-act"><button>다시 측정</button></div></div>
+    </div>
+    <div class="scope admin-only" data-mock-id="settings/scope[server]" data-mock-name="설정: 서버 (운영자만)">
+      <h3>서버 <span class="scope-tag t-srv">전원에게 적용 · 운영자</span></h3>
+      <p>이 라이브러리를 쓰는 모두에게 영향을 주는 정책</p>
+      <div class="srow"><div class="lab">분석 도메인<div class="d">게임 에셋 — 분류·태그 기준</div></div><div class="row-act"><button>변경…</button></div></div>
+      <div class="srow"><div class="lab">자동 분석 정책<div class="d">관리 &gt; 분석기에서 제어</div></div><div class="row-act"><button onclick="go('admin')">이동 →</button></div></div>
+      <div class="srow"><div class="lab">LAN 공개<div class="d">같은 네트워크에서 접속 허용</div></div><span class="toggle"></span></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ══ +추가 모달 ══ -->
+<div class="overlay" id="addOverlay" data-mock-id="add/overlay" data-mock-name="+추가 플로우">
+  <div class="modal">
+    <div class="m-head">
+      <button class="m-back" id="mBack" onclick="goBack()" data-mock-id="add/back" data-mock-name="뒤로 (항상 좌상단 한 곳)">←</button>
+      <h3>분석 작업 등록</h3>
+    </div>
+    <div class="steps"><i class="on" id="s1"></i><i id="s2"></i><i id="s3"></i><i id="s4"></i></div>
+
+    <!-- 1단계: 소스 (파일 단위 포함 — 현행 4개 진입점 흡수) -->
+    <div id="step1">
+      <p style="font-size:11px;color:var(--faint);margin-bottom:10px" data-mock-id="add/principle" data-mock-name="원칙: 폴더 지정형">분석은 <b style="color:var(--text)">폴더 단위</b>로 지정합니다 — 파일을 하나씩 다루지 않습니다</p>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[local]" data-mock-name="추가: 내 컴퓨터 폴더">💻<div><div class="t">내 컴퓨터의 폴더</div><div class="d">이 컴퓨터에서 폴더 선택 (드래그&드롭 가능)</div></div></div>
+      <div class="src-opt" onclick="showNas()" data-mock-id="add/source[nas]" data-mock-name="추가: NAS 폴더">🌐<div><div class="t">NAS 폴더</div><div class="d">등록된 NAS에서 탐색 — 또는 새 NAS 연결</div></div></div>
+      <div class="src-opt" onclick="addStep(2)" data-mock-id="add/source[existing]" data-mock-name="추가: 등록된 폴더 다시 분석">♻️<div><div class="t">등록된 폴더 다시 분석</div><div class="d">로컬/컨셉아트 — 다시 분석 필요 <span style="color:var(--red)">●</span></div></div></div>
+      <div class="m-acts"><button class="sec" onclick="closeAdd()">취소</button></div>
+    </div>
+
+    <!-- 1b단계: NAS 지정 — 등록된 NAS 선택 또는 새 연결 -->
+    <div id="step1b" style="display:none" data-mock-id="add/nas" data-mock-name="NAS 지정 단계">
+      <div class="nas-item" data-mock-id="add/nas/item[synology]" data-mock-name="등록된 NAS">
+        🌐<div><div class="t">synology-main</div><div class="d">https://nas.local:5006 · 연결됨 · 폴더 4개 사용 중</div></div>
+        <button class="browse" onclick="addStep(2)">탐색</button>
+      </div>
+      <div class="nas-form" data-mock-id="add/nas/new" data-mock-name="새 NAS 연결 폼">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px">＋ 새 NAS 연결</div>
+        <div class="fr"><input placeholder="주소 — 예: https://nas.local:5006 (WebDAV)"></div>
+        <div class="fr"><input placeholder="계정"><input type="password" placeholder="비밀번호"></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="sec" style="border:1px solid var(--line);border-radius:6px;padding:5px 14px;font-size:11.5px">연결 테스트</button>
+          <span class="test-ok">✓ 연결 성공 — 8개 공유 폴더 발견</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2단계: 폴더 탐색 — 타이핑 없음, 미리보기로 고른다 -->
+    <div id="step2" style="display:none">
+      <div class="browse-wrap">
+        <div class="btree" data-mock-id="add/browser/tree" data-mock-name="폴더 구조 트리">
+          <div class="btn-node"><span class="tw">▾</span>🌐 synology-main</div>
+          <div class="btn-node bt-1"><span class="tw">▾</span>📁 작업분</div>
+          <div class="btn-node bt-2 sel" data-mock-id="add/browser/tree/node[2026]" data-mock-name="트리: 선택된 폴더"><span class="tw">▾</span>📁 2026</div>
+          <div class="btn-node bt-2"><span class="tw">▸</span>📁 2025</div>
+          <div class="btn-node bt-1"><span class="tw">▸</span>📁 원화</div>
+          <div class="btn-node bt-1"><span class="tw">▸</span>📁 외주수령분</div>
+        </div>
+        <div class="bpane">
+          <div class="crumb" data-mock-id="add/browser/crumb" data-mock-name="브레드크럼">
+            <button>synology-main</button><span class="sep">▸</span><button>작업분</button><span class="sep">▸</span><b>2026</b>
+            <span style="margin-left:auto;font-size:10.5px;color:var(--faint)">하위 폴더 5개 — 더블클릭으로 진입</span>
+          </div>
+          <div class="fgrid" style="max-height:none;flex:1" data-mock-id="add/browser/grid" data-mock-name="내부 폴더 미리보기 그리드">
+            <div class="fcard sel" data-mock-id="add/browser/card[concept]" data-mock-name="폴더 카드(선택됨 · 미분석)">
+              <div class="mosaic noprev">📁</div>
+              <div class="fname">신규 컨셉 2026-06</div>
+              <div class="finfo">412개 파일 <span class="ftag new">미분석</span></div>
+            </div>
+            <div class="fcard" data-mock-id="add/browser/card[chars]" data-mock-name="폴더 카드(분석됨 → NAS여도 썸네일 미리보기)">
+              <div class="mosaic">
+                <div style="background:linear-gradient(140deg,#1e3a5f,#2d4a73)"></div>
+                <div style="background:linear-gradient(140deg,#33272b,#4a3a40)"></div>
+                <div style="background:linear-gradient(140deg,#1d3146,#28455e)"></div>
+                <div style="background:linear-gradient(140deg,#2a2a3e,#3c3c5c)"></div>
+              </div>
+              <div class="fname">캐릭터</div>
+              <div class="finfo">3,100개 <span class="ftag done">분석됨 98%</span></div>
+            </div>
+            <div class="fcard" data-mock-id="add/browser/card[bg]" data-mock-name="폴더 카드(일부 분석 → 부분 모자이크)">
+              <div class="mosaic">
+                <div style="background:linear-gradient(140deg,#1e3a4a,#2a5468)"></div>
+                <div style="background:linear-gradient(140deg,#27344a,#3a4a66)"></div>
+                <div></div><div></div>
+              </div>
+              <div class="fname">배경</div>
+              <div class="finfo">880개 <span class="ftag done">분석 41%</span></div>
+            </div>
+            <div class="fcard"><div class="mosaic noprev">📁</div><div class="fname">레퍼런스</div><div class="finfo">96개 <span class="ftag new">미분석</span></div></div>
+            <div class="fcard"><div class="mosaic noprev">📁</div><div class="fname">폐기예정</div><div class="finfo">12개</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="pick-bar" data-mock-id="add/browser/pickbar" data-mock-name="선택 바 (이름 자동, 옵션 인라인)">
+        <span class="sel-name">📁 신규 컨셉 2026-06</span>
+        <label class="chk" style="font-size:11.5px"><input type="checkbox" checked> 하위 포함</label>
+        <label class="chk" style="font-size:11.5px"><input type="checkbox" checked> 새 파일 자동 분석</label>
+        <span style="flex:1"></span>
+        <button class="sec" onclick="addStep(3)">세부 옵션</button>
+        <button class="pri" onclick="addStep(4)" data-mock-id="add/register-default" data-mock-name="기본값으로 작업 등록">작업 등록</button>
+      </div>
+    </div>
+
+    <!-- 3단계: 세부 (선택적) — 프로파일 + 모드 + 우선순위 -->
+    <div id="step3" style="display:none">
+      <div class="frow" data-mock-id="add/profile" data-mock-name="분석 프로파일 (폴더명 추천 보존)">
+        <label>이 폴더에 주로 들어있는 것 <span style="color:var(--cyan)">— 폴더명에서 '컨셉' 감지 → 추천 적용됨</span></label>
+        <div class="type-grid">
+          <span class="tchip on">일러스트 ★</span><span class="tchip on">캐릭터</span><span class="tchip">배경/BG</span><span class="tchip">소품</span><span class="tchip">이펙트</span><span class="tchip">UI</span><span class="tchip">아이콘</span><span class="tchip">텍스처</span>
+        </div>
+        <div style="font-size:10px;color:var(--faint);margin-top:4px">★ = 대표 유형 · 분류 정확도를 높입니다</div>
+      </div>
+      <div class="frow" data-mock-id="add/mode" data-mock-name="분석 모드 (신규/전체/파도 통합)">
+        <label>범위</label>
+        <label class="radio"><input type="radio" name="md" checked> <b>새 파일만</b> — 이미 분석된 파일은 건너뜀 (캐시 활용)</label>
+        <label class="radio"><input type="radio" name="md"> <b>전체 다시 분석</b> — 결과를 새로 덮어씀</label>
+        <label class="radio"><input type="radio" name="md"> <b>모델 파도</b> — 새 모델 버전 기준 재처리 <span style="color:var(--faint)">(관리>파생물 캐시와 동일)</span></label>
+      </div>
+      <div class="frow"><div class="chk" data-mock-id="add/opt[priority]" data-mock-name="옵션: 우선 처리"><input type="checkbox" id="c3"><label for="c3" style="margin:0">⚡ 우선 처리 — 다른 작업보다 먼저</label></div></div>
+      <div class="m-acts">
+        <button class="pri" onclick="addStep(4)">작업 등록</button>
+      </div>
+    </div>
+
+    <!-- 4단계: 시작됨 -->
+    <div id="step4" style="display:none">
+      <div class="done-box" data-mock-id="add/done" data-mock-name="등록됨 — 대기열 컨텍스트 + 점진 가용성">
+        <div class="ic">✅</div>
+        <h3 style="margin-top:6px">분석 리스트에 등록되었습니다</h3>
+        <p>412개 파일 · <b>진행 중인 작업 2개와 공정하게 배분</b>되어 처리됩니다<br>
+        캐시 적중분은 즉시 완료 · <b>파싱되는 대로 검색에 나타납니다</b></p>
+      </div>
+      <div class="m-acts"><button class="sec" onclick="closeAdd()">닫기</button><button class="pri" onclick="closeAdd();go('analysis')">분석에서 보기</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="insp-hint" id="inspHint">Ctrl 누른 채 hover/클릭 = 요소 ID 확인/복사</div>
+
+<script>
+const START_CARDS = ['start1','start2','create1','create2','create3'];
+function _startShow(id){
+  START_CARDS.forEach(c=>document.getElementById(c).style.display = (c===id?'':'none'));
+}
+function startStep2(){ _startShow('start2'); }
+function startCreate(n){ _startShow('create'+n); }
+/* ── 탭 ── */
+function go(id){
+  if(id==='start'){ _startShow('start1'); }
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('scr-'+id).classList.add('active');
+  document.querySelectorAll('[data-scr]').forEach(b=>b.classList.toggle('active', b.dataset.scr===id));
+}
+document.querySelectorAll('[data-scr]').forEach(b=>b.onclick=()=>go(b.dataset.scr));
+
+/* ── 관리 서브탭 ── */
+document.querySelectorAll('[data-adm]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-adm]').forEach(x=>x.classList.toggle('active',x===b));
+  ['workers','members','tools'].forEach(k=>document.getElementById('adm-'+k).style.display = (k===b.dataset.adm?'':'none'));
+});
+
+/* ── 역할 전환 데모 ── */
+let admin=true;
+function toggleRole(){
+  admin=!admin;
+  document.getElementById('roleName').textContent = admin?'운영자':'일반 사용자';
+  document.querySelectorAll('.admin-only').forEach(el=>el.classList.toggle('user-hidden',!admin));
+  if(!admin) go('search');
+}
+
+/* ── +추가 플로우 ── */
+function openAdd(){
+  document.getElementById('addOverlay').classList.add('open');
+  navStack = []; _render(1);
+}
+function closeAdd(){document.getElementById('addOverlay').classList.remove('open')}
+/* 뒤로 = 실제로 지나온 길의 역순 (이력 스택) — 로컬 진입은 NAS 화면을
+   거치지 않았으므로 뒤로도 NAS 화면을 보여주지 않는다 */
+let curView = 1;          // 1 | '1b' | 2 | 3 | 4
+let navStack = [];        // 지나온 화면들
+const BAR = {1:1, '1b':1, 2:2, 3:3, 4:4};   // 화면 → 진행 바 단계
+
+function _render(v){
+  curView = v;
+  document.getElementById('step1b').style.display = (v==='1b'?'':'none');
+  [1,2,3,4].forEach(i=>{
+    document.getElementById('step'+i).style.display = (v===i?'':'none');
+    document.getElementById('s'+i).classList.toggle('on', i<=BAR[v]);
+  });
+  // 시작점이거나 등록 완료면 뒤로 숨김
+  document.getElementById('mBack').classList.toggle('hide', navStack.length===0 || v===4);
+}
+function navTo(v){ navStack.push(curView); _render(v); }
+function goBack(){ if(navStack.length) _render(navStack.pop()); }
+
+/* 기존 호출명 유지 (전진은 전부 navTo) */
+function addStep(n){ navTo(n); }
+function showNas(){ navTo('1b'); }
+document.querySelectorAll('.tchip').forEach(c=>c.onclick=()=>c.classList.toggle('on'));
+document.querySelectorAll('.btn-node').forEach(n=>n.onclick=()=>{
+  document.querySelectorAll('.btn-node').forEach(x=>x.classList.remove('sel'));
+  n.classList.add('sel');
+});
+document.querySelectorAll('.fcard').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('.fcard').forEach(x=>x.classList.remove('sel'));
+  c.classList.add('sel');
+  const nm=c.querySelector('.fname')?.textContent;
+  const sn=document.querySelector('.pick-bar .sel-name'); if(sn&&nm)sn.textContent='📁 '+nm;
+});
+document.getElementById('addOverlay').addEventListener('click',e=>{if(e.target.id==='addOverlay')closeAdd()});
+
+/* ── 인스펙터 (목업 전용) ── */
+let inspOn=false, tip=null, cur=null;
+function clearInsp(){ if(cur){cur.classList.remove('insp-outline');cur=null} if(tip){tip.remove();tip=null} }
+addEventListener('keydown',e=>{ if(e.key==='Control')inspOn=true; if(e.key==='Escape'){inspOn=false;clearInsp()} });
+addEventListener('keyup',e=>{ if(e.key==='Control'){inspOn=false;clearInsp()} });
+addEventListener('mousemove',e=>{
+  if(!inspOn){return}
+  const t=e.target.closest('[data-mock-id]');
+  if(t!==cur){ clearInsp(); if(t){ cur=t; t.classList.add('insp-outline');
+    tip=document.createElement('div'); tip.className='insp-tip';
+    tip.textContent=t.dataset.mockName+'  —  '+t.dataset.mockId;
+    document.body.appendChild(tip); } }
+  if(tip){ tip.style.left=Math.min(e.clientX+12, innerWidth-tip.offsetWidth-8)+'px'; tip.style.top=(e.clientY+14)+'px'; }
+});
+addEventListener('click',e=>{
+  if(!inspOn)return;
+  const t=e.target.closest('[data-mock-id]'); if(!t)return;
+  e.preventDefault(); e.stopPropagation();
+  navigator.clipboard?.writeText(t.dataset.mockName+'  -  '+t.dataset.mockId);
+  const h=document.getElementById('inspHint'); h.textContent='복사됨: '+t.dataset.mockId;
+  setTimeout(()=>h.textContent='Ctrl 누른 채 hover/클릭 = 요소 ID 확인/복사',1500);
+},true);
+</script>
+</body>
+</html>

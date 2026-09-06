@@ -1,8 +1,19 @@
 """
 Static worker runtime contract check.
 
-This check catches drift in the three-runner worker model without requiring
-a live server or GPU.
+Catches drift in the worker-runtime model without needing a live server or
+GPU. Every runner is now a SEPARATE process running backend.worker.cli; they
+differ only in who launches them and what origin/launcher they register:
+
+  server-local  backend/server/local_worker.py spawns the CLI with
+                --launcher server
+  client        backend/worker/worker_ipc.py   origin=client-launched,
+                launcher=electron
+  headless      backend/worker/cli.py          origin=headless (default)
+
+The in-process embedded worker this file used to assert on was removed when
+the runners were unified; asserting on the deleted module made this check
+die with FileNotFoundError instead of guarding anything.
 """
 
 from pathlib import Path
@@ -18,8 +29,8 @@ def assert_contains(path: str, needle: str) -> None:
 
 
 def main() -> int:
-    assert_contains("backend/server/embedded_worker.py", 'origin="server-local"')
-    assert_contains("backend/server/embedded_worker.py", 'launcher="server"')
+    assert_contains("backend/server/local_worker.py", '"--launcher", "server"')
+    assert_contains("backend/server/local_worker.py", "backend.worker.cli")
     assert_contains("backend/worker/worker_ipc.py", 'origin="client-launched"')
     assert_contains("backend/worker/worker_ipc.py", 'launcher="electron"')
     assert_contains("backend/worker/cli.py", 'origin: str = "headless"')

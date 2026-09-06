@@ -33,11 +33,15 @@ FileTaskParsePool (file_task_parse_pool.py)    [서버 백그라운드 스레드
   - 파싱: ParserFactory → PSD 레이어/텍스트/폰트 추출 + 썸네일 생성
       실패 시 PIL thumbnail-only fallback (processing_status='parse_fallback')
   - files 테이블 upsert + 썸네일을 서버 thumbnail_dir로 복사
+  - CAS 캐시 적용(apply_cache_hits): 동일 content_hash의 기존 MC/VV/MV가
+      있으면 워커를 거치지 않고 즉시 done 처리.
+      단, 잡 프로필의 force_reanalyze('전체 다시 분석')면 캐시를 건너뛰고
+      전 단계를 재계산한다(게이트 판단 불가 시에도 재계산 쪽).
   - 완료 후 DownloadAheadPool.release_slot(file_id)
       → 원본 임시 파일 삭제 + 버퍼 슬롯 반환 (원본은 더 이상 불필요)
         │
         ▼
-AI phases: MC → VV → MV                        [워커: embedded 또는 외부]
+AI phases: MC → VV → MV              [워커: 로컬 또는 외부 — 둘 다 독립 프로세스 + HTTP]
   - Scheduler(scheduler.py)가 워커별로 phase(mc|vv|mv)와 batch size 배정
   - 워커 claim:   POST /api/v1/tasks/claim   (file_tasks 기반)
   - 시작 보고:    POST /api/v1/tasks/start
@@ -79,12 +83,17 @@ AI phases: MC → VV → MV                        [워커: embedded 또는 외�
 | 워커 결과 업로드 (files API) | `backend/worker/result_uploader.py` |
 | WebDAV 프로토콜 클라이언트 | `backend/remote/webdav_client.py` |
 | 태스크 API 라우터 | `backend/server/routers/analysis.py` |
+| 파생물 캐시(CAS) 기록·조회·물질화 | `backend/server/queue/derivations.py` |
+| 모델 버전 파도(재처리 잡 생성) | `backend/server/queue/waves.py` |
+| content_hash 백필 | `backend/server/queue/hash_backfill.py` |
 
 ## 설정 키
 
 | 키 | 의미 |
 |----|------|
 | `server.parse_ahead.poll_interval_s` | 두 풀의 폴링 주기 (이름은 레거시 시절 그대로지만 download/parse 풀이 공유) |
+| `server.parse_ahead.parse_workers` | 파싱 병렬 스레드 수 (기본 3, in-flight 2×workers) |
+| `server.auto_processing.enabled` | 서버 머신의 로컬 워커 기동 여부 (끄면 활성화 시에도 안 뜬다) |
 | temp buffer (`get_temp_buffer_config`) | `max_files`(버퍼 크기), `download_workers`(동시 다운로드 수) |
 
 ## 자주 헷갈리는 점

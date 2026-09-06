@@ -1,0 +1,72 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU torch is sufficient for the test suite (no model inference in tests)
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest
+
+      # config.yaml is gitignored (per-machine, holds the JWT secret), so a
+      # runner has none. Several paths hard-depend on ai_mode.tiers — the
+      # embedding widths come from it and tier_config raises without it.
+      - name: Provide config
+        run: cp config.example.yaml config.yaml
+
+      - name: Run test suite
+        run: python -m pytest tests/ -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      # Static guard on the worker-runtime model. It had silently rotted into a
+      # FileNotFoundError because nothing ran it — wired up so that cannot recur.
+      - name: Worker runtime contract
+        run: python tools/check_worker_runtime_contract.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+  # frontend-v2 has a Vitest harness locking the paging, role-guard and i18n
+  # parity invariants. Nothing ran it until now, so those locks were inert.
+  frontend-v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+          cache-dependency-path: frontend-v2/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend-v2
+        run: npm ci
+
+      - name: Run Vitest
+        working-directory: frontend-v2
+        run: npm test
+
+      # Catches import/build breakage the unit tests never load.
+      - name: Build renderer
+        working-directory: frontend-v2
+        run: npm run build

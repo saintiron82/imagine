@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocale } from '../../i18n';
 import {
-  listWorkerSessions, stopWorkerSession, blockWorkerSession,
+  listWorkerSessions, stopWorkerSession, blockWorkerSession, unblockWorkerSession,
   getAutoProcessing, updateAutoProcessing,
   getEmbeddedWorker,
   getPausedPhases, setPausedPhases,
@@ -158,6 +158,7 @@ export function ResourceMetrics({ resources, t }) {
 export default function WorkersPanel() {
   const { t } = useLocale();
   const [workers, setWorkers] = useState([]);
+  const [blockedWorkers, setBlockedWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [autoProcessing, setAutoProcessing] = useState(true);
   const [verboseLog, setVerboseLog] = useState(false);
@@ -178,6 +179,7 @@ export default function WorkersPanel() {
       let statsData = {};
       const all = workerData.workers || [];
       setWorkers(all.filter(w => w.status === 'online'));
+      setBlockedWorkers(all.filter(w => w.status === 'blocked'));
       const jobs = (jobsData.jobs || []).filter(j => j.status !== 'cancelled');
       setAnalysisJobs(jobs);
 
@@ -589,7 +591,7 @@ export default function WorkersPanel() {
                 <tr key={w.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
                   <td className="px-3 py-2">
                     <div className="text-xs font-medium text-white">
-                      {w.worker_name === '__builtin__' || w.worker_name === 'embedded'
+                      {w.origin === 'server-local'
                         ? t('admin.worker_builtin_label') : w.worker_name}
                     </div>
                     <div className="text-[10px] text-gray-500">{w.hostname}</div>
@@ -637,6 +639,32 @@ export default function WorkersPanel() {
           <div className="text-center text-gray-500 py-8 text-sm">{t('admin.workers_empty')}</div>
         )}
       </div>
+
+      {/* Blocked workers — durable until admin unblocks */}
+      {blockedWorkers.length > 0 && (
+        <div className="bg-red-950/20 rounded-lg border border-red-900/40 p-3">
+          <div className="text-xs font-medium text-red-300 mb-2">{t('admin.worker_blocked_title')}</div>
+          <div className="space-y-1">
+            {blockedWorkers.map((w) => (
+              <div key={w.id} className="flex items-center justify-between text-xs">
+                <span className="text-gray-300">
+                  {w.worker_name}
+                  <span className="text-gray-500 ml-2">{w.hostname}</span>
+                </span>
+                <button
+                  onClick={async () => {
+                    try { await unblockWorkerSession(w.id); load(); }
+                    catch (e) { console.error('Unblock failed:', e); }
+                  }}
+                  className="px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 text-[10px]"
+                >
+                  {t('admin.worker_unblock')}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Bottom spacer — prevent StatusBar from hiding last row */}
       <div className="h-16" />

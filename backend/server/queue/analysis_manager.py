@@ -83,8 +83,10 @@ class AnalysisJobManager:
                 WHERE {col} = 'assigned'
             """)
             total += cursor.rowcount
+        # Always commit: a 0-row UPDATE still opened a write txn (and acquired the
+        # write gate). Conditional commit would leave it open and pin the gate.
+        self.db.conn.commit()
         if total > 0:
-            self.db.conn.commit()
             logger.info(f"Reclaimed {total} stale assigned tasks → pending")
 
     def reclaim_worker_tasks(self, worker_id: int) -> int:
@@ -163,8 +165,10 @@ class AnalysisJobManager:
                     THEN 'done' ELSE mv_status END
         """)
         synced = cursor.rowcount
+        # Always commit: the UPDATE above opened a write txn even at 0 rows; a
+        # conditional commit would leave it open and pin the write gate.
+        self.db.conn.commit()
         if synced > 0:
-            self.db.conn.commit()
             logger.info(f"Synced {synced} file_tasks with files DB")
 
     def _ensure_snapshot_columns(self):
@@ -590,14 +594,24 @@ class AnalysisJobManager:
             cursor.execute("BEGIN IMMEDIATE")
 
             # Find claimable tasks (only from active jobs)
+            # Job-fair interleave: ROW_NUMBER per job so a large job cannot
+            # starve a small one (round-robin across active jobs). Explicit
+            # priority still trumps fairness.
             cursor.execute(f"""
-                SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id,
-                       aj.analysis_profile_json
-                FROM file_tasks ft
-                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
-                WHERE aj.status = 'active'
-                  AND {where}
-                ORDER BY ft.priority DESC, ft.created_at ASC
+                SELECT id, file_id, file_path, analysis_job_id, analysis_profile_json
+                FROM (
+                    SELECT ft.id, ft.file_id, ft.file_path, ft.analysis_job_id,
+                           aj.analysis_profile_json, ft.priority, ft.created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ft.analysis_job_id
+                               ORDER BY ft.created_at ASC
+                           ) AS job_rn
+                    FROM file_tasks ft
+                    JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
+                    WHERE aj.status = 'active'
+                      AND {where}
+                )
+                ORDER BY priority DESC, job_rn ASC, created_at ASC
                 LIMIT ?
             """, (count,))
             rows = cursor.fetchall()
@@ -658,6 +672,35 @@ class AnalysisJobManager:
             if profile:
                 task["analysis_profile"] = profile
             tasks.append(task)
+
+        # MV needs the MC text per file — inline it in the claim response so
+        # workers don't make one GET /files/{id}/mc round trip per file.
+        if phase == "mv" and tasks:
+            file_ids = [t["file_id"] for t in tasks]
+            placeholders = ",".join("?" * len(file_ids))
+            cursor.execute(f"""
+                SELECT id, mc_caption, ai_tags, image_type, scene_type, art_style
+                FROM files WHERE id IN ({placeholders})
+            """, file_ids)
+            mc_by_id = {}
+            for fr in cursor.fetchall():
+                ai_tags = fr[2]
+                if isinstance(ai_tags, str):
+                    try:
+                        ai_tags = _json.loads(ai_tags)
+                    except Exception:
+                        ai_tags = []
+                mc_by_id[fr[0]] = {
+                    "mc_caption": fr[1] or "",
+                    "ai_tags": ai_tags or [],
+                    "image_type": fr[3] or "",
+                    "scene_type": fr[4] or "",
+                    "art_style": fr[5] or "",
+                }
+            for t in tasks:
+                if t["file_id"] in mc_by_id:
+                    t["vision_data"] = mc_by_id[t["file_id"]]
+
         return tasks
 
     def start_task_phase(self, task_id: int, phase: str):

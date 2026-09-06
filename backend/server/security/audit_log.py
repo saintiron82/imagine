@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 ALLOWED_EVENTS = frozenset(
     {
         "admin_login",
+        "database_exported",
+        "database_imported",
+        "database_reset",
         "external_url_changed",
         "failed_login",
         "firebase_group_registered",

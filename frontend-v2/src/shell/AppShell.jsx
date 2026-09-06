@@ -1,0 +1,105 @@
+import { useState } from 'react'
+import { Outlet, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
+import { useApp } from '../state/AppContext'
+import { useLocale } from '../i18n'
+import { useAuth } from '../state/AuthContext'
+import { useLicenseStatus } from '../api/members'
+import { isOperatorOnlyPath } from '../lib/roleGuard'
+import AddFlow from '../flows/AddFlow'
+import UpdateNotification from './UpdateNotification'
+
+/**
+ * 앱 셸 — 상단 내비게이션 + 전역 [+ 추가] + 서버 상태 칩.
+ * 하드 인증 게이트: 미인증이면 어떤 화면도 렌더하지 않고 /start(로그인)로 보낸다.
+ * 역할 게이팅: 일반 사용자에겐 폴더/분석/관리/+추가가 존재하지 않는 앱처럼 보인다.
+ */
+export default function AppShell() {
+  const { t } = useLocale()
+  const { isOperator, server } = useApp()
+  const { connected, checking, firebaseUser, serverName, signOutAll } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [addOpen, setAddOpen] = useState(false)
+
+  const tab = ({ isActive }) => (isActive ? 'active' : '')
+
+  // 하드 게이트: 저장된 세션 검증 중에는 빈 화면, 미인증이면 로그인으로 강제 이동.
+  if (checking) {
+    return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--faint)', fontSize: 13 }}>{t('v2.auth.checking')}</div>
+  }
+  if (!connected) {
+    return <Navigate to="/start" replace />
+  }
+  // 역할 게이트: 운영자 전용 경로는 URL 직접 접근도 차단한다(내비 숨김만으로는 부족).
+  if (!isOperator && isOperatorOnlyPath(location.pathname)) {
+    return <Navigate to="/search" replace />
+  }
+
+  return (
+    <>
+      <header className="topbar">
+        <div className="logo"><span className="dot" />Imagine</div>
+        <nav className="nav">
+          <NavLink to="/search" className={tab}>{t('tab.search')}</NavLink>
+          {isOperator && <NavLink to="/folders" className={tab}>{t('v2.tab.folders')}</NavLink>}
+          {isOperator && <NavLink to="/analysis" className={tab}>{t('tab.analysis')}</NavLink>}
+        </nav>
+        <div className="spacer" />
+        {isOperator && (
+          <button className="btn-add" onClick={() => setAddOpen(true)}>{t('v2.action.add')}</button>
+        )}
+        <div className="right-nav">
+          {isOperator && <NavLink to="/admin" className={tab}>{t('v2.tab.admin')}</NavLink>}
+          <NavLink to="/settings" className={tab}>{t('v2.tab.settings')}</NavLink>
+        </div>
+        {isOperator && server.online && (
+          <button className="srv-chip" onClick={() => navigate('/admin')}>
+            <span className="sd" />{serverName || t('v2.server.fallback_name')} {t('v2.server.online_suffix')}
+          </button>
+        )}
+        <button className="role-chip" title={firebaseUser?.email || ''} onClick={signOutAll}>
+          {firebaseUser?.email ? firebaseUser.email.split('@')[0] : (serverName || t('v2.auth.signed_in'))} · <b>{t('auth.logout')}</b>
+        </button>
+      </header>
+      {isOperator && <ExpiryBanner />}
+      <main>
+        <Outlet />
+      </main>
+      {addOpen && <AddFlow onClose={() => setAddOpen(false)} />}
+      <UpdateNotification />
+    </>
+  )
+}
+
+/**
+ * 구독/만료 배너 (IMGV2-22) — 운영자에게만. 만료/임박 시 상단 고정 안내.
+ * 갱신은 홈페이지('계정의 집')에서 — imagine.app/account 로 연결한다.
+ */
+function ExpiryBanner() {
+  const { t, locale } = useLocale()
+  const { state, daysLeft, expiresAt } = useLicenseStatus()
+  const [dismissed, setDismissed] = useState(false)
+  if (state === 'ok' || dismissed) return null
+
+  const expired = state === 'expired'
+  // Format the date in the ACTIVE locale — this was pinned to ko-KR, so an
+  // English user got a Korean-formatted date inside English copy.
+  const when = expiresAt ? new Date(expiresAt).toLocaleDateString(locale) : ''
+  const bg = expired ? 'rgba(248,113,113,.12)' : 'rgba(251,191,36,.12)'
+  const bd = expired ? 'rgba(248,113,113,.4)' : 'rgba(251,191,36,.4)'
+  const fg = expired ? 'var(--red)' : '#fbbf24'
+  const suffix = when ? ` (${when})` : ''
+  const msg = expired
+    ? t('v2.license.expired', { when: suffix })
+    : t('v2.license.expiring', { days: daysLeft, when: suffix })
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 18px', fontSize: 12.5, background: bg, borderBottom: `1px solid ${bd}`, color: fg }}>
+      <span>{expired ? '⛔' : '⚠'}</span>
+      <span style={{ color: 'var(--text)' }}>{msg}</span>
+      <a href="https://imagine.app/account" target="_blank" rel="noreferrer"
+        style={{ marginLeft: 'auto', color: fg, fontSize: 11, textDecoration: 'underline' }}>{t('v2.license.renew_link')}</a>
+      <button onClick={() => setDismissed(true)} style={{ background: 'none', border: 'none', color: 'var(--faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
+    </div>
+  )
+}

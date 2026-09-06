@@ -1,5 +1,6 @@
 """
-Admin router — user management, invite codes, embedded worker control.
+Admin router — user/member management, invite codes, local worker control,
+CAS model-version waves, and content-hash backfill.
 """
 
 import logging
@@ -17,7 +18,6 @@ from backend.server.auth.schemas import (
     UserResponse, UserUpdateRequest,
     MemberResponse, MemberRoleUpdate,
 )
-from backend.server.auth.jwt import create_access_token, create_refresh_token, hash_refresh_token
 
 logger = logging.getLogger(__name__)
 
@@ -303,178 +303,95 @@ def activate_member(
     return {"success": True}
 
 
-# ── Embedded Worker Control ──────────────────────────────────
+# ── Reprocessing Waves (CAS M4) ──────────────────────────────
+
+@router.post("/waves/{phase}")
+def create_reprocessing_wave(
+    phase: str,
+    dry_run: bool = False,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Create a model-version reprocessing wave (mc waves include mv).
+
+    dry_run=true returns the candidate count without creating the job."""
+    from backend.server.queue.waves import create_wave_job
+
+    result = create_wave_job(db, phase, dry_run=dry_run,
+                             created_by=admin.get("id"))
+    if result.get("success") and not dry_run and result.get("job_id"):
+        logger.info(
+            f"Admin {admin['username']} created {phase} wave "
+            f"(job={result['job_id']}, files={result['candidates']})")
+    return result
+
+
+# ── Content-hash Backfill (CAS M2) ───────────────────────────
+
+@router.post("/backfill-hashes")
+def start_hash_backfill(admin: dict = Depends(require_admin)):
+    """Backfill files.content_hash via local reads / WebDAV Range reads.
+
+    Pre-burn preparation: ~16KB transfer per remote file (boundary hash),
+    no full re-download. Runs as a background thread."""
+    from backend.server.deps import get_db
+    from backend.server.queue.hash_backfill import start_backfill
+
+    result = start_backfill(get_db)
+    if result.get("success"):
+        logger.info(f"Admin {admin['username']} started hash backfill")
+    return result
+
+
+@router.get("/backfill-hashes")
+def get_hash_backfill_status(_user: dict = Depends(get_current_user)):
+    from backend.server.queue.hash_backfill import get_status
+    return get_status()
+
+
+@router.delete("/backfill-hashes")
+def stop_hash_backfill(admin: dict = Depends(require_admin)):
+    from backend.server.queue.hash_backfill import stop_backfill
+    stop_backfill()
+    logger.info(f"Admin {admin['username']} stopped hash backfill")
+    return {"success": True}
+
+
+# ── Local Worker Control ─────────────────────────────────────
 
 @router.post("/worker/start")
-def start_embedded_worker(
-    request: Request,
+def start_local_worker(
     admin: dict = Depends(require_admin),
 ):
-    """Start the embedded worker (admin only).
+    """Start the server machine's local worker process (admin only).
 
-    Creates a long-lived JWT token for the worker thread and starts it.
-    The worker uses HTTP loopback to claim/complete jobs from this server.
+    The worker runs as a separate process and connects over localhost HTTP,
+    identical to an external worker. Token minting is handled internally.
     """
-    from backend.server.embedded_worker import start_worker
+    from backend.server.local_worker import start_worker
 
-    # Create a long-lived token for the worker (24h)
-    worker_token = create_access_token(
-        admin["id"], admin["username"], admin["role"],
-        expires_minutes=1440,
-    )
-    worker_refresh = create_refresh_token()
-
-    # Determine server URL (loopback)
-    server_url = str(request.base_url).rstrip("/")
-
-    result = start_worker(server_url, worker_token, worker_refresh)
+    result = start_worker()
     if result.get("success"):
-        logger.info(f"Admin {admin['username']} started embedded worker")
+        logger.info(f"Admin {admin['username']} started local worker")
     return result
 
 
 @router.post("/worker/stop")
-def stop_embedded_worker(
+def stop_local_worker(
     admin: dict = Depends(require_admin),
 ):
-    """Stop the embedded worker (admin only)."""
-    from backend.server.embedded_worker import stop_worker
+    """Stop the local worker process (admin only)."""
+    from backend.server.local_worker import stop_worker
 
     result = stop_worker()
-    logger.info(f"Admin {admin['username']} stopped embedded worker")
+    logger.info(f"Admin {admin['username']} stopped local worker")
     return result
 
 
 @router.get("/worker/status")
-def get_embedded_worker_status(
+def get_local_worker_status(
     _user: dict = Depends(get_current_user),
 ):
-    """Get embedded worker status (any authenticated user)."""
-    from backend.server.embedded_worker import get_status
+    """Get local worker status (any authenticated user)."""
+    from backend.server.local_worker import get_status
     return get_status()
-
-
-# ── WebDAV Source Registration ──────────────────────────────
-
-class WebDAVSourceConfig(BaseModel):
-    id: str
-    url: str
-    username: str
-    password: str
-    remote_path: str = "/"
-    verify_ssl: bool = True
-
-
-@router.post("/webdav-sources")
-async def register_webdav_source(
-    config: WebDAVSourceConfig,
-    admin=Depends(require_admin),
-):
-    """Register a WebDAV source config for download-ahead access.
-
-    Called by Electron when a WebDAV source is added or on server startup,
-    so DownloadAheadPool can download files from this source.
-    """
-    from backend.server.queue.download_ahead import register_webdav_source
-    register_webdav_source(config.dict())
-    logger.info(f"WebDAV source registered via API: {config.id}")
-    return {"success": True, "source_id": config.id}
-
-
-@router.delete("/webdav-sources/{source_id}")
-async def unregister_webdav_source(
-    source_id: str,
-    admin=Depends(require_admin),
-):
-    """Remove a WebDAV source config."""
-    from backend.server.queue.download_ahead import unregister_webdav_source
-    unregister_webdav_source(source_id)
-    logger.info(f"WebDAV source unregistered via API: {source_id}")
-    return {"success": True}
-
-
-@router.get("/storage-info")
-def get_storage_info(
-    admin: dict = Depends(require_admin),
-    db: SQLiteDB = Depends(get_db_safe),
-):
-    """Get storage usage info: DB size, thumbnails, download temp."""
-    import os
-    import tempfile
-    from pathlib import Path
-
-    result = {}
-
-    # DB file size
-    try:
-        db_path = db.db_path if hasattr(db, 'db_path') else None
-        if not db_path:
-            # Try common locations
-            for p in ["imageparser.db", "imageparser_server.db"]:
-                if os.path.exists(p):
-                    db_path = p
-                    break
-        if db_path and os.path.exists(db_path):
-            db_size = os.path.getsize(db_path)
-            # Also check WAL and SHM files
-            wal_size = os.path.getsize(db_path + "-wal") if os.path.exists(db_path + "-wal") else 0
-            result["db"] = {
-                "path": str(db_path),
-                "size_bytes": db_size + wal_size,
-                "size_mb": round((db_size + wal_size) / (1024 * 1024), 1),
-            }
-    except Exception:
-        pass
-
-    # Thumbnail directory
-    try:
-        thumb_dir = Path("output/thumbnails")
-        if thumb_dir.exists():
-            files = list(thumb_dir.rglob("*"))
-            total = sum(f.stat().st_size for f in files if f.is_file())
-            result["thumbnails"] = {
-                "path": str(thumb_dir),
-                "count": sum(1 for f in files if f.is_file()),
-                "size_bytes": total,
-                "size_mb": round(total / (1024 * 1024), 1),
-            }
-    except Exception:
-        pass
-
-    # Download temp (current session)
-    try:
-        from backend.server.queue.download_ahead import DownloadAheadPool
-        # Find current temp dir from app state
-        tmp_root = Path(tempfile.gettempdir())
-        current_dirs = list(tmp_root.glob("imagine_dl_*"))
-        total_size = 0
-        total_files = 0
-        for d in current_dirs:
-            if d.is_dir():
-                for f in d.rglob("*"):
-                    if f.is_file():
-                        total_size += f.stat().st_size
-                        total_files += 1
-        result["download_temp"] = {
-            "folder_count": len(current_dirs),
-            "file_count": total_files,
-            "size_bytes": total_size,
-            "size_mb": round(total_size / (1024 * 1024), 1),
-            "size_gb": round(total_size / (1024 * 1024 * 1024), 2),
-        }
-    except Exception:
-        pass
-
-    # File counts by status
-    try:
-        cursor = db.conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM files")
-        result["total_files"] = cursor.fetchone()[0]
-        cursor.execute(
-            "SELECT COUNT(*) FROM files WHERE thumbnail_url IS NOT NULL AND thumbnail_url != ''"
-        )
-        result["files_with_thumbnail"] = cursor.fetchone()[0]
-    except Exception:
-        pass
-
-    return result

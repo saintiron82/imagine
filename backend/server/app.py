@@ -10,6 +10,7 @@ Or via CLI:
 
 import logging
 import os
+import sqlite3
 import sys
 import threading
 from pathlib import Path
@@ -45,6 +46,10 @@ else:
     )
 logger = logging.getLogger(__name__)
 
+# Capture recent log records in a ring buffer for the admin live-log view (IMGV2-26).
+from backend.server import log_buffer  # noqa: E402
+log_buffer.install()
+
 # ── App ──────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -69,6 +74,18 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Log full traceback for any unhandled exception (500 errors)."""
+    # SQLite write-lock contention is transient — return 503 (retryable) instead
+    # of 500 so clients/workers back off and retry rather than hard-failing.
+    # Frontend apiClient and worker _authed_request both retry on 503.
+    if isinstance(exc, sqlite3.OperationalError) and (
+        "locked" in str(exc).lower() or "busy" in str(exc).lower()
+    ):
+        logger.warning(f"DB busy on {request.method} {request.url.path}: {exc} → 503")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Database temporarily busy — retry shortly"},
+            headers={"Retry-After": "1"},
+        )
     tb = _traceback.format_exception(type(exc), exc, exc.__traceback__)
     logger.error(
         f"Unhandled exception on {request.method} {request.url.path}:\n"
@@ -90,7 +107,7 @@ async def startup():
     logger.info("Imagine Server starting up...")
 
     # Start parent watchdog — auto-exit when Electron (parent) dies unexpectedly.
-    # Without this, the server process would remain orphaned and hold the port.
+    # Without this, the server process would be left running with no parent and hold the port.
     try:
         from backend.utils.parent_watchdog import start_parent_watchdog
         start_parent_watchdog()
@@ -155,7 +172,7 @@ def _activate_server(app_instance):
     t1 = _time.perf_counter()
     try:
         from backend.server.queue.download_ahead import (
-            DownloadAheadPool, register_webdav_source,
+            DownloadAheadPool, register_webdav_source, load_persisted_sources,
         )
         app_instance.state.download_ahead = DownloadAheadPool(db)
         app_instance.state.download_ahead.start()
@@ -169,6 +186,8 @@ def _activate_server(app_instance):
                     n_sources += 1
             except Exception:
                 pass
+        # Runtime-registered sources (added via POST /api/v1/sources) survive restart.
+        n_sources += load_persisted_sources()
         _log(f"Phase 3a: DownloadAheadPool started ({n_sources} WebDAV sources) {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
         _log(f"Phase 3a FAILED: DownloadAheadPool: {e}")
@@ -224,14 +243,24 @@ def _activate_server(app_instance):
               AND (mc_status = 'pending' OR vv_status = 'pending' OR mv_status = 'pending')
         """)
         pending = cursor.fetchone()[0]
-        if pending > 0:
-            from backend.server.embedded_worker import start_worker
-            result = start_worker(server_url="", access_token="")
-            _log(f"Phase 6: Embedded worker started ({pending} pending tasks) {_time.perf_counter()-t1:.2f}s")
+
+        # Honour the operator's switch. Without this check an admin who turned
+        # the local worker off saw it come back on the next activation, because
+        # only `pending > 0` was consulted — the disable was not durable.
+        from backend.utils.config import get_config
+        auto_enabled = get_config().get("server.auto_processing.enabled", True)
+
+        if not auto_enabled:
+            _log(f"Phase 6: Local worker disabled by operator — not starting "
+                 f"({pending} pending) {_time.perf_counter()-t1:.2f}s")
+        elif pending > 0:
+            from backend.server.local_worker import start_worker
+            result = start_worker()
+            _log(f"Phase 6: Local worker started ({pending} pending tasks) {_time.perf_counter()-t1:.2f}s")
         else:
             _log(f"Phase 6: No pending tasks — worker standby {_time.perf_counter()-t1:.2f}s")
     except Exception as e:
-        _log(f"Phase 6 FAILED: Embedded worker: {e}")
+        _log(f"Phase 6 FAILED: local worker start: {e}")
 
     total = _time.perf_counter() - t0
     app_instance.state.ready = True
@@ -276,14 +305,14 @@ def _activate_server(app_instance):
 async def shutdown():
     logger.info("Imagine Server shutting down...")
     # Legacy pools removed (Analysis Job System v1)
-    # Embedded worker shutdown
+    # Local worker shutdown
     try:
-        from backend.server.embedded_worker import get_status as _ew_status, stop_worker as _ew_stop
-        if _ew_status()["running"]:
-            _ew_stop()
-            logger.info("Embedded worker stopped")
+        from backend.server.local_worker import get_status as _lw_status, stop_worker as _lw_stop
+        if _lw_status()["running"]:
+            _lw_stop()
+            logger.info("Local worker stopped")
     except Exception as e:
-        logger.warning(f"Embedded worker shutdown failed: {e}")
+        logger.warning(f"Local worker shutdown failed: {e}")
     if hasattr(app.state, "heartbeat_watchdog") and app.state.heartbeat_watchdog:
         if hasattr(app.state.heartbeat_watchdog, "_stop_event"):
             app.state.heartbeat_watchdog._stop_event.set()
@@ -323,6 +352,9 @@ from backend.server.routers.tools import router as tools_router
 from backend.server.routers.connection_info import router as connection_info_router
 from backend.server.routers.search_feedback import router as search_feedback_router
 from backend.server.routers.feedback_dashboard import router as feedback_dashboard_router
+from backend.server.routers.browse import router as browse_router
+from backend.server.routers.members import router as members_router
+from backend.server.routers.logs import router as logs_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
@@ -343,6 +375,9 @@ app.include_router(tools_router, prefix="/api/v1")
 app.include_router(connection_info_router, prefix="/api/v1")
 app.include_router(search_feedback_router, prefix="/api/v1")
 app.include_router(feedback_dashboard_router, prefix="/api/v1")
+app.include_router(browse_router, prefix="/api/v1")
+app.include_router(members_router, prefix="/api/v1")
+app.include_router(logs_router, prefix="/api/v1")
 
 
 @app.post("/api/v1/server/activate")
@@ -633,7 +668,11 @@ def _start_heartbeat_watchdog():
 
 # ── SPA Static Serving (React frontend) ─────────────────────
 
-DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
+# Serve the frontend-v2 SPA; fall back to the legacy frontend/ build during
+# staged retirement (frontend-v2 takes precedence when its build is present).
+DIST_DIR = PROJECT_ROOT / "frontend-v2" / "dist"
+if not DIST_DIR.exists():
+    DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
 
 if DIST_DIR.exists():
     # Serve static assets (JS, CSS, images, fonts)

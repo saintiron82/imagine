@@ -73,3 +73,13 @@ benchmarks/reviews/**/*backup*
 # Misc
 nul
 config.yaml
+
+# Runtime-registered WebDAV sources (plaintext creds — never commit)
+webdav_sources.json
+
+# 데스크톱 셸이 띄운 상주 서버 런타임 파일
+.imagine_server.pid
+imagine_server.log
+
+# 벤치 중간 산출물 (재생성 가능, WeMM 임베딩·번역 캐시)
+benchmarks/cache/

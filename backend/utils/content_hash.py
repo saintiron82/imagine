@@ -47,3 +47,33 @@ def compute_content_hash(file_path) -> str:
         h.update(tail)
 
     return h.hexdigest()
+
+
+def split_points(size: int):
+    """Byte ranges needed for the boundary hash: (head_range, tail_range).
+
+    Mirrors compute_content_hash()'s read pattern exactly so a hash
+    assembled from remote Range requests is identical to a local one.
+    Ranges are (start, end) inclusive; tail_range is None for tiny files.
+    """
+    if size <= 0:
+        return (None, None)
+    if size <= CHUNK_SIZE:
+        return ((0, size - 1), None)
+    if size <= CHUNK_SIZE * 2:
+        # local: head = first CHUNK, tail = bytes[CHUNK:size]
+        return ((0, CHUNK_SIZE - 1), (CHUNK_SIZE, size - 1))
+    return ((0, CHUNK_SIZE - 1), (size - CHUNK_SIZE, size - 1))
+
+
+def compute_content_hash_from_parts(size: int, head: bytes, tail: bytes) -> str:
+    """Assemble the boundary hash from pre-fetched parts (remote backfill).
+
+    Equivalent to compute_content_hash() when head/tail follow
+    split_points(size).
+    """
+    h = hashlib.sha256()
+    h.update(size.to_bytes(8, 'little'))
+    h.update(head or b'')
+    h.update(tail or b'')
+    return h.hexdigest()

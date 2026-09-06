@@ -2,7 +2,7 @@
 WorkerScheduler — central task assignment for Analysis Job System v1.
 
 Implements Algorithm E' (Pressure-based scheduling):
-- GPU class detection (strong/weak/embedded/cpu)
+- GPU class detection (strong/weak/cpu)
 - Per-phase pressure = (pending / (workers_on + 1)) × phase_weight
 - MC penalty by GPU class (cpu can't, weak penalized)
 - Phase stability (don't switch if current phase has work — minimize model load)
@@ -32,7 +32,6 @@ PHASE_TIME = {"mc": 8, "vv": 0.5, "mv": 0.25}
 # None = cannot do MC at all
 MC_PENALTY = {
     "strong": 1.0,     # Full speed MC
-    "embedded": 1.0,   # Server-local, same as strong
     "weak": 2.0,       # Can do MC but slower → penalized
     # "cpu": None      # Cannot do MC (not in dict → excluded)
 }
@@ -61,7 +60,7 @@ class WorkerScheduler:
     """Central scheduler — decides phase + batch size for each worker.
 
     Algorithm E' (pressure-based):
-    1. Classify worker GPU (strong/weak/embedded/cpu)
+    1. Classify worker GPU (strong/weak/cpu)
     2. Calculate pressure per phase: (pending / (workers_on + 1)) × time_weight
     3. Apply MC penalty by GPU class
     4. Phase sticky: stay in current phase unless another has 2× pressure
@@ -83,7 +82,7 @@ class WorkerScheduler:
             "mv_speed": "REAL",
             "gpu_name": "TEXT",
             "vram_gb": "REAL",
-            "gpu_class": "TEXT",   # strong/weak/embedded/cpu
+            "gpu_class": "TEXT",   # strong/weak/cpu
         }
         for col, typedef in columns.items():
             try:
@@ -165,7 +164,7 @@ class WorkerScheduler:
             )
 
     def _classify_gpu(self, gpu: str, vram_gb: float, is_metal: bool) -> str:
-        """Classify GPU into: embedded, strong, weak, cpu."""
+        """Classify GPU into: strong, weak, cpu."""
         if not gpu and vram_gb == 0:
             return "cpu"
 
@@ -274,6 +273,16 @@ class WorkerScheduler:
             capable["mc"] = mc_p
         # mc_speed == 0 → tried and failed → MC excluded
 
+        # 5.5 Admin pin: restrict this worker to the pinned phase.
+        # ("mc_only" is a legacy alias for "mc"; "full"/None = no pin)
+        pin = {"mc_only": "mc", "full": None}.get(
+            profile.get("mode_override"), profile.get("mode_override"))
+        if pin in ("mc", "vv", "mv"):
+            capable = {k: v for k, v in capable.items() if k == pin}
+            if not capable:
+                # pinned to a phase this worker cannot do (or no pending)
+                return {"phase": None, "count": 0}
+
         # 6. Algorithm E' — pressure × speed_factor selection
         phase = self._pick_best_phase(
             capable, workers_on, current_phase, profile
@@ -365,9 +374,14 @@ class WorkerScheduler:
             if n == 0 and pending > 0:
                 p *= 1.5
 
-            # MV completion bonus: each MV done = 1 file fully complete
+            # MV completion bonus: each MV done = 1 file fully complete.
+            # Capped — an unbounded pending×10 bonus let any large MV backlog
+            # outweigh MC pressure for every worker (strong GPUs included),
+            # causing cluster-wide mode flapping. The cap keeps the intent
+            # ("drain MVs when otherwise comparable / near the MC tail")
+            # without overriding a large MC backlog.
             if phase == "mv":
-                p += pending * 10
+                p += min(pending, 50) * 10
 
             pressure[phase] = p
 
@@ -423,7 +437,7 @@ class WorkerScheduler:
         cursor.execute("""
             SELECT mc_capable, mc_speed, vv_speed, mv_speed,
                    gpu_name, vram_gb, gpu_class, current_phase,
-                   resources_json
+                   resources_json, processing_mode_override
             FROM worker_sessions WHERE id = ?
         """, (session_id,))
         row = cursor.fetchone()
@@ -448,6 +462,7 @@ class WorkerScheduler:
             "gpu_class": row[6] or "cpu",
             "current_phase": row[7],
             "throttle": throttle,
+            "mode_override": row[9],
         }
 
     def get_status(self) -> dict:

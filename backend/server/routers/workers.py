@@ -126,6 +126,7 @@ class HeartbeatRequest(BaseModel):
     worker_state: Optional[str] = None    # active/idle/resting
     phase_counts: Optional[dict] = None  # {"mc": N, "vv": N, "mv": N}
     batch_throughput: Optional[float] = None  # Worker-measured files/min (actual)
+    phase_throughput: Optional[dict] = None  # {"mc": f/m, "vv": f/m, "mv": f/m} measured per phase
 
 
 class DisconnectRequest(BaseModel):
@@ -326,113 +327,12 @@ def _get_global_processing_mode() -> str:
         return "auto"
 
 
-def _auto_detect_mode_from_resources(resources: dict) -> Optional[str]:
-    """워커 resources_json에서 GPU 정보를 읽어 processing_mode 자동 결정.
-
-    서버의 현재 활성 tier를 기준으로 워커가 VLM을 실행할 수 있는지 판단한다.
-
-    Returns:
-        "mc" or "vv", or None if detection fails
-    """
-    try:
-        from backend.utils.gpu_detect import determine_worker_mode
-        from backend.utils.tier_config import get_active_tier
-        server_tier, _ = get_active_tier()
-        return determine_worker_mode(resources, server_tier)
-    except Exception as e:
-        logger.warning(f"Auto mode detection failed: {e}")
-        return None
-
-
 def _recalculate_server_pools(app, db: "SQLiteDB") -> None:
     """No-op in new architecture. Scheduler handles all assignment.
 
     Kept as stub for any remaining callers during migration.
     """
     pass
-
-
-# ── Builtin worker virtual session ──────────────────────────
-
-BUILTIN_WORKER_NAME = "embedded"
-
-
-def _ensure_builtin_worker_session(db: "SQLiteDB") -> int:
-    """Create or reactivate the virtual builtin worker session.
-
-    Returns the session_id.
-    """
-    now = _utcnow_sql()
-    cursor = db.conn.cursor()
-
-    # Check if already online
-    cursor.execute(
-        "SELECT id FROM worker_sessions WHERE worker_name = ? AND status = 'online'",
-        (BUILTIN_WORKER_NAME,),
-    )
-    row = cursor.fetchone()
-    if row:
-        return row[0]
-
-    # Try reactivating existing offline session
-    cursor.execute(
-        """UPDATE worker_sessions
-           SET status = 'online', last_heartbeat = ?, disconnected_at = NULL
-           WHERE worker_name = ? AND status = 'offline'""",
-        (now, BUILTIN_WORKER_NAME),
-    )
-    if cursor.rowcount > 0:
-        db.conn.commit()
-        cursor.execute(
-            "SELECT id FROM worker_sessions WHERE worker_name = ? AND status = 'online'",
-            (BUILTIN_WORKER_NAME,),
-        )
-        row = cursor.fetchone()
-        logger.info(f"Builtin worker session reactivated (id={row[0]})")
-        return row[0]
-    else:
-        db.conn.commit()  # Release WAL write lock from 0-row UPDATE
-
-    # Create new session — find the first admin user_id dynamically
-    batch_size = 5
-    try:
-        from backend.utils.config import get_config
-        batch_size = get_config().get("server.auto_processing.batch_size", 5)
-    except Exception:
-        pass
-
-    # Find an admin user_id (not hardcoded to 1)
-    cursor.execute("SELECT id FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
-    admin_row = cursor.fetchone()
-    admin_user_id = admin_row[0] if admin_row else 1
-
-    cursor.execute(
-        """INSERT INTO worker_sessions
-           (user_id, worker_name, hostname, batch_capacity, status,
-            processing_mode_override, connected_at, last_heartbeat)
-           VALUES (?, ?, 'server (built-in)', ?, 'online', NULL, ?, ?)""",
-        (admin_user_id, BUILTIN_WORKER_NAME, batch_size, now, now),
-    )
-    session_id = cursor.lastrowid
-    db.conn.commit()
-    logger.info(f"Builtin worker session created (id={session_id})")
-    return session_id
-
-
-def _deactivate_builtin_worker_session(db: "SQLiteDB"):
-    """Mark builtin worker session as offline."""
-    now = _utcnow_sql()
-    cursor = db.conn.cursor()
-    cursor.execute(
-        """UPDATE worker_sessions
-           SET status = 'offline', disconnected_at = ?,
-               current_job_id = NULL, current_file = NULL, current_phase = NULL
-           WHERE worker_name = ? AND status = 'online'""",
-        (now, BUILTIN_WORKER_NAME),
-    )
-    if cursor.rowcount > 0:
-        logger.info("Builtin worker session deactivated")
-    db.conn.commit()  # Always commit to release WAL write lock
 
 
 # ── Worker → Server endpoints ────────────────────────────────
@@ -445,24 +345,53 @@ def worker_connect(
     db: SQLiteDB = Depends(get_db_safe),
 ):
     """Register a new worker session."""
-    # Reject external workers when builtin_worker mode is active
-    global_mode = _get_global_processing_mode()
-    if global_mode == "builtin_worker":
-        logger.warning(f"Rejected worker connect from {req.worker_name}: builtin_worker mode active")
-        raise HTTPException(
-            status_code=409,
-            detail="Server is in built-in worker mode. External workers are not accepted."
-        )
-
     now = _utcnow_sql()
     cursor = db.conn.cursor()
 
-    # Mark any stale sessions from this user as offline
+    # Durable block: a worker blocked by admin stays blocked across
+    # reconnects until an admin unblocks it.
+    cursor.execute(
+        """SELECT 1 FROM worker_sessions
+           WHERE user_id = ? AND worker_name = ? AND status = 'blocked'
+           LIMIT 1""",
+        (user["id"], req.worker_name),
+    )
+    if cursor.fetchone():
+        logger.warning(f"Rejected connect from blocked worker: {req.worker_name} (user={user['username']})")
+        raise HTTPException(status_code=403, detail="Worker is blocked by admin")
+
+    # Retire THIS worker's own previous session. A crashed worker (no graceful
+    # disconnect) leaves tasks 'assigned' to a session that never returns —
+    # reclaim them → pending here so the restarted worker picks them straight
+    # back up instead of waiting out the heartbeat timeout.
+    #
+    # Scoped to (user_id, worker_name), NOT to the whole account. Scoping by
+    # user_id alone meant a SECOND worker connecting under the same account
+    # reset a LIVE sibling's in-flight tasks: another worker redid the work,
+    # and the sibling's later /tasks/complete hit 403 (the task was no longer
+    # 'assigned' to it) so its finished GPU work was discarded. Genuinely dead
+    # sibling sessions belong to the heartbeat watchdog
+    # (_start_heartbeat_watchdog in app.py — 15 min timeout), which reclaims
+    # across all users and is the single owner of that decision.
+    stale_ids = [
+        r[0] for r in cursor.execute(
+            """SELECT id FROM worker_sessions
+               WHERE user_id = ? AND worker_name = ? AND status = 'online'""",
+            (user["id"], req.worker_name),
+        ).fetchall()
+    ]
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
-           WHERE user_id = ? AND status = 'online'""",
-        (now, user["id"])
+           WHERE user_id = ? AND worker_name = ? AND status = 'online'""",
+        (now, user["id"], req.worker_name)
     )
+    for _sid in stale_ids:
+        for _phase in ("mc", "vv", "mv"):
+            cursor.execute(
+                f"""UPDATE file_tasks SET {_phase}_status = 'pending', {_phase}_assigned_to = NULL
+                    WHERE {_phase}_status = 'assigned' AND {_phase}_assigned_to = ?""",
+                (_sid,),
+            )
 
     cursor.execute(
         """INSERT INTO worker_sessions
@@ -599,6 +528,8 @@ def worker_heartbeat(
         resources_data["phase_counts"] = req.phase_counts
     if req.batch_throughput is not None:
         resources_data["batch_throughput"] = req.batch_throughput
+    if req.phase_throughput:
+        resources_data["phase_throughput"] = req.phase_throughput
     # Track phase_job_count: increment by delta of jobs_completed since last heartbeat
     cursor.execute(
         "SELECT jobs_completed FROM worker_sessions WHERE id = ?",
@@ -627,98 +558,27 @@ def worker_heartbeat(
     )
     db.conn.commit()
 
-    # Dynamic mode is handled by _decide_worker_mode() — no auto-detect override needed.
-    # processing_mode_override is ONLY for admin manual pinning.
-    pool_needs_recalc = False
-    if False and req.resources and not mode_override:  # DISABLED: was overriding dynamic scheduling
-        detected_mode = _auto_detect_mode_from_resources(req.resources)
-        if detected_mode:
-            cursor.execute(
-                "UPDATE worker_sessions SET processing_mode_override = ? WHERE id = ?",
-                (detected_mode, req.session_id)
-            )
-            db.conn.commit()
-            mode_override = detected_mode
-            pool_needs_recalc = True
-            logger.info(
-                f"Worker session {req.session_id} auto-detected mode: {detected_mode} "
-                f"(VRAM={req.resources.get('gpu_memory_total_gb', 0):.1f}GB)"
-            )
-
-    if pool_needs_recalc:
-        _recalculate_server_pools(request.app, db)
-
-    # Determine effective processing mode:
-    # - builtin_worker → stop external workers
-    # - mc global → ALL workers get mc
-    # - auto global → workers get their auto-detected mode (mc/vv/mv)
-    global_mode = _get_global_processing_mode()
-
-    # In builtin_worker mode, tell external workers to stop
-    if global_mode == "builtin_worker":
-        # Check if this is an external worker (not the built-in one)
-        cursor.execute(
-            "SELECT worker_name FROM worker_sessions WHERE id = ?",
-            (req.session_id,)
-        )
-        name_row = cursor.fetchone()
-        if name_row and name_row[0] != BUILTIN_WORKER_NAME:
-            logger.info(f"Sending stop to external worker session {req.session_id}: builtin_worker mode active")
-            return {
-                "ok": True,
-                "command": "stop",
-                "pool_hint": 0,
-                "batch_hint": 0,
-                "processing_mode": "mc",
-            }
-
-    mode_reason = None
-    queue_snapshot = None
-
-    # Check if this is the embedded worker
-    cursor.execute("SELECT worker_name FROM worker_sessions WHERE id = ?", (req.session_id,))
-    wn_row = cursor.fetchone()
-    is_builtin = wn_row and wn_row[0] == BUILTIN_WORKER_NAME
-
-    if is_builtin:
-        # Embedded worker decides its own mode from file_tasks — heartbeat is report-only.
-        # Just echo back current_phase from the worker's heartbeat.
-        processing_mode = req.current_phase or "mc"
-        mode_reason = "self_managed"
-        effective_batch = 0  # Not used — embedded worker sets its own batch size
-    elif global_mode == "mc":
-        processing_mode = "mc"
-        mode_reason = "global_mode=mc"
-        effective_batch = batch_override or batch_capacity
-    elif mode_override:
-        processing_mode = mode_override
-        mode_reason = f"admin_override={mode_override}"
-        effective_batch = batch_override or batch_capacity
-    else:
-        # Dynamic mode for external workers: decide from file_tasks
+    # Feed measured per-phase throughput into the scheduler speed profile
+    # (EMA-smoothed). This is what warms up cold-start workers (batch grows
+    # past COLD_START_BATCH) and keeps benchmarked speeds current.
+    if req.phase_throughput:
         try:
-            cursor.execute("""
-                SELECT
-                    SUM(CASE WHEN parse_status='done' AND mc_status='pending' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN parse_status='done' AND vv_status='pending' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN mc_status='done' AND mv_status='pending' THEN 1 ELSE 0 END)
-                FROM file_tasks ft
-                JOIN analysis_jobs aj ON ft.analysis_job_id = aj.id
-                WHERE aj.status = 'active'
-            """)
-            r = cursor.fetchone()
-            mc_p, vv_p, mv_p = (r[0] or 0), (r[1] or 0), (r[2] or 0)
-            if mc_p + vv_p + mv_p > 0:
-                cands = {"mc": mc_p, "vv": vv_p, "mv": mv_p}
-                processing_mode = max(cands, key=cands.get)
-                mode_reason = f"file_tasks({cands})"
-            else:
-                processing_mode = "mc"
-                mode_reason = "idle_default"
-        except Exception:
-            processing_mode = "mc"
-            mode_reason = "fallback (decision error)"
-        effective_batch = batch_override or batch_capacity
+            scheduler = getattr(request.app.state, "scheduler", None)
+            if scheduler is None:
+                from backend.server.queue.scheduler import WorkerScheduler
+                scheduler = WorkerScheduler(db)
+            for _phase in ("mc", "vv", "mv"):
+                _fpm = req.phase_throughput.get(_phase)
+                if _fpm and _fpm > 0:
+                    scheduler.update_speed(req.session_id, _phase, float(_fpm))
+        except Exception as e:
+            logger.debug(f"Speed update skipped: {e}")
+
+    # Phase assignment is decided at claim time by the scheduler
+    # (pressure × speed). The heartbeat no longer re-derives a mode from
+    # file_tasks on every beat — it only delivers commands and a
+    # resource-aware batch hint.
+    effective_batch = batch_override or batch_capacity
 
     # Resource-aware batch_hint: throttle down based on worker resource pressure
     throttle = resources_data.get("throttle_level", "normal") if resources_data else "normal"
@@ -731,18 +591,12 @@ def worker_heartbeat(
     else:
         resource_batch_hint = effective_batch
 
-    resp = {
+    return {
         "ok": True,
         "command": pending_cmd,
         "pool_hint": resource_batch_hint * 2,
         "batch_hint": resource_batch_hint,
-        "processing_mode": processing_mode,
     }
-    if mode_reason:
-        resp["mode_reason"] = mode_reason
-    if queue_snapshot:
-        resp["queue_snapshot"] = queue_snapshot
-    return resp
 
 
 @router.post("/workers/disconnect")
@@ -766,9 +620,11 @@ def worker_disconnect(
     mgr = AnalysisJobManager(db)
     reclaimed = mgr.reclaim_worker_tasks(req.session_id)
 
+    # Preserve 'blocked' — the worker's own disconnect (e.g. on receiving the
+    # block command) must not lift an admin block.
     cursor.execute(
         """UPDATE worker_sessions SET status = 'offline', disconnected_at = ?
-           WHERE id = ? AND user_id = ?""",
+           WHERE id = ? AND user_id = ? AND status != 'blocked'""",
         (now, req.session_id, user["id"])
     )
     db.conn.commit()
@@ -963,30 +819,8 @@ def admin_list_workers(
             "launcher": row[21],
         })
 
-    # BUG-005: override embedded worker's data from live memory
-    # (heartbeat may be blocked during long MC batch)
-    try:
-        from backend.server.embedded_worker import get_status as _ew_status
-        ew = _ew_status()
-        if ew.get("running"):
-            for w in workers:
-                if w["worker_name"] == "embedded":
-                    w["status"] = "online"  # force online if running
-                    w["current_phase"] = ew.get("current_phase") or w["current_phase"]
-                    w["current_file"] = ew.get("current_file") or w["current_file"]
-                    if ew.get("batch_capacity"):
-                        w["batch_capacity"] = ew["batch_capacity"]
-                    if ew.get("phase_counts"):
-                        w["phase_counts"] = ew["phase_counts"]
-                    if ew.get("phase_throughput"):
-                        if not w.get("resources"):
-                            w["resources"] = {}
-                        w["resources"]["phase_throughput"] = ew["phase_throughput"]
-                    if ew.get("throughput") and ew["throughput"] > 0:
-                        w["throughput"] = ew["throughput"]
-                    break
-    except Exception:
-        pass
+    # Local worker reports via normal HTTP heartbeats like external workers —
+    # no live-memory override needed (was BUG-005 for the in-process embedded worker).
 
     return {
         "workers": workers,
@@ -1057,6 +891,36 @@ def admin_block_worker(
     return {"ok": True, "reclaimed": reclaimed}
 
 
+@router.post("/admin/workers/{session_id}/unblock")
+def admin_unblock_worker(
+    session_id: int,
+    admin: dict = Depends(require_admin),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Unblock a worker session so it can reconnect (admin only)."""
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """UPDATE worker_sessions
+           SET status = 'offline', pending_command = NULL
+           WHERE id = ? AND status = 'blocked'""",
+        (session_id,)
+    )
+    if cursor.rowcount == 0:
+        db.conn.commit()  # release WAL write lock from 0-row UPDATE
+        raise HTTPException(status_code=404, detail="Blocked session not found")
+    db.conn.commit()
+    logger.info(f"Admin unblocked worker session {session_id}")
+    audit_log.record(
+        db,
+        "worker_unblocked",
+        actor_user_id=admin.get("id"),
+        actor_username=admin.get("username"),
+        target_kind="worker_session",
+        target_id=session_id,
+    )
+    return {"ok": True}
+
+
 @router.patch("/admin/workers/{session_id}/config")
 def admin_update_worker_config(
     session_id: int,
@@ -1119,59 +983,53 @@ def admin_update_auto_processing(
     if req.batch_size is not None:
         cfg.save_user_setting("server.auto_processing.batch_size", req.batch_size)
     if req.verbose_log is not None:
+        # Worker reads worker.verbose_log from config at startup
         cfg.save_user_setting("worker.verbose_log", req.verbose_log)
-        # Apply to running embedded worker immediately
-        try:
-            import backend.server.embedded_worker as ew_module
-            if ew_module._worker_daemon:
-                ew_module._worker_daemon.verbose_log = req.verbose_log
-        except Exception:
-            pass
 
     # Scheduler handles mode assignment — no global mode switching needed
 
-    # Start/stop embedded worker
-    # Note: start is handled by _activate_server Phase 6 (on login).
-    # This API only handles STOP (user explicitly disables).
-    if req.enabled is not None and not req.enabled:
-        _stop_embedded_worker()
+    # Start/stop local worker
+    if req.enabled is not None:
+        if req.enabled:
+            _start_local_worker(None)  # no-op if already running
+        else:
+            _stop_local_worker()
 
     logger.info(f"Admin updated auto_processing: enabled={req.enabled}, mode={req.mode}, rest={req.rest_after_batch_s}s")
     return {"ok": True}
 
 
-# ── Embedded Worker ──────────────────────────────────────────
+# ── Local Worker ─────────────────────────────────────────────
 
-def _start_embedded_worker(app):
-    """Start the embedded worker using LocalTransport (no HTTP needed)."""
-    from backend.server.embedded_worker import start_worker, get_status
+def _start_local_worker(app):
+    """Start the server machine's local worker process."""
+    from backend.server.local_worker import start_worker, get_status
 
     if get_status()["running"]:
         return
 
-    # server_url and access_token are unused by LocalTransport but kept for API compat
-    result = start_worker(server_url="", access_token="")
+    result = start_worker()
     if result.get("success"):
-        logger.info("Embedded worker started (LocalTransport)")
+        logger.info("Local worker started")
     else:
-        logger.warning(f"Embedded worker start failed: {result.get('error')}")
+        logger.warning(f"Local worker start failed: {result.get('error')}")
 
 
-def _stop_embedded_worker():
-    """Stop the embedded worker if running."""
-    from backend.server.embedded_worker import stop_worker, get_status
+def _stop_local_worker():
+    """Stop the local worker if running."""
+    from backend.server.local_worker import stop_worker, get_status
 
     if get_status()["running"]:
         result = stop_worker()
-        logger.info(f"Embedded worker stopped: {result}")
+        logger.info(f"Local worker stopped: {result}")
 
 
 @router.get("/admin/workers/embedded-worker")
 def admin_get_embedded_worker(
     admin: dict = Depends(require_admin),
 ):
-    """Get embedded worker status and config."""
-    from backend.server.embedded_worker import get_status
+    """Get local worker status and config."""
+    from backend.server.local_worker import get_status
     from backend.utils.config import get_config
 
     cfg = get_config()
@@ -1188,20 +1046,31 @@ def admin_update_embedded_worker(
     request: Request,
     admin: dict = Depends(require_admin),
 ):
-    """Enable or disable the embedded worker."""
-    from backend.server.embedded_worker import get_status
+    """Enable or disable the local worker.
+
+    Kept as an alias of PATCH /admin/workers/auto-processing (the legacy
+    frontend still calls this path) and now writes the SAME key that endpoint
+    and the GET above read.
+
+    It used to write `server.embedded_worker.enabled`, which nothing in the
+    repo reads, via `_set_dotted`, which does not persist — so enabling was a
+    complete no-op, the GET reported an unrelated key, and disabling survived
+    only until the next activation.
+    """
+    from backend.server.local_worker import get_status
     from backend.utils.config import get_config
 
     cfg = get_config()
 
     if req.enabled is not None:
-        cfg._set_dotted("server.embedded_worker.enabled", req.enabled)
-        # Start handled by _activate_server. Only stop here.
-        if not req.enabled:
-            _stop_embedded_worker()
+        cfg.save_user_setting("server.auto_processing.enabled", req.enabled)
+        if req.enabled:
+            _start_local_worker(None)   # no-op if already running
+        else:
+            _stop_local_worker()
 
     status = get_status()
-    logger.info(f"Admin updated embedded_worker: enabled={req.enabled}, running={status['running']}")
+    logger.info(f"Admin updated local worker: enabled={req.enabled}, running={status['running']}")
     return {"ok": True, **status}
 
 

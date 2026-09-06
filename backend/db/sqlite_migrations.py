@@ -588,6 +588,51 @@ def migrate_dismissed_at(db):
 # Orchestrator: run all migrations in order
 # ──────────────────────────────────────────────────────────────
 
+def migrate_derivations(db):
+    """CAS M1: content-addressed derivation cache + model registry.
+
+    derivations: (content_hash, phase, model_version) → result. Write path
+    only in M1 (shadow write); reads activate in M3.
+    """
+    db.conn.execute("""
+        CREATE TABLE IF NOT EXISTS derivations (
+            content_hash  TEXT NOT NULL,
+            phase         TEXT NOT NULL CHECK (phase IN ('mc','vv','mv')),
+            model_version TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'done'
+                CHECK (status IN ('done','failed')),
+            result_json   TEXT,
+            vector_blob   BLOB,
+            error_message TEXT,
+            created_at    TEXT DEFAULT (datetime('now')),
+            created_by    TEXT,
+            PRIMARY KEY (content_hash, phase, model_version)
+        )
+    """)
+    db.conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_deriv_phase_ver
+        ON derivations(phase, model_version)
+    """)
+    db.conn.execute("""
+        CREATE TABLE IF NOT EXISTS model_registry (
+            phase          TEXT NOT NULL CHECK (phase IN ('mc','vv','mv')),
+            model_version  TEXT NOT NULL,
+            is_active      INTEGER NOT NULL DEFAULT 0,
+            activated_at   TEXT,
+            PRIMARY KEY (phase, model_version)
+        )
+    """)
+    # M3: cache-hit tracking on the per-job ledger
+    if db._table_exists("file_tasks"):
+        for col in ("mc_cache_hit", "vv_cache_hit", "mv_cache_hit"):
+            try:
+                db.conn.execute(f"SELECT {col} FROM file_tasks LIMIT 1")
+            except Exception:
+                db.conn.execute(
+                    f"ALTER TABLE file_tasks ADD COLUMN {col} INTEGER DEFAULT 0")
+    db.conn.commit()
+
+
 def run_migrations(db, *, existing_db: bool = True):
     """Run all migrations in the correct order.
 
@@ -631,6 +676,7 @@ def run_migrations(db, *, existing_db: bool = True):
             ("worker_phase_tracking", lambda: migrate_worker_phase_tracking(db)),
             ("analysis_tables", lambda: _ensure_analysis_tables(db)),
             ("dismissed_at", lambda: migrate_dismissed_at(db)),
+            ("derivations", lambda: migrate_derivations(db)),
         ]
 
         slow = []
@@ -672,3 +718,4 @@ def run_migrations(db, *, existing_db: bool = True):
         migrate_worker_phase_tracking(db)
         _ensure_analysis_tables(db)
         migrate_dismissed_at(db)
+        migrate_derivations(db)

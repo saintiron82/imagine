@@ -1,0 +1,209 @@
+/**
+ * API Client — fetch wrapper with JWT auto-attach and token refresh.
+ *
+ * Usage:
+ *   import { apiClient } from '../api/client';
+ *   const data = await apiClient.get('/search/triaxis', { query: '...' });
+ */
+
+const TOKEN_KEY = 'imagine-access-token';
+const REFRESH_KEY = 'imagine-refresh-token';
+const SERVER_URL_KEY = 'imagine-server-url';
+
+/** Detect if running inside Electron */
+export const isElectron = typeof window !== 'undefined' && !!window.electron;
+
+/** Get server base URL */
+export function getServerUrl() {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem(SERVER_URL_KEY) || '';
+  }
+  return '';
+}
+
+export function setServerUrl(url) {
+  localStorage.setItem(SERVER_URL_KEY, url.replace(/\/+$/, ''));
+}
+
+/** Token management */
+export function getAccessToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function getRefreshToken() {
+  return localStorage.getItem(REFRESH_KEY);
+}
+
+export function setTokens(access, refresh) {
+  if (access) localStorage.setItem(TOKEN_KEY, access);
+  if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+}
+
+export function clearTokens() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
+}
+
+/** Forward refreshed tokens (no-op after IPC worker removal). */
+function _syncTokensToWorker(accessToken, refreshToken) {
+  // Previously forwarded tokens to IPC worker process.
+  // Now a no-op — server auto-processing uses its own JWT.
+}
+
+/** Pending refresh promise to avoid concurrent refresh calls */
+let _refreshPromise = null;
+
+async function refreshAccessToken() {
+  if (_refreshPromise) return _refreshPromise;
+
+  const refresh = getRefreshToken();
+  if (!refresh) {
+    clearTokens();
+    return null;
+  }
+
+  _refreshPromise = (async () => {
+    try {
+      const base = getServerUrl();
+      const resp = await fetch(`${base}/api/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        setTokens(data.access_token, data.refresh_token);
+        // Forward new tokens to embedded worker (if running in Electron)
+        _syncTokensToWorker(data.access_token, data.refresh_token);
+        return data.access_token;
+      } else if (resp.status === 401 || resp.status === 403) {
+        // The refresh token itself is expired/revoked — only this actually
+        // means "signed out".
+        clearTokens();
+        return null;
+      } else {
+        // 5xx / 429 / anything else is the SERVER having a bad moment, not the
+        // session being invalid. Clearing here logged the user out of a
+        // hard-auth-gated app (every screen goes away) on a restart or a blip,
+        // with no explanation and no way back except signing in again.
+        console.warn(`[auth] token refresh failed with HTTP ${resp.status} — keeping tokens for retry`);
+        return null;
+      }
+    } catch (err) {
+      // Network error: same reasoning as above — the tokens are still valid,
+      // we just could not reach the server.
+      console.warn('[auth] token refresh could not reach the server — keeping tokens for retry:', err);
+      return null;
+    } finally {
+      _refreshPromise = null;
+    }
+  })();
+
+  return _refreshPromise;
+}
+
+/** Check if JWT is expiring within bufferSeconds (decode payload without verification). */
+function _isTokenExpiringSoon(token, bufferSeconds = 60) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return Date.now() > (payload.exp * 1000) - (bufferSeconds * 1000);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Core fetch wrapper with auth and retry.
+ */
+async function request(method, path, { body, params, raw } = {}) {
+  const base = getServerUrl();
+  let url = `${base}${path}`;
+
+  if (params) {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) qs.set(k, v);
+    }
+    const qstr = qs.toString();
+    if (qstr) url += `?${qstr}`;
+  }
+
+  const headers = {};
+  let token = getAccessToken();
+
+  // Proactive refresh: renew token before it expires to avoid 401 console errors
+  if (token && _isTokenExpiringSoon(token)) {
+    const newToken = await refreshAccessToken();
+    if (newToken) token = newToken;
+  }
+
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  let fetchOpts = { method, headers };
+
+  if (body !== undefined) {
+    if (body instanceof FormData) {
+      fetchOpts.body = body;
+      // Let browser set Content-Type with boundary
+    } else {
+      headers['Content-Type'] = 'application/json';
+      fetchOpts.body = JSON.stringify(body);
+    }
+  }
+
+  let resp = await fetch(url, fetchOpts);
+
+  // Auto-refresh on 401
+  if (resp.status === 401) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      headers['Authorization'] = `Bearer ${newToken}`;
+      fetchOpts.headers = headers;
+      resp = await fetch(url, fetchOpts);
+    }
+  }
+
+  // Auto-retry on 503 (DB temporarily busy)
+  if (resp.status === 503) {
+    for (let i = 0; i < 2; i++) {
+      await new Promise(r => setTimeout(r, 500 * (i + 1)));
+      resp = await fetch(url, fetchOpts);
+      if (resp.status !== 503) break;
+    }
+  }
+
+  if (raw) return resp;
+
+  if (!resp.ok) {
+    let detail = '';
+    try {
+      const err = await resp.json();
+      detail = err.detail || JSON.stringify(err);
+    } catch {
+      detail = resp.statusText;
+    }
+    throw new ApiError(resp.status, detail);
+  }
+
+  return resp.json();
+}
+
+export class ApiError extends Error {
+  constructor(status, detail) {
+    super(detail);
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/** Public API client */
+export const apiClient = {
+  get: (path, params) => request('GET', path, { params }),
+  post: (path, body) => request('POST', path, { body }),
+  put: (path, body) => request('PUT', path, { body }),
+  patch: (path, body) => request('PATCH', path, { body }),
+  delete: (path) => request('DELETE', path),
+  upload: (path, formData) => request('POST', path, { body: formData }),
+  raw: (method, path, opts) => request(method, path, { ...opts, raw: true }),
+};

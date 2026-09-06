@@ -588,6 +588,14 @@ const SearchResultCard = React.memo(({ result, onShowMeta, onContextMenu, onNavi
                 </div>
                 {/* Bottom: image_type badge + dominant-axis badge */}
                 <div className="absolute bottom-2 left-2 flex items-center gap-1">
+                    {/* Progressive availability: file is searchable before MC
+                        completes (FTS/VV axes) — label it so empty caption/tags
+                        read as "in progress", not as a bug */}
+                    {!result.mc_caption && (
+                        <span className="bg-amber-900/80 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            {t('search.mc_pending')}
+                        </span>
+                    )}
                     {result.image_type && (
                         <span className="bg-purple-900/80 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
                             {result.image_type}

@@ -1,0 +1,18 @@
+# VV (Visual Vector) benchmark profile — SigLIP2 so400m-patch14-384 + Qwen3.5-9B Cross-Modal
+#
+# 이 인코더는 config.yaml 의 pro 티어(현재 활성 티어)가 실제로 쓰는 것인데
+# 한 번도 측정된 적이 없었다. 측정 기록이 있는 유일한 인코더는 naflex 인데
+# 정작 어느 티어에서도 쓰이지 않는다.
+#
+# vv_siglip2.yaml(naflex) 과 인코더만 다르고 나머지는 전부 동일하게 맞췄다 —
+# 비교 대상: benchmarks/results/vv_quality_20260404_164138 (naflex, 81.5/100).
+#
+# Usage: python tools/bench_vv_quality.py --profile benchmarks/profiles/vv_siglip2_patch14_384.yaml
+
+name: "SigLIP2 so400m-patch14-384 + Qwen3.5-9B Cross-Modal"
+description: "pro 티어 실사용 인코더 — naflex 기준선과 동일 조건 A/B"
+
+encoder_model: "google/siglip2-so400m-patch14-384"
+vlm_model: "mlx-community/Qwen3.5-9B-MLX-4bit"
+count: 20
+max_edge: 512

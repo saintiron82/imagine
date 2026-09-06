@@ -109,17 +109,15 @@ def _save_vision_fields_for_file(db: SQLiteDB, file_id: int, body: dict) -> bool
 
 
 def _auto_start_worker():
-    """Start embedded worker if not already running (called on new job creation)."""
+    """Start the local worker if not already running (called on new job creation)."""
     try:
-        from backend.server.embedded_worker import _daemon
-        # Already running — skip
-        if _daemon and _daemon.is_running():
+        from backend.server.local_worker import get_status, start_worker
+        if get_status()["running"]:
             return
-        from backend.server.embedded_worker import start_worker
-        start_worker(server_url="", access_token="")
-        logger.info("Embedded worker auto-started (new analysis job created)")
+        start_worker()
+        logger.info("Local worker auto-started (new analysis job created)")
     except Exception as e:
-        logger.warning(f"Embedded worker auto-start failed: {e}")
+        logger.warning(f"Local worker auto-start failed: {e}")
 
 
 # ── Models ───────────────────────────────────────────────────
@@ -136,6 +134,7 @@ class ScanJobRequest(BaseModel):
     name: Optional[str] = None
     priority: int = 0
     analysis_profile: Optional[dict] = None
+    force_reanalyze: bool = False  # 전체 다시 분석 — CAS 캐시 히트를 무시하고 재계산
 
 
 class ClaimRequest(BaseModel):
@@ -148,6 +147,10 @@ class CompletePhaseRequest(BaseModel):
     success: bool
     error_message: Optional[str] = None
     elapsed_s: Optional[float] = None  # actual processing time (worker-measured)
+
+
+class CompleteBatchRequest(BaseModel):
+    results: list[CompletePhaseRequest]
 
 
 class RetryRequest(BaseModel):
@@ -268,14 +271,18 @@ def scan_and_create_job(
             "scanned_path": folder_path,
         }
 
-    # Create analysis job
+    # Create analysis job — force_reanalyze 는 잡 프로필에 실어 parse 단계의
+    # CAS 캐시 적용(apply_cache_hits)에서 소비한다(프롬프트 prior 와 저장소 공유).
+    profile = dict(req.analysis_profile) if req.analysis_profile else {}
+    if req.force_reanalyze:
+        profile["force_reanalyze"] = True
     mgr = _get_manager(db)
     result = mgr.create_job(
         name=name,
         source_path=folder_path,
         file_paths=file_paths,
         created_by=user.get("id"),
-        analysis_profile=req.analysis_profile,
+        analysis_profile=profile or None,
     )
     _auto_start_worker()
     return {"success": True, "jobs_created": 1, **result}
@@ -582,6 +589,10 @@ async def save_vv_vector(
     # Upsert into vec_files
     cursor.execute("DELETE FROM vec_files WHERE file_id = ?", (file_id,))
     cursor.execute("INSERT INTO vec_files (file_id, embedding) VALUES (?, ?)", (file_id, blob))
+    # CAS M1 shadow write — same transaction as the primary save
+    from backend.server.queue.derivations import record_derivation
+    record_derivation(db, file_id, "vv", vector_blob=blob,
+                      created_by=user.get("username"))
     db.conn.commit()
     return {"success": True}
 
@@ -604,6 +615,10 @@ async def save_mv_vector(
     cursor = db.conn.cursor()
     cursor.execute("DELETE FROM vec_text WHERE file_id = ?", (file_id,))
     cursor.execute("INSERT INTO vec_text (file_id, embedding) VALUES (?, ?)", (file_id, blob))
+    # CAS M1 shadow write — same transaction as the primary save
+    from backend.server.queue.derivations import record_derivation
+    record_derivation(db, file_id, "mv", vector_blob=blob,
+                      created_by=user.get("username"))
     db.conn.commit()
     return {"success": True}
 
@@ -620,6 +635,13 @@ async def save_vision_fields(
     body = await request.json()
     if not _save_vision_fields_for_file(db, file_id, body):
         raise HTTPException(status_code=404, detail="File not found")
+
+    # CAS M1 shadow write — the raw vision payload is the MC derivation
+    import json as _json
+    from backend.server.queue.derivations import record_derivation
+    record_derivation(db, file_id, "mc", result_json=_json.dumps(body),
+                      created_by=user.get("username"))
+    db.conn.commit()
 
     return {"success": True}
 
@@ -669,6 +691,50 @@ def complete_task_phase(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True}
+
+
+@router.post("/api/v1/tasks/complete-batch")
+def complete_task_phases_batch(
+    req: CompleteBatchRequest,
+    user: dict = Depends(get_current_user),
+    db: SQLiteDB = Depends(get_db_safe),
+):
+    """Batched phase-completion reports (max 50) — one HTTP round trip for
+    a burst of results instead of one per file (high-throughput workers).
+
+    Items are processed independently: a bad item is reported in `errors`
+    without failing the rest.
+    """
+    if len(req.results) > 50:
+        raise HTTPException(status_code=400, detail="Batch too large (max 50)")
+    mgr = _get_manager(db)
+    accepted = 0
+    errors = []
+    for item in req.results:
+        try:
+            _require_task_assignment(db, user, item.task_id, item.phase)
+            mgr.complete_task_phase(
+                task_id=item.task_id,
+                phase=item.phase,
+                success=item.success,
+                error_message=item.error_message,
+                elapsed_s=item.elapsed_s,
+            )
+            accepted += 1
+        except HTTPException as exc:
+            errors.append({"task_id": item.task_id, "error": exc.detail})
+        except ValueError as exc:
+            errors.append({"task_id": item.task_id, "error": str(exc)})
+        except Exception as exc:
+            # Item-level isolation is this endpoint's contract (see docstring).
+            # complete_task_phase() commits per item, so letting anything else
+            # escape would 500 the request with the earlier items ALREADY
+            # committed — the worker then re-sends all 50 and the tail of the
+            # batch is never reported at all. A DB lock error here is exactly
+            # the case that must degrade to a per-item error, not a 500.
+            logger.exception("complete-batch item failed: task_id=%s", item.task_id)
+            errors.append({"task_id": item.task_id, "error": str(exc)})
+    return {"success": True, "accepted": accepted, "errors": errors}
 
 
 # ── Phase Pause Control ─────────────────────────────────────

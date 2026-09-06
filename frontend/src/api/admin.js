@@ -110,6 +110,10 @@ export async function blockWorkerSession(sessionId) {
   return apiClient.post(`/api/v1/admin/workers/${sessionId}/block`);
 }
 
+export async function unblockWorkerSession(sessionId) {
+  return apiClient.post(`/api/v1/admin/workers/${sessionId}/unblock`);
+}
+
 export async function listMyWorkers() {
   return apiClient.get('/api/v1/workers/my');
 }

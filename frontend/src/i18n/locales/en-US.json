@@ -885,7 +885,6 @@
   "members.no_members": "No members found",
   "members.cannot_change_self": "Cannot modify your own account",
   "admin.tab_members": "Members",
-
   "webdav.title": "WebDAV Sources",
   "webdav.desc": "Connect to remote folders via WebDAV. Files stay on the server — only metadata and thumbnails are stored locally.",
   "webdav.add": "Add WebDAV",
@@ -911,7 +910,6 @@
   "webdav.use_current_folder": "Use this folder",
   "sidebar.add_local_folder": "Local Folder...",
   "sidebar.add_nas_connection": "+ Add NAS Connection...",
-
   "tab.settings": "Settings",
   "settings.section_general": "General",
   "settings.section_pipeline": "AI Pipeline",
@@ -959,7 +957,6 @@
   "admin.dash_preview": "Preview Only",
   "admin.dash_cache": "Download Cache",
   "admin.dash_cleanup": "Clean Up",
-
   "history.title": "Processing History",
   "history.sessions": "Sessions",
   "history.session_name": "Name",
@@ -986,7 +983,6 @@
   "history.col_finished": "Finished",
   "history.col_retries": "Retries",
   "history.col_error": "Error",
-
   "admin.tab_tools": "Tools",
   "admin.tools_title": "Tools",
   "admin.tools_repair_parse_title": "Parse Data Repair",
@@ -997,7 +993,6 @@
   "admin.tools_repair_parse_success_unit": " succeeded",
   "admin.tools_repair_parse_failed": "failed",
   "admin.tools_repair_parse_skipped": "skipped (WebDAV)",
-
   "admin.tab_connection": "Connection",
   "connection.title": "Server connection info",
   "connection.current_address": "Current server address",
@@ -1041,5 +1036,8 @@
   "admin.search_feedback_empty": "No feedback accumulated yet.",
   "search.axis_vv": "Strong visual match",
   "search.axis_mv": "Strong meaning match",
-  "search.axis_fts": "Keyword match"
+  "search.axis_fts": "Keyword match",
+  "admin.worker_blocked_title": "Blocked workers (cannot reconnect)",
+  "admin.worker_unblock": "Unblock",
+  "search.mc_pending": "Analyzing"
 }

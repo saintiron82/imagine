@@ -82,11 +82,3 @@ export async function getIdToken() {
 export function onAuthStateChanged(callback) {
   return firebaseOnAuthStateChanged(auth, callback);
 }
-
-/**
- * Get the currently signed-in Firebase user.
- * @returns {import('firebase/auth').User | null}
- */
-export function getCurrentUser() {
-  return auth.currentUser;
-}

@@ -57,8 +57,16 @@ mlx-vlm>=0.3.0; sys_platform == 'darwin'
 # Firebase Auth (2-layer auth: Firebase identity + server password)
 firebase-admin>=6.0.0
 
-# Agentic CLI client — normalizes Codex/Claude/Copilot CLI sessions.
-# Used by query_decomposer for Codex-based query understanding. Optional
-# at import time so installs without it still fall back to legacy
-# subprocess code.
-agentcli>=0.4.2
+# ── Optional: agentcli ───────────────────────────────────────────────────
+# Agentic CLI client — normalizes Codex/Claude/Copilot CLI sessions. Used by
+# query_decomposer for Codex-based query understanding, and genuinely optional:
+# query_decomposer.py:340 imports it in a try/except and falls back to the
+# legacy subprocess path when it is missing.
+#
+# NOT listed as a hard requirement because it is not published on PyPI, so
+# `pip install -r requirements.txt` failed outright on every machine without a
+# local checkout — including CI, where it meant the pytest job never ran a
+# single test. Install it explicitly if you want the session-aware Codex path:
+#
+#   pip install git+https://github.com/saintiron82/agentcli.git
+#   # or, for local development:  pip install -e ../agentcli

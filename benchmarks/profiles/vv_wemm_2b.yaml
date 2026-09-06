@@ -1,0 +1,22 @@
+# VV 벤치 프로파일 — WeMM-Embedding-2B (텐센트, 2026-08 공개)
+#
+# 비교 대상: benchmarks/results/vv_quality_20260901_170900 (siglip2-so400m-patch14-384, 84.7/100)
+# vv_siglip2_patch14_384.yaml 과 인코더만 다르고 나머지 조건은 전부 동일하다.
+#
+# WeMM 은 SigLIP2 와 성격이 다르다:
+#   - 이미지·텍스트·비디오·문서를 하나의 공간에 넣는 범용 멀티모달 임베딩
+#   - 2048 차원 L2 정규화 (pro 티어 SigLIP2 는 1152)
+#   - 순수 임베딩 모델이라 MC(캡션·태그) 생성은 못 한다 → VLM 은 그대로 필요
+#
+# 관전 포인트는 Cross-Modal Recall (현행 28.9/33). 이미지와 텍스트가 같은
+# 공간에 있으니 MC 텍스트 → 원본 이미지 회수가 WeMM 의 주 무대다.
+#
+# Usage: python tools/bench_vv_quality.py --profile benchmarks/profiles/vv_wemm_2b.yaml
+
+name: "WeMM-Embedding-2B + Qwen3.5-9B Cross-Modal"
+description: "범용 멀티모달 임베딩 — pro 티어 SigLIP2 기준선과 동일 조건 A/B"
+
+encoder_model: "tencent/WeMM-Embedding-2B"
+vlm_model: "mlx-community/Qwen3.5-9B-MLX-4bit"
+count: 20
+max_edge: 512

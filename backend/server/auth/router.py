@@ -171,6 +171,8 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
     )
     user_row = cursor.fetchone()
 
+    from backend.server.auth import membership as _m
+
     if user_row:
         user_id, username, role, is_active = user_row
         if not is_active:
@@ -181,27 +183,32 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
             (user_id,)
         )
     else:
-        # Check max_users limit (0 = unlimited)
-        cursor.execute("SELECT value FROM system_meta WHERE key = 'max_users'")
-        max_row = cursor.fetchone()
-        max_users = int(max_row[0]) if max_row else 0
-
-        if max_users > 0:
-            cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
-            current_count = cursor.fetchone()[0]
-            if current_count >= max_users:
-                raise HTTPException(status_code=403, detail="Server user limit reached")
-
-        # Determine role: first Firebase user gets admin if no Firebase-linked users exist
+        # No auto-signup (IMGV2-14): an uninvited Firebase user is rejected,
+        # except first-admin bootstrap when no Firebase users exist yet.
         cursor.execute("SELECT COUNT(*) FROM users WHERE firebase_uid IS NOT NULL")
         no_firebase_users = cursor.fetchone()[0] == 0
-        role = 'admin' if no_firebase_users else 'user'
+        invite = _m.find_pending_invite(db, email) if email else None
+
+        if no_firebase_users:
+            role = 'admin'  # bootstrap: first Firebase identity owns the server
+        elif invite:
+            role = invite[1] if invite[1] in ('admin', 'user') else 'user'
+        else:
+            from backend.server.security import audit_log as _audit
+            _audit.record(db, "failed_login", detail="uninvited firebase user")
+            raise HTTPException(status_code=403, detail="초대가 필요합니다 — 관리자에게 문의하세요")
+
+        # Seat cap (max_users, 0 = unlimited). Invited users already hold a
+        # reserved seat (pending invite) — only guard the non-invite path.
+        if not invite:
+            limit = _m.seat_limit(db)
+            if limit and _m.count_active_users(db) >= limit:
+                raise HTTPException(status_code=403, detail="좌석이 가득 찼습니다")
 
         # Use display_name as username, ensure uniqueness
         username = display_name
         cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
         if cursor.fetchone():
-            # Append short uid suffix for uniqueness
             username = f"{display_name}_{firebase_uid[:6]}"
 
         cursor.execute(
@@ -210,7 +217,12 @@ def connect_with_firebase(req: FirebaseConnectRequest, db: SQLiteDB = Depends(ge
             (username, email, role, firebase_uid)
         )
         user_id = cursor.lastrowid
-        logger.info(f"Auto-created user: {username} (firebase_uid={firebase_uid[:8]}..., role={role})")
+        if invite:
+            _m.mark_invite_accepted(db, invite[0], user_id)
+        logger.info(f"Created user via {'invite' if invite else 'bootstrap'}: {username} (role={role})")
+
+    # Hard expiry block: expired license denies entry to non-admins.
+    _m.assert_entry_allowed(db, role)
 
     # 4. Issue JWT
     access_token = create_access_token(user_id, username, role)
