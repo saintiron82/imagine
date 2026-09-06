@@ -185,10 +185,12 @@ search:
     k: 60
     preset: balanced
     presets:
+      # 균등. 측정 결과 s(text_vec)에 무게를 몰아준 0.3/0.4/0.3 이
+      # 균등보다 낮았다(P@10 0.367 vs 0.379) — benchmarks/results/rrf_weights_*
       balanced:
-        m: 0.3
-        s: 0.4
-        v: 0.3
+        m: 0.34
+        s: 0.33
+        v: 0.33
       fact:
         m: 0.6
         s: 0.25
